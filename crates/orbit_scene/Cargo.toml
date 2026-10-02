@@ -1,0 +1,25 @@
+[package]
+name = "orbit_scene"
+description = "OrbitEngine 3D scene data: scenes, prefabs, materials, lights, cameras, validation, migration and glTF import. No GPU dependency; the data model compiles to wasm."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["gltf-import"]
+# glTF import (native tooling: editor / CLI). Disable for wasm runtimes.
+gltf-import = ["dep:gltf"]
+
+[dependencies]
+orbit_core.workspace = true
+serde.workspace = true
+ron.workspace = true
+gltf = { version = "1", optional = true, default-features = false, features = ["names", "utils", "import", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_materials_unlit"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+image.workspace = true
