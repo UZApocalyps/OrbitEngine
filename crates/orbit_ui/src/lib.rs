@@ -30,6 +30,7 @@
 //! Known limit: no clipping, so scroll lists show whole items only and
 //! scroll item by item.
 
+pub mod a11y;
 pub mod asset;
 mod banner;
 mod choice;

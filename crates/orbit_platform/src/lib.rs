@@ -7,7 +7,10 @@
 //! builds the app once the window exists (GPU initialization is async, and on
 //! the web it must not block the browser event loop).
 
+mod access;
 mod gamepad;
+pub use access::{WebItem, WebKind, WebView, placeholder_tree};
+pub use accesskit;
 pub use gamepad::{GamepadButton, StickDpad};
 
 use std::future::Future;
@@ -46,6 +49,10 @@ pub struct AppConfig {
     /// Native only: icon of the window (title bar, task bar). Ignored on the
     /// web, where the page provides a favicon.
     pub icon: Option<WindowIcon>,
+    /// Expose the app to screen readers (ADR 0017): an AccessKit adapter on
+    /// desktop, a hidden ARIA DOM on the web, fed by
+    /// [`App::accessibility_tree`]. Off by default (the editor has its own UI).
+    pub accessibility: bool,
 }
 
 /// A window icon: tightly packed RGBA8 pixels, row by row.
@@ -106,6 +113,7 @@ impl Default for AppConfig {
             canvas_id: Some("orbit-canvas".to_owned()),
             redraw: RedrawMode::Continuous,
             icon: WindowIcon::brand(),
+            accessibility: false,
         }
     }
 }
@@ -240,6 +248,17 @@ pub trait App {
     /// [`Visibility::Hidden`] and saves its progress when it becomes hidden
     /// (a hidden tab can be killed at any moment).
     fn visibility_changed(&mut self, _state: Visibility) {}
+    /// Screen reader ([`AppConfig::accessibility`]): the accessibility tree,
+    /// as a full AccessKit update, when it changed since the last call, or
+    /// always when `force` (a screen reader just connected). Polled after
+    /// each frame, only while a screen reader listens on desktop. The default
+    /// has none (the host then exposes the bare window).
+    fn accessibility_tree(&mut self, _force: bool) -> Option<accesskit::TreeUpdate> {
+        None
+    }
+    /// The screen reader asked for an action (click, focus...) on a node of
+    /// the last tree.
+    fn accessibility_action(&mut self, _request: accesskit::ActionRequest) {}
 }
 
 /// Whether the player can see and use the page.
@@ -334,6 +353,66 @@ enum UserEvent {
     /// The page was hidden or shown, gained or lost the focus (web).
     #[cfg(target_arch = "wasm32")]
     Visibility(Visibility),
+    /// The AccessKit adapter (screen reader connected, action, gone).
+    #[cfg(not(target_arch = "wasm32"))]
+    Access(accesskit_winit::Event),
+    /// A control of the hidden ARIA DOM was clicked (web).
+    #[cfg(target_arch = "wasm32")]
+    AccessAction(accesskit::ActionRequest),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<accesskit_winit::Event> for UserEvent {
+    fn from(event: accesskit_winit::Event) -> Self {
+        Self::Access(event)
+    }
+}
+
+/// The screen reader side of the loop: the desktop adapter or the web DOM.
+#[derive(Default)]
+struct Access {
+    #[cfg(not(target_arch = "wasm32"))]
+    adapter: Option<accesskit_winit::Adapter>,
+    /// A screen reader listens (desktop): the app's tree is polled.
+    #[cfg(not(target_arch = "wasm32"))]
+    active: bool,
+    #[cfg(target_arch = "wasm32")]
+    web: Option<access::web::WebAccess>,
+    /// The next poll must send a full tree.
+    force: bool,
+}
+
+impl Access {
+    /// Sends the app's tree to the screen reader when it changed.
+    fn push(&mut self, app: &mut dyn App, title: &str) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Some(adapter) = self.adapter.as_mut() else {
+                return;
+            };
+            if !self.active {
+                return;
+            }
+            let force = std::mem::take(&mut self.force);
+            let update = app
+                .accessibility_tree(force)
+                .or_else(|| force.then(|| placeholder_tree(title)));
+            if let Some(update) = update {
+                adapter.update_if_active(|| update);
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = title;
+            let Some(web) = self.web.as_mut() else {
+                return;
+            };
+            let force = std::mem::take(&mut self.force);
+            if let Some(update) = app.accessibility_tree(force) {
+                web.apply(WebView::from_update(&update));
+            }
+        }
+    }
 }
 
 /// Creates the window and runs the application until it is closed.
@@ -365,6 +444,7 @@ where
         app: None,
         last_frame: None,
         redraw_wanted: false,
+        access: Access::default(),
         #[cfg(not(target_arch = "wasm32"))]
         gamepads: gamepad::Poller::new(),
     };
@@ -391,6 +471,7 @@ struct Runner {
     last_frame: Option<Instant>,
     /// On-demand mode: a frame was requested and not drawn yet.
     redraw_wanted: bool,
+    access: Access,
     #[cfg(not(target_arch = "wasm32"))]
     gamepads: Option<gamepad::Poller>,
 }
@@ -426,6 +507,14 @@ fn platform_attributes(
 }
 
 impl Runner {
+    /// Hands a screen reader action to the app and draws the result.
+    fn access_action(&mut self, request: accesskit::ActionRequest) {
+        if let Some(app) = self.app.as_mut() {
+            app.accessibility_action(request);
+            self.redraw_wanted = true;
+        }
+    }
+
     /// Executes what the app asked of the window.
     fn serve_requests(&mut self, event_loop: &ActiveEventLoop) {
         let (Some(app), Some(window)) = (self.app.as_mut(), self.window.as_ref()) else {
@@ -467,6 +556,9 @@ impl Runner {
             attrs.with_window_icon(self.config.icon.as_ref().and_then(|i| {
                 winit::window::Icon::from_rgba(i.rgba.clone(), i.width, i.height).ok()
             }));
+        // An AccessKit adapter must exist before the window is first shown.
+        #[cfg(not(target_arch = "wasm32"))]
+        let attrs = attrs.with_visible(!self.config.accessibility);
         let attrs = platform_attributes(attrs, &self.config);
         Arc::new(
             event_loop
@@ -524,6 +616,22 @@ impl ApplicationHandler<UserEvent> for Runner {
             return;
         }
         let window = self.create_window(event_loop);
+        if self.config.accessibility {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.access.adapter = Some(accesskit_winit::Adapter::with_event_loop_proxy(
+                    event_loop,
+                    &window,
+                    self.proxy.clone(),
+                ));
+                window.set_visible(true);
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.access.web = access::web::WebAccess::install(self.proxy.clone());
+                self.access.force = true;
+            }
+        }
         self.window = Some(window.clone());
         let Some(factory) = self.factory.take() else {
             return;
@@ -565,11 +673,48 @@ impl ApplicationHandler<UserEvent> for Runner {
                 self.redraw_wanted = true;
                 self.schedule(event_loop);
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            UserEvent::Access(event) => {
+                use accesskit_winit::WindowEvent as A;
+                match event.window_event {
+                    A::InitialTreeRequested => {
+                        self.access.active = true;
+                        self.access.force = true;
+                        match self.app.as_mut() {
+                            Some(app) => self.access.push(app.as_mut(), &self.config.title),
+                            None => {
+                                if let Some(adapter) = self.access.adapter.as_mut() {
+                                    let title = self.config.title.clone();
+                                    adapter.update_if_active(|| placeholder_tree(&title));
+                                }
+                            }
+                        }
+                    }
+                    A::ActionRequested(request) => self.access_action(request),
+                    A::AccessibilityDeactivated => self.access.active = false,
+                }
+                self.serve_requests(event_loop);
+                self.schedule(event_loop);
+            }
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::AccessAction(request) => {
+                self.access_action(request);
+                self.serve_requests(event_loop);
+                self.schedule(event_loop);
+            }
         }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let (Some(adapter), Some(window)) = (self.access.adapter.as_mut(), self.window.as_ref()) {
+            adapter.process_event(window, &event);
+        }
+        let frame = matches!(event, WindowEvent::RedrawRequested);
         self.handle_window_event(event_loop, id, event);
+        if frame && let Some(app) = self.app.as_mut() {
+            self.access.push(app.as_mut(), &self.config.title);
+        }
         self.serve_requests(event_loop);
         self.schedule(event_loop);
     }

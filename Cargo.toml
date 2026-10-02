@@ -34,6 +34,9 @@ thiserror = "2"
 
 # platform / graphics (versions pinned on purpose, see docs/adr)
 gilrs = "0.11.2"
+# screen readers (ADR 0017): accesskit 0.24 is the version egui already uses
+accesskit = "0.24"
+accesskit_winit = { version = "0.32", default-features = false, features = ["accesskit_unix", "async-io", "rwh_06"] }
 winit = "=0.30.13"
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl"] }
 web-time = "1"

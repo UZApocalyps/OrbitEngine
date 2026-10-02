@@ -704,6 +704,10 @@ fn setting_event(key: SettingKey, v: f32) -> Option<UiEvent> {
 }
 
 impl Screen for DataScreen {
+    fn widgets(&mut self) -> Option<&mut Ui> {
+        Some(&mut self.ui)
+    }
+
     fn handle(&mut self, input: UiInput) -> Vec<UiEvent> {
         let mut out = Vec::new();
         let mut changed = false;

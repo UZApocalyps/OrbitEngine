@@ -373,6 +373,10 @@ impl SaveLoadScreen {
 }
 
 impl Screen for SaveLoadScreen {
+    fn widgets(&mut self) -> Option<&mut Ui> {
+        Some(&mut self.ui)
+    }
+
     fn handle(&mut self, input: UiInput) -> Vec<UiEvent> {
         let mut out = Vec::new();
         if !self.confirm.is_open() {

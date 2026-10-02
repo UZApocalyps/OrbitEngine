@@ -447,6 +447,7 @@ impl Ready {
                 UiEvent::SetTextSpeed(v) => log::debug!("gallery: text speed {v:.0}"),
                 UiEvent::SetAutoDelay(v) => log::debug!("gallery: auto delay {v:.1}"),
                 UiEvent::SetFullscreen(on) => log::info!("gallery: fullscreen {on}"),
+                UiEvent::SetScreenReader(on) => log::info!("gallery: screen reader {on}"),
                 UiEvent::ToggleSkip => {
                     self.quick_view.skip_active = !self.quick_view.skip_active;
                     self.quick.set_view(self.quick_view);

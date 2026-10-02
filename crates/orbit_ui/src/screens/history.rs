@@ -143,6 +143,10 @@ impl HistoryScreen {
 }
 
 impl Screen for HistoryScreen {
+    fn widgets(&mut self) -> Option<&mut Ui> {
+        Some(&mut self.ui)
+    }
+
     fn handle(&mut self, input: UiInput) -> Vec<UiEvent> {
         let mut out = Vec::new();
         forward(self.ui.handle(input), &mut out, |ev, out| match ev {

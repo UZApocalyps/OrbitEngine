@@ -513,6 +513,8 @@ pub struct Runtime {
     /// Splashes of the UI bundle in use (the engine splash is not here: it
     /// is built into [`SplashState::new`]).
     ui_splashes: Vec<SplashDef>,
+    /// The last accessibility tree sent to the screen reader.
+    a11y_last: Option<orbit_ui::a11y::A11yTree>,
 }
 
 impl Runtime {
@@ -638,6 +640,7 @@ impl Runtime {
             hidden: false,
             splash_assets: SplashAssets::default(),
             ui_splashes: Vec::new(),
+            a11y_last: None,
             config,
         })
     }
@@ -1814,6 +1817,74 @@ impl App for Runtime {
 
     fn host_requests(&mut self) -> Vec<HostRequest> {
         std::mem::take(&mut self.host_requests)
+    }
+
+    fn accessibility_tree(&mut self, force: bool) -> Option<orbit_platform::accesskit::TreeUpdate> {
+        use orbit_ui::a11y::{A11yNode, A11yRole, A11yTree, LINE_ID, ROOT_ID};
+        let tree = match &mut self.phase {
+            Phase::Running(shell) => {
+                let title = shell.story().title.clone();
+                shell.a11y_tree(&title)
+            }
+            Phase::Failed(message) => {
+                let mut tree = A11yTree::root("OrbitEngine");
+                let text = orbit_ui::a11y::plain(message);
+                tree.push(ROOT_ID, A11yNode::new(LINE_ID, A11yRole::Live, text));
+                tree
+            }
+            Phase::Ready(shell) => {
+                let mut tree = A11yTree::root(shell.story().title.clone());
+                if shell.prefs().screen_reader {
+                    let mut start = A11yNode::new(
+                        orbit_ui::a11y::START_ID,
+                        A11yRole::Button,
+                        shell.texts().get("ui.click_to_start"),
+                    );
+                    start.bounds = [0.0, 0.0, orbit_ui::CANVAS[0], orbit_ui::CANVAS[1]];
+                    tree.push(ROOT_ID, start);
+                    tree.focus = orbit_ui::a11y::START_ID;
+                }
+                tree
+            }
+            _ => A11yTree::root("OrbitEngine"),
+        };
+        if !force && self.a11y_last.as_ref() == Some(&tree) {
+            return None;
+        }
+        // Canvas → window pixels: the inverse of the letterboxed mapping the
+        // pointer goes through.
+        let renderer = &self.ctx.renderer;
+        let o = renderer.screen_to_world([0.0, 0.0]);
+        let u = renderer.screen_to_world([1.0, 1.0]);
+        let scale = [u[0] - o[0], u[1] - o[1]];
+        let to_window = |[x, y, w, h]: [f32; 4]| {
+            let px = |v: f32, axis: usize| {
+                if scale[axis].abs() > f32::EPSILON {
+                    f64::from((v - o[axis]) / scale[axis])
+                } else {
+                    f64::from(v)
+                }
+            };
+            [px(x, 0), px(y, 1), px(x + w, 0), px(y + h, 1)]
+        };
+        let update = tree.to_accesskit(to_window);
+        self.a11y_last = Some(tree);
+        Some(update)
+    }
+
+    fn accessibility_action(&mut self, request: orbit_platform::accesskit::ActionRequest) {
+        let Some(action) = orbit_ui::a11y::A11yAction::from_accesskit(request.action) else {
+            return;
+        };
+        let id = request.target_node.0;
+        match &mut self.phase {
+            Phase::Running(shell) => shell.a11y_action(id, action),
+            Phase::Ready(_) if id == orbit_ui::a11y::START_ID && action == orbit_ui::a11y::A11yAction::Click => {
+                self.on_action(InputAction::Ui(UiInput::Confirm));
+            }
+            _ => {}
+        }
+        self.after_shell();
     }
 
     fn visibility_changed(&mut self, state: Visibility) {

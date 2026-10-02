@@ -463,6 +463,8 @@ fn old_preferences_without_gamepad_still_load() {
     let old = "(volumes: (master: 0.5, music: 0.8, sfx: 1.0, voice: 1.0), text_speed: 40.0, auto_delay: 2.0, skip_mode: ReadOnly, fullscreen: false, language: None)";
     let prefs = Preferences::from_ron(old).unwrap();
     assert!(prefs.gamepad.is_empty());
+    // M7-09: the screen reader support is on for older files too.
+    assert!(prefs.screen_reader);
     assert_eq!(prefs.volumes.master, 0.5);
 }
 
@@ -486,6 +488,7 @@ fn preferences_roundtrip_default_and_sanitize() {
         fullscreen: true,
         language: Some("fr".into()),
         gamepad: [("advance".to_owned(), "East".to_owned())].into(),
+        screen_reader: false,
     };
     mgr.save_prefs(&prefs).unwrap();
     assert_eq!(mgr.load_prefs().unwrap(), prefs);

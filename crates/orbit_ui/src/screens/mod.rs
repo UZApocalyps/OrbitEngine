@@ -34,6 +34,10 @@ pub trait Screen {
     fn set_theme(&mut self, theme: &Theme);
     /// Re-translates the screen (language change).
     fn set_texts(&mut self, texts: &Texts);
+    /// The widget tree, for the screen reader (see [`crate::a11y`]).
+    fn widgets(&mut self) -> Option<&mut Ui> {
+        None
+    }
 }
 
 /// Forwards sound cues as events and hands the other widget events to `f`.

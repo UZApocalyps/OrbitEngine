@@ -7,6 +7,7 @@ use super::*;
 use crate::director::Flow;
 use orbit_ui::UiBundle;
 
+mod a11y;
 mod splashes;
 
 const DEMO: &str = include_str!("../../../../examples/stories/test_minimal.ron");
