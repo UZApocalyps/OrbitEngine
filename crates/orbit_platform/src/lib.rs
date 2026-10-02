@@ -9,6 +9,12 @@
 
 mod gamepad;
 pub use gamepad::{GamepadButton, StickDpad};
+mod lifecycle;
+pub use lifecycle::{Lifecycle, LifecycleAction, LifecycleState, SafeArea};
+mod touch;
+pub use touch::{TouchConfig, TouchRecognizer, is_back_key};
+#[cfg(target_os = "android")]
+pub mod android;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -240,6 +246,17 @@ pub trait App {
     /// [`Visibility::Hidden`] and saves its progress when it becomes hidden
     /// (a hidden tab can be killed at any moment).
     fn visibility_changed(&mut self, _state: Visibility) {}
+    /// The app went to the background and its native window is going away
+    /// (Android; see [`Lifecycle`]). Save progress silently, silence the
+    /// audio and release the GPU surface: no frame is drawn until
+    /// [`App::resumed`]. Never called on desktop or the web.
+    fn suspended(&mut self) {}
+    /// Back to the foreground after [`App::suspended`]: recreate the surface
+    /// on the window, now `size` (physical pixels) at `scale_factor`.
+    fn resumed(&mut self, _size: PhysicalSize<u32>, _scale_factor: f64) {}
+    /// The part of the window clear of system bars and cutouts changed
+    /// (Android). Touch targets should stay inside it.
+    fn safe_area_changed(&mut self, _area: SafeArea) {}
 }
 
 /// Whether the player can see and use the page.
@@ -349,7 +366,17 @@ where
     Fut: Future<Output = A> + 'static,
     A: App + 'static,
 {
-    let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
+    #[cfg_attr(not(target_os = "android"), allow(unused_mut))]
+    let mut builder = EventLoop::<UserEvent>::with_user_event();
+    #[cfg(target_os = "android")]
+    {
+        use winit::platform::android::EventLoopBuilderExtAndroid;
+        let app = android::app()
+            .expect("orbit_platform::android::init must be called before run")
+            .clone();
+        builder.with_android_app(app);
+    }
+    let event_loop = builder.build()?;
     event_loop.set_control_flow(match config.redraw {
         RedrawMode::Continuous => ControlFlow::Poll,
         RedrawMode::OnDemand => ControlFlow::Wait,
@@ -367,6 +394,9 @@ where
         redraw_wanted: false,
         #[cfg(not(target_arch = "wasm32"))]
         gamepads: gamepad::Poller::new(),
+        lifecycle: Lifecycle::default(),
+        touch: TouchRecognizer::default(),
+        safe_area: SafeArea::default(),
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -393,6 +423,13 @@ struct Runner {
     redraw_wanted: bool,
     #[cfg(not(target_arch = "wasm32"))]
     gamepads: Option<gamepad::Poller>,
+    lifecycle: Lifecycle,
+    /// Android: touch points become taps, long presses and swipes.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    touch: TouchRecognizer,
+    /// Last safe area reported to the app.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    safe_area: SafeArea,
 }
 
 /// Web: bind the window to the page's canvas (or append a new one).
@@ -519,7 +556,22 @@ fn plan(wake: Option<Instant>, now: Instant, redraw_wanted: bool) -> (bool, Cont
 
 impl ApplicationHandler<UserEvent> for Runner {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // `resumed` can fire several times (Android); only build once.
+        // `resumed` fires again each time Android brings the app back.
+        match self.lifecycle.on_resumed() {
+            LifecycleAction::Launch => {}
+            LifecycleAction::ResumeSurface => {
+                if let (Some(app), Some(window)) = (self.app.as_mut(), self.window.as_ref()) {
+                    app.resumed(window.inner_size(), window.scale_factor());
+                    window.request_redraw();
+                }
+                self.last_frame = Some(Instant::now());
+                self.refresh_safe_area();
+                self.redraw_wanted = true;
+                self.schedule(event_loop);
+                return;
+            }
+            LifecycleAction::SuspendSurface | LifecycleAction::Nothing => return,
+        }
         if self.window.is_some() {
             return;
         }
@@ -536,6 +588,7 @@ impl ApplicationHandler<UserEvent> for Runner {
         {
             let app = pollster::block_on(future);
             self.install_app(app);
+            self.refresh_safe_area();
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -546,6 +599,14 @@ impl ApplicationHandler<UserEvent> for Runner {
                     log::error!("event loop closed before the app was ready");
                 }
             });
+        }
+    }
+
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        if self.lifecycle.on_suspended() == LifecycleAction::SuspendSurface
+            && let Some(app) = self.app.as_mut()
+        {
+            app.suspended();
         }
     }
 
@@ -587,6 +648,20 @@ impl ApplicationHandler<UserEvent> for Runner {
 }
 
 impl Runner {
+    /// Android: tells the app when the safe area changed (system bars,
+    /// cutout, rotation). Nothing to do elsewhere: the whole window is safe.
+    fn refresh_safe_area(&mut self) {
+        #[cfg(target_os = "android")]
+        if let (Some(app), Some(window)) = (self.app.as_mut(), self.window.as_ref()) {
+            let size = window.inner_size();
+            let area = android::safe_area(size.width, size.height);
+            if area != self.safe_area {
+                self.safe_area = area;
+                app.safe_area_changed(area);
+            }
+        }
+    }
+
     fn handle_window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -614,6 +689,7 @@ impl Runner {
             WindowEvent::Resized(size) => {
                 app.resize(size, window.scale_factor());
                 self.redraw_wanted |= on_demand;
+                self.refresh_safe_area();
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 // The following `Resized` carries the new size; refresh the scale.
@@ -634,7 +710,13 @@ impl Runner {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if let PhysicalKey::Code(code) = event.physical_key {
+                // The Android back button is Cancel, like Escape.
+                if is_back_key(&event.physical_key, &event.logical_key) {
+                    app.input(&InputEvent::Key {
+                        code: KeyCode::Escape,
+                        pressed: event.state == ElementState::Pressed,
+                    });
+                } else if let PhysicalKey::Code(code) = event.physical_key {
                     app.input(&InputEvent::Key {
                         code,
                         pressed: event.state == ElementState::Pressed,
@@ -655,6 +737,21 @@ impl Runner {
                     MouseScrollDelta::PixelDelta(p) => (p.x as f32 / 20.0, p.y as f32 / 20.0),
                 };
                 app.input(&InputEvent::Scroll { dx, dy });
+            }
+            // Desktop touch screens already synthesize mouse events.
+            #[cfg(target_os = "android")]
+            WindowEvent::Touch(touch) => {
+                let events = self.touch.touch(
+                    touch.id,
+                    touch.phase,
+                    (touch.location.x, touch.location.y),
+                    Instant::now(),
+                    window.scale_factor(),
+                );
+                for event in &events {
+                    app.input(event);
+                }
+                self.redraw_wanted |= on_demand && !events.is_empty();
             }
             _ => {}
         }

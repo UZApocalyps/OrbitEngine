@@ -20,6 +20,11 @@ pollster.workspace = true
 image.workspace = true
 time.workspace = true
 
+# Android (ADR 0017): GameActivity entry point through `android-activity`,
+# re-exported by winit as `winit::platform::android::activity`.
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { workspace = true, features = ["android-game-activity"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true
 web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlCanvasElement", "EventTarget", "Event"] }

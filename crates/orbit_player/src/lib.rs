@@ -16,6 +16,8 @@
 //! glued to the executable, `game.pak` beside it, `--pak <file>`, or the
 //! `ORBIT_PAK` global of the web page.
 
+#[cfg(target_os = "android")]
+mod android;
 #[cfg(feature = "showcase")]
 mod demo;
 #[cfg(feature = "showcase")]
@@ -89,7 +91,10 @@ fn window_config(launch: &Launch) -> AppConfig {
 
 /// Opens the window and runs the player until it is closed.
 pub fn run() -> Result<(), PlayerError> {
-    let launch = Launch::from_environment().map_err(PlayerError::Args)?;
+    run_launch(Launch::from_environment().map_err(PlayerError::Args)?)
+}
+
+fn run_launch(launch: Launch) -> Result<(), PlayerError> {
     if launch.demo || launch.ui_gallery {
         #[cfg(feature = "showcase")]
         return if launch.demo {

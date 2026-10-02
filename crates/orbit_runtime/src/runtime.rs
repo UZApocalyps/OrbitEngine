@@ -509,6 +509,9 @@ pub struct Runtime {
     streaming: Option<Streaming>,
     /// The page is hidden: nothing is drawn.
     hidden: bool,
+    /// Android: the window insets clear of system bars and cutouts.
+    #[allow(dead_code)]
+    safe_area: orbit_platform::SafeArea,
     splash_assets: SplashAssets,
     /// Splashes of the UI bundle in use (the engine splash is not here: it
     /// is built into [`SplashState::new`]).
@@ -636,6 +639,7 @@ impl Runtime {
             embedded: embedded.map(embedded::Embedded::new),
             streaming: None,
             hidden: false,
+            safe_area: orbit_platform::SafeArea::default(),
             splash_assets: SplashAssets::default(),
             ui_splashes: Vec::new(),
             config,
@@ -1829,6 +1833,35 @@ impl App for Runtime {
             shell.on_exit();
         }
         self.hidden = hidden;
+    }
+
+    fn suspended(&mut self) {
+        // Android may kill a background app without warning: save now
+        // (autosave, preferences, persistent data), then let the native
+        // window go. Textures and pipelines stay on the device.
+        self.visibility_changed(Visibility::Hidden);
+        self.ctx.renderer.gfx_mut().suspend();
+    }
+
+    fn resumed(&mut self, size: PhysicalSize<u32>, _scale_factor: f64) {
+        if let Err(err) = self
+            .ctx
+            .renderer
+            .gfx_mut()
+            .resume((size.width, size.height))
+        {
+            log::error!("cannot recreate the surface: {err}");
+            return;
+        }
+        self.ctx.renderer.resize(size.width, size.height);
+        self.visibility_changed(Visibility::Active);
+    }
+
+    fn safe_area_changed(&mut self, area: orbit_platform::SafeArea) {
+        // The scene is letterboxed into the whole window for now; the insets
+        // are recorded for UI layout (touch targets) to use.
+        log::info!("safe area: {area:?}");
+        self.safe_area = area;
     }
 }
 

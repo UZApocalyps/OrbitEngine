@@ -42,7 +42,8 @@ type TargetFactory = Box<dyn Fn() -> wgpu::SurfaceTarget<'static>>;
 pub struct Gfx {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
-    surface: wgpu::Surface<'static>,
+    /// `None` while the app is suspended (Android): see [`Gfx::suspend`].
+    surface: Option<wgpu::Surface<'static>>,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -110,7 +111,7 @@ impl Gfx {
         let mut gfx = Self {
             instance,
             adapter,
-            surface,
+            surface: Some(surface),
             device,
             queue,
             config,
@@ -141,7 +142,7 @@ impl Gfx {
             let gamma = self.config.format.remove_srgb_suffix();
             if gamma != self.config.format {
                 self.config.view_formats = vec![gamma];
-                self.surface.configure(&self.device, &self.config);
+                self.configure_surface();
             }
         }
     }
@@ -167,6 +168,39 @@ impl Gfx {
             })
     }
 
+    fn configure_surface(&self) {
+        if let Some(surface) = &self.surface {
+            surface.configure(&self.device, &self.config);
+        }
+    }
+
+    /// Releases the surface (Android: the native window is going away when
+    /// the app is sent to the background). The device, the textures and the
+    /// pipelines are kept; frames are skipped until [`Gfx::resume`].
+    pub fn suspend(&mut self) {
+        self.surface = None;
+    }
+
+    /// Whether the surface was released by [`Gfx::suspend`].
+    pub fn is_suspended(&self) -> bool {
+        self.surface.is_none()
+    }
+
+    /// Recreates the surface on the (new) native window after
+    /// [`Gfx::suspend`], with the current configuration. A no-op when the
+    /// surface exists. `size` is the window size now, in physical pixels.
+    pub fn resume(&mut self, size: (u32, u32)) -> Result<(), GfxError> {
+        if self.surface.is_none() {
+            self.surface = Some(self.instance.create_surface((self.target_factory)())?);
+        }
+        if size.0 > 0 && size.1 > 0 {
+            self.config.width = size.0;
+            self.config.height = size.1;
+        }
+        self.configure_surface();
+        Ok(())
+    }
+
     /// Reconfigures the surface. A zero dimension (minimized window) is
     /// ignored: rendering is skipped until a valid size arrives.
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -175,7 +209,7 @@ impl Gfx {
         }
         self.config.width = width;
         self.config.height = height;
-        self.surface.configure(&self.device, &self.config);
+        self.configure_surface();
     }
 
     /// Draws `sprites` (in order) over a cleared background and presents.
@@ -204,17 +238,20 @@ impl Gfx {
     pub fn begin_frame(&mut self) -> Result<Option<SurfaceFrame>, GfxError> {
         use wgpu::CurrentSurfaceTexture as Cst;
 
-        let (texture, suboptimal) = match self.surface.get_current_texture() {
+        let Some(surface) = &self.surface else {
+            return Ok(None); // suspended
+        };
+        let (texture, suboptimal) = match surface.get_current_texture() {
             Cst::Success(f) => (f, false),
             Cst::Suboptimal(f) => (f, true),
             Cst::Outdated => {
-                self.surface.configure(&self.device, &self.config);
+                self.configure_surface();
                 return Ok(None);
             }
             Cst::Lost => {
                 log::warn!("surface lost, recreating");
-                self.surface = self.instance.create_surface((self.target_factory)())?;
-                self.surface.configure(&self.device, &self.config);
+                self.surface = Some(self.instance.create_surface((self.target_factory)())?);
+                self.configure_surface();
                 return Ok(None);
             }
             Cst::Timeout | Cst::Occluded => return Ok(None),
@@ -242,7 +279,7 @@ impl Gfx {
         } = frame;
         self.queue.present(texture);
         if suboptimal {
-            self.surface.configure(&self.device, &self.config);
+            self.configure_surface();
         }
     }
 
