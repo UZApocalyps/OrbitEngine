@@ -771,3 +771,85 @@ fn no_two_actions_share_a_shortcut() {
         }
     }
 }
+
+// ------------------------------------------------------- the demo, as is
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// Opens `story` the way the editor does and returns the error and warning
+/// messages of its diagnostics.
+fn problems_of(story: &Path) -> Vec<(Level, String)> {
+    let ctx = Context::default();
+    let mut core = EditorCore::new(options(), &ctx);
+    core.open_project(story);
+    assert!(core.has_project(), "the story opens");
+    frames(&mut core, &ctx, 4);
+    core.state
+        .diagnostics
+        .problems
+        .iter()
+        .map(|p| (p.level, p.message.clone()))
+        .collect()
+}
+
+#[test]
+fn the_demo_opened_as_a_story_file_has_no_error_in_its_diagnostics() {
+    let problems = problems_of(&repo_root().join("examples/stories/demo.ron"));
+    let errors: Vec<_> = problems.iter().filter(|p| p.0 == Level::Error).collect();
+    assert!(errors.is_empty(), "{errors:#?}");
+}
+
+#[test]
+fn the_demo_copied_deep_in_a_folder_tree_has_no_error_either() {
+    let dir = TempDir::new("demo-deep");
+    let deep = dir.path().join("a/.claude/worktrees/some-long-name/b");
+    copy_dir(&repo_root().join("examples"), &deep.join("examples"));
+    copy_dir(&repo_root().join("assets"), &deep.join("assets"));
+    let problems = problems_of(&deep.join("examples/stories/demo.ron"));
+    let errors: Vec<_> = problems.iter().filter(|p| p.0 == Level::Error).collect();
+    assert!(errors.is_empty(), "{errors:#?}");
+}
+
+#[test]
+fn the_lint_accepts_an_empty_root_and_a_relative_story_path() {
+    // Tests run in the crate folder: `Cargo.toml` exists there.
+    let mut story = Story::new("t");
+    story.assets.assets.push(orbit_core::AssetEntry {
+        id: AssetId::new(),
+        kind: AssetKind::Image,
+        path: "Cargo.toml".into(),
+    });
+    assert!(assets::lint_asset_files(Path::new(""), &story).is_empty());
+    // The demo opened by a relative path, `/` or `\` (the way a shell on
+    // Windows passes it), has no error.
+    for rel in [
+        "../../examples/stories/demo.ron",
+        r"..\..\examples\stories\demo.ron",
+    ] {
+        if rel.contains('\\') && !cfg!(windows) {
+            continue;
+        }
+        let errors: Vec<_> = problems_of(Path::new(rel))
+            .into_iter()
+            .filter(|p| p.0 == Level::Error)
+            .collect();
+        assert!(errors.is_empty(), "{rel}: {errors:#?}");
+    }
+}

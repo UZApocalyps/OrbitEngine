@@ -547,6 +547,12 @@ impl AssetIssue {
 /// only by case.
 pub fn lint_asset_files(root: &Path, story: &Story) -> Vec<AssetIssue> {
     let mut issues = Vec::new();
+    // `read_dir("")` fails: an empty root is the current directory.
+    let root = if root.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        root
+    };
     let mut listings: HashMap<PathBuf, Vec<String>> = HashMap::new();
     let mut seen: HashMap<String, String> = HashMap::new();
     for asset in &story.assets.assets {

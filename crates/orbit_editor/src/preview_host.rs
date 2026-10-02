@@ -185,14 +185,18 @@ pub fn translate(input: &PreviewInput) -> Vec<InputEvent> {
 /// in a parent folder (`assets/demo/...` next to `examples/`): the first
 /// ancestor where the first declared asset exists wins.
 pub fn find_assets_root(root: &Path, story: &Story) -> PathBuf {
-    let Some(first) = story.assets.assets.first() else {
-        return root.to_owned();
-    };
-    root.ancestors()
-        .take(5)
-        .find(|dir| dir.join(&first.path).exists())
-        .unwrap_or(root)
-        .to_owned()
+    let found = story.assets.assets.first().and_then(|first| {
+        root.ancestors()
+            .take(5)
+            .find(|dir| dir.join(&first.path).exists())
+    });
+    let dir = found.unwrap_or(root);
+    // The last ancestor of a relative path is `""`, which `read_dir` refuses.
+    if dir.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        dir.to_owned()
+    }
 }
 
 /// Assets of `story` whose file changed since the last call (by modification
@@ -830,6 +834,23 @@ mod tests {
         assert!(changed_assets(&mut stamps, &dir, &story).is_empty());
         assert!(stamps.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_relative_story_path_never_gives_an_empty_assets_root() {
+        // Tests run in the crate folder, where `Cargo.toml` exists: the
+        // last ancestor of `src/builtin` is the empty path.
+        let mut story = Story::new("t");
+        story.assets.assets.push(orbit_core::AssetEntry {
+            id: orbit_core::AssetId::new(),
+            kind: orbit_core::AssetKind::Image,
+            path: "Cargo.toml".into(),
+        });
+        assert_eq!(
+            find_assets_root(Path::new("src/builtin"), &story),
+            Path::new(".")
+        );
+        assert_eq!(find_assets_root(Path::new(""), &story), Path::new("."));
     }
 
     #[test]
