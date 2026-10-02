@@ -185,6 +185,56 @@ impl Project {
         self.merge_key = None;
     }
 
+    /// Runs `f` and merges every undo entry it created into **one** entry
+    /// labeled `label`: for hosts that call code which uses the project API
+    /// freely (a plugin's MCP tool) yet must show one entry per call. When `f`
+    /// fails, everything it applied is rolled back and `f`'s error returned.
+    pub fn group<R, E>(
+        &mut self,
+        label: &str,
+        f: impl FnOnce(&mut Project) -> Result<R, E>,
+    ) -> Result<R, E> {
+        let before = self.undo.len();
+        self.merge_key = None;
+        let result = f(self);
+        if self.undo.len() < before {
+            // `f` undid something itself: nothing sensible to merge.
+            return result;
+        }
+        match result {
+            Ok(value) => {
+                if self.undo.len() > before + 1 {
+                    let commands = self
+                        .undo
+                        .drain(before..)
+                        .flat_map(|entry| entry.commands)
+                        .collect();
+                    self.undo.push(Entry {
+                        label: label.to_owned(),
+                        commands,
+                        merge_key: None,
+                    });
+                } else if let Some(entry) = self.undo.get_mut(before) {
+                    entry.label = label.to_owned();
+                }
+                Ok(value)
+            }
+            Err(err) => {
+                let rolled_back = self.undo.len() > before;
+                while self.undo.len() > before {
+                    if self.undo().is_err() {
+                        break;
+                    }
+                }
+                if rolled_back {
+                    // The rollback's own redo entries are noise.
+                    self.redo.clear();
+                }
+                Err(err)
+            }
+        }
+    }
+
     /// Runs several commands as **one** undo entry. If the closure (or any
     /// command) fails, every command already applied is rolled back and the
     /// project is left unchanged (no undo entry, no event).

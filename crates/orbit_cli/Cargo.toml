@@ -15,6 +15,10 @@ path = "src/main.rs"
 orbit_core.workspace = true
 orbit_vm.workspace = true
 orbit_save.workspace = true
+orbit_mcp.workspace = true
+
+[dev-dependencies]
+serde_json = "1"
 
 [lints]
 workspace = true

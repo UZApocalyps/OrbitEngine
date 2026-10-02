@@ -20,6 +20,7 @@ pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 /// list of scenes. Execution starts at the first node of the first scene and
 /// falls through to the next scene when a scene ends.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Story {
     pub schema_version: u32,
     pub title: String,
@@ -43,6 +44,7 @@ pub struct Story {
 /// A scene: a linear list of nodes. Control flow is expressed with
 /// `Jump` / `Choice` / `If` / `Call` nodes targeting `Label` nodes by id.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Scene {
     pub id: SceneId,
     pub name: String,
@@ -51,12 +53,14 @@ pub struct Scene {
 
 /// A node with its stable id.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Node {
     pub id: NodeId,
     pub kind: NodeKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum NodeKind {
     /// Jump destination. Names are for humans; targeting is done by id.
     Label {
@@ -179,6 +183,7 @@ impl NodeKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ChoiceOption {
     pub text_id: StringId,
     pub target: NodeId,

@@ -221,7 +221,11 @@ fn character_details(
                 let mut new = def.clone();
                 new.color = c;
                 pending.push((
-                    Command::ReplaceCharacter { character: new },
+                    Command::SetCharacter {
+                        id: new.id,
+                        character: Some(new),
+                        index: None,
+                    },
                     Some(format!("char-color:{id}")),
                 ));
             }
@@ -241,7 +245,14 @@ fn character_details(
                 if resp.clicked() {
                     let mut new = def.clone();
                     new.color = Color::rgb(r, g, b);
-                    pending.push((Command::ReplaceCharacter { character: new }, None));
+                    pending.push((
+                        Command::SetCharacter {
+                            id: new.id,
+                            character: Some(new),
+                            index: None,
+                        },
+                        None,
+                    ));
                 }
             }
         });
@@ -264,7 +275,14 @@ fn character_details(
         if let Some(p) = change {
             let mut new = def.clone();
             new.default_position = p;
-            pending.push((Command::ReplaceCharacter { character: new }, None));
+            pending.push((
+                Command::SetCharacter {
+                    id: new.id,
+                    character: Some(new),
+                    index: None,
+                },
+                None,
+            ));
         }
     });
     for (command, key) in pending {
@@ -451,7 +469,11 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
             new.expressions.push(Expression { name, image });
         }
     }
-    ctx.exec_or_toast(Command::ReplaceCharacter { character: new });
+    ctx.exec_or_toast(Command::SetCharacter {
+        id: new.id,
+        character: Some(new),
+        index: None,
+    });
 }
 
 fn positions_section(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
@@ -720,12 +742,14 @@ fn variable_row(ui: &mut Ui, ctx: &mut EditorContext<'_>, decl: &VarDecl) {
         }
         Do::Initial(v) => {
             // Live edits of one value are one undo step.
-            let mut variables = ctx.story().map(|s| s.variables.clone()).unwrap_or_default();
-            if let Some(slot) = variables.iter_mut().find(|v| v.name == name) {
-                slot.initial = v;
-            }
+            let mut updated = decl.clone();
+            updated.initial = v;
             ctx.exec_merged(
-                Command::SetVariables { variables },
+                Command::SetVariable {
+                    name: name.clone(),
+                    decl: Some(updated),
+                    index: None,
+                },
                 &format!("var-init:{name}"),
             )
         }

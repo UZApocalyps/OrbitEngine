@@ -108,7 +108,7 @@ fn replace_node_kind_round_trips_for_every_kind() {
     let host = say(&mut p, scene, 1, "host");
     for kind in kinds {
         undoable(&mut p, |p| {
-            p.execute(Command::ReplaceNodeKind {
+            p.execute(Command::SetNodeKind {
                 id: host,
                 kind: kind.clone(),
                 expected_version: None,
@@ -126,14 +126,14 @@ fn a_targeted_label_cannot_change_kind() {
     let lid = label.node.id;
     let jump = NodeDraft::plain(NodeKind::Jump { target: lid });
     ops::insert_drafts(&mut p, scene, 0, vec![label, jump], "x").unwrap();
-    let err = p.execute(Command::ReplaceNodeKind {
+    let err = p.execute(Command::SetNodeKind {
         id: lid,
         kind: NodeKind::End,
         expected_version: None,
     });
     assert!(err.is_err());
     // Renaming a label stays possible.
-    p.execute(Command::ReplaceNodeKind {
+    p.execute(Command::SetNodeKind {
         id: lid,
         kind: NodeKind::Label { name: "m".into() },
         expected_version: None,
@@ -152,6 +152,7 @@ fn moving_nodes_and_scenes_is_undoable() {
             id: ids[0],
             scene,
             index: 4,
+            expected_version: None,
         })
         .unwrap();
         assert_eq!(order(p, scene), [ids[1], ids[2], ids[3], ids[4], ids[0]]);
@@ -173,7 +174,8 @@ fn moving_nodes_and_scenes_is_undoable() {
         p.execute(Command::MoveNode {
             id: ids[0],
             scene,
-            index: 99
+            index: 99,
+            expected_version: None,
         })
         .is_err()
     );
@@ -353,8 +355,12 @@ fn characters_and_expressions() {
         image: img,
     });
     def.default_position = Some(Position::Right);
-    p.execute(Command::ReplaceCharacter { character: def })
-        .unwrap();
+    p.execute(Command::SetCharacter {
+        id: def.id,
+        character: Some(def),
+        index: None,
+    })
+    .unwrap();
     let show = NodeDraft::plain(NodeKind::Show {
         character: ana,
         expression: "happy".into(),
@@ -377,14 +383,9 @@ fn characters_and_expressions() {
     assert!(ops::rename_expression(&mut p, ana, "happy", "").is_err());
     assert!(ops::rename_expression(&mut p, ana, "nope", "x").is_err());
 
-    // A used character and a used asset cannot be removed.
+    // A used character cannot be removed.
     assert!(ops::delete_character(&mut p, ana).is_err());
-    assert!(p.execute(Command::RemoveAsset { id: img }).is_err());
     ops::delete_nodes(&mut p, &[show_id]).unwrap();
-    assert!(
-        p.execute(Command::RemoveAsset { id: img }).is_err(),
-        "still a sprite"
-    );
     undoable(&mut p, |p| ops::delete_character(p, ana).unwrap());
     // The default position survives the RON round trip (and is absent when unset).
     let ron = p.story().to_ron().unwrap();

@@ -76,6 +76,21 @@ macro_rules! id_type {
             }
         }
 
+        #[cfg(feature = "schema")]
+        impl schemars::JsonSchema for $name {
+            fn schema_name() -> std::borrow::Cow<'static, str> {
+                stringify!($name).into()
+            }
+
+            fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+                schemars::json_schema!({
+                    "type": "string",
+                    "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+                    "description": "Stable id: a 26-character ULID string."
+                })
+            }
+        }
+
         impl FromStr for $name {
             type Err = ulid::DecodeError;
 

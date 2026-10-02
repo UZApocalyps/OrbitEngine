@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 /// A JSON-like value. Maps keep insertion order (a `Vec` of pairs) so saved
 /// files stay diff-friendly and stable.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum CustomData {
     #[default]
     Null,

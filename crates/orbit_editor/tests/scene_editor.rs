@@ -157,7 +157,11 @@ fn a_story_is_built_with_the_editor_operations_only_and_validates() {
                     name: "neutral".into(),
                     image: sprite,
                 });
-                p.execute(Command::ReplaceCharacter { character: def })?;
+                p.execute(Command::SetCharacter {
+                    id: def.id,
+                    character: Some(def),
+                    index: None,
+                })?;
             }
             Ok((ana, ben, bg, music, sprite))
         })
@@ -174,7 +178,7 @@ fn a_story_is_built_with_the_editor_operations_only_and_validates() {
     let shows: Vec<NodeId> = scene_nodes(&core, scene).into_iter().skip(2).collect();
     let second_show = shows[1];
     with_ctx(&mut core, |c| {
-        c.exec(Command::ReplaceNodeKind {
+        c.exec(Command::SetNodeKind {
             id: second_show,
             kind: NodeKind::Show {
                 character: ben,
@@ -441,10 +445,12 @@ fn every_node_kind_has_an_inspector_that_draws_and_edits() {
                 name: "neutral".into(),
                 image: bg,
             });
-            p.execute(Command::ReplaceCharacter { character: def })?;
-            p.execute(Command::SetVariables {
-                variables: vec![orbit_core::VarDecl::game("n", Value::Int(1))],
+            p.execute(Command::SetCharacter {
+                id: def.id,
+                character: Some(def),
+                index: None,
             })?;
+            ops::add_variable(p, orbit_core::VarDecl::game("n", Value::Int(1)))?;
             Ok((ana, bg, music, sound))
         })
         .unwrap()
@@ -598,7 +604,7 @@ fn every_node_kind_has_an_inspector_that_draws_and_edits() {
         }
         let before = story(&core).clone();
         with_ctx(&mut core, |c| {
-            c.exec(Command::ReplaceNodeKind {
+            c.exec(Command::SetNodeKind {
                 id: *id,
                 kind: changed,
                 expected_version: None,
@@ -623,7 +629,11 @@ fn characters_and_variables_panels_draw_and_renames_follow_their_usages() {
                 name: "happy".into(),
                 image: sprite,
             });
-            p.execute(Command::ReplaceCharacter { character: def })?;
+            p.execute(Command::SetCharacter {
+                id: def.id,
+                character: Some(def),
+                index: None,
+            })?;
             ops::add_variable(p, orbit_core::VarDecl::game("mood", Value::Int(0)))?;
             Ok((ana, sprite))
         })

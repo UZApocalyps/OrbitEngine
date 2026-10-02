@@ -9,6 +9,7 @@
 //! This crate has no graphics or platform dependency and compiles to wasm.
 
 mod command;
+mod ext;
 pub mod ops;
 mod project;
 mod storage;

@@ -17,6 +17,7 @@ orbit_project = { path = "crates/orbit_project" }
 orbit_platform = { path = "crates/orbit_platform" }
 orbit_gfx = { path = "crates/orbit_gfx" }
 orbit_plugin_api = { path = "crates/orbit_plugin_api" }
+orbit_mcp = { path = "crates/orbit_mcp" }
 orbit_editor_api = { path = "crates/orbit_editor_api" }
 
 # --- story/vm ---

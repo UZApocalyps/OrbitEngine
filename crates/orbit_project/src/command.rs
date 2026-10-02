@@ -1,8 +1,8 @@
 //! Typed commands on the story IR.
 
 use orbit_core::{
-    AssetEntry, AssetId, Character, CharacterId, Node, NodeId, NodeKind, PositionDef, Scene,
-    SceneId, Story, StringId, VarDecl,
+    AssetEntry, AssetId, Character, CharacterId, Node, NodeId, NodeKind, Scene, SceneId, Story,
+    StringId, VarDecl,
 };
 use thiserror::Error;
 
@@ -35,73 +35,53 @@ pub enum Command {
     },
     /// Sets (`Some`) or removes (`None`) an entry of the source string table.
     /// Needed before inserting a node that displays a new string.
-    SetString {
-        id: StringId,
-        text: Option<String>,
+    SetString { id: StringId, text: Option<String> },
+    /// Inserts a whole scene at `index` in the scene list.
+    InsertScene { index: usize, scene: Scene },
+    /// Removes a scene and its nodes. Refused if a node of another scene
+    /// still targets one of them.
+    RemoveScene { id: SceneId },
+    /// Renames a scene.
+    RenameScene { id: SceneId, name: String },
+    /// Moves a scene to position `index` (among the other scenes).
+    MoveScene { id: SceneId, index: usize },
+    /// Replaces the list of custom stage positions.
+    SetPositions {
+        positions: Vec<orbit_core::PositionDef>,
     },
-    /// Replaces the whole content of a node (`kind`) keeping its id and place:
-    /// the generic setter behind the inspector. A `Label` that is still
-    /// targeted cannot be turned into another kind. Strings used by the new
-    /// kind must be registered with [`Command::SetString`] first.
-    ReplaceNodeKind {
-        id: NodeId,
-        kind: NodeKind,
-        expected_version: Option<u64>,
-    },
-    /// Moves a node to position `index` of `scene` (an index among the nodes
-    /// that remain once the node is taken out), possibly into another scene.
+    /// Moves a node to `index` of `scene` (an index counted once the node has
+    /// been taken out of its current place).
     MoveNode {
         id: NodeId,
         scene: SceneId,
         index: usize,
+        expected_version: Option<u64>,
     },
-    /// Inserts a scene (with its nodes, whose ids must be new) at `index`.
-    InsertScene {
-        index: usize,
-        scene: Scene,
+    /// Replaces the content of a node, keeping its id.
+    SetNodeKind {
+        id: NodeId,
+        kind: NodeKind,
+        expected_version: Option<u64>,
     },
-    /// Removes a scene and its nodes. Refused if a node outside the scene
-    /// still targets one of its nodes.
-    RemoveScene {
-        id: SceneId,
-    },
-    RenameScene {
-        id: SceneId,
-        name: String,
-    },
-    /// Moves a scene to position `index` (among the other scenes).
-    MoveScene {
-        id: SceneId,
-        index: usize,
-    },
-    InsertCharacter {
-        index: usize,
-        character: Character,
-    },
-    /// Replaces the definition of an existing character (same id).
-    ReplaceCharacter {
-        character: Character,
-    },
-    /// Removes a character. Refused while a node still uses it.
-    RemoveCharacter {
+    /// Creates or replaces (`Some`) or removes (`None`) a character. `index`
+    /// only matters when creating (`None` appends).
+    SetCharacter {
         id: CharacterId,
+        character: Option<Character>,
+        index: Option<usize>,
     },
-    /// Replaces the list of declared variables.
-    SetVariables {
-        variables: Vec<VarDecl>,
+    /// Declares or replaces (`Some`) or removes (`None`) a variable.
+    SetVariable {
+        name: String,
+        decl: Option<VarDecl>,
+        index: Option<usize>,
     },
-    /// Replaces the list of custom stage positions.
-    SetPositions {
-        positions: Vec<PositionDef>,
-    },
-    /// Registers an asset in the manifest at `index`.
-    InsertAsset {
-        index: usize,
-        entry: AssetEntry,
-    },
-    /// Removes an asset from the manifest. Refused while it is used.
-    RemoveAsset {
+    /// Registers or replaces (`Some`) or removes (`None`) an asset of the
+    /// manifest (the file itself is the host's business).
+    SetAsset {
         id: AssetId,
+        entry: Option<AssetEntry>,
+        index: Option<usize>,
     },
 }
 
@@ -127,18 +107,14 @@ pub enum CommandError {
     DuplicateScene(SceneId),
     #[error("unknown character {0}")]
     UnknownCharacter(CharacterId),
-    #[error("character {0} already exists")]
-    DuplicateCharacter(CharacterId),
     #[error("character {0} is still used by node {1}")]
     CharacterInUse(CharacterId, NodeId),
+    #[error("unknown variable `{0}`")]
+    UnknownVariable(String),
     #[error("unknown asset {0}")]
     UnknownAsset(AssetId),
-    #[error("asset {0} already exists")]
-    DuplicateAsset(AssetId),
-    #[error("asset {0} is still in use")]
-    AssetInUse(AssetId),
-    #[error("{0} index {1} out of bounds")]
-    BadIndex(&'static str, usize),
+    #[error("asset {0} is still used by node {1}")]
+    AssetInUse(AssetId, NodeId),
     #[error("version conflict on node {node}: expected {expected}, found {actual}")]
     VersionConflict {
         node: NodeId,
@@ -176,23 +152,6 @@ fn users_of_string(story: &Story, id: StringId) -> Vec<NodeId> {
         .collect()
 }
 
-fn node_uses_character(kind: &NodeKind, id: CharacterId) -> bool {
-    match kind {
-        NodeKind::Say { speaker, .. } => *speaker == Some(id),
-        NodeKind::Show { character, .. } | NodeKind::Hide { character, .. } => *character == id,
-        _ => false,
-    }
-}
-
-fn node_uses_asset(kind: &NodeKind, id: AssetId) -> bool {
-    match kind {
-        NodeKind::Background { asset, .. }
-        | NodeKind::PlayMusic { asset, .. }
-        | NodeKind::PlaySound { asset } => *asset == id,
-        _ => false,
-    }
-}
-
 impl Command {
     /// Short human label (French, like the editor UI) shown in the undo menu.
     pub fn label(&self) -> &'static str {
@@ -201,19 +160,16 @@ impl Command {
             Command::RemoveNode { .. } => "Supprimer un nœud",
             Command::SetSay { .. } => "Modifier la réplique",
             Command::SetString { .. } => "Modifier un texte",
-            Command::ReplaceNodeKind { .. } => "Modifier le nœud",
+            Command::InsertScene { .. } => "Créer une scène",
+            Command::RemoveScene { .. } => "Supprimer une scène",
+            Command::RenameScene { .. } => "Renommer une scène",
             Command::MoveNode { .. } => "Déplacer un nœud",
-            Command::InsertScene { .. } => "Ajouter une scène",
-            Command::RemoveScene { .. } => "Supprimer la scène",
-            Command::RenameScene { .. } => "Renommer la scène",
             Command::MoveScene { .. } => "Déplacer la scène",
-            Command::InsertCharacter { .. } => "Ajouter un personnage",
-            Command::ReplaceCharacter { .. } => "Modifier le personnage",
-            Command::RemoveCharacter { .. } => "Supprimer le personnage",
-            Command::SetVariables { .. } => "Modifier les variables",
             Command::SetPositions { .. } => "Modifier les positions",
-            Command::InsertAsset { .. } => "Ajouter une ressource",
-            Command::RemoveAsset { .. } => "Supprimer la ressource",
+            Command::SetNodeKind { .. } => "Modifier un nœud",
+            Command::SetCharacter { .. } => "Modifier un personnage",
+            Command::SetVariable { .. } => "Modifier une variable",
+            Command::SetAsset { .. } => "Modifier un asset",
         }
     }
 
@@ -229,7 +185,12 @@ impl Command {
                 expected_version: Some(v),
                 ..
             }
-            | Command::ReplaceNodeKind {
+            | Command::MoveNode {
+                id,
+                expected_version: Some(v),
+                ..
+            }
+            | Command::SetNodeKind {
                 id,
                 expected_version: Some(v),
                 ..
@@ -338,221 +299,16 @@ impl Command {
                     touched: users_of_string(story, *id),
                 })
             }
-            Command::ReplaceNodeKind { id, kind, .. } => {
-                let (si, ni) = story.locate(*id).ok_or(CommandError::UnknownNode(*id))?;
-                let was_label = matches!(story.scenes[si].nodes[ni].kind, NodeKind::Label { .. });
-                if was_label
-                    && !matches!(kind, NodeKind::Label { .. })
-                    && let Some(by) = referencer(story, *id)
-                {
-                    return Err(CommandError::StillReferenced(*id, by));
-                }
-                let old = std::mem::replace(&mut story.scenes[si].nodes[ni].kind, kind.clone());
-                Ok(Applied {
-                    inverse: Command::ReplaceNodeKind {
-                        id: *id,
-                        kind: old,
-                        expected_version: None,
-                    },
-                    touched: vec![*id],
-                })
-            }
-            Command::MoveNode { id, scene, index } => {
-                let (si, ni) = story.locate(*id).ok_or(CommandError::UnknownNode(*id))?;
-                let target = story
-                    .scenes
-                    .iter()
-                    .position(|s| s.id == *scene)
-                    .ok_or(CommandError::UnknownScene(*scene))?;
-                let remaining = story.scenes[target].nodes.len() - usize::from(target == si);
-                if *index > remaining {
-                    return Err(CommandError::IndexOutOfBounds {
-                        index: *index,
-                        len: remaining,
-                    });
-                }
-                let old_scene = story.scenes[si].id;
-                let node = story.scenes[si].nodes.remove(ni);
-                story.scenes[target].nodes.insert(*index, node);
-                Ok(Applied {
-                    inverse: Command::MoveNode {
-                        id: *id,
-                        scene: old_scene,
-                        index: ni,
-                    },
-                    touched: vec![*id],
-                })
-            }
-            Command::InsertScene { index, scene } => {
-                if story.scenes.iter().any(|s| s.id == scene.id) {
-                    return Err(CommandError::DuplicateScene(scene.id));
-                }
-                if *index > story.scenes.len() {
-                    return Err(CommandError::BadIndex("scene", *index));
-                }
-                for n in &scene.nodes {
-                    if story.locate(n.id).is_some() {
-                        return Err(CommandError::DuplicateNode(n.id));
-                    }
-                }
-                story.scenes.insert(*index, scene.clone());
-                Ok(Applied {
-                    inverse: Command::RemoveScene { id: scene.id },
-                    touched: scene.nodes.iter().map(|n| n.id).collect(),
-                })
-            }
-            Command::RemoveScene { id } => {
-                let index = story
-                    .scenes
-                    .iter()
-                    .position(|s| s.id == *id)
-                    .ok_or(CommandError::UnknownScene(*id))?;
-                let own: Vec<NodeId> = story.scenes[index].nodes.iter().map(|n| n.id).collect();
-                for (si, other) in story.scenes.iter().enumerate() {
-                    if si == index {
-                        continue;
-                    }
-                    for n in &other.nodes {
-                        if let Some(t) = n.kind.targets().into_iter().find(|t| own.contains(t)) {
-                            return Err(CommandError::StillReferenced(t, n.id));
-                        }
-                    }
-                }
-                let scene = story.scenes.remove(index);
-                Ok(Applied {
-                    inverse: Command::InsertScene { index, scene },
-                    touched: own,
-                })
-            }
-            Command::RenameScene { id, name } => {
-                let scene = story
-                    .scenes
-                    .iter_mut()
-                    .find(|s| s.id == *id)
-                    .ok_or(CommandError::UnknownScene(*id))?;
-                let old = std::mem::replace(&mut scene.name, name.clone());
-                Ok(Applied {
-                    inverse: Command::RenameScene { id: *id, name: old },
-                    touched: Vec::new(),
-                })
-            }
-            Command::MoveScene { id, index } => {
-                let from = story
-                    .scenes
-                    .iter()
-                    .position(|s| s.id == *id)
-                    .ok_or(CommandError::UnknownScene(*id))?;
-                if *index >= story.scenes.len() {
-                    return Err(CommandError::BadIndex("scene", *index));
-                }
-                let scene = story.scenes.remove(from);
-                story.scenes.insert(*index, scene);
-                Ok(Applied {
-                    inverse: Command::MoveScene {
-                        id: *id,
-                        index: from,
-                    },
-                    touched: Vec::new(),
-                })
-            }
-            Command::InsertCharacter { index, character } => {
-                if story.character(character.id).is_some() {
-                    return Err(CommandError::DuplicateCharacter(character.id));
-                }
-                if *index > story.characters.len() {
-                    return Err(CommandError::BadIndex("character", *index));
-                }
-                story.characters.insert(*index, character.clone());
-                Ok(Applied {
-                    inverse: Command::RemoveCharacter { id: character.id },
-                    touched: Vec::new(),
-                })
-            }
-            Command::ReplaceCharacter { character } => {
-                let slot = story
-                    .characters
-                    .iter_mut()
-                    .find(|c| c.id == character.id)
-                    .ok_or(CommandError::UnknownCharacter(character.id))?;
-                let old = std::mem::replace(slot, character.clone());
-                Ok(Applied {
-                    inverse: Command::ReplaceCharacter { character: old },
-                    touched: Vec::new(),
-                })
-            }
-            Command::RemoveCharacter { id } => {
-                let index = story
-                    .characters
-                    .iter()
-                    .position(|c| c.id == *id)
-                    .ok_or(CommandError::UnknownCharacter(*id))?;
-                if let Some(user) = story
-                    .scenes
-                    .iter()
-                    .flat_map(|s| &s.nodes)
-                    .find(|n| node_uses_character(&n.kind, *id))
-                {
-                    return Err(CommandError::CharacterInUse(*id, user.id));
-                }
-                let character = story.characters.remove(index);
-                Ok(Applied {
-                    inverse: Command::InsertCharacter { index, character },
-                    touched: Vec::new(),
-                })
-            }
-            Command::SetVariables { variables } => {
-                let old = std::mem::replace(&mut story.variables, variables.clone());
-                Ok(Applied {
-                    inverse: Command::SetVariables { variables: old },
-                    touched: Vec::new(),
-                })
-            }
-            Command::SetPositions { positions } => {
-                let old = std::mem::replace(&mut story.positions, positions.clone());
-                Ok(Applied {
-                    inverse: Command::SetPositions { positions: old },
-                    touched: Vec::new(),
-                })
-            }
-            Command::InsertAsset { index, entry } => {
-                if story.assets.get(entry.id).is_some() {
-                    return Err(CommandError::DuplicateAsset(entry.id));
-                }
-                if *index > story.assets.assets.len() {
-                    return Err(CommandError::BadIndex("asset", *index));
-                }
-                story.assets.assets.insert(*index, entry.clone());
-                Ok(Applied {
-                    inverse: Command::RemoveAsset { id: entry.id },
-                    touched: Vec::new(),
-                })
-            }
-            Command::RemoveAsset { id } => {
-                let index = story
-                    .assets
-                    .assets
-                    .iter()
-                    .position(|a| a.id == *id)
-                    .ok_or(CommandError::UnknownAsset(*id))?;
-                let used = story
-                    .scenes
-                    .iter()
-                    .flat_map(|s| &s.nodes)
-                    .any(|n| node_uses_asset(&n.kind, *id))
-                    || story
-                        .characters
-                        .iter()
-                        .flat_map(|c| &c.expressions)
-                        .any(|e| e.image == *id);
-                if used {
-                    return Err(CommandError::AssetInUse(*id));
-                }
-                let entry = story.assets.assets.remove(index);
-                Ok(Applied {
-                    inverse: Command::InsertAsset { index, entry },
-                    touched: Vec::new(),
-                })
-            }
+            Command::InsertScene { .. }
+            | Command::RemoveScene { .. }
+            | Command::RenameScene { .. }
+            | Command::MoveScene { .. }
+            | Command::SetPositions { .. }
+            | Command::MoveNode { .. }
+            | Command::SetNodeKind { .. }
+            | Command::SetCharacter { .. }
+            | Command::SetVariable { .. }
+            | Command::SetAsset { .. } => crate::ext::apply(self, story),
         }
     }
 }

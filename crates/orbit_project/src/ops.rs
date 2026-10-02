@@ -304,6 +304,7 @@ pub fn move_nodes(
                 id,
                 scene,
                 index: at,
+                expected_version: None,
             })?;
         }
         Ok(())
@@ -389,15 +390,16 @@ pub fn add_character(
             id: name_id,
             text: Some(name.to_owned()),
         })?;
-        tx.execute(Command::InsertCharacter {
-            index,
-            character: Character {
+        tx.execute(Command::SetCharacter {
+            id,
+            character: Some(Character {
                 id,
                 name_id,
                 color,
                 expressions: Vec::new(),
                 default_position: None,
-            },
+            }),
+            index: Some(index),
         })
     })?;
     Ok(id)
@@ -411,7 +413,11 @@ pub fn delete_character(project: &mut Project, id: CharacterId) -> Result<(), Pr
         .map(|c| c.name_id)
         .ok_or_else(|| reject("Personnage introuvable."))?;
     project.transaction_labeled("Supprimer le personnage", |tx| {
-        tx.execute(Command::RemoveCharacter { id })?;
+        tx.execute(Command::SetCharacter {
+            id,
+            character: None,
+            index: None,
+        })?;
         tx.execute(Command::SetString {
             id: name_id,
             text: None,
@@ -442,13 +448,14 @@ pub fn add_asset(
     }
     let id = AssetId::new();
     let index = project.story().assets.assets.len();
-    project.execute(Command::InsertAsset {
-        index,
-        entry: AssetEntry {
+    project.execute(Command::SetAsset {
+        id,
+        entry: Some(AssetEntry {
             id,
             kind,
             path: path.to_owned(),
-        },
+        }),
+        index: Some(index),
     })?;
     Ok(id)
 }
@@ -520,9 +527,13 @@ pub fn rename_expression(
         })
         .collect();
     project.transaction_labeled("Renommer l'expression", |tx| {
-        tx.execute(Command::ReplaceCharacter { character: def })?;
+        tx.execute(Command::SetCharacter {
+            id: def.id,
+            character: Some(def),
+            index: None,
+        })?;
         for (id, kind) in updates {
-            tx.execute(Command::ReplaceNodeKind {
+            tx.execute(Command::SetNodeKind {
                 id,
                 kind,
                 expected_version: None,
@@ -581,15 +592,22 @@ pub fn add_variable(project: &mut Project, decl: VarDecl) -> Result<(), ProjectE
             decl.name
         )));
     }
-    let mut variables = project.story().variables.clone();
-    if variables.iter().any(|v| v.name == decl.name) {
+    if project
+        .story()
+        .variables
+        .iter()
+        .any(|v| v.name == decl.name)
+    {
         return Err(reject(format!(
             "La variable « {} » existe déjà.",
             decl.name
         )));
     }
-    variables.push(decl);
-    project.execute(Command::SetVariables { variables })
+    project.execute(Command::SetVariable {
+        name: decl.name.clone(),
+        decl: Some(decl),
+        index: None,
+    })
 }
 
 /// Replaces a variable declaration (type, initial value, scope).
@@ -599,14 +617,20 @@ pub fn update_variable(
     initial: Value,
     scope: orbit_core::VarScope,
 ) -> Result<(), ProjectError> {
-    let mut variables = project.story().variables.clone();
-    let slot = variables
-        .iter_mut()
+    let mut decl = project
+        .story()
+        .variables
+        .iter()
         .find(|v| v.name == name)
+        .cloned()
         .ok_or_else(|| reject(format!("Variable « {name} » introuvable.")))?;
-    slot.initial = initial;
-    slot.scope = scope;
-    project.execute(Command::SetVariables { variables })
+    decl.initial = initial;
+    decl.scope = scope;
+    project.execute(Command::SetVariable {
+        name: name.to_owned(),
+        decl: Some(decl),
+        index: None,
+    })
 }
 
 /// Renames a variable and every usage (assignments, conditions, choice
@@ -626,12 +650,13 @@ pub fn rename_variable(project: &mut Project, old: &str, new: &str) -> Result<()
     if story.variables.iter().any(|v| v.name == new) {
         return Err(reject(format!("La variable « {new} » existe déjà.")));
     }
-    let mut variables = story.variables.clone();
-    let slot = variables
-        .iter_mut()
+    let mut renamed = story
+        .variables
+        .iter()
         .find(|v| v.name == old)
+        .cloned()
         .ok_or_else(|| reject(format!("Variable « {old} » introuvable.")))?;
-    slot.name = new.to_owned();
+    renamed.name = new.to_owned();
     let updates: Vec<(NodeId, NodeKind)> = story
         .scenes
         .iter()
@@ -671,9 +696,13 @@ pub fn rename_variable(project: &mut Project, old: &str, new: &str) -> Result<()
         })
         .collect();
     project.transaction_labeled("Renommer la variable", |tx| {
-        tx.execute(Command::SetVariables { variables })?;
+        tx.execute(Command::SetVariable {
+            name: old.to_owned(),
+            decl: Some(renamed),
+            index: None,
+        })?;
         for (id, kind) in updates {
-            tx.execute(Command::ReplaceNodeKind {
+            tx.execute(Command::SetNodeKind {
                 id,
                 kind,
                 expected_version: None,
@@ -690,9 +719,11 @@ pub fn delete_variable(project: &mut Project, name: &str) -> Result<(), ProjectE
             "La variable « {name} » est encore utilisée par des nœuds."
         )));
     }
-    let mut variables = project.story().variables.clone();
-    variables.retain(|v| v.name != name);
-    project.execute(Command::SetVariables { variables })
+    project.execute(Command::SetVariable {
+        name: name.to_owned(),
+        decl: None,
+        index: None,
+    })
 }
 
 /// Names of the labels reachable as jump targets: `(id, name)` in reading order.

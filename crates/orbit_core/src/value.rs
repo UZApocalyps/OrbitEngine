@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// A variable value stored in the game state.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Value {
     Bool(bool),
     Int(i64),
@@ -16,6 +17,7 @@ pub enum Value {
 
 /// Static type of a [`Value`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum ValueType {
     Bool,
     Int,

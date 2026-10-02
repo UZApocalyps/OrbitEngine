@@ -1,7 +1,7 @@
 //! Inspector: edits the selected element. One inspector per node kind is
 //! registered through the plugin API (`InspectorDef`); all of the built-in
 //! ones are made of the typed field widgets of `orbit_editor_api::fields`
-//! and turn each change into a `ReplaceNodeKind` command (merged per field,
+//! and turn each change into a `SetNodeKind` command (merged per field,
 //! so typing or dragging a value is one undo step). A plugin node without an
 //! inspector of its own gets a generic editor of its data.
 
@@ -285,7 +285,7 @@ fn node_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
 /// Replaces the kind of `id` with `kind`; consecutive edits of the same
 /// `field` are one undo step.
 fn commit(ctx: &mut EditorContext<'_>, id: NodeId, kind: NodeKind, field: &str) {
-    let command = Command::ReplaceNodeKind {
+    let command = Command::SetNodeKind {
         id,
         kind,
         expected_version: ctx.node_version(id),
@@ -327,7 +327,7 @@ fn with_new_label(
             index: end,
             node: label,
         })?;
-        tx.execute(Command::ReplaceNodeKind {
+        tx.execute(Command::SetNodeKind {
             id: node,
             kind,
             expected_version: version,
@@ -662,7 +662,7 @@ fn choice(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, options: &[Choic
             });
             let version = ctx.node_version(id);
             let result = ctx.transaction("Supprimer une option", |tx| {
-                tx.execute(Command::ReplaceNodeKind {
+                tx.execute(Command::SetNodeKind {
                     id,
                     kind,
                     expected_version: version,
@@ -711,7 +711,7 @@ fn add_option(ctx: &mut EditorContext<'_>, id: NodeId, options: &[ChoiceOption])
                     id: text_id,
                     text: Some(format!("Option {n}")),
                 })?;
-                tx.execute(Command::ReplaceNodeKind {
+                tx.execute(Command::SetNodeKind {
                     id,
                     kind,
                     expected_version: version,
@@ -742,7 +742,7 @@ fn add_option(ctx: &mut EditorContext<'_>, id: NodeId, options: &[ChoiceOption])
                     index: end,
                     node: label,
                 })?;
-                tx.execute(Command::ReplaceNodeKind {
+                tx.execute(Command::SetNodeKind {
                     id,
                     kind,
                     expected_version: version,
