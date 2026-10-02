@@ -40,6 +40,46 @@ pub struct AppConfig {
     pub canvas_id: Option<String>,
     /// When frames are produced (continuously, or only on demand).
     pub redraw: RedrawMode,
+    /// Native only: icon of the window (title bar, task bar). Ignored on the
+    /// web, where the page provides a favicon.
+    pub icon: Option<WindowIcon>,
+}
+
+/// A window icon: tightly packed RGBA8 pixels, row by row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowIcon {
+    pub rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl WindowIcon {
+    /// Decodes a PNG file. `None` when it is not a valid PNG (the icon is
+    /// cosmetic, so callers just go without).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_png(bytes: &[u8]) -> Option<Self> {
+        let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+            .ok()?
+            .into_rgba8();
+        let (width, height) = image.dimensions();
+        Some(Self {
+            rgba: image.into_raw(),
+            width,
+            height,
+        })
+    }
+
+    /// The OrbitEngine logo (`assets/brand/icon-256.png`). `None` on the web.
+    pub fn brand() -> Option<Self> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::from_png(include_bytes!("../../../assets/brand/icon-256.png"))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            None
+        }
+    }
 }
 
 /// How the loop schedules frames.
@@ -62,6 +102,7 @@ impl Default for AppConfig {
             initial_size: (1280.0, 720.0),
             canvas_id: Some("orbit-canvas".to_owned()),
             redraw: RedrawMode::Continuous,
+            icon: WindowIcon::brand(),
         }
     }
 }
@@ -308,6 +349,11 @@ impl Runner {
             self.config.initial_size.0,
             self.config.initial_size.1,
         ));
+        #[cfg(not(target_arch = "wasm32"))]
+        let attrs =
+            attrs.with_window_icon(self.config.icon.as_ref().and_then(|i| {
+                winit::window::Icon::from_rgba(i.rgba.clone(), i.width, i.height).ok()
+            }));
         let attrs = platform_attributes(attrs, &self.config);
         Arc::new(
             event_loop

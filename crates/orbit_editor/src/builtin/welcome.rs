@@ -49,19 +49,49 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         });
 }
 
+const LOGO_DARK: &[u8] = include_bytes!("../../../../assets/brand/logo-horizontal-dark.png");
+const LOGO_LIGHT: &[u8] = include_bytes!("../../../../assets/brand/logo-horizontal-light.png");
+
+/// The horizontal logo (variant matching the theme), loaded once per variant
+/// as an egui texture and cached in the context.
+fn logo(ui: &mut Ui) {
+    let dark = ui.visuals().dark_mode;
+    let key = egui::Id::new(("orbit-logo", dark));
+    let cached = ui.ctx().data(|d| d.get_temp::<egui::TextureHandle>(key));
+    let texture = cached.or_else(|| {
+        let bytes = if dark { LOGO_DARK } else { LOGO_LIGHT };
+        let rgba = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+            .ok()?
+            .into_rgba8();
+        let size = [rgba.width() as usize, rgba.height() as usize];
+        let texture = ui.ctx().load_texture(
+            "orbit-logo",
+            egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()),
+            egui::TextureOptions::LINEAR,
+        );
+        ui.ctx().data_mut(|d| d.insert_temp(key, texture.clone()));
+        Some(texture)
+    });
+    match texture {
+        // The image is 680x138: shown at half size (sharp on HiDPI screens).
+        Some(texture) => {
+            ui.add(
+                egui::Image::new(&texture)
+                    .fit_to_exact_size(vec2(340.0, 69.0))
+                    .corner_radius(CornerRadius::same(10)),
+            );
+        }
+        None => {
+            ui.label(strong("OrbitEngine", 26.0));
+        }
+    }
+}
+
 fn content(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     ui.add_space(28.0);
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(icons::ROCKET_LAUNCH)
-                .size(34.0)
-                .color(accent(ui)),
-        );
-        ui.vertical(|ui| {
-            ui.label(strong("OrbitEngine", 26.0));
-            ui.label(RichText::new("Éditeur de visual novels").color(weak(ui)));
-        });
-    });
+    logo(ui);
+    ui.add_space(6.0);
+    ui.label(RichText::new("Éditeur de visual novels").color(weak(ui)));
     ui.add_space(20.0);
 
     // Open project summary.

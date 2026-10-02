@@ -7,6 +7,8 @@ use std::process::Command;
 use crate::{Result, cargo, run, workspace_root};
 
 const INDEX_HTML: &str = include_str!("../web/index.html");
+const FAVICON_PNG: &[u8] = include_bytes!("../../assets/brand/icon-64.png");
+const ICON_PNG: &[u8] = include_bytes!("../../assets/brand/icon-256.png");
 
 /// Version of the `wasm-bindgen` crate resolved in Cargo.lock.
 fn locked_wasm_bindgen_version() -> Result<String> {
@@ -117,6 +119,8 @@ pub fn build() -> Result {
         .arg(&wasm))?;
 
     fs::write(out_dir.join("index.html"), INDEX_HTML)?;
+    fs::write(out_dir.join("favicon.png"), FAVICON_PNG)?;
+    fs::write(out_dir.join("icon-256.png"), ICON_PNG)?;
     copy_assets(&root, &out_dir)?;
 
     let size = fs::metadata(out_dir.join("orbit_player_bg.wasm"))?.len();

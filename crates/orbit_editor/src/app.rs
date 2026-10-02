@@ -35,7 +35,7 @@ pub fn run(args: Args, t0: Instant) -> Result<(), PlatformError> {
         title: "OrbitEngine".to_owned(),
         initial_size: (width, height),
         redraw: RedrawMode::OnDemand,
-        ..AppConfig::default()
+        ..AppConfig::default() // includes the brand window icon
     };
     orbit_platform::run(config, move |window| async move {
         EditorApp::new(window, args, t0).await

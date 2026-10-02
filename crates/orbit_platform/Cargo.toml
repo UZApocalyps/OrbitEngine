@@ -16,6 +16,7 @@ sys-locale.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster.workspace = true
+image.workspace = true
 time.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

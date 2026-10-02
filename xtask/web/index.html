@@ -4,16 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OrbitEngine Player</title>
+  <link rel="icon" type="image/png" sizes="64x64" href="favicon.png">
+  <link rel="apple-touch-icon" href="icon-256.png">
   <style>
     html, body { margin: 0; height: 100%; background: #05070d; overflow: hidden; }
     #orbit-canvas { display: block; width: 100vw !important; height: 100vh !important; touch-action: none; outline: none; }
-    #status { position: fixed; inset: 0; display: grid; place-items: center;
+    #status { position: fixed; inset: 0; display: flex; flex-direction: column; gap: 14px;
+              align-items: center; justify-content: center;
               color: #9aa4b2; font: 14px system-ui, sans-serif; pointer-events: none; }
+    #status img { width: 72px; height: 72px; }
   </style>
 </head>
 <body>
   <canvas id="orbit-canvas" tabindex="0"></canvas>
-  <div id="status">Loading...</div>
+  <div id="status"><img src="icon-256.png" alt=""><span id="status-text">Loading...</span></div>
   <script type="module">
     import init from "./orbit_player.js";
     const status = document.getElementById("status");
@@ -25,7 +29,7 @@
       if (String(err).includes("control flow")) {
         status.remove();
       } else {
-        status.textContent = "Failed to start: " + err;
+        document.getElementById("status-text").textContent = "Failed to start: " + err;
         console.error(err);
       }
     }

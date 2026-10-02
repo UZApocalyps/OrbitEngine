@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/marketing/png/logo-horizontal-dark.png">
+    <img src="assets/marketing/png/logo-horizontal-light.png" alt="OrbitEngine" width="480">
+  </picture>
+</p>
+
 # OrbitEngine
 
 Moteur de visual novel en Rust (wgpu + winit) avec son éditeur no-code (en construction). Cibles du jeu : Windows, Linux, Web (WebGL2), Android plus tard ; l'éditeur est natif (Windows et Linux). Le plan complet est dans [`docs/ROADMAP.md`](docs/ROADMAP.md), les décisions d'architecture dans [`docs/adr/`](docs/adr).
