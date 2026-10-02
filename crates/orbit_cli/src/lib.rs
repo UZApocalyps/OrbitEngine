@@ -2,7 +2,7 @@
 //!
 //! * `orbit validate <project|file> [--check-files] [--root <dir>]`
 //! * `orbit run-text <file> [--step] [--save-dir <dir>]`
-//! * `orbit mcp` (placeholder until M3)
+//! * `orbit mcp --project <dir|file.ron>` (MCP server over stdio, see `orbit_mcp`)
 //!
 //! The logic lives in [`run`], which takes its streams as parameters so it can
 //! be tested without spawning a process.
@@ -36,8 +36,12 @@ USAGE:
           b [n]   roll back n steps (default 1)     f [n]  roll forward
           s <slot>  save      l <slot>  load        h      show the history
         <slot> is a number (manual slot), q (quicksave) or a (last autosave).
-    orbit mcp
-        Placeholder (not implemented, planned for M3).
+    orbit mcp --project <dir|file.ron>
+        Serve the project to an AI client over the Model Context Protocol
+        (stdio, no GPU). Every edit goes through the project command API, is
+        saved atomically and is one undo entry; file access is limited to
+        the project folder. The log is kept in <project>/.orbit/mcp.log.
+        Protocol on stdout: nothing else is printed there.
     orbit help
 ";
 
@@ -51,10 +55,7 @@ pub fn run(
     let result = match args.first().map(String::as_str) {
         Some("validate") => validate_cmd(&args[1..], out, err),
         Some("run-text") => run_text_cmd(&args[1..], input, out, err),
-        Some("mcp") => {
-            let _ = writeln!(err, "orbit mcp: not implemented (M3)");
-            Ok(1)
-        }
+        Some("mcp") => mcp_cmd(&args[1..], err),
         Some("help" | "--help" | "-h") | None => {
             let _ = write!(out, "{USAGE}");
             Ok(0)
@@ -116,6 +117,29 @@ fn print_report(report: &ValidationReport, err: &mut dyn Write) {
     for w in &report.warnings {
         let _ = writeln!(err, "warning: {w}");
     }
+}
+
+// -------------------------------------------------------------------- mcp
+
+/// `orbit mcp --project <dir|file>`: blocks serving MCP on the process's own
+/// stdin / stdout (the `input` / `out` streams of [`run`] are not used: stdout
+/// belongs to the protocol).
+fn mcp_cmd(args: &[String], err: &mut dyn Write) -> Result<u8, String> {
+    let mut project: Option<PathBuf> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--project" => {
+                project = Some(PathBuf::from(it.next().ok_or("--project needs a path")?));
+            }
+            flag if flag.starts_with("--") => return Err(format!("unknown option `{flag}`")),
+            _ => return Err("usage: orbit mcp --project <dir|file.ron>".into()),
+        }
+    }
+    let project = project.ok_or("usage: orbit mcp --project <dir|file.ron>")?;
+    let _ = writeln!(err, "orbit mcp: serving {} on stdio", project.display());
+    orbit_mcp::serve_stdio(&project)?;
+    Ok(0)
 }
 
 // --------------------------------------------------------------- validate

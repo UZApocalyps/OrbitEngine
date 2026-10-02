@@ -18,12 +18,14 @@ use thiserror::Error;
 use crate::value::{Value, ValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum UnOp {
     Not,
     Neg,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum BinOp {
     Add,
     Sub,
@@ -56,6 +58,7 @@ impl BinOp {
 
 /// Expression AST.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Expr {
     Lit(Value),
     Var(String),

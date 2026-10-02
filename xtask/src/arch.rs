@@ -1,7 +1,8 @@
 //! `cargo xtask check-arch`: architecture rules from ROADMAP 1.5 / 1.6.
 //!
 //! * `orbit_core`, `orbit_project`, `orbit_vm`, `orbit_save`, `orbit_i18n` and `orbit_plugin_api` must not depend
-//!   (even transitively, on any target) on wgpu, winit, egui or our own gfx/platform/editor crates.
+//!   (even transitively, on any target) on wgpu, winit, egui, the MCP server (`orbit_mcp`, `rmcp`) or our own
+//!   gfx/platform/editor crates.
 //! * They must compile for `wasm32-unknown-unknown`.
 //! * `orbit_player` must never depend on the editor (`orbit_editor`, `orbit_editor_api`), egui, the native file
 //!   dialog crate or the MCP server.
@@ -37,6 +38,9 @@ const CORE_FORBIDDEN: &[&str] = &[
     "orbit_audio",
     "orbit_player",
     "orbit_editor*",
+    "orbit_mcp",
+    "rmcp",
+    "rmcp-*",
     "rfd",
 ];
 

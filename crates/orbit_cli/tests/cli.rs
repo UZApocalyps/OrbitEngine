@@ -184,10 +184,12 @@ fn run_text_refuses_invalid_stories() {
 }
 
 #[test]
-fn mcp_is_a_placeholder_and_help_works() {
+fn mcp_needs_a_project_and_help_works() {
     let r = orbit(&["mcp"], "");
-    assert_eq!(r.code, 1);
-    assert!(r.err.contains("not implemented (M3)"));
+    assert_eq!(r.code, 2);
+    assert!(r.err.contains("--project"));
+    let r = orbit(&["mcp", "--project", "/definitely/not/here"], "");
+    assert_eq!(r.code, 2, "{}", r.err);
     let r = orbit(&["help"], "");
     assert_eq!(r.code, 0);
     assert!(r.out.contains("orbit validate"));

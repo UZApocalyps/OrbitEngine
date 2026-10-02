@@ -1,6 +1,9 @@
 //! Typed commands on the story IR.
 
-use orbit_core::{CharacterId, Node, NodeId, NodeKind, SceneId, Story, StringId};
+use orbit_core::{
+    AssetEntry, AssetId, Character, CharacterId, Node, NodeId, NodeKind, Scene, SceneId, Story,
+    StringId, VarDecl,
+};
 use thiserror::Error;
 
 /// A reversible edit of the story.
@@ -33,6 +36,47 @@ pub enum Command {
     /// Sets (`Some`) or removes (`None`) an entry of the source string table.
     /// Needed before inserting a node that displays a new string.
     SetString { id: StringId, text: Option<String> },
+    /// Inserts a whole scene at `index` in the scene list.
+    InsertScene { index: usize, scene: Scene },
+    /// Removes a scene and its nodes. Refused if a node of another scene
+    /// still targets one of them.
+    RemoveScene { id: SceneId },
+    /// Renames a scene.
+    RenameScene { id: SceneId, name: String },
+    /// Moves a node to `index` of `scene` (an index counted once the node has
+    /// been taken out of its current place).
+    MoveNode {
+        id: NodeId,
+        scene: SceneId,
+        index: usize,
+        expected_version: Option<u64>,
+    },
+    /// Replaces the content of a node, keeping its id.
+    SetNodeKind {
+        id: NodeId,
+        kind: NodeKind,
+        expected_version: Option<u64>,
+    },
+    /// Creates or replaces (`Some`) or removes (`None`) a character. `index`
+    /// only matters when creating (`None` appends).
+    SetCharacter {
+        id: CharacterId,
+        character: Option<Character>,
+        index: Option<usize>,
+    },
+    /// Declares or replaces (`Some`) or removes (`None`) a variable.
+    SetVariable {
+        name: String,
+        decl: Option<VarDecl>,
+        index: Option<usize>,
+    },
+    /// Registers or replaces (`Some`) or removes (`None`) an asset of the
+    /// manifest (the file itself is the host's business).
+    SetAsset {
+        id: AssetId,
+        entry: Option<AssetEntry>,
+        index: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -53,6 +97,18 @@ pub enum CommandError {
     StringInUse(StringId, NodeId),
     #[error("node {0} is still targeted by node {1}")]
     StillReferenced(NodeId, NodeId),
+    #[error("scene {0} already exists")]
+    DuplicateScene(SceneId),
+    #[error("unknown character {0}")]
+    UnknownCharacter(CharacterId),
+    #[error("character {0} is still used by node {1}")]
+    CharacterInUse(CharacterId, NodeId),
+    #[error("unknown variable `{0}`")]
+    UnknownVariable(String),
+    #[error("unknown asset {0}")]
+    UnknownAsset(AssetId),
+    #[error("asset {0} is still used by node {1}")]
+    AssetInUse(AssetId, NodeId),
     #[error("version conflict on node {node}: expected {expected}, found {actual}")]
     VersionConflict {
         node: NodeId,
@@ -98,6 +154,14 @@ impl Command {
             Command::RemoveNode { .. } => "Supprimer un nœud",
             Command::SetSay { .. } => "Modifier la réplique",
             Command::SetString { .. } => "Modifier un texte",
+            Command::InsertScene { .. } => "Créer une scène",
+            Command::RemoveScene { .. } => "Supprimer une scène",
+            Command::RenameScene { .. } => "Renommer une scène",
+            Command::MoveNode { .. } => "Déplacer un nœud",
+            Command::SetNodeKind { .. } => "Modifier un nœud",
+            Command::SetCharacter { .. } => "Modifier un personnage",
+            Command::SetVariable { .. } => "Modifier une variable",
+            Command::SetAsset { .. } => "Modifier un asset",
         }
     }
 
@@ -109,6 +173,16 @@ impl Command {
                 expected_version: Some(v),
             }
             | Command::SetSay {
+                id,
+                expected_version: Some(v),
+                ..
+            }
+            | Command::MoveNode {
+                id,
+                expected_version: Some(v),
+                ..
+            }
+            | Command::SetNodeKind {
                 id,
                 expected_version: Some(v),
                 ..
@@ -217,6 +291,14 @@ impl Command {
                     touched: users_of_string(story, *id),
                 })
             }
+            Command::InsertScene { .. }
+            | Command::RemoveScene { .. }
+            | Command::RenameScene { .. }
+            | Command::MoveNode { .. }
+            | Command::SetNodeKind { .. }
+            | Command::SetCharacter { .. }
+            | Command::SetVariable { .. }
+            | Command::SetAsset { .. } => crate::ext::apply(self, story),
         }
     }
 }

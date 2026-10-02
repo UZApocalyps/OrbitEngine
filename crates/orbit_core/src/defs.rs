@@ -10,6 +10,7 @@ use crate::value::Value;
 
 /// 8-bit RGB color.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -31,6 +32,7 @@ impl Color {
 
 /// How a visual change is animated.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum TransitionKind {
     /// Fades to `Color`, then to the new content.
     Fade(Color),
@@ -40,6 +42,7 @@ pub enum TransitionKind {
 
 /// A timed transition. A duration of `0` behaves like a cut.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Transition {
     pub kind: TransitionKind,
     /// Seconds.
@@ -64,6 +67,7 @@ impl Transition {
 
 /// Where a character stands on stage.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Position {
     Left,
     Center,
@@ -76,6 +80,7 @@ pub enum Position {
 /// in `0.0..=1.0` with the origin at the top-left corner. A sprite is anchored
 /// by its bottom-center point.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PositionDef {
     pub name: String,
     pub x: f32,
@@ -94,12 +99,14 @@ pub fn builtin_position(position: &Position) -> Option<(f32, f32)> {
 
 /// One expression (sprite) of a character.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Expression {
     pub name: String,
     pub image: AssetId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Character {
     pub id: CharacterId,
     /// Display name, localizable.
@@ -116,6 +123,7 @@ impl Character {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum AssetKind {
     Image,
     Music,
@@ -133,6 +141,7 @@ impl std::fmt::Display for AssetKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AssetEntry {
     pub id: AssetId,
     pub kind: AssetKind,
@@ -143,6 +152,7 @@ pub struct AssetEntry {
 /// The asset manifest: stable id -> relative path. Nodes only ever refer to
 /// assets by id.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AssetManifest {
     #[serde(default)]
     pub assets: Vec<AssetEntry>,
@@ -158,6 +168,7 @@ impl AssetManifest {
 /// [`StringId`]. Other languages will be separate tables keyed by the same
 /// ids (localization is not implemented yet).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct StringTable {
     /// BCP 47 tag of the source language, e.g. `"en"`.
     pub source_lang: String,
@@ -200,6 +211,7 @@ impl StringTable {
 ///   of completed games). Stored by the host in a separate file; it is **not**
 ///   part of the VM state, so loading a save or rolling back never changes it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum VarScope {
     #[default]
     Game,
@@ -208,6 +220,7 @@ pub enum VarScope {
 
 /// Declares a variable and its initial value (and thus its type).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct VarDecl {
     pub name: String,
     pub initial: Value,
