@@ -1,0 +1,74 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+default-members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+# internal
+orbit_core = { path = "crates/orbit_core" }
+orbit_project = { path = "crates/orbit_project" }
+orbit_platform = { path = "crates/orbit_platform" }
+orbit_gfx = { path = "crates/orbit_gfx" }
+
+# --- story/vm ---
+orbit_vm = { path = "crates/orbit_vm" }
+
+# data / errors
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+ulid = { version = "3", default-features = false }
+thiserror = "2"
+
+# platform / graphics (versions pinned on purpose, see docs/adr)
+winit = "=0.30.13"
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl"] }
+web-time = "1"
+pollster = "1"
+bytemuck = { version = "1", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# logging / diagnostics
+log = "0.4"
+env_logger = "0.11"
+console_log = "1"
+console_error_panic_hook = "0.1"
+
+# web
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"
+
+# --- presentation ---
+orbit_render2d = { path = "crates/orbit_render2d" }
+orbit_text = { path = "crates/orbit_text" }
+orbit_audio = { path = "crates/orbit_audio" }
+orbit_assets = { path = "crates/orbit_assets" }
+orbit_ui = { path = "crates/orbit_ui" }
+orbit_runtime = { path = "crates/orbit_runtime" }
+cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
+unicode-segmentation = "1"
+kira = { version = "0.12", default-features = false, features = ["cpal"] }
+lewton = "0.10"
+hound = "3"
+js-sys = "0.3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+opt-level = 3
+
+[profile.release-wasm]
+inherits = "release"
+opt-level = "s"

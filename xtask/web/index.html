@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OrbitEngine Player</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #05070d; overflow: hidden; }
+    #orbit-canvas { display: block; width: 100vw !important; height: 100vh !important; touch-action: none; outline: none; }
+    #status { position: fixed; inset: 0; display: grid; place-items: center;
+              color: #9aa4b2; font: 14px system-ui, sans-serif; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <canvas id="orbit-canvas" tabindex="0"></canvas>
+  <div id="status">Loading...</div>
+  <script type="module">
+    import init from "./orbit_player.js";
+    const status = document.getElementById("status");
+    try {
+      await init();
+      status.remove();
+    } catch (err) {
+      // winit may throw a control-flow "exception" that is not a real error.
+      if (String(err).includes("control flow")) {
+        status.remove();
+      } else {
+        status.textContent = "Failed to start: " + err;
+        console.error(err);
+      }
+    }
+  </script>
+</body>
+</html>

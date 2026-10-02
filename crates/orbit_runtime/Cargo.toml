@@ -1,0 +1,23 @@
+[package]
+name = "orbit_runtime"
+description = "OrbitEngine runtime: orchestrates the story VM, assets, 2D rendering, text, audio and in-game UI. Independent of the player binary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_core.workspace = true
+orbit_vm.workspace = true
+orbit_platform.workspace = true
+orbit_render2d.workspace = true
+orbit_text.workspace = true
+orbit_audio.workspace = true
+orbit_assets.workspace = true
+orbit_ui.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

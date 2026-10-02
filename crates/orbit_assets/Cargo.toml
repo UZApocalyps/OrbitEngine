@@ -1,0 +1,24 @@
+[package]
+name = "orbit_assets"
+description = "OrbitEngine asynchronous asset loading (files natively, fetch on the web) with image/audio decoding."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+image = { workspace = true, features = ["jpeg"] }
+hound.workspace = true
+lewton.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["Window", "Response"] }
+
+[lints]
+workspace = true

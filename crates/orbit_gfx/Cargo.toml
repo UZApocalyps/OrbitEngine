@@ -1,0 +1,24 @@
+[package]
+name = "orbit_gfx"
+description = "OrbitEngine low-level wgpu layer: device, surface, textures, sprite pipeline."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wgpu.workspace = true
+bytemuck.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wgpu = { workspace = true, features = ["vulkan", "dx12", "metal", "gles"] }
+
+# Web: WebGL2 only (the browser WebGPU backend is deliberately not enabled).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { workspace = true, features = ["webgl"] }
+
+[lints]
+workspace = true

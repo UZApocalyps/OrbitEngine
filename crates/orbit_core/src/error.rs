@@ -1,0 +1,111 @@
+//! Typed errors.
+
+use thiserror::Error;
+
+use crate::defs::AssetKind;
+use crate::ids::{AssetId, CharacterId, NodeId, SceneId, StringId};
+
+/// A semantic problem found by [`crate::validate::validate`]. A story with
+/// errors must not be played.
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum ValidationError {
+    #[error("duplicate scene id {0}")]
+    DuplicateSceneId(SceneId),
+    #[error("duplicate node id {0}")]
+    DuplicateNodeId(NodeId),
+    #[error("duplicate character id {0}")]
+    DuplicateCharacterId(CharacterId),
+    #[error("duplicate asset id {0}")]
+    DuplicateAssetId(AssetId),
+    #[error("character {character} defines expression `{name}` twice")]
+    DuplicateExpression {
+        character: CharacterId,
+        name: String,
+    },
+    #[error("duplicate or reserved position name `{0}`")]
+    DuplicatePosition(String),
+    #[error("duplicate variable declaration `{0}`")]
+    DuplicateVariable(String),
+    #[error("position `{name}` has coordinates outside 0..1")]
+    InvalidPositionCoords { name: String },
+    #[error("asset {asset} has an invalid path `{path}` (must be relative, no `..`, no `\\`)")]
+    InvalidAssetPath { asset: AssetId, path: String },
+    #[error("node {from} targets unknown node {target}")]
+    UnknownTarget { from: NodeId, target: NodeId },
+    #[error("node {from} targets node {target} which is not a Label")]
+    TargetNotLabel { from: NodeId, target: NodeId },
+    #[error("choice node {0} has no options")]
+    EmptyChoice(NodeId),
+    /// `node` is `None` when the string is a character name.
+    #[error("{} uses unknown string {id}", owner(.node))]
+    UnknownString { node: Option<NodeId>, id: StringId },
+    #[error("node {node} uses unknown character {character}")]
+    UnknownCharacter {
+        node: NodeId,
+        character: CharacterId,
+    },
+    #[error("node {node}: character {character} has no expression `{expression}`")]
+    UnknownExpression {
+        node: NodeId,
+        character: CharacterId,
+        expression: String,
+    },
+    /// `node` is `None` when the asset is used by a character expression.
+    #[error("{} uses unknown asset {asset}", owner(.node))]
+    UnknownAsset {
+        node: Option<NodeId>,
+        asset: AssetId,
+    },
+    #[error("{} uses asset {asset} as {expected} but it is a {found}", owner(.node))]
+    AssetKindMismatch {
+        node: Option<NodeId>,
+        asset: AssetId,
+        expected: AssetKind,
+        found: AssetKind,
+    },
+    #[error("node {node} uses unknown position `{name}`")]
+    UnknownPosition { node: NodeId, name: String },
+    #[error("node {node} has an invalid duration {seconds} (must be finite and >= 0)")]
+    InvalidDuration { node: NodeId, seconds: f32 },
+    #[error("node {node}: {message}")]
+    ExprType { node: NodeId, message: String },
+    #[error("asset {asset} file `{path}` does not exist")]
+    MissingAssetFile { asset: AssetId, path: String },
+}
+
+fn owner(node: &Option<NodeId>) -> String {
+    match *node {
+        Some(n) => format!("node {n}"),
+        None => "a character definition".to_owned(),
+    }
+}
+
+/// A suspicious but playable construct.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ValidationWarning {
+    #[error("node {node} reads variable `{var}` which is never declared nor assigned")]
+    UndefinedVariable { node: NodeId, var: String },
+    #[error("node {0} is unreachable from the story entry")]
+    UnreachableNode(NodeId),
+    #[error(
+        "node {0} is part of a cycle without Say/Choice/Wait: it loops forever unless a condition breaks it"
+    )]
+    PossibleInfiniteLoop(NodeId),
+    #[error("every option of choice {0} has a condition: the player may get stuck")]
+    AllOptionsConditional(NodeId),
+}
+
+/// Errors from loading / saving / migrating a story.
+#[derive(Debug, Error)]
+pub enum CoreError {
+    #[error("RON parse error: {0}")]
+    Parse(#[from] ron::error::SpannedError),
+    #[error("RON serialization error: {0}")]
+    Serialize(#[from] ron::Error),
+    #[error("unsupported schema version {found} (current is {current})")]
+    UnsupportedVersion { found: u32, current: u32 },
+    #[error("migration from schema version {from} failed: {reason}")]
+    Migration { from: u32, reason: String },
+    #[error("story failed validation with {} error(s)", .0.len())]
+    Invalid(Vec<ValidationError>),
+}

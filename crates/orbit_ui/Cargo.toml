@@ -1,0 +1,17 @@
+[package]
+name = "orbit_ui"
+description = "OrbitEngine in-game UI: data-driven theme, dialogue textbox and choice menu, drawn with orbit_render2d and orbit_text."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_render2d.workspace = true
+orbit_text.workspace = true
+serde.workspace = true
+ron.workspace = true
+
+[lints]
+workspace = true

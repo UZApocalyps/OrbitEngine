@@ -1,0 +1,30 @@
+[package]
+name = "orbit_player"
+description = "OrbitEngine player: opens a window (or canvas) and plays a story RON file with orbit_runtime. Native and web."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_platform.workspace = true
+orbit_gfx.workspace = true
+orbit_render2d.workspace = true
+orbit_text.workspace = true
+orbit_audio.workspace = true
+orbit_assets.workspace = true
+orbit_runtime.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_log.workspace = true
+console_error_panic_hook.workspace = true
+web-sys = { workspace = true, features = ["Window", "Location"] }
+
+[lints]
+workspace = true

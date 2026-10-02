@@ -1,0 +1,17 @@
+[package]
+name = "orbit_render2d"
+description = "OrbitEngine 2D renderer: batched sprites, layers, camera, render targets and transitions."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_gfx.workspace = true
+bytemuck.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

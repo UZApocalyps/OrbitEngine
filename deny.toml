@@ -1,0 +1,39 @@
+# cargo-deny configuration. Only permissive licenses are accepted (ROADMAP §6).
+
+[graph]
+all-features = true
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "ISC",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "BSL-1.0",
+]
+
+# Narrow, documented exception (M1): `kira` (audio, MIT/Apache-2.0) depends on
+# `triple_buffer` (MPL-2.0, file-level weak copyleft, used unmodified). Every
+# kira release depends on it. Revisit if the audio backend is replaced.
+[[licenses.exceptions]]
+allow = ["MPL-2.0"]
+crate = "triple_buffer"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[advisories]
+unmaintained = "workspace"

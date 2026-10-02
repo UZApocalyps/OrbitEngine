@@ -1,0 +1,18 @@
+[package]
+name = "orbit_text"
+description = "OrbitEngine text: cosmic-text layout, dynamic glyph atlas, typewriter and inline tags."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_render2d.workspace = true
+cosmic-text.workspace = true
+unicode-segmentation.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
