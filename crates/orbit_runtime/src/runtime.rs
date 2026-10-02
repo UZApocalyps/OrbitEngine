@@ -36,11 +36,13 @@ use crate::loading::{
     start_loading, start_loading_only, successor_scenes,
 };
 use crate::shell::{AutosaveConfig, Effect, Shell, ShellConfig};
-use crate::splash::SplashState;
+use crate::splash::{AfterLoad, SplashPhase, SplashState};
 use crate::splash_draw::SplashAssets;
-use crate::stage::{AnimClock, CANVAS, StageCharacter, StageState, character_placement, cover_size};
-use orbit_core::anim::{FrameRef, sheet_cell_size, sheet_uv};
+use crate::stage::{
+    AnimClock, CANVAS, StageCharacter, StageState, character_placement, cover_size,
+};
 use orbit_core::AnimFrames;
+use orbit_core::anim::{FrameRef, sheet_cell_size, sheet_uv};
 use orbit_ui::UiInput;
 
 mod embedded;
@@ -313,13 +315,6 @@ enum Phase {
     Failed(String),
     /// Hosted by an editor and not playing: a blank stage.
     Stopped,
-}
-
-struct SplashPhase {
-    shell: Box<Shell>,
-    state: SplashState,
-    /// Start a new game when the splashes end (`auto_start`).
-    start_game: bool,
 }
 
 /// Where a frame is drawn: the window surface, or an offscreen render target
@@ -783,18 +778,19 @@ impl Runtime {
         // Hot reload restarts at once; `auto_start` skips the click natively
         // (nothing blocks audio there) but not on the web (autoplay policy).
         let native_auto = self.config.auto_start && !cfg!(target_arch = "wasm32");
-        self.phase = if autostart {
-            // A restart inside a running session (the splashes already played).
-            self.started_once = true;
-            let mut shell = shell;
-            shell.start_new_game();
-            Phase::Running(shell)
-        } else if native_auto {
-            self.started_once = true;
-            self.audio.resume_after_user_gesture();
-            self.begin_splash(shell, true)
-        } else {
-            Phase::Ready(shell)
+        self.phase = match AfterLoad::decide(autostart, native_auto) {
+            AfterLoad::RunNow => {
+                self.started_once = true;
+                let mut shell = shell;
+                shell.start_new_game();
+                Phase::Running(shell)
+            }
+            AfterLoad::Splash => {
+                self.started_once = true;
+                self.audio.resume_after_user_gesture();
+                self.begin_splash(shell, true)
+            }
+            AfterLoad::Ready => Phase::Ready(shell),
         };
         self.after_shell();
     }
@@ -811,33 +807,20 @@ impl Runtime {
         let state = SplashState::new(&self.ui_splashes);
         self.splash_assets
             .request(&self.assets_loader, state.steps());
-        Phase::Splash(Box::new(SplashPhase {
-            shell,
-            state,
-            start_game,
-        }))
+        Phase::Splash(Box::new(SplashPhase::new(shell, state, start_game)))
     }
 
     /// Advances the splashes; hands over to the running game when done.
     fn update_splash(&mut self, dt: f32) {
-        let Phase::Splash(sp) = &mut self.phase else {
-            return;
-        };
-        sp.state.update(dt);
-        if !sp.state.finished() {
+        if !matches!(self.phase, Phase::Splash(_)) {
             return;
         }
         let placeholder = Phase::Failed(String::new());
         if let Phase::Splash(sp) = std::mem::replace(&mut self.phase, placeholder) {
-            let SplashPhase {
-                mut shell,
-                start_game,
-                ..
-            } = *sp;
-            if start_game {
-                shell.start_new_game();
-            }
-            self.phase = Phase::Running(shell);
+            self.phase = match sp.update(dt) {
+                Ok(shell) => Phase::Running(shell),
+                Err(sp) => Phase::Splash(Box::new(sp)),
+            };
         }
     }
 
@@ -1160,12 +1143,7 @@ impl Runtime {
             self.audio.resume_after_user_gesture();
         }
         if let Phase::Splash(sp) = &mut self.phase {
-            if matches!(
-                action,
-                InputAction::Ui(UiInput::Confirm | UiInput::PointerDown(_) | UiInput::Cancel)
-            ) {
-                sp.state.skip();
-            }
+            sp.input(&action);
             return;
         }
         let start = matches!(
@@ -1197,7 +1175,11 @@ impl Runtime {
     // ------------------------------------------------------------- drawing
 
     fn draw(&mut self, out: &mut Output<'_>) -> Result<(), RenderError> {
-        if self.embedded.as_ref().is_some_and(|e| e.ui_preview.is_some()) {
+        if self
+            .embedded
+            .as_ref()
+            .is_some_and(|e| e.ui_preview.is_some())
+        {
             return self.draw_ui_preview(out);
         }
         let language = match &self.phase {
@@ -1631,7 +1613,10 @@ fn character_frame(
     if animated.is_some() {
         return animated;
     }
-    if matches!(animation.map(|a| &a.frames), Some(AnimFrames::SpriteSheet { .. })) {
+    if matches!(
+        animation.map(|a| &a.frames),
+        Some(AnimFrames::SpriteSheet { .. })
+    ) {
         // The poster of a sheet is usually the sheet itself: not drawable.
         let poster = story
             .character(c.character)

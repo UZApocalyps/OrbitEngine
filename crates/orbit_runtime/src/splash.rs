@@ -11,7 +11,10 @@
 //! reserved in the data format (the engine has no decoder): such a splash is
 //! dropped.
 
-use orbit_ui::{SplashContent, SplashDef};
+use orbit_ui::{SplashContent, SplashDef, UiInput};
+
+use crate::input::InputAction;
+use crate::shell::Shell;
 
 /// Name of the engine, drawn as text when the logo cannot be decoded.
 pub(crate) const ENGINE_NAME: &str = "OrbitEngine";
@@ -51,7 +54,11 @@ pub(crate) struct SplashStep {
 }
 
 fn sane(v: f32, default: f32, max: f32) -> f32 {
-    if v.is_finite() { v.clamp(0.0, max) } else { default }
+    if v.is_finite() {
+        v.clamp(0.0, max)
+    } else {
+        default
+    }
 }
 
 impl SplashStep {
@@ -176,6 +183,72 @@ impl SplashState {
         }
         self.t = out_start;
         true
+    }
+}
+
+/// What follows a freshly loaded story.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AfterLoad {
+    /// A restart inside a running session (hot reload): the splashes
+    /// already played, the game starts at once.
+    RunNow,
+    /// Native `auto_start`: the splashes play, then a new game starts.
+    Splash,
+    /// Wait for the "click to start" gesture.
+    Ready,
+}
+
+impl AfterLoad {
+    pub fn decide(autostart: bool, native_auto: bool) -> Self {
+        if autostart {
+            Self::RunNow
+        } else if native_auto {
+            Self::Splash
+        } else {
+            Self::Ready
+        }
+    }
+}
+
+/// The splashes playing in front of a shell that is ready.
+pub(crate) struct SplashPhase {
+    pub shell: Box<Shell>,
+    pub state: SplashState,
+    /// Start a new game when the splashes end (`auto_start`).
+    pub start_game: bool,
+}
+
+impl SplashPhase {
+    pub fn new(shell: Box<Shell>, state: SplashState, start_game: bool) -> Self {
+        Self {
+            shell,
+            state,
+            start_game,
+        }
+    }
+
+    /// A click, Confirm or Cancel asks to skip; every input is swallowed
+    /// (nothing reaches the shell while the splashes play).
+    pub fn input(&mut self, action: &InputAction) {
+        if matches!(
+            action,
+            InputAction::Ui(UiInput::Confirm | UiInput::PointerDown(_) | UiInput::Cancel)
+        ) {
+            self.state.skip();
+        }
+    }
+
+    /// Advances the timeline; once finished, hands the shell over (with a
+    /// new game started when asked).
+    pub fn update(mut self, dt: f32) -> Result<Box<Shell>, Self> {
+        self.state.update(dt);
+        if !self.state.finished() {
+            return Err(self);
+        }
+        if self.start_game {
+            self.shell.start_new_game();
+        }
+        Ok(self.shell)
     }
 }
 

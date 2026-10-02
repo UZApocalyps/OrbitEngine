@@ -7,6 +7,8 @@ use super::*;
 use crate::director::Flow;
 use orbit_ui::UiBundle;
 
+mod splashes;
+
 const DEMO: &str = include_str!("../../../../examples/stories/test_minimal.ron");
 const FR: &str = include_str!("../../../../examples/stories/i18n/test_minimal.fr.ron");
 
@@ -1142,7 +1144,11 @@ fn screens_open_replace_and_close_by_id_with_stock_fallbacks() {
     let mut sh = with_bundle(&bundle_of(&[HUD, BLOCKER]));
     sh.start_new_game();
     sh.apply(UiEvent::OpenScreen("preferences".into()));
-    assert_eq!(sh.top(), Some(Overlay::Prefs), "no data screen: the stock one");
+    assert_eq!(
+        sh.top(),
+        Some(Overlay::Prefs),
+        "no data screen: the stock one"
+    );
     sh.apply(UiEvent::ReplaceScreen("hud".into()));
     assert!(matches!(sh.top(), Some(Overlay::Custom(_))));
     assert_eq!(sh.stack.len(), 1);
@@ -1245,7 +1251,11 @@ fn press(actions: &str, setup: impl FnOnce(&mut Shell)) -> (Shell, MemoryStorage
     sh.set_ui_bundle(&bundle_of(&[&t, p2]));
     setup(&mut sh);
     sh.apply(UiEvent::OpenScreen("t".into()));
-    assert!(matches!(sh.top(), Some(Overlay::Custom(_))), "{:?}", sh.top());
+    assert!(
+        matches!(sh.top(), Some(Overlay::Custom(_))),
+        "{:?}",
+        sh.top()
+    );
     sh.take_effects();
     sh.input(ui(UiInput::Confirm));
     (sh, storage)
@@ -1317,13 +1327,19 @@ fn a_button_resets_preferences_plays_sounds_and_calls_hooks() {
     let (sh, _) = press("ResetPreferences", |sh| {
         sh.apply(UiEvent::SetVolume(AudioBus::Master, 0.3));
     });
-    assert_eq!(sh.prefs().volumes.master, Preferences::default().volumes.master);
+    assert_eq!(
+        sh.prefs().volumes.master,
+        Preferences::default().volumes.master
+    );
     let (mut sh, _) = press(
         "PlaySound(\"click.ogg\"), Custom(name: \"hi\", args: [\"a\"])",
         |_| {},
     );
     let effects = sh.take_effects();
-    assert!(effects.contains(&Effect::PlayAsset("click.ogg".into())), "{effects:?}");
+    assert!(
+        effects.contains(&Effect::PlayAsset("click.ogg".into())),
+        "{effects:?}"
+    );
     assert!(effects.contains(&Effect::Custom {
         name: "hi".into(),
         args: vec!["a".into()]
@@ -1383,7 +1399,11 @@ fn at_the_title_only_persistent_variables_change() {
     sh.apply(add("credits"));
     sh.apply(add("plays"));
     let vars = sh.data_context().vars;
-    assert_eq!(vars.get("credits"), Some(&Value::Int(100)), "no playthrough");
+    assert_eq!(
+        vars.get("credits"),
+        Some(&Value::Int(100)),
+        "no playthrough"
+    );
     assert_eq!(vars.get("plays"), Some(&Value::Int(1)));
     // The next game starts with it.
     sh.start_new_game();
