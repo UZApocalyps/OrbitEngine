@@ -3,12 +3,11 @@
 //! editor is M3c.
 
 use egui::{Align2, FontId, Key, Modifiers, Rect, Ui};
-use orbit_core::{Node, NodeId, NodeKind, Story, StringId};
+use orbit_core::{NodeId, NodeKind, Story};
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Plugin,
     PluginManifest, Selection, icons,
 };
-use orbit_project::Command;
 
 use super::ids;
 use super::nodeinfo::{kind_icon, kind_label, summary};
@@ -56,93 +55,14 @@ impl EditorPlugin for ExplorerPlugin {
     }
 }
 
-/// Inserts a new line after the selection (or at the end of the selected
-/// scene / of the story) as one undoable step, and selects it.
+/// Inserts a new line after the selection (see `edit::add_say`).
 pub fn add_say(ctx: &mut EditorContext<'_>) {
-    let Some(story) = ctx.story() else { return };
-    let (scene, index, speaker) = match ctx.selection() {
-        Some(Selection::Node(id)) => match story.locate(id) {
-            Some((s, n)) => {
-                let speaker = match &story.scenes[s].nodes[n].kind {
-                    NodeKind::Say { speaker, .. } => *speaker,
-                    _ => None,
-                };
-                (story.scenes[s].id, n + 1, speaker)
-            }
-            None => return,
-        },
-        Some(Selection::Scene(id)) => match story.scene(id) {
-            Some(sc) => (sc.id, sc.nodes.len(), None),
-            None => return,
-        },
-        None => match story.scenes.last() {
-            Some(sc) => (sc.id, sc.nodes.len(), None),
-            None => {
-                ctx.error("Le projet n'a aucune scène.");
-                return;
-            }
-        },
-    };
-    let text_id = StringId::new();
-    let node = Node {
-        id: NodeId::new(),
-        kind: NodeKind::Say { speaker, text_id },
-    };
-    let node_id = node.id;
-    let result = ctx.transaction("Ajouter une réplique", |tx| {
-        tx.execute(Command::SetString {
-            id: text_id,
-            text: Some("Nouvelle réplique".to_owned()),
-        })?;
-        tx.execute(Command::InsertNode { scene, index, node })
-    });
-    match result {
-        Ok(()) => ctx.select(Selection::Node(node_id)),
-        Err(e) => ctx.error(e.to_string()),
-    }
+    super::edit::add_say(ctx);
 }
 
-/// Deletes the selected node (and the strings only it displayed) as one
-/// undoable step; the next node (or the previous one) becomes selected.
+/// Deletes the selected nodes (see `edit::delete_selection`).
 pub fn delete_selected(ctx: &mut EditorContext<'_>) {
-    let Some(Selection::Node(id)) = ctx.selection() else {
-        return;
-    };
-    let Some(story) = ctx.story() else { return };
-    let Some((s, n)) = story.locate(id) else {
-        return;
-    };
-    let nodes = &story.scenes[s].nodes;
-    let neighbor = nodes
-        .get(n + 1)
-        .or_else(|| n.checked_sub(1).and_then(|p| nodes.get(p)))
-        .map(|node| node.id);
-    let strings = nodes[n].kind.strings();
-    let version = ctx.node_version(id);
-    let label = match &nodes[n].kind {
-        NodeKind::Say { .. } => "Supprimer la réplique",
-        _ => "Supprimer le nœud",
-    };
-    let result = ctx.transaction(label, |tx| {
-        tx.execute(Command::RemoveNode {
-            id,
-            expected_version: version,
-        })?;
-        for text in strings {
-            tx.execute(Command::SetString {
-                id: text,
-                text: None,
-            })?;
-        }
-        Ok(())
-    });
-    match result {
-        Ok(()) => match neighbor {
-            Some(next) => ctx.select(Selection::Node(next)),
-            None => ctx.clear_selection(),
-        },
-        Err(e) => ctx.error(e.to_string()),
-    }
+    super::edit::delete_selection(ctx);
 }
 
 #[derive(Clone, Copy)]

@@ -10,11 +10,12 @@
 //! the editor state (selection, toasts, requests to the host).
 
 mod context;
+pub mod fields;
 mod preview;
 mod registry;
 
 pub use context::{
-    ConsoleEntry, ConsoleLog, EditorContext, EditorError, EditorRequest, EditorState, Level,
+    ConsoleEntry, ConsoleLog, Diagnostics, EditorContext, EditorError, EditorRequest, EditorState, Level,
     ProjectInfo, RecentProject, Selection, ThemeMode, Toast,
 };
 pub use orbit_plugin_api::{API_VERSION, Plugin, PluginError, PluginManifest, ProjectRegistry};

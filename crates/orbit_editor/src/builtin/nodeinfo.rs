@@ -74,6 +74,30 @@ pub fn kind_icon(kind: &NodeKind) -> &'static str {
     }
 }
 
+/// Accent color of a node kind (by family: visual, sound, logic, flow).
+pub fn kind_color(kind: &NodeKind) -> egui::Color32 {
+    use egui::Color32;
+    match kind {
+        NodeKind::Say { .. } => Color32::from_rgb(130, 140, 160),
+        NodeKind::Background { .. } | NodeKind::Show { .. } | NodeKind::Hide { .. } => {
+            Color32::from_rgb(86, 156, 240)
+        }
+        NodeKind::PlayMusic { .. } | NodeKind::StopMusic { .. } | NodeKind::PlaySound { .. } => {
+            Color32::from_rgb(176, 124, 236)
+        }
+        NodeKind::Choice { .. } | NodeKind::SetVar { .. } | NodeKind::If { .. } => {
+            Color32::from_rgb(236, 168, 70)
+        }
+        NodeKind::Label { .. }
+        | NodeKind::Jump { .. }
+        | NodeKind::Call { .. }
+        | NodeKind::Return
+        | NodeKind::End => Color32::from_rgb(98, 190, 168),
+        NodeKind::Wait { .. } => Color32::from_rgb(150, 156, 170),
+        NodeKind::Custom { .. } => Color32::from_rgb(232, 110, 160),
+    }
+}
+
 fn character_name(story: &Story, id: orbit_core::CharacterId) -> String {
     story
         .character(id)

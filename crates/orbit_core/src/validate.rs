@@ -554,6 +554,7 @@ mod tests {
                 name: "happy".into(),
                 image: img,
             }],
+            default_position: None,
         });
         (id, img)
     }

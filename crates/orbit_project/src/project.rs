@@ -11,6 +11,10 @@ use crate::command::{Command, CommandError};
 pub enum ProjectError {
     #[error(transparent)]
     Command(#[from] CommandError),
+    /// A compound operation (see [`crate::ops`]) refused the request; the
+    /// message is meant for the user.
+    #[error("{0}")]
+    Rejected(String),
 }
 
 /// Why a change event was emitted.

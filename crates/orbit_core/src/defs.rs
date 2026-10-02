@@ -107,6 +107,11 @@ pub struct Character {
     pub color: Color,
     #[serde(default)]
     pub expressions: Vec<Expression>,
+    /// Where the character stands when shown without an explicit choice
+    /// (editor convenience: pre-fills new `Show` nodes). Absent in the file
+    /// when unset, so existing stories are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_position: Option<Position>,
 }
 
 impl Character {

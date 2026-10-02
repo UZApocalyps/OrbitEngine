@@ -1,25 +1,38 @@
-//! Inspector: edits the selected element. Inspectors are registered per
-//! node kind (`InspectorDef`); the one for `Say` proves the command chain
-//! (live text edit, one undo step per editing session). Kinds without an
-//! inspector fall back to a read-only summary until M3c.
+//! Inspector: edits the selected element. One inspector per node kind is
+//! registered through the plugin API (`InspectorDef`); all of the built-in
+//! ones are made of the typed field widgets of `orbit_editor_api::fields`
+//! and turn each change into a `ReplaceNodeKind` command (merged per field,
+//! so typing or dragging a value is one undo step). A plugin node without an
+//! inspector of its own gets a generic editor of its data.
 
-use egui::{Align, FontId, Frame, Layout, Margin, RichText, TextEdit, Ui};
-use orbit_core::{CharacterId, CustomData, NodeId, NodeKind};
+use egui::{Frame, Margin, RichText, Ui};
+use orbit_core::{
+    AssetKind, CharacterId, ChoiceOption, CustomData, Expr, Node, NodeId, NodeKind, Position,
+    SceneId, StringId, ValueType,
+};
+use orbit_editor_api::fields::{
+    self, asset_picker, character_picker, expr_editor, expression_picker, field,
+    is_simple_condition, label_picker, position_picker, seconds_field, simple_condition_editor,
+    transition_editor, value_editor,
+};
 use orbit_editor_api::{
-    DockSlot, EditorContext, EditorPlugin, EditorRegistry, InspectorDef, PanelDef, Plugin,
+    DockSlot, EditorContext, EditorPlugin, EditorRegistry, InspectorDef, Level, PanelDef, Plugin,
     PluginManifest, Selection, icons,
 };
-use orbit_project::Command;
+use orbit_project::{Command, ops};
 
+use super::drafts::builtin_insertables;
+use super::edit;
 use super::ids;
-use super::nodeinfo::{kind_icon, kind_key, kind_label, summary};
+use super::nodeinfo::{kind_color, kind_icon, kind_key, kind_label};
+use super::thumbs;
 use super::ui_util::{accent, card, danger, faint, section_title, strong, warning, weak};
 
 pub struct InspectorPlugin;
 
 impl Plugin for InspectorPlugin {
     fn manifest(&self) -> PluginManifest {
-        PluginManifest::new(ids::INSPECTOR, "Inspecteur", "0.1.0")
+        PluginManifest::new(ids::INSPECTOR, "Inspecteur", "0.2.0")
     }
 }
 
@@ -32,17 +45,31 @@ impl EditorPlugin for InspectorPlugin {
             DockSlot::Right,
             panel,
         ));
-        reg.inspector(InspectorDef::new("Say", say_inspector));
+        // One inspector per built-in kind, through the same registry a
+        // plugin uses for its own node types.
+        for item in builtin_insertables() {
+            reg.inspector(InspectorDef::new(item.key, node_inspector));
+        }
     }
 }
 
 fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show(ui, |ui| match ctx.selection() {
-            None => empty_state(ui, "Sélectionnez un élément dans l'explorateur."),
-            Some(Selection::Scene(id)) => scene_header(ui, ctx, id),
-            Some(Selection::Node(id)) => node_panel(ui, ctx, id),
+        .show(ui, |ui| {
+            ui.add_space(4.0);
+            match ctx.selection() {
+                None => empty_state(ui, "Sélectionnez une ligne dans l'éditeur de scène."),
+                Some(Selection::Scene(id)) => scene_inspector(ui, ctx, id),
+                Some(Selection::Node(id)) => {
+                    if ctx.selected_nodes().len() > 1 {
+                        multi_selection(ui, ctx);
+                    } else {
+                        node_panel(ui, ctx, id);
+                    }
+                }
+            }
+            ui.add_space(12.0);
         });
 }
 
@@ -59,30 +86,93 @@ fn empty_state(ui: &mut Ui, text: &str) {
     });
 }
 
-fn scene_header(ui: &mut Ui, ctx: &EditorContext<'_>, id: orbit_core::SceneId) {
+fn multi_selection(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
+    let count = ctx.selected_nodes().len();
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(icons::STACK_SIMPLE)
+                .size(18.0)
+                .color(accent(ui)),
+        );
+        ui.label(strong(format!("{count} lignes sélectionnées"), 16.0));
+    });
+    ui.add_space(8.0);
+    ui.label(
+        RichText::new("Glissez-déposer pour les déplacer, Alt+↑ / Alt+↓ pour les monter ou les descendre.")
+            .small()
+            .color(weak(ui)),
+    );
+    ui.add_space(10.0);
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .button(format!("{}  Dupliquer", icons::COPY_SIMPLE))
+            .clicked()
+        {
+            edit::duplicate_selection(ctx);
+        }
+        if ui.button(format!("{}  Copier", icons::COPY)).clicked() {
+            edit::copy_selection(ctx, false);
+        }
+        if ui.button(format!("{}  Couper", icons::SCISSORS)).clicked() {
+            edit::copy_selection(ctx, true);
+        }
+    });
+    ui.add_space(8.0);
+    let delete = egui::Button::new(
+        RichText::new(format!("{}  Supprimer la sélection", icons::TRASH)).color(danger(ui)),
+    );
+    if ui.add(delete).clicked() {
+        edit::delete_selection(ctx);
+    }
+}
+
+fn scene_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: SceneId) {
     let Some(scene) = ctx.story().and_then(|s| s.scene(id)) else {
         return;
     };
+    let (name, count) = (scene.name.clone(), scene.nodes.len());
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(icons::FOLDER_OPEN)
                 .size(18.0)
                 .color(accent(ui)),
         );
-        ui.label(strong(&scene.name, 16.0));
+        ui.label(strong("Scène", 16.0));
     });
-    ui.label(RichText::new("Scène").color(weak(ui)));
-    ui.add_space(8.0);
+    ui.add_space(4.0);
+    let mut done = false;
+    if let Some(new) = field(ui, "Nom", |ui| {
+        fields::text_field(ui, ("scene_name", id), &name, "Nom de la scène", 1, &mut done)
+    }) && !new.is_empty()
+    {
+        ctx.exec_merged(Command::RenameScene { id, name: new }, &format!("scene-name:{id}"))
+            .unwrap_or_else(|e| ctx.error(e.to_string()));
+    }
+    ui.add_space(6.0);
     section_title(ui, "Contenu");
-    ui.label(format!("{} nœud(s)", scene.nodes.len()));
+    ui.label(format!("{count} ligne(s)"));
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        if ui
+            .button(format!("{}  Monter", icons::ARROW_UP))
+            .clicked()
+        {
+            edit::move_scene(ctx, id, -1);
+        }
+        if ui
+            .button(format!("{}  Descendre", icons::ARROW_DOWN))
+            .clicked()
+        {
+            edit::move_scene(ctx, id, 1);
+        }
+    });
     ui.add_space(8.0);
-    ui.label(
-        RichText::new(
-            "Le renommage et les réglages de scène arrivent avec l'éditeur de scène (M3c).",
-        )
-        .small()
-        .color(faint(ui)),
+    let delete = egui::Button::new(
+        RichText::new(format!("{}  Supprimer la scène", icons::TRASH)).color(danger(ui)),
     );
+    if ui.add(delete).clicked() {
+        edit::delete_scene(ctx, id);
+    }
 }
 
 fn node_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
@@ -94,17 +184,51 @@ fn node_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
         ui.label(
             RichText::new(kind_icon(&node.kind))
                 .size(18.0)
-                .color(accent(ui)),
+                .color(kind_color(&node.kind)),
         );
         ui.label(strong(kind_label(&node.kind), 16.0));
     });
     ui.label(RichText::new(id.to_string()).small().color(faint(ui)));
-    ui.add_space(8.0);
+
+    // What validation says about this node.
+    let findings: Vec<(Level, String)> = ctx.state().diagnostics.of(id).to_vec();
+    if !findings.is_empty() {
+        ui.add_space(6.0);
+        for (level, message) in findings {
+            let color = if level == Level::Error {
+                danger(ui)
+            } else {
+                warning(ui)
+            };
+            Frame::new()
+                .fill(color.gamma_multiply(0.12))
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(Margin::symmetric(8, 5))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(
+                        RichText::new(format!(
+                            "{}  {message}",
+                            if level == Level::Error {
+                                icons::WARNING_CIRCLE
+                            } else {
+                                icons::WARNING
+                            }
+                        ))
+                        .small()
+                        .color(color),
+                    );
+                });
+        }
+    }
+    ui.add_space(6.0);
 
     // Plugin node whose plugin is absent: kept as is, read-only.
+    let mut read_only = false;
     if let NodeKind::Custom { plugin_id, .. } = &node.kind
         && !ctx.registry().project.has_plugin(plugin_id)
     {
+        read_only = true;
         let color = warning(ui);
         Frame::new()
             .fill(color.gamma_multiply(0.12))
@@ -123,167 +247,872 @@ fn node_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
     }
 
     let key = kind_key(&node.kind);
-    match ctx.registry().inspector_for(&key) {
+    ui.add_enabled_ui(!read_only, |ui| match ctx.registry().inspector_for(&key) {
         Some(inspector) => (inspector.ui)(ui, ctx, id),
         None => generic_inspector(ui, ctx, id),
-    }
+    });
 
     ui.add_space(16.0);
     ui.separator();
     ui.add_space(4.0);
-    let delete = egui::Button::new(
-        RichText::new(format!("{}  Supprimer le nœud", icons::TRASH)).color(danger(ui)),
-    );
-    if ui.add(delete).clicked() {
-        ctx.run_action("orbit.explorer.delete");
-    }
-}
-
-/// Read-only view of any node kind.
-fn generic_inspector(ui: &mut Ui, ctx: &EditorContext<'_>, id: NodeId) {
-    let Some(story) = ctx.story() else { return };
-    let Some(node) = story.node(id) else { return };
-    section_title(ui, "Résumé");
-    let line = summary(story, node);
-    ui.label(if line.is_empty() {
-        "—".to_owned()
-    } else {
-        line
-    });
-    if let NodeKind::Custom {
-        kind,
-        version,
-        data,
-        ..
-    } = &node.kind
-    {
-        ui.add_space(6.0);
-        ui.label(
-            RichText::new(format!("type « {kind} », données v{version}"))
-                .small()
-                .color(weak(ui)),
+    ui.horizontal(|ui| {
+        if ui
+            .button(format!("{}  Dupliquer", icons::COPY_SIMPLE))
+            .clicked()
+        {
+            edit::duplicate_selection(ctx);
+        }
+        let delete = egui::Button::new(
+            RichText::new(format!("{}  Supprimer", icons::TRASH)).color(danger(ui)),
         );
-        card(ui, |ui| show_data(ui, data));
-    }
-    ui.add_space(8.0);
-    ui.label(
-        RichText::new("L'édition de ce type de nœud arrive avec l'éditeur de scène (M3c).")
-            .small()
-            .color(faint(ui)),
-    );
+        if ui.add(delete).clicked() {
+            edit::delete_selection(ctx);
+        }
+    });
 }
 
-fn show_data(ui: &mut Ui, data: &CustomData) {
-    match data {
-        CustomData::Null => {
-            ui.label("null");
-        }
-        CustomData::Bool(b) => {
-            ui.label(b.to_string());
-        }
-        CustomData::Int(i) => {
-            ui.label(i.to_string());
-        }
-        CustomData::Float(f) => {
-            ui.label(f.to_string());
-        }
-        CustomData::Str(s) => {
-            ui.label(format!("« {s} »"));
-        }
-        CustomData::List(items) => {
-            for (i, item) in items.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("[{i}]")).color(weak(ui)));
-                    show_data(ui, item);
-                });
-            }
-        }
-        CustomData::Map(entries) => {
-            for (key, value) in entries {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("{key} :")).color(weak(ui)));
-                    show_data(ui, value);
-                });
-            }
-        }
+// -------------------------------------------------------------------- commit
+
+/// Replaces the kind of `id` with `kind`; consecutive edits of the same
+/// `field` are one undo step.
+fn commit(ctx: &mut EditorContext<'_>, id: NodeId, kind: NodeKind, field: &str) {
+    let command = Command::ReplaceNodeKind {
+        id,
+        kind,
+        expected_version: ctx.node_version(id),
+    };
+    if let Err(e) = ctx.exec_merged(command, &format!("node:{id}:{field}")) {
+        ctx.error(e.to_string());
     }
 }
 
-/// Inspector of a `Say` node: speaker and text. Text edits are live (one
-/// command per change, merged into one undo entry per editing session).
-fn say_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
+fn current_kind(ctx: &EditorContext<'_>, id: NodeId) -> Option<NodeKind> {
+    ctx.story()?.node(id).map(|n| n.kind.clone())
+}
+
+/// A new `Label` at the end of the scene holding `node`, plus the kind that
+/// uses it, as one undo step.
+fn with_new_label(
+    ctx: &mut EditorContext<'_>,
+    node: NodeId,
+    build: impl FnOnce(NodeId) -> NodeKind,
+) {
     let Some(story) = ctx.story() else { return };
-    let Some(NodeKind::Say { speaker, text_id }) = story.node(id).map(|n| &n.kind) else {
+    let Some((si, _)) = story.locate(node) else {
         return;
     };
-    let (speaker, text_id) = (*speaker, *text_id);
-    let text = story.text(text_id).unwrap_or_default().to_owned();
-    let characters: Vec<(CharacterId, String)> = story
-        .characters
-        .iter()
-        .map(|c| (c.id, story.text(c.name_id).unwrap_or("?").to_owned()))
-        .collect();
-    let speaker_name = |s: Option<CharacterId>| match s {
-        None => "Narrateur".to_owned(),
-        Some(c) => characters
-            .iter()
-            .find(|(id, _)| *id == c)
-            .map_or_else(|| "?".to_owned(), |(_, n)| n.clone()),
+    let scene = story.scenes[si].id;
+    let end = story.scenes[si].nodes.len();
+    let taken: Vec<String> = ops::labels(story).into_iter().map(|(_, n)| n).collect();
+    let name = ops::unique_name("etiquette", taken.iter().map(String::as_str));
+    let label = Node {
+        id: NodeId::new(),
+        kind: NodeKind::Label { name },
     };
-
-    section_title(ui, "Personnage");
-    let mut chosen = speaker;
-    egui::ComboBox::from_id_salt(("say_speaker", id))
-        .selected_text(speaker_name(speaker))
-        .width(ui.available_width())
-        .show_ui(ui, |ui| {
-            ui.selectable_value(&mut chosen, None, "Narrateur");
-            for (c, name) in &characters {
-                ui.selectable_value(&mut chosen, Some(*c), name);
-            }
-        });
-    if chosen != speaker {
-        let command = Command::SetSay {
-            id,
-            speaker: chosen,
-            text: text.clone(),
-            expected_version: ctx.node_version(id),
-        };
-        ctx.exec_or_toast(command);
+    let label_id = label.id;
+    let kind = build(label_id);
+    let version = ctx.node_version(node);
+    let result = ctx.transaction("Nouvelle étiquette", |tx| {
+        tx.execute(Command::InsertNode {
+            scene,
+            index: end,
+            node: label,
+        })?;
+        tx.execute(Command::ReplaceNodeKind {
+            id: node,
+            kind,
+            expected_version: version,
+        })
+    });
+    if let Err(e) = result {
+        ctx.error(e.to_string());
     }
+}
 
-    ui.add_space(8.0);
-    section_title(ui, "Texte");
-    let mut buffer = text.clone();
-    let response = ui.add(
-        TextEdit::multiline(&mut buffer)
-            .desired_width(f32::INFINITY)
-            .desired_rows(5)
-            .font(FontId::proportional(14.0))
-            .hint_text("Écrivez la réplique…")
-            .margin(Margin::same(8)),
-    );
-    if buffer != text {
-        let command = Command::SetSay {
-            id,
-            speaker,
-            text: buffer,
-            expected_version: ctx.node_version(id),
-        };
-        let key = format!("say-text:{id}");
-        if let Err(e) = ctx.exec_merged(command, &key) {
-            ctx.error(e.to_string());
+fn new_label_button(ui: &mut Ui) -> bool {
+    ui.small_button(format!("{}  Nouvelle étiquette", icons::FLAG))
+        .on_hover_text("Crée une étiquette à la fin de la scène et la prend pour cible")
+        .clicked()
+}
+
+// ------------------------------------------------------------------ inspectors
+
+/// The inspector registered for every built-in kind.
+fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
+    let Some(kind) = current_kind(ctx, id) else {
+        return;
+    };
+    match kind {
+        NodeKind::Say { speaker, text_id } => say(ui, ctx, id, speaker, text_id),
+        NodeKind::Label { name } => label(ui, ctx, id, &name),
+        NodeKind::Choice { options } => choice(ui, ctx, id, &options),
+        NodeKind::Jump { target } => jump(ui, ctx, id, target, true),
+        NodeKind::Call { label } => jump(ui, ctx, id, label, false),
+        NodeKind::SetVar { var, value } => set_var(ui, ctx, id, &var, &value),
+        NodeKind::If {
+            condition,
+            then_target,
+            else_target,
+        } => condition_node(ui, ctx, id, &condition, then_target, else_target),
+        NodeKind::Background { asset, transition } => {
+            background(ui, ctx, id, asset, transition);
         }
+        NodeKind::Show {
+            character,
+            expression,
+            position,
+            transition,
+        } => show(ui, ctx, id, character, &expression, &position, transition),
+        NodeKind::Hide {
+            character,
+            transition,
+        } => hide(ui, ctx, id, character, transition),
+        NodeKind::PlayMusic {
+            asset,
+            fade_in,
+            looping,
+        } => play_music(ui, ctx, id, asset, fade_in, looping),
+        NodeKind::StopMusic { fade_out } => {
+            field(ui, "Fondu de sortie", |ui| {
+                if let Some(v) = seconds_field(ui, fade_out) {
+                    commit(ctx, id, NodeKind::StopMusic { fade_out: v }, "fade_out");
+                }
+            });
+        }
+        NodeKind::PlaySound { asset } => {
+            field(ui, "Son", |ui| {
+                asset_row(ui, ctx, id, AssetKind::Sound, asset, |a| NodeKind::PlaySound {
+                    asset: a,
+                });
+            });
+        }
+        NodeKind::Wait { seconds } => {
+            field(ui, "Durée de l'attente", |ui| {
+                if let Some(v) = seconds_field(ui, seconds) {
+                    commit(ctx, id, NodeKind::Wait { seconds: v }, "seconds");
+                }
+            });
+        }
+        NodeKind::Return => {
+            info(ui, "Revient à l'appel (« Appeler une routine ») qui a mené ici.");
+        }
+        NodeKind::End => {
+            info(ui, "Termine l'histoire à cet endroit.");
+        }
+        NodeKind::Custom { .. } => generic_inspector(ui, ctx, id),
     }
-    if response.lost_focus() {
-        ctx.end_merge();
-    }
+}
+
+fn info(ui: &mut Ui, text: &str) {
     ui.add_space(4.0);
-    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+    ui.label(RichText::new(text).color(weak(ui)));
+}
+
+fn say(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, speaker: Option<CharacterId>, text_id: StringId) {
+    let Some(story) = ctx.story() else { return };
+    let text = story.text(text_id).unwrap_or_default().to_owned();
+    let mut change: Option<Option<CharacterId>> = None;
+    field(ui, "Personnage", |ui| {
+        change = character_picker(ui, ("say_speaker", id), story, speaker, Some("Narrateur"));
+    });
+    let mut new_text = None;
+    let mut done = false;
+    field(ui, "Texte", |ui| {
+        new_text = fields::text_field(
+            ui,
+            ("say_text", id),
+            &text,
+            "Écrivez la réplique…",
+            5,
+            &mut done,
+        );
         ui.label(
             RichText::new(format!("{} caractères", text.chars().count()))
                 .small()
                 .color(faint(ui)),
         );
     });
+    let (version, key) = (ctx.node_version(id), format!("say-text:{id}"));
+    if let Some(s) = change {
+        let command = Command::SetSay {
+            id,
+            speaker: s,
+            text: text.clone(),
+            expected_version: version,
+        };
+        ctx.exec_or_toast(command);
+    }
+    if let Some(t) = new_text {
+        let command = Command::SetSay {
+            id,
+            speaker,
+            text: t,
+            expected_version: version,
+        };
+        if let Err(e) = ctx.exec_merged(command, &key) {
+            ctx.error(e.to_string());
+        }
+    }
+    if done {
+        ctx.end_merge();
+    }
+}
+
+fn label(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, name: &str) {
+    let mut done = false;
+    if let Some(new) = field(ui, "Nom de l'étiquette", |ui| {
+        fields::text_field(ui, ("label_name", id), name, "ex. fin_heureuse", 1, &mut done)
+    }) {
+        commit(ctx, id, NodeKind::Label { name: new }, "name");
+    }
+    if done {
+        ctx.end_merge();
+    }
+    let Some(story) = ctx.story() else { return };
+    let users = story
+        .scenes
+        .iter()
+        .flat_map(|s| &s.nodes)
+        .filter(|n| n.kind.targets().contains(&id))
+        .count();
+    info(ui, &format!("{users} saut(s) ou choix mènent ici."));
+}
+
+fn jump(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, target: NodeId, is_jump: bool) {
+    let Some(story) = ctx.story() else { return };
+    let mut chosen = None;
+    field(
+        ui,
+        if is_jump { "Aller à l'étiquette" } else { "Appeler la routine" },
+        |ui| {
+            chosen = label_picker(ui, ("jump_target", id), story, Some(target), None);
+        },
+    );
+    let build = move |t: NodeId| {
+        if is_jump {
+            NodeKind::Jump { target: t }
+        } else {
+            NodeKind::Call { label: t }
+        }
+    };
+    if let Some(Some(t)) = chosen {
+        commit(ctx, id, build(t), "target");
+    }
+    ui.add_space(4.0);
+    if new_label_button(ui) {
+        with_new_label(ctx, id, build);
+    }
+}
+
+fn choice(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, options: &[ChoiceOption]) {
+    let Some(story) = ctx.story() else { return };
+    section_title(ui, "Options proposées");
+    // What to do after the loop (the story is borrowed while drawing).
+    enum Do {
+        Text(StringId, String),
+        Target(usize, NodeId),
+        NewLabel(usize),
+        Condition(usize, Option<Expr>),
+        Remove(usize),
+        Move(usize, i32),
+        Add,
+    }
+    let mut action: Option<Do> = None;
+    let count = options.len();
+    for (i, option) in options.iter().enumerate() {
+        card(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(strong(format!("Option {}", i + 1), 12.5));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled(count > 1, egui::Button::new(icons::TRASH).frame(false))
+                        .on_hover_text("Supprimer l'option")
+                        .clicked()
+                    {
+                        action = Some(Do::Remove(i));
+                    }
+                    if ui
+                        .add_enabled(i + 1 < count, egui::Button::new(icons::ARROW_DOWN).frame(false))
+                        .clicked()
+                    {
+                        action = Some(Do::Move(i, 1));
+                    }
+                    if ui
+                        .add_enabled(i > 0, egui::Button::new(icons::ARROW_UP).frame(false))
+                        .clicked()
+                    {
+                        action = Some(Do::Move(i, -1));
+                    }
+                });
+            });
+            let text = story.text(option.text_id).unwrap_or_default();
+            let mut done = false;
+            if let Some(t) = fields::text_field(
+                ui,
+                ("choice_text", id, i),
+                text,
+                "Texte de l'option",
+                2,
+                &mut done,
+            ) {
+                action = Some(Do::Text(option.text_id, t));
+            }
+            field(ui, "Mène à", |ui| {
+                if let Some(Some(t)) =
+                    label_picker(ui, ("choice_target", id, i), story, Some(option.target), None)
+                {
+                    action = Some(Do::Target(i, t));
+                }
+            });
+            if new_label_button(ui) {
+                action = Some(Do::NewLabel(i));
+            }
+            ui.add_space(4.0);
+            let mut has_condition = option.condition.is_some();
+            if ui
+                .checkbox(&mut has_condition, "Option conditionnelle")
+                .changed()
+            {
+                action = Some(Do::Condition(
+                    i,
+                    has_condition.then(|| Expr::lit(true)),
+                ));
+            }
+            if let Some(cond) = &option.condition {
+                if let Some(c) = condition_editor(ui, ("choice_cond", id, i), story, cond) {
+                    action = Some(Do::Condition(i, Some(c)));
+                }
+            }
+        });
+        ui.add_space(4.0);
+    }
+    if ui
+        .button(format!("{}  Ajouter une option", icons::PLUS))
+        .clicked()
+    {
+        action = Some(Do::Add);
+    }
+    let Some(action) = action else { return };
+    let with_options = |f: &dyn Fn(&mut Vec<ChoiceOption>)| {
+        let mut o = options.to_vec();
+        f(&mut o);
+        NodeKind::Choice { options: o }
+    };
+    match action {
+        Do::Text(string, text) => {
+            let command = Command::SetString {
+                id: string,
+                text: Some(text),
+            };
+            if let Err(e) = ctx.exec_merged(command, &format!("opt-text:{string}")) {
+                ctx.error(e.to_string());
+            }
+        }
+        Do::Target(i, t) => {
+            let kind = with_options(&|o| o[i].target = t);
+            commit(ctx, id, kind, &format!("opt-target:{i}"));
+        }
+        Do::NewLabel(i) => {
+            let mut o = options.to_vec();
+            with_new_label(ctx, id, move |l| {
+                o[i].target = l;
+                NodeKind::Choice { options: o }
+            });
+        }
+        Do::Condition(i, c) => {
+            let kind = with_options(&|o| o[i].condition = c.clone());
+            commit(ctx, id, kind, &format!("opt-cond:{i}"));
+        }
+        Do::Remove(i) => {
+            let string = options[i].text_id;
+            let kind = with_options(&|o| {
+                o.remove(i);
+            });
+            let version = ctx.node_version(id);
+            let result = ctx.transaction("Supprimer une option", |tx| {
+                tx.execute(Command::ReplaceNodeKind {
+                    id,
+                    kind,
+                    expected_version: version,
+                })?;
+                tx.execute(Command::SetString {
+                    id: string,
+                    text: None,
+                })
+            });
+            if let Err(e) = result {
+                ctx.error(e.to_string());
+            }
+        }
+        Do::Move(i, d) => {
+            let j = (i as i32 + d) as usize;
+            let kind = with_options(&|o| o.swap(i, j));
+            commit(ctx, id, kind, "opt-move");
+        }
+        Do::Add => add_option(ctx, id, options),
+    }
+}
+
+fn add_option(ctx: &mut EditorContext<'_>, id: NodeId, options: &[ChoiceOption]) {
+    let Some(story) = ctx.story() else { return };
+    let target = options.last().map(|o| o.target).or_else(|| {
+        ops::labels(story).first().map(|(l, _)| *l)
+    });
+    let text_id = StringId::new();
+    let n = options.len() + 1;
+    let version = ctx.node_version(id);
+    let make = |target: NodeId| {
+        let mut o = options.to_vec();
+        o.push(ChoiceOption {
+            text_id,
+            target,
+            condition: None,
+        });
+        NodeKind::Choice { options: o }
+    };
+    let result = match target {
+        Some(target) => {
+            let kind = make(target);
+            ctx.transaction("Ajouter une option", |tx| {
+                tx.execute(Command::SetString {
+                    id: text_id,
+                    text: Some(format!("Option {n}")),
+                })?;
+                tx.execute(Command::ReplaceNodeKind {
+                    id,
+                    kind,
+                    expected_version: version,
+                })
+            })
+        }
+        None => {
+            // No label to point at yet: make one.
+            let Some((si, _)) = story.locate(id) else {
+                return;
+            };
+            let scene = story.scenes[si].id;
+            let end = story.scenes[si].nodes.len();
+            let label = Node {
+                id: NodeId::new(),
+                kind: NodeKind::Label {
+                    name: "etiquette".into(),
+                },
+            };
+            let kind = make(label.id);
+            ctx.transaction("Ajouter une option", |tx| {
+                tx.execute(Command::SetString {
+                    id: text_id,
+                    text: Some(format!("Option {n}")),
+                })?;
+                tx.execute(Command::InsertNode {
+                    scene,
+                    index: end,
+                    node: label,
+                })?;
+                tx.execute(Command::ReplaceNodeKind {
+                    id,
+                    kind,
+                    expected_version: version,
+                })
+            })
+        }
+    };
+    if let Err(e) = result {
+        ctx.error(e.to_string());
+    }
+}
+
+/// Condition editor: the simple builder when the expression allows it,
+/// otherwise (or on request) the text form with the parser.
+fn condition_editor(
+    ui: &mut Ui,
+    salt: impl fields::Salt,
+    story: &orbit_core::Story,
+    cond: &Expr,
+) -> Option<Expr> {
+    let mode_id = ui.make_persistent_id(("cond_mode", salt));
+    let simple_possible = is_simple_condition(cond);
+    let advanced = ui
+        .data(|d| d.get_temp::<bool>(mode_id))
+        .unwrap_or(false)
+        || !simple_possible;
+    let out;
+    if advanced {
+        out = expr_editor(ui, salt, story, cond, true);
+        if simple_possible
+            && ui
+                .small_button("Éditeur simple")
+                .on_hover_text("Choisir une variable, un test et une valeur")
+                .clicked()
+        {
+            ui.data_mut(|d| d.insert_temp(mode_id, false));
+        }
+    } else {
+        out = simple_condition_editor(ui, salt, story, cond);
+        if story.variables.is_empty() {
+            ui.label(
+                RichText::new("Aucune variable déclarée : ouvrez le panneau Variables, ou écrivez la condition.")
+                    .small()
+                    .color(weak(ui)),
+            );
+        }
+        if ui
+            .small_button("Écrire l'expression")
+            .on_hover_text("Passer à la saisie texte (&&, ||, !, comparaisons…)")
+            .clicked()
+        {
+            ui.data_mut(|d| d.insert_temp(mode_id, true));
+        }
+    }
+    out
+}
+
+fn set_var(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, var: &str, value: &Expr) {
+    let Some(story) = ctx.story() else { return };
+    let declared = story.variables.iter().any(|v| v.name == var);
+    let mut new_var = None;
+    field(ui, "Variable", |ui| {
+        let mut chosen = var.to_owned();
+        egui::ComboBox::from_id_salt(("setvar_var", id))
+            .selected_text(if var.is_empty() { "choisir…" } else { var })
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                for v in &story.variables {
+                    ui.selectable_value(&mut chosen, v.name.clone(), &v.name);
+                }
+            });
+        if chosen != var {
+            new_var = Some(chosen);
+        }
+        let mut done = false;
+        if let Some(t) = fields::text_field(
+            ui,
+            ("setvar_name", id),
+            var,
+            "ou un nom (variable non déclarée)",
+            1,
+            &mut done,
+        ) {
+            new_var = Some(t);
+        }
+        if !declared && !var.is_empty() {
+            ui.label(
+                RichText::new("Variable non déclarée (voir le panneau Variables).")
+                    .small()
+                    .color(warning(ui)),
+            );
+        }
+    });
+    // Value: typed widget for a constant, expression text otherwise.
+    let ty = fields::var_type(story, var);
+    let mode_id = ui.make_persistent_id(("setvar_mode", id));
+    let is_lit = matches!(value, Expr::Lit(_));
+    let calc = ui.data(|d| d.get_temp::<bool>(mode_id)).unwrap_or(false) || !is_lit;
+    let mut new_value = None;
+    field(ui, "Nouvelle valeur", |ui| {
+        ui.horizontal(|ui| {
+            let mut calc_now = calc;
+            ui.selectable_value(&mut calc_now, false, "Valeur fixe");
+            ui.selectable_value(&mut calc_now, true, "Calcul");
+            if calc_now != calc {
+                ui.data_mut(|d| d.insert_temp(mode_id, calc_now));
+                if !calc_now && !is_lit {
+                    new_value = Some(Expr::Lit(fields::default_value(ty.unwrap_or(ValueType::Int))));
+                }
+            }
+        });
+        match (calc, value) {
+            (false, Expr::Lit(v)) => {
+                if let Some(nv) = value_editor(ui, v) {
+                    new_value = Some(Expr::Lit(nv));
+                }
+                // Switch the type of the constant when the variable is not declared.
+                if ty.is_none() {
+                    ui.horizontal(|ui| {
+                        for (name, t) in [
+                            ("Nombre", ValueType::Int),
+                            ("Oui/non", ValueType::Bool),
+                            ("Texte", ValueType::Str),
+                        ] {
+                            if ui.small_button(name).clicked() && v.value_type() != t {
+                                new_value = Some(Expr::Lit(fields::default_value(t)));
+                            }
+                        }
+                    });
+                }
+            }
+            _ => {
+                if let Some(e) = expr_editor(ui, ("setvar_expr", id), story, value, false) {
+                    new_value = Some(e);
+                }
+            }
+        }
+    });
+    if new_var.is_some() || new_value.is_some() {
+        let key = if new_var.is_some() { "var" } else { "value" };
+        let kind = NodeKind::SetVar {
+            var: new_var.unwrap_or_else(|| var.to_owned()),
+            value: new_value.unwrap_or_else(|| value.clone()),
+        };
+        commit(ctx, id, kind, key);
+    }
+}
+
+fn condition_node(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    id: NodeId,
+    condition: &Expr,
+    then_target: NodeId,
+    else_target: Option<NodeId>,
+) {
+    let Some(story) = ctx.story() else { return };
+    let mut new_cond = None;
+    field(ui, "Condition", |ui| {
+        new_cond = condition_editor(ui, ("if_cond", id), story, condition);
+    });
+    let mut new_then = None;
+    field(ui, "Si vrai, aller à", |ui| {
+        new_then = label_picker(ui, ("if_then", id), story, Some(then_target), None);
+    });
+    let mut new_else = None;
+    field(ui, "Sinon", |ui| {
+        new_else = label_picker(ui, ("if_else", id), story, else_target, Some("Continuer à la ligne suivante"));
+    });
+    let rebuild = |condition: Expr, then_target: NodeId, else_target: Option<NodeId>| NodeKind::If {
+        condition,
+        then_target,
+        else_target,
+    };
+    if let Some(c) = new_cond {
+        commit(ctx, id, rebuild(c, then_target, else_target), "condition");
+    }
+    if let Some(Some(t)) = new_then {
+        commit(ctx, id, rebuild(condition.clone(), t, else_target), "then");
+    }
+    if let Some(e) = new_else {
+        commit(ctx, id, rebuild(condition.clone(), then_target, e), "else");
+    }
+    ui.add_space(4.0);
+    if new_label_button(ui) {
+        let condition = condition.clone();
+        with_new_label(ctx, id, move |l| rebuild(condition, l, else_target));
+    }
+}
+
+/// An asset chooser with a preview (images) and an "add a file" button.
+fn asset_row(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    id: NodeId,
+    kind: AssetKind,
+    current: orbit_core::AssetId,
+    build: impl Fn(orbit_core::AssetId) -> NodeKind,
+) {
+    let Some(story) = ctx.story() else { return };
+    if kind == AssetKind::Image {
+        thumbs::show(ui, ctx, story, current, egui::vec2(ui.available_width().min(240.0), 135.0));
+        ui.add_space(4.0);
+    }
+    let mut chosen = asset_picker(ui, ("asset", id), story, kind, current);
+    if ui
+        .small_button(format!("{}  Ajouter un fichier…", icons::FILE_PLUS))
+        .on_hover_text("Copie un fichier dans le projet et le déclare")
+        .clicked()
+        && let Some(new) = edit::import_asset_dialog(ctx, kind)
+    {
+        chosen = Some(new);
+    }
+    if let Some(a) = chosen {
+        commit(ctx, id, build(a), "asset");
+    }
+}
+
+fn background(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    id: NodeId,
+    asset: orbit_core::AssetId,
+    transition: Option<orbit_core::Transition>,
+) {
+    field(ui, "Image", |ui| {
+        asset_row(ui, ctx, id, AssetKind::Image, asset, |a| NodeKind::Background {
+            asset: a,
+            transition,
+        });
+    });
+    field(ui, "Transition", |ui| {
+        if let Some(t) = transition_editor(ui, ("bg_transition", id), transition) {
+            commit(ctx, id, NodeKind::Background { asset, transition: t }, "transition");
+        }
+    });
+}
+
+fn show(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    id: NodeId,
+    character: CharacterId,
+    expression: &str,
+    position: &Position,
+    transition: Option<orbit_core::Transition>,
+) {
+    let Some(story) = ctx.story() else { return };
+    let rebuild = |character, expression: String, position, transition| NodeKind::Show {
+        character,
+        expression,
+        position,
+        transition,
+    };
+    let mut new_char = None;
+    field(ui, "Personnage", |ui| {
+        new_char = character_picker(ui, ("show_char", id), story, Some(character), None);
+    });
+    let mut new_expr = None;
+    field(ui, "Expression", |ui| {
+        // Preview of the sprite.
+        if let Some(e) = story.character(character).and_then(|c| c.expression(expression)) {
+            thumbs::show(ui, ctx, story, e.image, egui::vec2(96.0, 120.0));
+            ui.add_space(4.0);
+        }
+        new_expr = expression_picker(ui, ("show_expr", id), story, character, expression);
+    });
+    let mut new_pos = None;
+    field(ui, "Position", |ui| {
+        new_pos = position_picker(ui, ("show_pos", id), story, position);
+    });
+    let mut new_tr = None;
+    field(ui, "Transition", |ui| {
+        new_tr = transition_editor(ui, ("show_tr", id), transition);
+    });
+    if let Some(Some(c)) = new_char {
+        // Keep the expression when the new character has it, else take its first.
+        let expr = story
+            .character(c)
+            .map(|d| {
+                if d.expression(expression).is_some() {
+                    expression.to_owned()
+                } else {
+                    d.expressions.first().map(|e| e.name.clone()).unwrap_or_default()
+                }
+            })
+            .unwrap_or_default();
+        commit(ctx, id, rebuild(c, expr, position.clone(), transition), "character");
+    }
+    if let Some(e) = new_expr {
+        commit(ctx, id, rebuild(character, e, position.clone(), transition), "expression");
+    }
+    if let Some(p) = new_pos {
+        commit(ctx, id, rebuild(character, expression.to_owned(), p, transition), "position");
+    }
+    if let Some(t) = new_tr {
+        commit(ctx, id, rebuild(character, expression.to_owned(), position.clone(), t), "transition");
+    }
+}
+
+fn hide(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    id: NodeId,
+    character: CharacterId,
+    transition: Option<orbit_core::Transition>,
+) {
+    let Some(story) = ctx.story() else { return };
+    let mut new_char = None;
+    field(ui, "Personnage", |ui| {
+        new_char = character_picker(ui, ("hide_char", id), story, Some(character), None);
+    });
+    let mut new_tr = None;
+    field(ui, "Transition", |ui| {
+        new_tr = transition_editor(ui, ("hide_tr", id), transition);
+    });
+    if let Some(Some(c)) = new_char {
+        commit(ctx, id, NodeKind::Hide { character: c, transition }, "character");
+    }
+    if let Some(t) = new_tr {
+        commit(ctx, id, NodeKind::Hide { character, transition: t }, "transition");
+    }
+}
+
+fn play_music(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    id: NodeId,
+    asset: orbit_core::AssetId,
+    fade_in: f32,
+    looping: bool,
+) {
+    field(ui, "Musique", |ui| {
+        asset_row(ui, ctx, id, AssetKind::Music, asset, |a| NodeKind::PlayMusic {
+            asset: a,
+            fade_in,
+            looping,
+        });
+    });
+    field(ui, "Fondu d'entrée", |ui| {
+        if let Some(v) = seconds_field(ui, fade_in) {
+            commit(ctx, id, NodeKind::PlayMusic { asset, fade_in: v, looping }, "fade_in");
+        }
+    });
+    ui.add_space(6.0);
+    let mut l = looping;
+    if ui.checkbox(&mut l, "Jouer en boucle").changed() {
+        commit(ctx, id, NodeKind::PlayMusic { asset, fade_in, looping: l }, "looping");
+    }
+}
+
+// --------------------------------------------------------------------- custom
+
+/// Fallback for node kinds without a dedicated inspector: plugin nodes get
+/// an editor of their open data (and the plugin's own validation messages).
+fn generic_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
+    let Some(story) = ctx.story() else { return };
+    let Some(node) = story.node(id) else { return };
+    let NodeKind::Custom {
+        plugin_id,
+        kind,
+        version,
+        data,
+    } = &node.kind
+    else {
+        // A built-in kind always has an inspector; this is only a safety net.
+        ui.label(RichText::new(super::nodeinfo::summary(story, node)).color(weak(ui)));
+        return;
+    };
+    ui.label(
+        RichText::new(format!("{plugin_id} · {kind} (données v{version})"))
+            .small()
+            .color(weak(ui)),
+    );
+    let problems: Vec<String> = ctx
+        .registry()
+        .project
+        .node_type(plugin_id, kind)
+        .and_then(|t| t.def.validate.map(|v| v(data)))
+        .unwrap_or_default();
+    for p in problems {
+        ui.label(RichText::new(format!("{}  {p}", icons::WARNING)).small().color(warning(ui)));
+    }
+    ui.add_space(4.0);
+    let (plugin_id, kind, version) = (plugin_id.clone(), kind.clone(), *version);
+    let data = data.clone();
+    let mut changed: Option<CustomData> = None;
+    card(ui, |ui| {
+        ui.set_width(ui.available_width());
+        changed = fields::custom_data_editor(ui, egui::Id::new(("custom", id)), &data);
+    });
+    if let Some(d) = changed {
+        commit(
+            ctx,
+            id,
+            NodeKind::Custom {
+                plugin_id,
+                kind,
+                version,
+                data: d,
+            },
+            "data",
+        );
+    }
 }

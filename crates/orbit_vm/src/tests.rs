@@ -65,6 +65,7 @@ impl B {
                     image: *image,
                 })
                 .collect(),
+            default_position: None,
         });
         id
     }

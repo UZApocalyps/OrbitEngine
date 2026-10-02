@@ -120,8 +120,10 @@ impl EditorCore {
         }
         self.apply_dialog_outcome(dialog_outcome);
         self.pump(&ctx);
-        // No text field focused: the live-edit merge session is over.
+        // No text field focused and no drag in progress: the live-edit merge
+        // session is over.
         if !ctx.egui_wants_keyboard_input()
+            && !ctx.input(|i| i.pointer.any_down())
             && let Some(session) = self.session.as_mut()
         {
             session.project.end_merge();

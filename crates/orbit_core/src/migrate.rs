@@ -183,6 +183,7 @@ fn v1_to_v2(source: &str) -> Result<String, CoreError> {
                                 name_id,
                                 color: Color::rgb(200, 200, 200),
                                 expressions: Vec::new(),
+                                default_position: None,
                             });
                             speakers.insert(name, id);
                             id

@@ -4,11 +4,16 @@
 
 mod actions;
 mod console;
+mod definitions;
+pub mod drafts;
+pub mod edit;
 mod explorer;
 mod inspector;
 mod nodeinfo;
 mod preview;
 mod sample;
+mod scene;
+mod thumbs;
 mod ui_util;
 mod welcome;
 
@@ -19,6 +24,7 @@ use orbit_editor_api::{
 pub use nodeinfo::{kind_icon, kind_key, kind_label, summary};
 pub use preview::{CANVAS as PREVIEW_CANVAS, fit_16_9, to_virtual};
 pub use sample::SamplePlugin;
+pub use scene::click_selection;
 
 /// Plugin ids of the built-in tools.
 pub mod ids {
@@ -29,6 +35,9 @@ pub mod ids {
     pub const PREVIEW: &str = "orbit.preview";
     pub const WELCOME: &str = "orbit.welcome";
     pub const SAMPLE: &str = "orbit.sample";
+    pub const SCENE: &str = "orbit.scene";
+    pub const CHARACTERS: &str = "orbit.characters";
+    pub const VARIABLES: &str = "orbit.variables";
 }
 
 /// Full ids of the built-in panels.
@@ -39,6 +48,9 @@ pub mod panels {
     pub const PREVIEW: &str = "orbit.preview.preview";
     pub const WELCOME: &str = "orbit.welcome.welcome";
     pub const SAMPLE: &str = "orbit.sample.panel";
+    pub const SCENE: &str = "orbit.scene.scene";
+    pub const CHARACTERS: &str = "orbit.characters.characters";
+    pub const VARIABLES: &str = "orbit.variables.variables";
 }
 
 /// The built-in plugins, in registration order (menus first, then panels in
@@ -47,8 +59,11 @@ pub fn plugins() -> Vec<Box<dyn EditorPlugin>> {
     vec![
         Box::new(actions::CorePlugin),
         Box::new(welcome::WelcomePlugin),
+        Box::new(scene::ScenePlugin),
         Box::new(explorer::ExplorerPlugin),
         Box::new(inspector::InspectorPlugin),
+        Box::new(definitions::CharactersPlugin),
+        Box::new(definitions::VariablesPlugin),
         Box::new(preview::PreviewPlugin),
         Box::new(console::ConsolePlugin),
         Box::new(SamplePlugin::default()),

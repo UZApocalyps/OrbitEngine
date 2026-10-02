@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use orbit_core::{NodeId, SceneId, Story};
+use orbit_project::ops::NodeClip;
 use orbit_project::{Command, Project, ProjectError, Transaction};
 use serde::{Deserialize, Serialize};
 
@@ -138,10 +139,51 @@ pub enum EditorRequest {
     ToggleMaximizePanel(String),
 }
 
+/// What validation found about nodes: errors and warnings, in French.
+#[derive(Clone, Debug, Default)]
+pub struct Diagnostics {
+    /// Project revision these findings were computed for.
+    pub revision: u64,
+    pub by_node: std::collections::HashMap<NodeId, Vec<(Level, String)>>,
+    /// Findings not tied to a node (definitions...).
+    pub general: Vec<(Level, String)>,
+}
+
+impl Diagnostics {
+    pub fn of(&self, node: NodeId) -> &[(Level, String)] {
+        self.by_node.get(&node).map_or(&[], Vec::as_slice)
+    }
+
+    /// The worst level among the findings of a node.
+    pub fn worst(&self, node: NodeId) -> Option<Level> {
+        let items = self.of(node);
+        if items.iter().any(|(l, _)| *l == Level::Error) {
+            Some(Level::Error)
+        } else if items.is_empty() {
+            None
+        } else {
+            Some(Level::Warn)
+        }
+    }
+}
+
 /// State owned by the editor, separate from the project: never undoable.
 #[derive(Default)]
 pub struct EditorState {
     pub selection: Option<Selection>,
+    /// Every selected node (multi-selection); the primary one, if any, is in
+    /// `selection`. Empty when no node is selected.
+    pub node_selection: Vec<NodeId>,
+    /// The scene shown by the scene editor.
+    pub current_scene: Option<SceneId>,
+    /// Internal clipboard of the scene editor (copy / paste of nodes).
+    pub clipboard: Option<NodeClip>,
+    /// A node whose text the scene editor should start editing in place.
+    pub inline_edit: Option<NodeId>,
+    /// Validation findings per node, kept up to date by the host.
+    pub diagnostics: Diagnostics,
+    /// Debug (`--autoscroll`): pixels the scene editor scrolls by each frame.
+    pub debug_autoscroll: Option<f32>,
     pub toasts: Vec<Toast>,
     pub console: ConsoleLog,
     pub requests: Vec<EditorRequest>,
@@ -279,6 +321,31 @@ impl<'a> EditorContext<'a> {
         Ok(project.transaction_labeled(label, f)?)
     }
 
+    /// Runs a compound operation of `orbit_project::ops` (insert, delete,
+    /// move, copy / paste, renames...): they are built from commands and
+    /// each one is a single undo entry.
+    pub fn ops<R>(
+        &mut self,
+        f: impl FnOnce(&mut Project) -> Result<R, ProjectError>,
+    ) -> Result<R, EditorError> {
+        let project = self.project.as_deref_mut().ok_or(EditorError::NoProject)?;
+        Ok(f(project)?)
+    }
+
+    /// Like [`EditorContext::ops`], reporting a failure as an error toast.
+    pub fn ops_or_toast<R>(
+        &mut self,
+        f: impl FnOnce(&mut Project) -> Result<R, ProjectError>,
+    ) -> Option<R> {
+        match self.ops(f) {
+            Ok(value) => Some(value),
+            Err(e) => {
+                self.error(e.to_string());
+                None
+            }
+        }
+    }
+
     /// Like [`EditorContext::exec`], reporting a failure as an error toast.
     pub fn exec_or_toast(&mut self, command: Command) -> bool {
         match self.exec(command) {
@@ -322,12 +389,39 @@ impl<'a> EditorContext<'a> {
         self.state.selection
     }
 
+    /// Selects one element (replaces any multi-selection).
     pub fn select(&mut self, selection: Selection) {
         self.state.selection = Some(selection);
+        self.state.node_selection = match selection {
+            Selection::Node(id) => vec![id],
+            Selection::Scene(id) => {
+                self.state.current_scene = Some(id);
+                Vec::new()
+            }
+        };
+    }
+
+    /// Selects several nodes; `primary` (which should be one of them) is
+    /// the one the inspector shows.
+    pub fn select_nodes(&mut self, nodes: Vec<NodeId>, primary: NodeId) {
+        self.state.selection = Some(Selection::Node(primary));
+        self.state.node_selection = nodes;
+    }
+
+    /// The selected nodes (the multi-selection, or the single selected node).
+    pub fn selected_nodes(&self) -> Vec<NodeId> {
+        match self.state.selection {
+            Some(Selection::Node(id)) if self.state.node_selection.contains(&id) => {
+                self.state.node_selection.clone()
+            }
+            Some(Selection::Node(id)) => vec![id],
+            _ => Vec::new(),
+        }
     }
 
     pub fn clear_selection(&mut self) {
         self.state.selection = None;
+        self.state.node_selection.clear();
     }
 
     pub fn info(&mut self, message: impl Into<String>) {

@@ -103,6 +103,8 @@ pub struct EditorCore {
     /// Bumped each time a project is opened or closed (the preview reloads
     /// from scratch instead of resuming).
     pub project_generation: u64,
+    /// `(project generation, revision)` the diagnostics were computed for.
+    diag_key: Option<(u64, u64)>,
 }
 
 impl EditorCore {
@@ -168,6 +170,7 @@ impl EditorCore {
             first_frame_done: false,
             show_frame_counter: false,
             project_generation: 0,
+            diag_key: None,
         }
     }
 
@@ -264,7 +267,12 @@ impl EditorCore {
         let title = session.name.clone();
         self.session = Some(session);
         self.state.selection = None;
+        self.state.node_selection.clear();
+        self.state.current_scene = None;
+        self.state.clipboard = None;
         self.state.collapsed_scenes.clear();
+        self.diag_key = None;
+        dock::show_panel(&mut self.dock, builtin::panels::SCENE);
         self.sync_info();
         self.remember(&title, &remembered);
         self.registry
@@ -579,6 +587,7 @@ impl EditorCore {
     /// autosave, layout persistence.
     pub fn after_frame(&mut self, ctx: &Context) {
         self.process_changes();
+        self.refresh_diagnostics();
         self.sync_info();
         if let Some(session) = self.session.as_mut() {
             let now = Instant::now();
@@ -601,6 +610,27 @@ impl EditorCore {
         }
     }
 
+    /// Recomputes the per-node validation findings when the project changed.
+    pub fn refresh_diagnostics(&mut self) {
+        let Some(session) = self.session.as_ref() else {
+            self.diag_key = None;
+            self.state.diagnostics = Default::default();
+            return;
+        };
+        let key = (self.project_generation, session.project.revision());
+        if self.diag_key == Some(key) {
+            return;
+        }
+        let started = Instant::now();
+        self.state.diagnostics =
+            crate::diagnostics::compute(session.project.story(), session.project.revision());
+        self.diag_key = Some(key);
+        let elapsed = started.elapsed();
+        if elapsed > Duration::from_millis(8) {
+            log::debug!(target: "orbit_editor::perf", "validation: {} ms", elapsed.as_millis());
+        }
+    }
+
     /// Delivers project change events: plugin hooks, selection upkeep.
     fn process_changes(&mut self) {
         let Some(session) = self.session.as_mut() else {
@@ -611,6 +641,7 @@ impl EditorCore {
                 .project
                 .dispatch(&ProjectEvent::Changed(&event));
             let story = session.project.story();
+            self.state.node_selection.retain(|id| story.locate(*id).is_some());
             match self.state.selection {
                 Some(Selection::Node(id)) if story.locate(id).is_none() => {
                     self.state.selection = None;
