@@ -123,6 +123,11 @@ id_type!(
     AssetId
 );
 
+id_type!(
+    /// Stable id of a node inside a 3D scene or prefab (`.scene3d.ron`).
+    Node3dId
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;

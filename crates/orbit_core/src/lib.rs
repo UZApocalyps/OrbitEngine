@@ -25,7 +25,7 @@ pub use defs::{
 };
 pub use error::{AnimationIssue, CoreError, ValidationError, ValidationWarning};
 pub use expr::{BinOp, EvalError, Expr, ParseError, TypeError, UnOp};
-pub use ids::{AssetId, CharacterId, NodeId, SceneId, StringId};
+pub use ids::{AssetId, CharacterId, Node3dId, NodeId, SceneId, StringId};
 pub use story::{CURRENT_SCHEMA_VERSION, ChoiceOption, Node, NodeKind, Scene, Story};
 pub use validate::{ValidationReport, check_asset_files, validate};
 pub use value::{Value, ValueType};
