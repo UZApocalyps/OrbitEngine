@@ -406,8 +406,17 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
                             Color32::from_rgb(255, 228, 140),
                         ),
                     };
-                    ui.label(RichText::new(icon).size(15.0).color(color))
-                        .on_hover_text(text);
+                    let badge = ui
+                        .add(
+                            egui::Label::new(RichText::new(icon).size(15.0).color(color))
+                                .sense(egui::Sense::click()),
+                        )
+                        .on_hover_text(format!("{text}\nClic : afficher le nœud"));
+                    if badge.clicked()
+                        && let Some(node) = n.problem_node
+                    {
+                        self.events.push(GraphEvent::Reveal(node));
+                    }
                 });
             }
         });

@@ -20,7 +20,7 @@ use egui_phosphor::regular as ph;
 use orbit_core::{NodeKind, SceneId, Story};
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Level,
-    PanelDef, Plugin, PluginManifest, Selection,
+    Location, PanelDef, Plugin, PluginManifest, Selection,
 };
 use orbit_project::graph::{BlockId, GraphModel, SlotKind, SlotRef, SlotTarget, Terminator};
 use orbit_project::graph_layout::{BLOCK_WIDTH, GraphLayout, auto_layout, block_height};
@@ -62,6 +62,8 @@ struct GraphUi {
     /// Scroll to this block (and zoom in to at least this level) once its
     /// position is known.
     focus: Option<(BlockId, Option<f32>)>,
+    /// `EditorState::reveal_serial` already handled.
+    seen_reveal: u64,
 }
 
 impl GraphUi {
@@ -77,6 +79,7 @@ impl GraphUi {
             search_focus: false,
             show_minimap: true,
             focus: None,
+            seen_reveal: 0,
         }
     }
 }
@@ -328,6 +331,7 @@ fn build_content(
                 .collect();
             // Worst finding over the nodes of the block.
             let mut problem: Option<(Level, String)> = None;
+            let mut problem_node = None;
             let mut count = 0;
             for id in &block.nodes {
                 for (level, message) in diagnostics.of(*id) {
@@ -340,6 +344,7 @@ fn build_content(
                     };
                     if worse {
                         problem = Some((*level, message.clone()));
+                        problem_node = Some(*id);
                     }
                 }
             }
@@ -360,6 +365,7 @@ fn build_content(
                     first_line: block.first_line.clone(),
                     slots,
                     problem,
+                    problem_node,
                     orphan: model.unreachable.contains(&block.id),
                     dead_nodes: block.dead_nodes,
                     selected: selected.contains(&block.id),
@@ -507,6 +513,20 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) {
             1.0 + 0.004 * (t * 1.5).cos(),
         );
         ui.ctx().request_repaint();
+    }
+
+    // Something was revealed elsewhere (problems, search, palette): bring the
+    // graph to it.
+    {
+        let serial = ctx.state().reveal_serial;
+        let mut st = shared.borrow_mut();
+        if st.seen_reveal != serial {
+            st.seen_reveal = serial;
+            drop(st);
+            if let Some(block) = selected_block(ctx) {
+                focus_block(shared, block, None);
+            }
+        }
     }
 
     // A pending "scroll to this block".
@@ -971,9 +991,17 @@ fn handle_with(ctx: &mut EditorContext<'_>, model: &GraphModel, event: GraphEven
             }
         }
         GraphEvent::Open(block) => {
-            select_block(ctx, model, block);
-            ctx.request(EditorRequest::ShowPanel(super::panels::SCENE.to_owned()));
+            let Some(b) = model.block(block) else { return };
+            // The scene editor, the explorer and the inspector follow.
+            super::reveal::reveal(
+                ctx,
+                match b.head_node() {
+                    Some(node) => Location::Node(node),
+                    None => Location::Scene(b.scene),
+                },
+            );
         }
+        GraphEvent::Reveal(node) => super::reveal::reveal(ctx, Location::Node(node)),
         GraphEvent::PlayFrom(block) => {
             select_block(ctx, model, block);
             match model.block(block).and_then(|b| b.head_node()) {

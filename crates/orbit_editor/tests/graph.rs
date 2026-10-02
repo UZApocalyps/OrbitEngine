@@ -545,3 +545,35 @@ fn the_graph_panel_draws_every_state_without_panicking() {
     core.close_project();
     frames(&mut core, &ctx, 2);
 }
+
+#[test]
+fn revealing_elsewhere_brings_the_graph_to_the_node_and_problems_are_located() {
+    use orbit_editor_api::Location;
+
+    let (mut core, ctx, _dir, _root) = new_project("reveal");
+    frames(&mut core, &ctx, 3);
+    let (_, first) = intro(&core);
+    with_ctx(&mut core, |c| c.select(Selection::Node(first)));
+    core.run_action_now("orbit.graph.add_choice", &ctx);
+    frames(&mut core, &ctx, 3);
+
+    // The branch scenes end the game: warnings, located on a node that a
+    // click on the Problems panel (or on the badge of the block) reveals.
+    let problems = core.state.diagnostics.problems.clone();
+    let ends: Vec<_> = problems
+        .iter()
+        .filter(|p| p.message.contains("La partie se termine ici"))
+        .collect();
+    assert!(ends.len() >= 2, "{problems:?}");
+    assert!(ends.iter().all(|p| p.location.is_some()));
+
+    // Reveal a node of the second branch (as the Problems panel or the
+    // search do): the selection follows and the graph draws without error.
+    let branch_label = story(&core).scenes[2].nodes[0].id;
+    with_ctx(&mut core, |c| {
+        orbit_editor::builtin::reveal::reveal(c, Location::Node(branch_label));
+    });
+    frames(&mut core, &ctx, 3);
+    assert_eq!(core.state.selection, Some(Selection::Node(branch_label)));
+    assert!(core.state.graph.pending_delete.is_none());
+}

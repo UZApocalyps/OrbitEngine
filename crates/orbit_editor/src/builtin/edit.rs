@@ -2,7 +2,7 @@
 //! and the palette actions: insert, delete, duplicate, copy / paste, nudge,
 //! scene management. Each one is one undo entry (see `orbit_project::ops`).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use orbit_core::{AssetId, AssetKind, NodeId, NodeKind, SceneId, Story};
 use orbit_editor_api::{EditorContext, Selection};
@@ -44,75 +44,59 @@ pub fn insertion_point(ctx: &EditorContext<'_>) -> Option<(SceneId, usize)> {
     Some((scene.id, scene.nodes.len()))
 }
 
-/// Copies `source` into the project's `assets/` folder when it lies outside
-/// the project, and returns the manifest path (relative, `/` separators).
-pub fn project_relative_path(root: &Path, source: &Path) -> Result<String, String> {
-    let relative = |p: &Path| -> Option<String> {
-        let rel = p.strip_prefix(root).ok()?;
-        Some(
-            rel.components()
-                .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join("/"),
-        )
-    };
-    if let Some(rel) = relative(source) {
-        return Ok(rel);
-    }
-    let name = source
-        .file_name()
-        .ok_or_else(|| "Nom de fichier invalide".to_owned())?
-        .to_string_lossy()
-        .into_owned();
-    let dir = root.join("assets");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let mut target: PathBuf = dir.join(&name);
-    let (stem, ext) = match name.rsplit_once('.') {
-        Some((s, e)) => (s.to_owned(), format!(".{e}")),
-        None => (name.clone(), String::new()),
-    };
-    let mut n = 2;
-    while target.exists() {
-        target = dir.join(format!("{stem}-{n}{ext}"));
-        n += 1;
-    }
-    std::fs::copy(source, &target).map_err(|e| format!("Copie impossible : {e}"))?;
-    relative(&target).ok_or_else(|| "Chemin hors du projet".to_owned())
-}
-
-/// Asks for a file (system dialog), copies it into the project when needed
-/// and registers it in the manifest. Returns its id. (The full importer,
-/// with previews and plugin importers, is M3e.)
+/// Asks for a file (system dialog) of the given kind and imports it into the
+/// project (validated, copied under `assets/<type>/`, declared under a new
+/// stable id). Returns its id.
 pub fn import_asset_dialog(ctx: &mut EditorContext<'_>, kind: AssetKind) -> Option<AssetId> {
     let root = ctx.project_info()?.root.clone();
     let (title, extensions): (&str, &[&str]) = match kind {
-        AssetKind::Image => ("Choisir une image", &["png", "jpg", "jpeg", "webp"]),
-        AssetKind::Music => ("Choisir une musique", &["ogg", "wav", "mp3", "flac"]),
-        AssetKind::Sound => ("Choisir un son", &["ogg", "wav", "mp3", "flac"]),
+        AssetKind::Image => ("Choisir une image", &["png", "jpg", "jpeg"]),
+        AssetKind::Music => ("Choisir une musique", &["ogg", "wav"]),
+        AssetKind::Sound => ("Choisir un son", &["ogg", "wav"]),
     };
     let file = rfd::FileDialog::new()
         .set_title(title)
         .set_directory(&root)
         .add_filter(kind.to_string(), extensions)
         .pick_file()?;
-    register_asset_file(ctx, &root, &file, kind)
+    register_asset_file(ctx, &file, kind)
 }
 
-/// The non-interactive half of [`import_asset_dialog`].
+/// The non-interactive half of [`import_asset_dialog`]: imports `file` and
+/// returns its id, or reports why not. A file of another kind than wanted
+/// (a sound where an image is expected) is refused.
 pub fn register_asset_file(
     ctx: &mut EditorContext<'_>,
-    root: &Path,
     file: &Path,
     kind: AssetKind,
 ) -> Option<AssetId> {
-    let path = match project_relative_path(root, file) {
-        Ok(p) => p,
-        Err(e) => {
-            ctx.error(e);
+    let report = super::import_paths(ctx, &[file.to_owned()]);
+    let imported = report.imported.first()?;
+    if imported.kind != kind {
+        // Audio is long (music) or short (sound): both fit an audio field.
+        // The importer guessed from the length; the field says what it is.
+        let audio = |k: AssetKind| matches!(k, AssetKind::Music | AssetKind::Sound);
+        if !(audio(kind) && audio(imported.kind)) {
+            ctx.error(format!(
+                "« {} » est de type « {} », « {kind} » attendu.",
+                imported.path, imported.kind
+            ));
             return None;
         }
-    };
-    ctx.ops_or_toast(|p| ops::add_asset(p, kind, &path))
+        let command = orbit_project::Command::SetAsset {
+            id: imported.id,
+            entry: Some(orbit_core::AssetEntry {
+                id: imported.id,
+                kind,
+                path: imported.path.clone(),
+            }),
+            index: None,
+        };
+        if !ctx.exec_or_toast(command) {
+            return None;
+        }
+    }
+    Some(imported.id)
 }
 
 /// Inserts a node of type `key` (see `drafts`) after the selection and

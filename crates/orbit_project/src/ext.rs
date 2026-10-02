@@ -28,19 +28,35 @@ fn character_user(story: &Story, id: CharacterId) -> Option<orbit_core::NodeId> 
         .map(|n| n.id)
 }
 
-/// Node (if any) that still uses asset `id` directly.
-fn asset_user(story: &Story, id: AssetId) -> Option<orbit_core::NodeId> {
-    story
+/// What still uses an asset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssetUser {
+    /// A node (background, music, sound).
+    Node(orbit_core::NodeId),
+    /// An expression (sprite) of a character.
+    Character(CharacterId),
+}
+
+/// Everything that uses asset `id`: nodes first, then characters whose
+/// expressions point at it.
+pub fn asset_users(story: &Story, id: AssetId) -> Vec<AssetUser> {
+    let nodes = story
         .scenes
         .iter()
         .flat_map(|s| &s.nodes)
-        .find(|n| match &n.kind {
+        .filter(|n| match &n.kind {
             NodeKind::Background { asset, .. }
             | NodeKind::PlayMusic { asset, .. }
             | NodeKind::PlaySound { asset } => *asset == id,
             _ => false,
         })
-        .map(|n| n.id)
+        .map(|n| AssetUser::Node(n.id));
+    let characters = story
+        .characters
+        .iter()
+        .filter(|c| c.expressions.iter().any(|e| e.image == id))
+        .map(|c| AssetUser::Character(c.id));
+    nodes.chain(characters).collect()
 }
 
 pub(crate) fn apply(cmd: &Command, story: &mut Story) -> Result<Applied, CommandError> {
@@ -306,8 +322,14 @@ pub(crate) fn apply(cmd: &Command, story: &mut Story) -> Result<Applied, Command
                     })
                 }
                 (Some(pos), None) => {
-                    if let Some(user) = asset_user(story, *id) {
-                        return Err(CommandError::AssetInUse(*id, user));
+                    match asset_users(story, *id).first() {
+                        Some(AssetUser::Node(user)) => {
+                            return Err(CommandError::AssetInUse(*id, *user));
+                        }
+                        Some(AssetUser::Character(user)) => {
+                            return Err(CommandError::AssetInUseByCharacter(*id, *user));
+                        }
+                        None => {}
                     }
                     let old: AssetEntry = story.assets.assets.remove(pos);
                     Ok(Applied {

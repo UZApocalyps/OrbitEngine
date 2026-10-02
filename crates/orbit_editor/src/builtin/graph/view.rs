@@ -41,6 +41,9 @@ pub struct ViewNode {
     pub slots: Vec<ViewSlot>,
     /// Worst validation finding on the block and its text.
     pub problem: Option<(orbit_editor_api::Level, String)>,
+    /// The node of the block the first finding is about (a click on the
+    /// badge reveals it).
+    pub problem_node: Option<orbit_core::NodeId>,
     /// No path from the start of the story reaches it.
     pub orphan: bool,
     /// Nodes after the terminator, which never run.
@@ -70,6 +73,8 @@ pub enum GraphEvent {
     /// Double click: open in the scene editor.
     Open(BlockId),
     PlayFrom(BlockId),
+    /// Show a node (the one a validation finding is about).
+    Reveal(orbit_core::NodeId),
     /// A block is being dragged to this position.
     Moved(BlockId, (f32, f32)),
     /// The pointer was released after moving blocks.

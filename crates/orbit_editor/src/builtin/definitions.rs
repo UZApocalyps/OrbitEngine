@@ -21,7 +21,7 @@ use orbit_project::{Command, ops};
 use super::edit;
 use super::ids;
 use super::thumbs;
-use super::ui_util::{card, danger, faint, primary_button, section_title, strong, weak};
+use super::ui_util::{accent, card, danger, faint, primary_button, section_title, strong, weak};
 
 /// Colors offered for characters.
 const PALETTE: [(u8, u8, u8); 10] = [
@@ -76,6 +76,11 @@ fn characters_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Characters
     if !ctx.has_project() {
         empty_project(ui);
         return;
+    }
+    // A problem or a search hit points at a character: select it.
+    if let Some(orbit_editor_api::Location::Character(id)) = ctx.state().pending_reveal.clone() {
+        ctx.state_mut().pending_reveal = None;
+        state.selected.set(Some(id));
     }
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -596,6 +601,17 @@ fn variables_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         empty_project(ui);
         return;
     }
+    // A problem or a search hit points at a variable: highlight its row.
+    let reveal_id = egui::Id::new("orbit_variable_reveal");
+    if let Some(orbit_editor_api::Location::Variable(name)) = ctx.state().pending_reveal.clone() {
+        let serial = ctx.state().reveal_serial;
+        ctx.state_mut().pending_reveal = None;
+        ui.data_mut(|d| d.insert_temp(reveal_id, (name, serial)));
+    }
+    let revealed: Option<String> = ui
+        .data(|d| d.get_temp::<(String, u64)>(reveal_id))
+        .filter(|(_, serial)| *serial == ctx.state().reveal_serial)
+        .map(|(name, _)| name);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -636,7 +652,16 @@ fn variables_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             }
             let vars = story.variables.clone();
             for decl in &vars {
-                variable_row(ui, ctx, decl);
+                let row = ui.scope(|ui| variable_row(ui, ctx, decl)).response;
+                if revealed.as_deref() == Some(decl.name.as_str()) {
+                    ui.painter().rect_stroke(
+                        row.rect.expand(3.0),
+                        egui::CornerRadius::same(8),
+                        egui::Stroke::new(1.5, accent(ui)),
+                        egui::StrokeKind::Outside,
+                    );
+                    row.scroll_to_me(Some(egui::Align::Center));
+                }
                 ui.add_space(4.0);
             }
         });

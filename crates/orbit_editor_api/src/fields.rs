@@ -179,7 +179,38 @@ pub fn position_picker(
     (chosen != *current).then_some(chosen)
 }
 
-/// Asset chooser, filtered by kind. Shows the asset's path.
+/// What the asset library drags: dropped on an asset field it assigns the
+/// asset (see [`asset_picker`], [`asset_drop`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AssetDrag {
+    pub id: AssetId,
+    pub kind: AssetKind,
+}
+
+/// The asset being dragged over `response`, when it is of `kind`; draws the
+/// drop highlight. Returns it on the frame it is released there.
+pub fn asset_drop(ui: &Ui, response: &egui::Response, kind: AssetKind) -> Option<AssetId> {
+    if let Some(drag) = response.dnd_hover_payload::<AssetDrag>() {
+        let color = if drag.kind == kind {
+            ui.visuals().selection.stroke.color
+        } else {
+            danger(ui)
+        };
+        ui.painter().rect_stroke(
+            response.rect.expand(1.0),
+            4.0,
+            egui::Stroke::new(2.0, color),
+            egui::StrokeKind::Outside,
+        );
+    }
+    response
+        .dnd_release_payload::<AssetDrag>()
+        .filter(|drag| drag.kind == kind)
+        .map(|drag| drag.id)
+}
+
+/// Asset chooser, filtered by kind. Shows the asset's path. An asset
+/// dragged from the library and dropped on it is chosen.
 pub fn asset_picker(
     ui: &mut Ui,
     salt: impl Salt,
@@ -193,7 +224,7 @@ pub fn asset_picker(
         None => RichText::new("(ressource inconnue)").color(danger(ui)),
     };
     let mut chosen = current;
-    ComboBox::from_id_salt(salt)
+    let combo = ComboBox::from_id_salt(salt)
         .selected_text(text)
         .width(ui.available_width())
         .show_ui(ui, |ui| {
@@ -211,6 +242,11 @@ pub fn asset_picker(
                 );
             }
         });
+    if let Some(dropped) = asset_drop(ui, &combo.response, kind)
+        && story.assets.get(dropped).is_some()
+    {
+        chosen = dropped;
+    }
     if known.is_some_and(|a| a.kind != kind) {
         ui.label(
             RichText::new(format!("Cette ressource n'est pas de type « {kind} »."))

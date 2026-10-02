@@ -124,6 +124,15 @@ impl EditorApp {
             {
                 core.state.preview.command(PreviewCommand::PlayFrom(id));
             }
+            if !args.imports.is_empty() {
+                core.import_dropped(args.imports.clone());
+            }
+            if let Some(n) = args.select_asset {
+                core.select_nth_asset(n);
+            }
+            if let Some(query) = &args.search {
+                core.open_search(query);
+            }
         }
         for action in &args.run_actions {
             core.run_action_now(action, &egui_ctx);
@@ -625,5 +634,11 @@ impl App for EditorApp {
 
     fn host_requests(&mut self) -> Vec<HostRequest> {
         std::mem::take(&mut self.host)
+    }
+
+    fn attach_waker(&mut self, waker: orbit_platform::Waker) {
+        // Background threads (thumbnails, file watching, validation) ask for
+        // a frame through the event loop.
+        self.core.set_waker(move || waker.wake());
     }
 }

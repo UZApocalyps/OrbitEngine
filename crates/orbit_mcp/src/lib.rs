@@ -18,7 +18,7 @@
 pub mod convert;
 pub mod error;
 pub mod host;
-pub mod sandbox;
+pub use orbit_project::sandbox;
 pub mod schema;
 pub mod server;
 pub mod tools;

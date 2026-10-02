@@ -17,7 +17,7 @@ mod registry;
 
 pub use context::{
     ConsoleEntry, ConsoleLog, Diagnostics, EditorContext, EditorError, EditorRequest, EditorState,
-    Level, ProjectInfo, RecentProject, Selection, ThemeMode, Toast,
+    Level, Location, Problem, ProjectInfo, RecentProject, Selection, ThemeMode, Toast, Waker,
 };
 pub use graph_state::GraphState;
 pub use orbit_plugin_api::{API_VERSION, Plugin, PluginError, PluginManifest, ProjectRegistry};

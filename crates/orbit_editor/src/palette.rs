@@ -6,9 +6,10 @@ use egui::{
     Align, Align2, Color32, Context, CornerRadius, FontId, Frame, Id, Key, Margin, Modifiers,
     Sense, Stroke, TextEdit, Ui, vec2,
 };
-use orbit_editor_api::{EditorContext, EditorRegistry, icons, shortcut_text};
+use orbit_editor_api::{EditorContext, EditorRegistry, Location, icons, shortcut_text};
 
 use crate::fuzzy::fuzzy_match;
+use crate::search::{HitKind, SearchHandle};
 use crate::theme::{Theme, bold};
 
 /// Rows shown at most.
@@ -28,6 +29,12 @@ pub struct PaletteItem {
     /// Char indices of `label` that matched the query.
     pub positions: Vec<usize>,
     pub score: i32,
+    /// A thing of the project to show instead of running an action
+    /// (navigation: scenes, lines, characters, assets...).
+    pub goto: Option<Location>,
+    /// A scattered match (`bob` in "Basculer ... sombre"): shown after the
+    /// project's own entries when those exist.
+    pub weak: bool,
 }
 
 /// Enabled actions matching `query`, best first (registry order for ties).
@@ -48,12 +55,14 @@ pub fn search(registry: &EditorRegistry, ctx: &EditorContext<'_>, query: &str) -
             };
             Some(PaletteItem {
                 action_id: a.def.id.clone(),
-                label,
                 category: a.def.category.clone(),
                 icon: a.def.icon,
                 shortcut: a.def.shortcut.as_ref().map(shortcut_text),
+                weak: is_weak(&label, &positions),
                 positions,
+                label,
                 score,
+                goto: None,
             })
         })
         .collect();
@@ -63,12 +72,93 @@ pub fn search(registry: &EditorRegistry, ctx: &EditorContext<'_>, query: &str) -
     items
 }
 
+/// Whether the matched characters are scattered: neither one contiguous run
+/// nor all at the start of words (`np` for "Nouveau projet").
+fn is_weak(label: &str, positions: &[usize]) -> bool {
+    if positions.len() < 2 {
+        return false;
+    }
+    let chars: Vec<char> = label.chars().collect();
+    let contiguous = positions.windows(2).all(|w| w[1] == w[0] + 1);
+    let word_starts = positions
+        .iter()
+        .all(|&p| p == 0 || chars.get(p - 1).is_some_and(|c| !c.is_alphanumeric()));
+    !(contiguous || word_starts)
+}
+
+/// Orders the palette: commands that match well, then the project's own
+/// things (scenes, characters, lines...), then the scattered command matches.
+pub fn merge(actions: Vec<PaletteItem>, navigation: Vec<PaletteItem>) -> Vec<PaletteItem> {
+    let (weak, strong): (Vec<_>, Vec<_>) = actions.into_iter().partition(|i| i.weak);
+    strong.into_iter().chain(navigation).chain(weak).collect()
+}
+
+/// Navigation entries for `query`: scenes, characters, variables, labels,
+/// assets and dialogue lines of the open project, from the global search
+/// index (names first, then texts), at most [`MAX_NAV`]. Needs two letters.
+pub fn navigation(handle: &SearchHandle, ctx: &EditorContext<'_>, query: &str) -> Vec<PaletteItem> {
+    if query.trim().chars().count() < 2 {
+        return Vec::new();
+    }
+    let (Some(story), Some(project)) = (ctx.story(), ctx.project()) else {
+        return Vec::new();
+    };
+    handle.refresh(story, (0, project.revision()));
+    let mut hits = handle.query(query);
+    // Names are what one jumps to; long texts come after.
+    hits.sort_by_key(|h| matches!(h.kind, HitKind::Line | HitKind::Choice));
+    hits.into_iter()
+        .take(MAX_NAV)
+        .map(|hit| {
+            let icon = match hit.kind {
+                HitKind::Line => icons::CHAT_TEXT,
+                HitKind::Choice => icons::GIT_BRANCH,
+                HitKind::Character => icons::USER,
+                HitKind::Variable => icons::BRACKETS_CURLY,
+                HitKind::Label => icons::FLAG,
+                HitKind::Scene => icons::FOLDER_SIMPLE,
+                HitKind::Asset => icons::IMAGE,
+            };
+            let chars: Vec<char> = hit.text.chars().collect();
+            let shown: String = if chars.len() > NAV_LABEL_CHARS {
+                chars[..NAV_LABEL_CHARS].iter().chain(&['…']).collect()
+            } else {
+                hit.text.clone()
+            };
+            let positions = hit
+                .marks
+                .iter()
+                .flat_map(|(s, e)| *s..*e)
+                .filter(|i| *i < NAV_LABEL_CHARS)
+                .collect();
+            PaletteItem {
+                action_id: String::new(),
+                label: shown,
+                category: hit.context.clone(),
+                icon,
+                shortcut: None,
+                positions,
+                score: hit.score,
+                goto: Some(hit.location),
+                weak: false,
+            }
+        })
+        .collect()
+}
+
+/// Navigation entries shown at most.
+const MAX_NAV: usize = 8;
+/// Characters of a line shown in a navigation entry.
+const NAV_LABEL_CHARS: usize = 64;
+
 /// What the user did in the palette this frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PaletteOutcome {
     None,
     Close,
     Run(String),
+    /// Show this thing of the project.
+    Goto(Location),
 }
 
 #[derive(Default)]
@@ -138,7 +228,7 @@ impl Palette {
         }
         let mut outcome = PaletteOutcome::None;
         if enter && let Some(item) = items.get(self.selected) {
-            outcome = PaletteOutcome::Run(item.action_id.clone());
+            outcome = choose(item);
         }
 
         let frame = Frame::new()
@@ -191,7 +281,7 @@ impl Palette {
                     .color(theme.text_faint()),
             );
             let edit = TextEdit::singleline(&mut self.query)
-                .hint_text("Rechercher une commande…")
+                .hint_text("Commande, scène, personnage, réplique…")
                 .desired_width(f32::INFINITY)
                 .font(FontId::proportional(16.0))
                 .frame(Frame::NONE)
@@ -212,9 +302,7 @@ impl Palette {
         if items.is_empty() {
             ui.add_space(18.0);
             ui.vertical_centered(|ui| {
-                ui.label(
-                    egui::RichText::new("Aucune commande ne correspond.").color(theme.text_weak()),
-                );
+                ui.label(egui::RichText::new("Rien ne correspond.").color(theme.text_weak()));
             });
             ui.add_space(18.0);
         } else {
@@ -225,7 +313,7 @@ impl Palette {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for (index, item) in items.iter().enumerate() {
                         if self.row(ui, theme, item, index) {
-                            *outcome = PaletteOutcome::Run(item.action_id.clone());
+                            *outcome = choose(item);
                         }
                     }
                 });
@@ -319,6 +407,13 @@ impl Palette {
             keycaps(&painter, theme, shortcut, inner.right() - 8.0, center_y);
         }
         response.clicked()
+    }
+}
+
+fn choose(item: &PaletteItem) -> PaletteOutcome {
+    match &item.goto {
+        Some(location) => PaletteOutcome::Goto(location.clone()),
+        None => PaletteOutcome::Run(item.action_id.clone()),
     }
 }
 
@@ -448,5 +543,35 @@ mod tests {
         let hit = search(&registry, &ctx, "ouvrir").remove(0);
         assert_eq!(hit.shortcut.as_deref(), Some("Ctrl+O"));
         assert_eq!(hit.positions, vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn scattered_matches_come_after_the_projects_own_entries() {
+        let item = |label: &str, weak: bool, goto: Option<Location>| PaletteItem {
+            action_id: label.to_owned(),
+            label: label.to_owned(),
+            category: String::new(),
+            icon: "",
+            shortcut: None,
+            positions: Vec::new(),
+            score: 0,
+            goto,
+            weak,
+        };
+        // `bob` is scattered in "Basculer le thème clair / sombre" but
+        // contiguous in "Bob"; `np` hits the word starts of "Nouveau projet".
+        assert!(is_weak("Basculer le thème clair / sombre", &[0, 22, 25]));
+        assert!(!is_weak("Bob", &[0, 1, 2]));
+        assert!(!is_weak("Nouveau projet", &[0, 8]));
+        let merged = merge(
+            vec![item("strong", false, None), item("scattered", true, None)],
+            vec![item(
+                "Bob",
+                false,
+                Some(Location::Scene(orbit_core::SceneId::new())),
+            )],
+        );
+        let order: Vec<&str> = merged.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(order, ["strong", "Bob", "scattered"]);
     }
 }

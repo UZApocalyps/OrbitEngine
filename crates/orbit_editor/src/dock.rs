@@ -45,7 +45,7 @@ pub fn default_layout(registry: &EditorRegistry) -> DockState<String> {
         }
     }
     if !bottom.is_empty() {
-        let [old, _] = main.split_below(middle, 0.7, bottom);
+        let [old, _] = main.split_below(middle, 0.66, bottom);
         middle = old;
     }
     let _ = middle;

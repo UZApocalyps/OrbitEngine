@@ -7,7 +7,7 @@ use egui::{
 };
 use egui_dock::DockArea;
 use orbit_editor_api::{
-    EditorContext, EditorRegistry, EditorRequest, Level, ThemeMode, icons, shortcut_text,
+    EditorContext, EditorRegistry, EditorRequest, Level, Location, ThemeMode, icons, shortcut_text,
 };
 
 use crate::core::{Dialog, EditorCore, NewProjectForm, Pending, UnsavedChoice};
@@ -21,8 +21,13 @@ enum DialogOutcome {
     None,
     Unsaved(Pending, UnsavedChoice),
     Recovery(bool),
-    CreateProject { name: String, parent: String },
+    CreateProject {
+        name: String,
+        parent: String,
+    },
     CancelNewProject,
+    /// The story file changed on disk: reload (`true`) or keep ours.
+    ExternalChange(bool),
 }
 
 /// Keys that edit text: global shortcuts on them are left to the text field
@@ -47,6 +52,7 @@ impl EditorCore {
         let ctx = ui.ctx().clone();
         self.first_frame();
         self.handle_shortcuts(&ctx);
+        self.handle_dropped_files(&ctx);
         self.pump(&ctx);
 
         let palette_outcome;
@@ -63,13 +69,18 @@ impl EditorCore {
                 dialog,
                 theme,
                 show_frame_counter,
+                shared,
                 ..
             } = self;
             let mut ectx =
                 EditorContext::new(session.as_mut().map(|s| &mut s.project), state, registry);
 
             menu_clicks = menu_bar(ui, &ectx, theme, &mut palette_request);
-            status_bar(ui, &ectx, theme, *show_frame_counter);
+            if status_bar(ui, &ectx, theme, *show_frame_counter) {
+                ectx.request(EditorRequest::ShowPanel(
+                    crate::builtin::panels::PROBLEMS.to_owned(),
+                ));
+            }
             egui::CentralPanel::default()
                 .frame(Frame::new().fill(theme.bg()))
                 .show(ui, |ui| {
@@ -95,9 +106,14 @@ impl EditorCore {
                 });
 
             let registry_ref: &EditorRegistry = registry;
+            let search = shared.search.clone();
             palette_outcome = palette.show(&ctx, theme, |query| {
-                palette::search(registry_ref, &ectx, query)
+                palette::merge(
+                    palette::search(registry_ref, &ectx, query),
+                    palette::navigation(&search, &ectx, query),
+                )
             });
+            drop_overlay(&ctx, theme);
             if let Some(d) = dialog.as_mut() {
                 let name = ectx
                     .project_info()
@@ -116,6 +132,7 @@ impl EditorCore {
         }
         match palette_outcome {
             PaletteOutcome::Run(id) => self.state.requests.push(EditorRequest::RunAction(id)),
+            PaletteOutcome::Goto(location) => self.goto(location),
             PaletteOutcome::Close | PaletteOutcome::None => {}
         }
         self.apply_dialog_outcome(dialog_outcome);
@@ -129,6 +146,16 @@ impl EditorCore {
             session.project.end_merge();
         }
         self.after_frame(&ctx);
+    }
+
+    /// Shows a thing of the project (palette navigation).
+    fn goto(&mut self, location: Location) {
+        let mut ectx = EditorContext::new(
+            self.session.as_mut().map(|s| &mut s.project),
+            &mut self.state,
+            &self.registry,
+        );
+        crate::builtin::reveal::reveal(&mut ectx, location);
     }
 
     fn handle_shortcuts(&mut self, ctx: &Context) {
@@ -167,6 +194,10 @@ impl EditorCore {
                 self.resolve_recovery(restore);
             }
             DialogOutcome::CancelNewProject => self.dialog = None,
+            DialogOutcome::ExternalChange(reload) => {
+                self.dialog = None;
+                self.resolve_external_change(reload);
+            }
             DialogOutcome::CreateProject { name, parent } => {
                 match self.create_and_open(std::path::Path::new(parent.trim()), &name) {
                     Ok(()) => {
@@ -267,7 +298,8 @@ fn menu_bar(
 
 // -------------------------------------------------------------- status bar
 
-fn status_bar(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme, frame_counter: bool) {
+fn status_bar(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme, frame_counter: bool) -> bool {
+    let mut open_problems = false;
     let frame = Frame::new()
         .fill(theme.panel())
         .inner_margin(Margin::symmetric(12, 3))
@@ -295,6 +327,8 @@ fn status_bar(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme, frame_counte
                                 .small()
                                 .color(theme.text_weak()),
                         );
+                        ui.separator();
+                        open_problems = problem_badges(ui, ectx, theme);
                     }
                     None => {
                         ui.label(
@@ -326,6 +360,75 @@ fn status_bar(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme, frame_counte
                 });
             });
         });
+    open_problems
+}
+
+/// The error / warning counters of the live validation; `true` when clicked.
+fn problem_badges(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme) -> bool {
+    let diagnostics = &ectx.state().diagnostics;
+    let (errors, warnings) = (diagnostics.error_count(), diagnostics.warning_count());
+    let mut clicked = false;
+    let badge = |ui: &mut Ui, icon: &str, n: usize, color: Color32, what: &str| -> bool {
+        let color = if n == 0 { theme.text_faint() } else { color };
+        let response = ui
+            .add(
+                egui::Button::new(RichText::new(format!("{icon} {n}")).small().color(color))
+                    .frame(false),
+            )
+            .on_hover_text(format!("{n} {what} : afficher le panneau Problèmes"));
+        response.clicked()
+    };
+    clicked |= badge(
+        ui,
+        icons::WARNING_CIRCLE,
+        errors,
+        theme.danger(),
+        "erreur(s)",
+    );
+    clicked |= badge(
+        ui,
+        icons::WARNING,
+        warnings,
+        theme.warning(),
+        "avertissement(s)",
+    );
+    clicked
+}
+
+/// While files are dragged over the window: a veil that says where they go.
+fn drop_overlay(ctx: &Context, theme: &Theme) {
+    if ctx.input(|i| i.raw.hovered_files.is_empty()) {
+        return;
+    }
+    let rect = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        Id::new("orbit_drop_overlay"),
+    ));
+    painter.rect_filled(rect, 0.0, theme.accent_soft(60));
+    painter.rect_stroke(
+        rect.shrink(10.0),
+        CornerRadius::same(14),
+        Stroke::new(2.5, theme.accent()),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        format!(
+            "{}  Déposez pour importer dans le projet",
+            icons::UPLOAD_SIMPLE
+        ),
+        bold(22.0),
+        theme.text(),
+    );
+    painter.text(
+        rect.center() + vec2(0.0, 30.0),
+        Align2::CENTER_CENTER,
+        "Images PNG / JPEG, sons WAV / OGG, ou un dossier",
+        egui::FontId::proportional(14.0),
+        theme.text_weak(),
+    );
 }
 
 // ----------------------------------------------------------------- toasts
@@ -452,6 +555,53 @@ fn show_dialog(
         }
         Dialog::NewProject(form) => {
             outcome = new_project_dialog(ctx, theme, form, escape);
+        }
+        Dialog::ExternalChange { conflict } => {
+            let conflict = *conflict;
+            egui::Modal::new(Id::new("orbit_external_change"))
+                .frame(dialog_frame(theme, ctx))
+                .show(ctx, |ui| {
+                    ui.set_width(440.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "{}  L'histoire a changé sur le disque",
+                            icons::WARNING
+                        ))
+                        .font(bold(17.0)),
+                    );
+                    ui.add_space(6.0);
+                    let text = if conflict {
+                        format!(
+                            "Le fichier de « {project_name} » a été modifié en dehors de l'éditeur, \
+                             et vous avez aussi des modifications non enregistrées. Recharger \
+                             remplace votre version ; garder la vôtre écrasera le fichier au \
+                             prochain enregistrement."
+                        )
+                    } else {
+                        format!(
+                            "Le fichier de « {project_name} » a été modifié en dehors de l'éditeur. \
+                             Voulez-vous le recharger ? (L'historique d'annulation repart de zéro.)"
+                        )
+                    };
+                    ui.label(RichText::new(text).color(theme.text_weak()));
+                    ui.add_space(16.0);
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let reload = if conflict {
+                            "Recharger (perdre mes modifications)"
+                        } else {
+                            "Recharger"
+                        };
+                        if primary(ui, theme, reload).clicked() {
+                            outcome = DialogOutcome::ExternalChange(true);
+                        }
+                        let keep = if conflict { "Garder les miennes" } else { "Ignorer" };
+                        if ui.button(keep).clicked() {
+                            outcome = DialogOutcome::ExternalChange(false);
+                        }
+                    });
+                });
+            // Escape does not decide for the user.
+            let _ = escape;
         }
     }
     outcome

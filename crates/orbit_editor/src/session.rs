@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use orbit_core::Story;
-use orbit_project::{ChangeEvent, Project, save_story};
+use orbit_project::{ChangeEvent, Project, load_story, save_story};
 
 use crate::storage::{ProjectLocation, Recovery, RecoveryMeta};
 
@@ -75,6 +75,25 @@ impl Session {
             self.modified = self.project.story() != &self.saved;
         }
         self.modified
+    }
+
+    /// The story as last read from / written to the project files.
+    pub fn saved_story(&self) -> &Story {
+        &self.saved
+    }
+
+    /// Replaces the story by what the file holds now (it was changed by
+    /// another tool). Undo history starts empty; the project is unmodified.
+    pub fn reload_from_disk(&mut self) -> Result<(), String> {
+        let story = load_story(&self.location.storage(), &self.location.story_file)
+            .map_err(|e| e.to_string())?;
+        self.project = Project::new(story.clone());
+        self.attach();
+        self.saved = story;
+        self.checked_revision = u64::MAX; // force the comparison
+        self.autosaved_revision = self.project.revision();
+        self.recovery.clear();
+        Ok(())
     }
 
     /// Writes the story to its file (atomically) and forgets recovery files.
