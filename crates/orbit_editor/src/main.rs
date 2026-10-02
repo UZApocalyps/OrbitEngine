@@ -20,6 +20,23 @@ fn main() -> ExitCode {
         print!("{USAGE}");
         return ExitCode::SUCCESS;
     }
+    if let Some((nodes, path)) = &args.generate_story {
+        let story = orbit_editor::bench::generate_story(*nodes);
+        let written = story
+            .to_ron()
+            .map_err(|e| e.to_string())
+            .and_then(|text| std::fs::write(path, text).map_err(|e| e.to_string()));
+        return match written {
+            Ok(()) => {
+                println!("{} : {nodes} nœuds demandés", path.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("erreur : {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     match orbit_editor::app::run(args, t0) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

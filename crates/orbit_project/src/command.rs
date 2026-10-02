@@ -35,7 +35,10 @@ pub enum Command {
     },
     /// Sets (`Some`) or removes (`None`) an entry of the source string table.
     /// Needed before inserting a node that displays a new string.
-    SetString { id: StringId, text: Option<String> },
+    SetString {
+        id: StringId,
+        text: Option<String>,
+    },
     /// Replaces the whole content of a node (`kind`) keeping its id and place:
     /// the generic setter behind the inspector. A `Label` that is still
     /// targeted cannot be turned into another kind. Strings used by the new
@@ -53,26 +56,53 @@ pub enum Command {
         index: usize,
     },
     /// Inserts a scene (with its nodes, whose ids must be new) at `index`.
-    InsertScene { index: usize, scene: Scene },
+    InsertScene {
+        index: usize,
+        scene: Scene,
+    },
     /// Removes a scene and its nodes. Refused if a node outside the scene
     /// still targets one of its nodes.
-    RemoveScene { id: SceneId },
-    RenameScene { id: SceneId, name: String },
+    RemoveScene {
+        id: SceneId,
+    },
+    RenameScene {
+        id: SceneId,
+        name: String,
+    },
     /// Moves a scene to position `index` (among the other scenes).
-    MoveScene { id: SceneId, index: usize },
-    InsertCharacter { index: usize, character: Character },
+    MoveScene {
+        id: SceneId,
+        index: usize,
+    },
+    InsertCharacter {
+        index: usize,
+        character: Character,
+    },
     /// Replaces the definition of an existing character (same id).
-    ReplaceCharacter { character: Character },
+    ReplaceCharacter {
+        character: Character,
+    },
     /// Removes a character. Refused while a node still uses it.
-    RemoveCharacter { id: CharacterId },
+    RemoveCharacter {
+        id: CharacterId,
+    },
     /// Replaces the list of declared variables.
-    SetVariables { variables: Vec<VarDecl> },
+    SetVariables {
+        variables: Vec<VarDecl>,
+    },
     /// Replaces the list of custom stage positions.
-    SetPositions { positions: Vec<PositionDef> },
+    SetPositions {
+        positions: Vec<PositionDef>,
+    },
     /// Registers an asset in the manifest at `index`.
-    InsertAsset { index: usize, entry: AssetEntry },
+    InsertAsset {
+        index: usize,
+        entry: AssetEntry,
+    },
     /// Removes an asset from the manifest. Refused while it is used.
-    RemoveAsset { id: AssetId },
+    RemoveAsset {
+        id: AssetId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -402,10 +432,7 @@ impl Command {
                     .ok_or(CommandError::UnknownScene(*id))?;
                 let old = std::mem::replace(&mut scene.name, name.clone());
                 Ok(Applied {
-                    inverse: Command::RenameScene {
-                        id: *id,
-                        name: old,
-                    },
+                    inverse: Command::RenameScene { id: *id, name: old },
                     touched: Vec::new(),
                 })
             }

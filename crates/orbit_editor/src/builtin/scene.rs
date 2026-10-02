@@ -11,8 +11,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Id, Key, Modifiers, Pos2, Rect, RichText, Sense,
-    Stroke, StrokeKind, Ui, vec2,
+    Align2, Color32, CornerRadius, FontId, Id, Key, Modifiers, Pos2, Rect, RichText, Sense, Stroke,
+    StrokeKind, Ui, vec2,
 };
 use orbit_core::{CharacterId, Node, NodeId, NodeKind, SceneId, Story, TransitionKind};
 use orbit_editor_api::{
@@ -35,7 +35,7 @@ const GHOST_HEIGHT: f32 = 52.0;
 fn row_height(kind: &NodeKind, editing: bool) -> f32 {
     match kind {
         NodeKind::Say { .. } if editing => 176.0,
-        NodeKind::Say { .. } => 68.0,
+        NodeKind::Say { .. } => 72.0,
         NodeKind::Choice { options } => 48.0 + 26.0 * options.len() as f32,
         NodeKind::Label { .. } => 38.0,
         _ => 46.0,
@@ -82,7 +82,11 @@ impl Layout {
         }
         let below = self.tops[(i - 1).min(n)];
         let above = self.tops[i.min(n)];
-        if (y - below) <= (above - y) { i - 1 } else { i.min(n) }
+        if (y - below) <= (above - y) {
+            i - 1
+        } else {
+            i.min(n)
+        }
     }
 }
 
@@ -131,12 +135,16 @@ impl EditorPlugin for ScenePlugin {
         {
             let state = state.clone();
             reg.action(
-                ActionDef::new("quick_insert", "Insérer une ligne… (menu rapide)", move |ctx| {
-                    if ctx.has_project() {
-                        state.borrow_mut().quick = Some((String::new(), 0));
-                        ctx.request(EditorRequest::ShowPanel(super::panels::SCENE.to_owned()));
-                    }
-                })
+                ActionDef::new(
+                    "quick_insert",
+                    "Insérer une ligne… (menu rapide)",
+                    move |ctx| {
+                        if ctx.has_project() {
+                            state.borrow_mut().quick = Some((String::new(), 0));
+                            ctx.request(EditorRequest::ShowPanel(super::panels::SCENE.to_owned()));
+                        }
+                    },
+                )
                 .icon(icons::PLUS_CIRCLE)
                 .category("Édition")
                 .shortcut(Modifiers::COMMAND, egui::Key::I)
@@ -145,8 +153,20 @@ impl EditorPlugin for ScenePlugin {
             );
         }
         for (id, label, icon, order, key) in [
-            ("insert_choice", "Insérer un choix", icons::GIT_BRANCH, 206, "Choice"),
-            ("insert_background", "Insérer un décor", icons::IMAGE, 207, "Background"),
+            (
+                "insert_choice",
+                "Insérer un choix",
+                icons::GIT_BRANCH,
+                206,
+                "Choice",
+            ),
+            (
+                "insert_background",
+                "Insérer un décor",
+                icons::IMAGE,
+                207,
+                "Background",
+            ),
         ] {
             reg.action(
                 ActionDef::new(id, label, move |ctx| {
@@ -158,29 +178,52 @@ impl EditorPlugin for ScenePlugin {
                 .enabled(|c| c.story().is_some_and(|s| !s.scenes.is_empty())),
             );
         }
-        reg.action(
-            ActionDef::new("duplicate", "Dupliquer la sélection", edit::duplicate_selection)
-                .icon(icons::COPY_SIMPLE)
+        {
+            let state = state.clone();
+            reg.action(
+                ActionDef::new("edit_line", "Modifier le texte de la ligne", move |ctx| {
+                    if let Some(Selection::Node(id)) = ctx.selection() {
+                        ctx.state_mut().inline_edit = Some(id);
+                    }
+                    let _ = &state;
+                })
+                .icon(icons::PENCIL_SIMPLE)
                 .category("Édition")
-                .shortcut(Modifiers::COMMAND, Key::D)
-                .menu("edit", 220)
-                .enabled(has_nodes_selected),
+                .menu("edit", 204)
+                .enabled(|c| matches!(c.selection(), Some(Selection::Node(_)))),
+            );
+        }
+        reg.action(
+            ActionDef::new(
+                "duplicate",
+                "Dupliquer la sélection",
+                edit::duplicate_selection,
+            )
+            .icon(icons::COPY_SIMPLE)
+            .category("Édition")
+            .shortcut(Modifiers::COMMAND, Key::D)
+            .menu("edit", 220)
+            .enabled(has_nodes_selected),
         );
         reg.action(
-            ActionDef::new("copy", "Copier les lignes", |c| edit::copy_selection(c, false))
-                .icon(icons::COPY)
-                .category("Édition")
-                .shortcut(Modifiers::COMMAND, Key::C)
-                .menu("edit", 230)
-                .enabled(has_nodes_selected),
+            ActionDef::new("copy", "Copier les lignes", |c| {
+                edit::copy_selection(c, false)
+            })
+            .icon(icons::COPY)
+            .category("Édition")
+            .shortcut(Modifiers::COMMAND, Key::C)
+            .menu("edit", 230)
+            .enabled(has_nodes_selected),
         );
         reg.action(
-            ActionDef::new("cut", "Couper les lignes", |c| edit::copy_selection(c, true))
-                .icon(icons::SCISSORS)
-                .category("Édition")
-                .shortcut(Modifiers::COMMAND, Key::X)
-                .menu("edit", 231)
-                .enabled(has_nodes_selected),
+            ActionDef::new("cut", "Couper les lignes", |c| {
+                edit::copy_selection(c, true)
+            })
+            .icon(icons::SCISSORS)
+            .category("Édition")
+            .shortcut(Modifiers::COMMAND, Key::X)
+            .menu("edit", 231)
+            .enabled(has_nodes_selected),
         );
         reg.action(
             ActionDef::new("paste", "Coller les lignes", edit::paste)
@@ -284,9 +327,7 @@ pub fn click_selection(
     shift: bool,
 ) -> (Vec<NodeId>, NodeId) {
     let index_of = |id: NodeId| nodes.iter().position(|n| *n == id);
-    if shift
-        && let (Some(a), Some(c)) = (anchor.and_then(index_of), index_of(clicked))
-    {
+    if shift && let (Some(a), Some(c)) = (anchor.and_then(index_of), index_of(clicked)) {
         let (lo, hi) = (a.min(c), a.max(c));
         return (nodes[lo..=hi].to_vec(), nodes[a]);
     }
@@ -480,7 +521,7 @@ fn header(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared, scene_id: S
                             RichText::new(format!("{}  {scene_name}", icons::FOLDER_OPEN))
                                 .font(bold(14.0)),
                         )
-                        .width(240.0)
+                        .width(190.0)
                         .show_ui(ui, |ui| {
                             for (id, name, n) in &scenes {
                                 let label = format!("{name}   ({n})");
@@ -489,11 +530,13 @@ fn header(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared, scene_id: S
                                 }
                             }
                         });
-                    ui.label(
-                        RichText::new(format!("{count} ligne(s)"))
-                            .small()
-                            .color(faint(ui)),
-                    );
+                    if ui.available_width() > 400.0 {
+                        ui.label(
+                            RichText::new(format!("{count} ligne(s)"))
+                                .small()
+                                .color(faint(ui)),
+                        );
+                    }
                 }
 
                 ui.menu_button(RichText::new(icons::DOTS_THREE_VERTICAL).size(16.0), |ui| {
@@ -581,31 +624,38 @@ fn header(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared, scene_id: S
 /// The "+ Ajouter" menu: every node type, grouped.
 fn insert_menu(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let items = all_insertables(ctx.registry());
-    ui.menu_button(RichText::new(format!("{}  Ajouter", icons::PLUS_CIRCLE)), |ui| {
-        let mut group = "";
-        for item in &items {
-            if item.group != group {
-                if !group.is_empty() {
-                    ui.separator();
+    ui.menu_button(
+        RichText::new(format!("{}  Ajouter", icons::PLUS_CIRCLE)),
+        |ui| {
+            let mut group = "";
+            for item in &items {
+                if item.group != group {
+                    if !group.is_empty() {
+                        ui.separator();
+                    }
+                    group = item.group;
+                    ui.label(
+                        RichText::new(group.to_uppercase())
+                            .font(bold(10.0))
+                            .color(faint(ui)),
+                    );
                 }
-                group = item.group;
-                ui.label(RichText::new(group.to_uppercase()).font(bold(10.0)).color(faint(ui)));
+                if ui
+                    .button(format!("{}  {}", item.icon, item.label))
+                    .clicked()
+                {
+                    edit::insert_kind(ctx, &item.key);
+                    ui.close();
+                }
             }
-            if ui
-                .button(format!("{}  {}", item.icon, item.label))
-                .clicked()
-            {
-                edit::insert_kind(ctx, &item.key);
-                ui.close();
-            }
-        }
-        ui.separator();
-        ui.label(
-            RichText::new("Ctrl+I : menu rapide")
-                .small()
-                .color(faint(ui)),
-        );
-    })
+            ui.separator();
+            ui.label(
+                RichText::new("Ctrl+I : menu rapide")
+                    .small()
+                    .color(faint(ui)),
+            );
+        },
+    )
     .response
     .on_hover_text("Ajouter une ligne d'un autre type");
 }
@@ -691,7 +741,10 @@ fn keyboard(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared, scene_id:
         st.editing = primary;
         st.focus_edit = true;
     }
-    if escape && ctx.selected_nodes().len() > 1 && let Some(p) = primary {
+    if escape
+        && ctx.selected_nodes().len() > 1
+        && let Some(p) = primary
+    {
         ctx.select(Selection::Node(p));
     }
 }
@@ -801,10 +854,8 @@ fn list(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared, scene_id: Sce
         let nodes = &scene.nodes;
         let output = scroll.show_viewport(ui, |ui, viewport| {
             let width = ui.available_width();
-            let (area, _) = ui.allocate_exact_size(
-                vec2(width, layout.total() + GHOST_HEIGHT),
-                Sense::hover(),
-            );
+            let (area, _) =
+                ui.allocate_exact_size(vec2(width, layout.total() + GHOST_HEIGHT), Sense::hover());
             let range = layout.visible(viewport.min.y - 60.0, viewport.max.y + 60.0);
             for i in range {
                 let h = layout.tops[i + 1] - layout.tops[i];
@@ -812,7 +863,10 @@ fn list(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared, scene_id: Sce
                     Pos2::new(area.left() + 6.0, area.top() + layout.tops[i]),
                     vec2(width - 12.0, h - GAP),
                 );
-                let env = RowEnv { index_base: i, ..clone_env(&env) };
+                let env = RowEnv {
+                    index_base: i,
+                    ..clone_env(&env)
+                };
                 draw_row(ui, &env, &nodes[i], rect, shared, &mut actions);
             }
             // The "add" row at the end of the list.
@@ -820,7 +874,8 @@ fn list(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared, scene_id: Sce
                 Pos2::new(area.left() + 6.0, area.top() + layout.total() + 4.0),
                 vec2(width - 12.0, GHOST_HEIGHT - 12.0),
             );
-            if ghost.bottom() >= area.top() + viewport.min.y && ghost.top() <= area.top() + viewport.max.y
+            if ghost.bottom() >= area.top() + viewport.min.y
+                && ghost.top() <= area.top() + viewport.max.y
             {
                 draw_ghost(ui, ghost, &mut actions);
             }
@@ -859,10 +914,10 @@ fn list(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared, scene_id: Sce
             d.insert_temp(Id::new("scene_scroll_offset"), output.state.offset.y);
         });
         shared.borrow_mut().layout = Some(layout);
-        if let Some((boundary, dragged)) = output.inner {
-            if ui.input(|i| i.pointer.any_released() || !i.pointer.any_down()) {
-                pointer_drop = Some((boundary, dragged));
-            }
+        if let Some((boundary, dragged)) = output.inner
+            && ui.input(|i| i.pointer.any_released() || !i.pointer.any_down())
+        {
+            pointer_drop = Some((boundary, dragged));
         }
     }
 
@@ -916,7 +971,11 @@ use egui::ScrollArea;
 
 fn draw_ghost(ui: &mut Ui, rect: Rect, actions: &mut Vec<RowAction>) {
     let response = ui.interact(rect, Id::new("scene_ghost"), Sense::click());
-    let color = if response.hovered() { accent(ui) } else { faint(ui) };
+    let color = if response.hovered() {
+        accent(ui)
+    } else {
+        faint(ui)
+    };
     ui.painter().rect_stroke(
         rect,
         CornerRadius::same(8),
@@ -961,10 +1020,18 @@ fn describe(story: &Story, node: &Node) -> (String, String) {
             |p| p.rsplit('/').next().unwrap_or(p).to_owned(),
         )
     };
-    let who = |c| super::nodeinfo::summary(story, &Node {
-        id: NodeId::new(),
-        kind: NodeKind::Hide { character: c, transition: None },
-    });
+    let who = |c| {
+        super::nodeinfo::summary(
+            story,
+            &Node {
+                id: NodeId::new(),
+                kind: NodeKind::Hide {
+                    character: c,
+                    transition: None,
+                },
+            },
+        )
+    };
     let transition = |t: &Option<orbit_core::Transition>| match t {
         None => String::new(),
         Some(t) => match t.kind {
@@ -993,9 +1060,10 @@ fn describe(story: &Story, node: &Node) -> (String, String) {
                 else_target.map_or(String::new(), |e| format!(", sinon → {}", label(e)))
             ),
         ),
-        NodeKind::Background { asset: a, transition: t } => {
-            ("Décor".into(), format!("{}{}", asset(*a), transition(t)))
-        }
+        NodeKind::Background {
+            asset: a,
+            transition: t,
+        } => ("Décor".into(), format!("{}{}", asset(*a), transition(t))),
         NodeKind::Show {
             character,
             expression,
@@ -1015,28 +1083,46 @@ fn describe(story: &Story, node: &Node) -> (String, String) {
                 transition(t)
             ),
         ),
-        NodeKind::Hide { character, transition: t } => {
-            ("Masquer".into(), format!("{}{}", who(*character), transition(t)))
-        }
-        NodeKind::PlayMusic { asset: a, fade_in, looping } => (
+        NodeKind::Hide {
+            character,
+            transition: t,
+        } => (
+            "Masquer".into(),
+            format!("{}{}", who(*character), transition(t)),
+        ),
+        NodeKind::PlayMusic {
+            asset: a,
+            fade_in,
+            looping,
+        } => (
             "Musique".into(),
             format!(
                 "{}{}{}",
                 asset(*a),
                 if *looping { "  ·  en boucle" } else { "" },
-                if *fade_in > 0.0 { format!("  ·  fondu {fade_in} s") } else { String::new() }
+                if *fade_in > 0.0 {
+                    format!("  ·  fondu {fade_in} s")
+                } else {
+                    String::new()
+                }
             ),
         ),
         NodeKind::StopMusic { fade_out } => (
             "Arrêt de la musique".into(),
-            if *fade_out > 0.0 { format!("fondu {fade_out} s") } else { String::new() },
+            if *fade_out > 0.0 {
+                format!("fondu {fade_out} s")
+            } else {
+                String::new()
+            },
         ),
         NodeKind::PlaySound { asset: a } => ("Son".into(), asset(*a)),
         NodeKind::Wait { seconds } => ("Attente".into(), format!("{seconds} s")),
         NodeKind::Call { label: l } => ("Appel de".into(), label(*l)),
         NodeKind::Return => ("Retour".into(), String::new()),
         NodeKind::End => ("Fin de l'histoire".into(), String::new()),
-        NodeKind::Custom { plugin_id, kind, .. } => ("Nœud de plugin".into(), format!("{plugin_id}.{kind}")),
+        NodeKind::Custom {
+            plugin_id, kind, ..
+        } => ("Nœud de plugin".into(), format!("{plugin_id}.{kind}")),
         NodeKind::Say { .. } => (String::new(), String::new()),
     }
 }
@@ -1106,7 +1192,11 @@ fn draw_row(
     }
     let diag = env.diagnostics.worst(node.id);
     if let Some(level) = diag {
-        let color = if level == Level::Error { danger(ui) } else { warning(ui) };
+        let color = if level == Level::Error {
+            danger(ui)
+        } else {
+            warning(ui)
+        };
         let dot = Pos2::new(rect.right() - 14.0, rect.top() + 14.0);
         painter.circle_filled(dot, 4.5, color);
         let dot_resp = ui.interact(
@@ -1117,7 +1207,11 @@ fn draw_row(
         if dot_resp.hovered() {
             dot_resp.on_hover_ui(|ui| {
                 for (l, msg) in env.diagnostics.of(node.id) {
-                    let c = if *l == Level::Error { danger(ui) } else { warning(ui) };
+                    let c = if *l == Level::Error {
+                        danger(ui)
+                    } else {
+                        warning(ui)
+                    };
                     ui.label(RichText::new(msg).color(c));
                 }
             });
@@ -1128,7 +1222,16 @@ fn draw_row(
     match &node.kind {
         NodeKind::Say { speaker, text_id } => {
             draw_say(
-                ui, env, node, *speaker, *text_id, rect, x0, shared, actions, content_alpha,
+                ui,
+                env,
+                node,
+                *speaker,
+                *text_id,
+                rect,
+                x0,
+                shared,
+                actions,
+                content_alpha,
             );
         }
         NodeKind::Label { name } => {
@@ -1142,7 +1245,11 @@ fn draw_row(
             );
             let galley = painter.layout_no_wrap(name.clone(), bold(13.5), color);
             let w = galley.size().x;
-            painter.galley(Pos2::new(x0 + 24.0, mid_y - galley.size().y / 2.0), galley, color);
+            painter.galley(
+                Pos2::new(x0 + 24.0, mid_y - galley.size().y / 2.0),
+                galley,
+                color,
+            );
             painter.line_segment(
                 [
                     Pos2::new(x0 + 24.0 + w + 12.0, mid_y),
@@ -1153,7 +1260,12 @@ fn draw_row(
         }
         NodeKind::Choice { options } => {
             let color = kind_color(&node.kind);
-            chip(&painter, Pos2::new(x0 + 13.0, rect.top() + 21.0), icons::GIT_BRANCH, color);
+            chip(
+                &painter,
+                Pos2::new(x0 + 13.0, rect.top() + 21.0),
+                icons::GIT_BRANCH,
+                color,
+            );
             painter.text(
                 Pos2::new(x0 + 36.0, rect.top() + 21.0),
                 Align2::LEFT_CENTER,
@@ -1175,12 +1287,20 @@ fn draw_row(
                 };
                 let tail = format!(
                     "{}→ {target}",
-                    if option.condition.is_some() { "si …   " } else { "" }
+                    if option.condition.is_some() {
+                        "si …   "
+                    } else {
+                        ""
+                    }
                 );
-                let tail_galley = painter.layout_no_wrap(tail, FontId::proportional(11.5), faint(ui));
+                let tail_galley =
+                    painter.layout_no_wrap(tail, FontId::proportional(11.5), faint(ui));
                 let tail_w = tail_galley.size().x;
                 painter.galley(
-                    Pos2::new(box_rect.right() - tail_w - 8.0, y - tail_galley.size().y / 2.0),
+                    Pos2::new(
+                        box_rect.right() - tail_w - 8.0,
+                        y - tail_galley.size().y / 2.0,
+                    ),
                     tail_galley,
                     faint(ui),
                 );
@@ -1199,12 +1319,21 @@ fn draw_row(
         }
         _ => {
             let color = kind_color(&node.kind);
-            chip(&painter, Pos2::new(x0 + 13.0, mid_y), kind_icon(&node.kind), color);
+            chip(
+                &painter,
+                Pos2::new(x0 + 13.0, mid_y),
+                kind_icon(&node.kind),
+                color,
+            );
             let (title, detail) = describe(env.story, node);
             let text_color = ui.visuals().text_color().gamma_multiply(content_alpha);
             let g = painter.layout_no_wrap(title, bold(13.0), text_color);
             let w = g.size().x;
-            painter.galley(Pos2::new(x0 + 36.0, mid_y - g.size().y / 2.0), g, text_color);
+            painter.galley(
+                Pos2::new(x0 + 36.0, mid_y - g.size().y / 2.0),
+                g,
+                text_color,
+            );
             if !detail.is_empty() {
                 let clip = Rect::from_min_max(
                     Pos2::new(x0 + 36.0 + w + 10.0, rect.top()),
@@ -1368,13 +1497,23 @@ fn draw_say(
     let missing = speaker.is_some() && story.character(speaker.unwrap_or_default()).is_none();
     let center = Pos2::new(x0 + 15.0, rect.top() + 25.0);
     if speaker.is_none() {
-        avatar(&painter, center, color.gamma_multiply(0.5), icons::QUOTES, 30.0);
+        avatar(
+            &painter,
+            center,
+            color.gamma_multiply(0.5),
+            icons::QUOTES,
+            30.0,
+        );
     } else {
         avatar(&painter, center, color, &initial(&name), 30.0);
     }
     // Speaker chip: click to change the speaker.
     let name_galley = painter.layout_no_wrap(
-        if missing { "Personnage supprimé".to_owned() } else { name },
+        if missing {
+            "Personnage supprimé".to_owned()
+        } else {
+            name
+        },
         bold(13.0),
         color,
     );
@@ -1386,7 +1525,11 @@ fn draw_say(
         Sense::click(),
     );
     if chip_resp.hovered() {
-        painter.rect_filled(chip_rect.expand2(vec2(2.0, 1.0)), CornerRadius::same(5), color.gamma_multiply(0.18));
+        painter.rect_filled(
+            chip_rect.expand2(vec2(2.0, 1.0)),
+            CornerRadius::same(5),
+            color.gamma_multiply(0.18),
+        );
     }
     let name_w = name_galley.size().x;
     painter.galley(name_pos + vec2(0.0, 1.0), name_galley, color);
@@ -1403,7 +1546,10 @@ fn draw_say(
             .selectable_label(speaker.is_none(), format!("{}  Narrateur", icons::QUOTES))
             .clicked()
         {
-            actions.push(RowAction::SetSpeaker { id: node.id, speaker: None });
+            actions.push(RowAction::SetSpeaker {
+                id: node.id,
+                speaker: None,
+            });
             ui.close();
         }
         for c in &story.characters {
@@ -1411,12 +1557,17 @@ fn draw_say(
             let label = RichText::new(format!("●  {n}"))
                 .color(orbit_editor_api::fields::to_color32(c.color));
             if ui.selectable_label(speaker == Some(c.id), label).clicked() {
-                actions.push(RowAction::SetSpeaker { id: node.id, speaker: Some(c.id) });
+                actions.push(RowAction::SetSpeaker {
+                    id: node.id,
+                    speaker: Some(c.id),
+                });
                 ui.close();
             }
         }
         if story.characters.is_empty() {
-            ui.label(RichText::new("Aucun personnage : créez-en dans le panneau Personnages.").small());
+            ui.label(
+                RichText::new("Aucun personnage : créez-en dans le panneau Personnages.").small(),
+            );
         }
     });
 
@@ -1474,7 +1625,9 @@ fn draw_say(
             let end = buffer.chars().count();
             state
                 .cursor
-                .set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(end))));
+                .set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(end),
+                )));
             state.store(ui.ctx(), id);
             shared.borrow_mut().focus_edit = false;
         }
@@ -1486,15 +1639,17 @@ fn draw_say(
             faint(ui),
         );
         if buffer != text {
-            actions.push(RowAction::SetText { id: node.id, speaker, text: buffer.clone() });
+            actions.push(RowAction::SetText {
+                id: node.id,
+                speaker,
+                text: buffer.clone(),
+            });
         }
         if backspace {
             actions.push(RowAction::BackspaceEmpty(node.id));
         } else if enter {
             actions.push(RowAction::EnterNew(node.id));
-        } else if escape {
-            actions.push(RowAction::EndEdit);
-        } else if resp.lost_focus() && !focus {
+        } else if escape || (resp.lost_focus() && !focus) {
             actions.push(RowAction::EndEdit);
         }
     } else if text.is_empty() {
@@ -1532,9 +1687,11 @@ fn apply_actions(
     for action in actions {
         match action {
             RowAction::Select { id, ctrl, shift } => {
-                let Some(order) = ctx.story().and_then(|s| s.scene(scene_id)).map(|s| {
-                    s.nodes.iter().map(|n| n.id).collect::<Vec<NodeId>>()
-                }) else {
+                let Some(order) = ctx
+                    .story()
+                    .and_then(|s| s.scene(scene_id))
+                    .map(|s| s.nodes.iter().map(|n| n.id).collect::<Vec<NodeId>>())
+                else {
                     continue;
                 };
                 let (selected, anchor) = {
@@ -1563,7 +1720,11 @@ fn apply_actions(
                 if selected.is_empty() {
                     ctx.clear_selection();
                 } else {
-                    let primary = if selected.contains(&id) { id } else { selected[0] };
+                    let primary = if selected.contains(&id) {
+                        id
+                    } else {
+                        selected[0]
+                    };
                     ctx.select_nodes(selected, primary);
                 }
             }
@@ -1629,9 +1790,9 @@ fn apply_actions(
                 ctx.end_merge();
                 let previous = ctx.story().and_then(|s| {
                     let (si, ni) = s.locate(id)?;
-                    ni.checked_sub(1).map(|p| &s.scenes[si].nodes[p]).map(|n| {
-                        (n.id, matches!(n.kind, NodeKind::Say { .. }))
-                    })
+                    ni.checked_sub(1)
+                        .map(|p| &s.scenes[si].nodes[p])
+                        .map(|n| (n.id, matches!(n.kind, NodeKind::Say { .. })))
                 });
                 if ctx.ops_or_toast(|p| ops::delete_nodes(p, &[id])).is_some() {
                     let mut st = shared.borrow_mut();
@@ -1743,7 +1904,10 @@ fn quick_insert(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) {
     let panel_rect = ui.max_rect();
     egui::Area::new(Id::new("scene_quick_insert"))
         .order(egui::Order::Foreground)
-        .fixed_pos(Pos2::new(panel_rect.center().x - 170.0, panel_rect.top() + 60.0))
+        .fixed_pos(Pos2::new(
+            panel_rect.center().x - 170.0,
+            panel_rect.top() + 60.0,
+        ))
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style())
                 .corner_radius(CornerRadius::same(10))
@@ -1758,21 +1922,25 @@ fn quick_insert(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) {
                     );
                     resp.request_focus();
                     ui.add_space(6.0);
-                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        for (n, item) in matches.iter().enumerate() {
-                            let label = format!("{}  {}", item.icon, item.label);
-                            let r = ui.selectable_label(n == highlighted, label);
-                            if r.clicked() {
-                                chosen = Some(item.key.clone());
+                    egui::ScrollArea::vertical()
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            for (n, item) in matches.iter().enumerate() {
+                                let label = format!("{}  {}", item.icon, item.label);
+                                let r = ui.selectable_label(n == highlighted, label);
+                                if r.clicked() {
+                                    chosen = Some(item.key.clone());
+                                }
+                                if n == highlighted {
+                                    r.scroll_to_me(None);
+                                }
                             }
-                            if n == highlighted {
-                                r.scroll_to_me(None);
+                            if matches.is_empty() {
+                                ui.label(
+                                    RichText::new("Aucun type ne correspond.").color(weak(ui)),
+                                );
                             }
-                        }
-                        if matches.is_empty() {
-                            ui.label(RichText::new("Aucun type ne correspond.").color(weak(ui)));
-                        }
-                    });
+                        });
                 });
         });
     if ui.input(|i| i.pointer.any_pressed())
@@ -1834,7 +2002,14 @@ mod tests {
     #[test]
     fn shift_click_selects_the_range_from_the_anchor() {
         let ns = nodes(6);
-        let (sel, anchor) = click_selection(&ids(&ns), &[ns[4].id], Some(ns[4].id), ns[1].id, false, true);
+        let (sel, anchor) = click_selection(
+            &ids(&ns),
+            &[ns[4].id],
+            Some(ns[4].id),
+            ns[1].id,
+            false,
+            true,
+        );
         assert_eq!(sel, [ns[1].id, ns[2].id, ns[3].id, ns[4].id]);
         assert_eq!(anchor, ns[4].id);
     }

@@ -144,7 +144,9 @@ fn a_targeted_label_cannot_change_kind() {
 #[test]
 fn moving_nodes_and_scenes_is_undoable() {
     let (mut p, scene) = project();
-    let ids: Vec<NodeId> = (0..5).map(|i| say(&mut p, scene, i, &format!("l{i}"))).collect();
+    let ids: Vec<NodeId> = (0..5)
+        .map(|i| say(&mut p, scene, i, &format!("l{i}")))
+        .collect();
     undoable(&mut p, |p| {
         p.execute(Command::MoveNode {
             id: ids[0],
@@ -178,7 +180,11 @@ fn moving_nodes_and_scenes_is_undoable() {
     // Scenes.
     let first = p.story().scenes[0].id;
     undoable(&mut p, |p| {
-        p.execute(Command::MoveScene { id: first, index: 1 }).unwrap();
+        p.execute(Command::MoveScene {
+            id: first,
+            index: 1,
+        })
+        .unwrap();
         assert_eq!(p.story().scenes[1].id, first);
     });
     undoable(&mut p, |p| {
@@ -193,13 +199,21 @@ fn moving_nodes_and_scenes_is_undoable() {
 #[test]
 fn nudging_moves_the_selection_one_step() {
     let (mut p, scene) = project();
-    let ids: Vec<NodeId> = (0..4).map(|i| say(&mut p, scene, i, &format!("l{i}"))).collect();
+    let ids: Vec<NodeId> = (0..4)
+        .map(|i| say(&mut p, scene, i, &format!("l{i}")))
+        .collect();
     assert!(ops::nudge_nodes(&mut p, &[ids[1]], -1).unwrap());
     assert_eq!(order(&p, scene), [ids[1], ids[0], ids[2], ids[3]]);
-    assert!(!ops::nudge_nodes(&mut p, &[ids[1]], -1).unwrap(), "top edge");
+    assert!(
+        !ops::nudge_nodes(&mut p, &[ids[1]], -1).unwrap(),
+        "top edge"
+    );
     assert!(ops::nudge_nodes(&mut p, &[ids[1], ids[0]], 1).unwrap());
     assert_eq!(order(&p, scene), [ids[2], ids[1], ids[0], ids[3]]);
-    assert!(!ops::nudge_nodes(&mut p, &[ids[3]], 1).unwrap(), "bottom edge");
+    assert!(
+        !ops::nudge_nodes(&mut p, &[ids[3]], 1).unwrap(),
+        "bottom edge"
+    );
 }
 
 #[test]
@@ -260,7 +274,10 @@ fn copy_paste_regenerates_ids_and_keeps_internal_references() {
     undoable(&mut p, |p| {
         let new = ops::paste_nodes(p, &clip, scene, 4).unwrap();
         assert_eq!(new.len(), 4);
-        assert!(new.iter().all(|id| ![label_id, choice_id, jump_id, say_id].contains(id)));
+        assert!(
+            new.iter()
+                .all(|id| ![label_id, choice_id, jump_id, say_id].contains(id))
+        );
         // The pasted jump and choice target the pasted label, not the original.
         let story = p.story();
         let NodeKind::Jump { target } = &story.node(new[3]).unwrap().kind else {
@@ -336,7 +353,8 @@ fn characters_and_expressions() {
         image: img,
     });
     def.default_position = Some(Position::Right);
-    p.execute(Command::ReplaceCharacter { character: def }).unwrap();
+    p.execute(Command::ReplaceCharacter { character: def })
+        .unwrap();
     let show = NodeDraft::plain(NodeKind::Show {
         character: ana,
         expression: "happy".into(),
@@ -363,7 +381,10 @@ fn characters_and_expressions() {
     assert!(ops::delete_character(&mut p, ana).is_err());
     assert!(p.execute(Command::RemoveAsset { id: img }).is_err());
     ops::delete_nodes(&mut p, &[show_id]).unwrap();
-    assert!(p.execute(Command::RemoveAsset { id: img }).is_err(), "still a sprite");
+    assert!(
+        p.execute(Command::RemoveAsset { id: img }).is_err(),
+        "still a sprite"
+    );
     undoable(&mut p, |p| ops::delete_character(p, ana).unwrap());
     // The default position survives the RON round trip (and is absent when unset).
     let ron = p.story().to_ron().unwrap();
@@ -376,7 +397,11 @@ fn characters_and_expressions() {
 fn variables_rename_updates_every_usage_or_refuses() {
     let (mut p, scene) = project();
     ops::add_variable(&mut p, orbit_core::VarDecl::game("affinity", Value::Int(0))).unwrap();
-    ops::add_variable(&mut p, orbit_core::VarDecl::persistent("seen", Value::Bool(false))).unwrap();
+    ops::add_variable(
+        &mut p,
+        orbit_core::VarDecl::persistent("seen", Value::Bool(false)),
+    )
+    .unwrap();
     let label = NodeDraft::label("l");
     let lid = label.node.id;
     let set = NodeDraft::plain(NodeKind::SetVar {

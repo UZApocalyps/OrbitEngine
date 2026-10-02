@@ -29,6 +29,10 @@ Options :
   --screenshot <png>       enregistre la frame rendue dans un PNG puis quitte
   --exit-after <secondes>  quitte après ce délai (la capture est prise à ce moment) ; comme un
                            arrêt brutal : pas de confirmation, la sauvegarde automatique reste
+  --generate-story <n> <fichier.ron>
+                           écrit une histoire de test d'environ <n> nœuds (un scène) puis quitte
+  --autoscroll <px>        fait défiler l'éditeur de scène de <px> pixels par frame ; avec --exit-after,
+                           journalise le temps de frame (moyenne, p95, max) à la sortie
   -h, --help               affiche cette aide
 ";
 
@@ -54,6 +58,8 @@ pub struct Args {
     pub edit_text: Option<(usize, String)>,
     pub edit_delay: f32,
     pub preview_capture: Option<PathBuf>,
+    pub generate_story: Option<(usize, PathBuf)>,
+    pub autoscroll: Option<f32>,
     pub help: bool,
 }
 
@@ -79,6 +85,16 @@ impl Args {
                 "--always-active" => out.always_active = true,
                 "--preview-skip" => out.preview_skip = true,
                 "--play-from-selection" => out.play_from_selection = true,
+                "--generate-story" => {
+                    let n = value("--generate-story")?;
+                    let n = n.parse().map_err(|_| format!("nombre invalide : {n}"))?;
+                    let path = PathBuf::from(value("--generate-story")?);
+                    out.generate_story = Some((n, path));
+                }
+                "--autoscroll" => {
+                    let v = value("--autoscroll")?;
+                    out.autoscroll = Some(v.parse().map_err(|_| format!("nombre invalide : {v}"))?);
+                }
                 "--preview-capture" => {
                     out.preview_capture = Some(PathBuf::from(value("--preview-capture")?));
                 }

@@ -98,9 +98,11 @@ fn multi_selection(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     });
     ui.add_space(8.0);
     ui.label(
-        RichText::new("Glissez-déposer pour les déplacer, Alt+↑ / Alt+↓ pour les monter ou les descendre.")
-            .small()
-            .color(weak(ui)),
+        RichText::new(
+            "Glissez-déposer pour les déplacer, Alt+↑ / Alt+↓ pour les monter ou les descendre.",
+        )
+        .small()
+        .color(weak(ui)),
     );
     ui.add_space(10.0);
     ui.horizontal_wrapped(|ui| {
@@ -142,21 +144,28 @@ fn scene_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: SceneId) {
     ui.add_space(4.0);
     let mut done = false;
     if let Some(new) = field(ui, "Nom", |ui| {
-        fields::text_field(ui, ("scene_name", id), &name, "Nom de la scène", 1, &mut done)
+        fields::text_field(
+            ui,
+            ("scene_name", id),
+            &name,
+            "Nom de la scène",
+            1,
+            &mut done,
+        )
     }) && !new.is_empty()
     {
-        ctx.exec_merged(Command::RenameScene { id, name: new }, &format!("scene-name:{id}"))
-            .unwrap_or_else(|e| ctx.error(e.to_string()));
+        ctx.exec_merged(
+            Command::RenameScene { id, name: new },
+            &format!("scene-name:{id}"),
+        )
+        .unwrap_or_else(|e| ctx.error(e.to_string()));
     }
     ui.add_space(6.0);
     section_title(ui, "Contenu");
     ui.label(format!("{count} ligne(s)"));
     ui.add_space(12.0);
     ui.horizontal(|ui| {
-        if ui
-            .button(format!("{}  Monter", icons::ARROW_UP))
-            .clicked()
-        {
+        if ui.button(format!("{}  Monter", icons::ARROW_UP)).clicked() {
             edit::move_scene(ctx, id, -1);
         }
         if ui
@@ -381,8 +390,8 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
         }
         NodeKind::PlaySound { asset } => {
             field(ui, "Son", |ui| {
-                asset_row(ui, ctx, id, AssetKind::Sound, asset, |a| NodeKind::PlaySound {
-                    asset: a,
+                asset_row(ui, ctx, id, AssetKind::Sound, asset, |a| {
+                    NodeKind::PlaySound { asset: a }
                 });
             });
         }
@@ -394,7 +403,10 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
             });
         }
         NodeKind::Return => {
-            info(ui, "Revient à l'appel (« Appeler une routine ») qui a mené ici.");
+            info(
+                ui,
+                "Revient à l'appel (« Appeler une routine ») qui a mené ici.",
+            );
         }
         NodeKind::End => {
             info(ui, "Termine l'histoire à cet endroit.");
@@ -408,7 +420,13 @@ fn info(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).color(weak(ui)));
 }
 
-fn say(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, speaker: Option<CharacterId>, text_id: StringId) {
+fn say(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    id: NodeId,
+    speaker: Option<CharacterId>,
+    text_id: StringId,
+) {
     let Some(story) = ctx.story() else { return };
     let text = story.text(text_id).unwrap_or_default().to_owned();
     let mut change: Option<Option<CharacterId>> = None;
@@ -461,7 +479,14 @@ fn say(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, speaker: Option<Cha
 fn label(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, name: &str) {
     let mut done = false;
     if let Some(new) = field(ui, "Nom de l'étiquette", |ui| {
-        fields::text_field(ui, ("label_name", id), name, "ex. fin_heureuse", 1, &mut done)
+        fields::text_field(
+            ui,
+            ("label_name", id),
+            name,
+            "ex. fin_heureuse",
+            1,
+            &mut done,
+        )
     }) {
         commit(ctx, id, NodeKind::Label { name: new }, "name");
     }
@@ -483,7 +508,11 @@ fn jump(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, target: NodeId, is
     let mut chosen = None;
     field(
         ui,
-        if is_jump { "Aller à l'étiquette" } else { "Appeler la routine" },
+        if is_jump {
+            "Aller à l'étiquette"
+        } else {
+            "Appeler la routine"
+        },
         |ui| {
             chosen = label_picker(ui, ("jump_target", id), story, Some(target), None);
         },
@@ -533,7 +562,10 @@ fn choice(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, options: &[Choic
                         action = Some(Do::Remove(i));
                     }
                     if ui
-                        .add_enabled(i + 1 < count, egui::Button::new(icons::ARROW_DOWN).frame(false))
+                        .add_enabled(
+                            i + 1 < count,
+                            egui::Button::new(icons::ARROW_DOWN).frame(false),
+                        )
                         .clicked()
                     {
                         action = Some(Do::Move(i, 1));
@@ -559,9 +591,13 @@ fn choice(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, options: &[Choic
                 action = Some(Do::Text(option.text_id, t));
             }
             field(ui, "Mène à", |ui| {
-                if let Some(Some(t)) =
-                    label_picker(ui, ("choice_target", id, i), story, Some(option.target), None)
-                {
+                if let Some(Some(t)) = label_picker(
+                    ui,
+                    ("choice_target", id, i),
+                    story,
+                    Some(option.target),
+                    None,
+                ) {
                     action = Some(Do::Target(i, t));
                 }
             });
@@ -569,20 +605,15 @@ fn choice(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, options: &[Choic
                 action = Some(Do::NewLabel(i));
             }
             ui.add_space(4.0);
-            let mut has_condition = option.condition.is_some();
-            if ui
-                .checkbox(&mut has_condition, "Option conditionnelle")
-                .changed()
+            if let Some(on) =
+                fields::checkbox(ui, option.condition.is_some(), "Option conditionnelle")
             {
-                action = Some(Do::Condition(
-                    i,
-                    has_condition.then(|| Expr::lit(true)),
-                ));
+                action = Some(Do::Condition(i, on.then(|| Expr::lit(true))));
             }
-            if let Some(cond) = &option.condition {
-                if let Some(c) = condition_editor(ui, ("choice_cond", id, i), story, cond) {
-                    action = Some(Do::Condition(i, Some(c)));
-                }
+            if let Some(cond) = &option.condition
+                && let Some(c) = condition_editor(ui, ("choice_cond", id, i), story, cond)
+            {
+                action = Some(Do::Condition(i, Some(c)));
             }
         });
         ui.add_space(4.0);
@@ -656,9 +687,10 @@ fn choice(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, options: &[Choic
 
 fn add_option(ctx: &mut EditorContext<'_>, id: NodeId, options: &[ChoiceOption]) {
     let Some(story) = ctx.story() else { return };
-    let target = options.last().map(|o| o.target).or_else(|| {
-        ops::labels(story).first().map(|(l, _)| *l)
-    });
+    let target = options
+        .last()
+        .map(|o| o.target)
+        .or_else(|| ops::labels(story).first().map(|(l, _)| *l));
     let text_id = StringId::new();
     let n = options.len() + 1;
     let version = ctx.node_version(id);
@@ -733,10 +765,7 @@ fn condition_editor(
 ) -> Option<Expr> {
     let mode_id = ui.make_persistent_id(("cond_mode", salt));
     let simple_possible = is_simple_condition(cond);
-    let advanced = ui
-        .data(|d| d.get_temp::<bool>(mode_id))
-        .unwrap_or(false)
-        || !simple_possible;
+    let advanced = ui.data(|d| d.get_temp::<bool>(mode_id)).unwrap_or(false) || !simple_possible;
     let out;
     if advanced {
         out = expr_editor(ui, salt, story, cond, true);
@@ -818,7 +847,9 @@ fn set_var(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, var: &str, valu
             if calc_now != calc {
                 ui.data_mut(|d| d.insert_temp(mode_id, calc_now));
                 if !calc_now && !is_lit {
-                    new_value = Some(Expr::Lit(fields::default_value(ty.unwrap_or(ValueType::Int))));
+                    new_value = Some(Expr::Lit(fields::default_value(
+                        ty.unwrap_or(ValueType::Int),
+                    )));
                 }
             }
         });
@@ -878,13 +909,20 @@ fn condition_node(
     });
     let mut new_else = None;
     field(ui, "Sinon", |ui| {
-        new_else = label_picker(ui, ("if_else", id), story, else_target, Some("Continuer à la ligne suivante"));
+        new_else = label_picker(
+            ui,
+            ("if_else", id),
+            story,
+            else_target,
+            Some("Continuer à la ligne suivante"),
+        );
     });
-    let rebuild = |condition: Expr, then_target: NodeId, else_target: Option<NodeId>| NodeKind::If {
-        condition,
-        then_target,
-        else_target,
-    };
+    let rebuild =
+        |condition: Expr, then_target: NodeId, else_target: Option<NodeId>| NodeKind::If {
+            condition,
+            then_target,
+            else_target,
+        };
     if let Some(c) = new_cond {
         commit(ctx, id, rebuild(c, then_target, else_target), "condition");
     }
@@ -912,7 +950,13 @@ fn asset_row(
 ) {
     let Some(story) = ctx.story() else { return };
     if kind == AssetKind::Image {
-        thumbs::show(ui, ctx, story, current, egui::vec2(ui.available_width().min(240.0), 135.0));
+        thumbs::show(
+            ui,
+            ctx,
+            story,
+            current,
+            egui::vec2(ui.available_width().min(240.0), 135.0),
+        );
         ui.add_space(4.0);
     }
     let mut chosen = asset_picker(ui, ("asset", id), story, kind, current);
@@ -937,14 +981,24 @@ fn background(
     transition: Option<orbit_core::Transition>,
 ) {
     field(ui, "Image", |ui| {
-        asset_row(ui, ctx, id, AssetKind::Image, asset, |a| NodeKind::Background {
-            asset: a,
-            transition,
+        asset_row(ui, ctx, id, AssetKind::Image, asset, |a| {
+            NodeKind::Background {
+                asset: a,
+                transition,
+            }
         });
     });
     field(ui, "Transition", |ui| {
         if let Some(t) = transition_editor(ui, ("bg_transition", id), transition) {
-            commit(ctx, id, NodeKind::Background { asset, transition: t }, "transition");
+            commit(
+                ctx,
+                id,
+                NodeKind::Background {
+                    asset,
+                    transition: t,
+                },
+                "transition",
+            );
         }
     });
 }
@@ -972,7 +1026,10 @@ fn show(
     let mut new_expr = None;
     field(ui, "Expression", |ui| {
         // Preview of the sprite.
-        if let Some(e) = story.character(character).and_then(|c| c.expression(expression)) {
+        if let Some(e) = story
+            .character(character)
+            .and_then(|c| c.expression(expression))
+        {
             thumbs::show(ui, ctx, story, e.image, egui::vec2(96.0, 120.0));
             ui.add_space(4.0);
         }
@@ -994,20 +1051,43 @@ fn show(
                 if d.expression(expression).is_some() {
                     expression.to_owned()
                 } else {
-                    d.expressions.first().map(|e| e.name.clone()).unwrap_or_default()
+                    d.expressions
+                        .first()
+                        .map(|e| e.name.clone())
+                        .unwrap_or_default()
                 }
             })
             .unwrap_or_default();
-        commit(ctx, id, rebuild(c, expr, position.clone(), transition), "character");
+        commit(
+            ctx,
+            id,
+            rebuild(c, expr, position.clone(), transition),
+            "character",
+        );
     }
     if let Some(e) = new_expr {
-        commit(ctx, id, rebuild(character, e, position.clone(), transition), "expression");
+        commit(
+            ctx,
+            id,
+            rebuild(character, e, position.clone(), transition),
+            "expression",
+        );
     }
     if let Some(p) = new_pos {
-        commit(ctx, id, rebuild(character, expression.to_owned(), p, transition), "position");
+        commit(
+            ctx,
+            id,
+            rebuild(character, expression.to_owned(), p, transition),
+            "position",
+        );
     }
     if let Some(t) = new_tr {
-        commit(ctx, id, rebuild(character, expression.to_owned(), position.clone(), t), "transition");
+        commit(
+            ctx,
+            id,
+            rebuild(character, expression.to_owned(), position.clone(), t),
+            "transition",
+        );
     }
 }
 
@@ -1028,10 +1108,26 @@ fn hide(
         new_tr = transition_editor(ui, ("hide_tr", id), transition);
     });
     if let Some(Some(c)) = new_char {
-        commit(ctx, id, NodeKind::Hide { character: c, transition }, "character");
+        commit(
+            ctx,
+            id,
+            NodeKind::Hide {
+                character: c,
+                transition,
+            },
+            "character",
+        );
     }
     if let Some(t) = new_tr {
-        commit(ctx, id, NodeKind::Hide { character, transition: t }, "transition");
+        commit(
+            ctx,
+            id,
+            NodeKind::Hide {
+                character,
+                transition: t,
+            },
+            "transition",
+        );
     }
 }
 
@@ -1044,21 +1140,40 @@ fn play_music(
     looping: bool,
 ) {
     field(ui, "Musique", |ui| {
-        asset_row(ui, ctx, id, AssetKind::Music, asset, |a| NodeKind::PlayMusic {
-            asset: a,
-            fade_in,
-            looping,
+        asset_row(ui, ctx, id, AssetKind::Music, asset, |a| {
+            NodeKind::PlayMusic {
+                asset: a,
+                fade_in,
+                looping,
+            }
         });
     });
     field(ui, "Fondu d'entrée", |ui| {
         if let Some(v) = seconds_field(ui, fade_in) {
-            commit(ctx, id, NodeKind::PlayMusic { asset, fade_in: v, looping }, "fade_in");
+            commit(
+                ctx,
+                id,
+                NodeKind::PlayMusic {
+                    asset,
+                    fade_in: v,
+                    looping,
+                },
+                "fade_in",
+            );
         }
     });
     ui.add_space(6.0);
-    let mut l = looping;
-    if ui.checkbox(&mut l, "Jouer en boucle").changed() {
-        commit(ctx, id, NodeKind::PlayMusic { asset, fade_in, looping: l }, "looping");
+    if let Some(l) = fields::checkbox(ui, looping, "Jouer en boucle") {
+        commit(
+            ctx,
+            id,
+            NodeKind::PlayMusic {
+                asset,
+                fade_in,
+                looping: l,
+            },
+            "looping",
+        );
     }
 }
 
@@ -1092,7 +1207,11 @@ fn generic_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
         .and_then(|t| t.def.validate.map(|v| v(data)))
         .unwrap_or_default();
     for p in problems {
-        ui.label(RichText::new(format!("{}  {p}", icons::WARNING)).small().color(warning(ui)));
+        ui.label(
+            RichText::new(format!("{}  {p}", icons::WARNING))
+                .small()
+                .color(warning(ui)),
+        );
     }
     ui.add_space(4.0);
     let (plugin_id, kind, version) = (plugin_id.clone(), kind.clone(), *version);

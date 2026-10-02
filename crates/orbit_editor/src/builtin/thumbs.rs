@@ -75,8 +75,7 @@ pub fn show(
     asset: AssetId,
     max: egui::Vec2,
 ) {
-    let texture = assets_root(ctx, story)
-        .and_then(|root| thumbnail(ui.ctx(), &root, story, asset));
+    let texture = assets_root(ctx, story).and_then(|root| thumbnail(ui.ctx(), &root, story, asset));
     match texture {
         Some(t) => {
             ui.add(egui::Image::new(&t).fit_to_exact_size(max).corner_radius(6));

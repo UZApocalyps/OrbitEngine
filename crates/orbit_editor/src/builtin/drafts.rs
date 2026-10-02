@@ -3,8 +3,7 @@
 //! without a window.
 
 use orbit_core::{
-    AssetKind, CharacterId, ChoiceOption, Expr, NodeKind, Position, SceneId, Story, StringId,
-    Value,
+    AssetKind, CharacterId, ChoiceOption, Expr, NodeKind, Position, SceneId, Story, StringId, Value,
 };
 use orbit_editor_api::{EditorRegistry, icons};
 use orbit_project::ops::{NodeDraft, unique_name};
@@ -49,13 +48,38 @@ pub fn builtin_insertables() -> Vec<Insertable> {
         item("StopMusic", "Arrêter la musique", icons::STOP, "Son"),
         item("PlaySound", "Jouer un son", icons::SPEAKER_HIGH, "Son"),
         item("Wait", "Attendre", icons::TIMER, "Scène"),
-        item("SetVar", "Modifier une variable", icons::FUNCTION, "Logique"),
+        item(
+            "SetVar",
+            "Modifier une variable",
+            icons::FUNCTION,
+            "Logique",
+        ),
         item("If", "Condition", icons::GIT_FORK, "Logique"),
         item("Label", "Étiquette", icons::FLAG, "Navigation"),
-        item("Jump", "Saut vers une étiquette", icons::ARROW_BEND_UP_RIGHT, "Navigation"),
-        item("Call", "Appeler une routine", icons::PHONE_CALL, "Navigation"),
-        item("Return", "Retour de routine", icons::ARROW_U_UP_LEFT, "Navigation"),
-        item("End", "Fin de l'histoire", icons::FLAG_CHECKERED, "Navigation"),
+        item(
+            "Jump",
+            "Saut vers une étiquette",
+            icons::ARROW_BEND_UP_RIGHT,
+            "Navigation",
+        ),
+        item(
+            "Call",
+            "Appeler une routine",
+            icons::PHONE_CALL,
+            "Navigation",
+        ),
+        item(
+            "Return",
+            "Retour de routine",
+            icons::ARROW_U_UP_LEFT,
+            "Navigation",
+        ),
+        item(
+            "End",
+            "Fin de l'histoire",
+            icons::FLAG_CHECKERED,
+            "Navigation",
+        ),
     ]
 }
 
@@ -107,11 +131,7 @@ fn first_asset(story: &Story, kind: AssetKind) -> Result<orbit_core::AssetId, Dr
         .ok_or(DraftError::NeedAsset(kind))
 }
 
-fn stage_character(
-    story: &Story,
-    scene: SceneId,
-    index: usize,
-) -> Result<CharacterId, DraftError> {
+fn stage_character(story: &Story, scene: SceneId, index: usize) -> Result<CharacterId, DraftError> {
     previous_speaker(story, scene, index)
         .filter(|c| story.character(*c).is_some())
         .or_else(|| story.characters.first().map(|c| c.id))

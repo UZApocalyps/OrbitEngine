@@ -37,7 +37,7 @@ pub fn default_layout(registry: &EditorRegistry) -> DockState<String> {
     }
     if !right.is_empty() || !right_top.is_empty() {
         // The right column is wide enough for a 16:9 preview over the inspector.
-        let width = if right_top.is_empty() { 0.76 } else { 0.5 };
+        let width = if right_top.is_empty() { 0.76 } else { 0.58 };
         let [old, column] = main.split_right(middle, width, right);
         middle = old;
         if !right_top.is_empty() {

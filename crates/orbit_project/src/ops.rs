@@ -188,10 +188,7 @@ pub fn paste_nodes(
 }
 
 /// Duplicates nodes right after the last one. Returns the new ids.
-pub fn duplicate_nodes(
-    project: &mut Project,
-    ids: &[NodeId],
-) -> Result<Vec<NodeId>, ProjectError> {
+pub fn duplicate_nodes(project: &mut Project, ids: &[NodeId]) -> Result<Vec<NodeId>, ProjectError> {
     let story = project.story();
     let ordered = in_story_order(story, ids);
     let Some(&last) = ordered.last() else {
@@ -438,7 +435,9 @@ pub fn add_asset(
         return if existing.kind == kind {
             Ok(existing.id)
         } else {
-            Err(reject(format!("« {path} » est déjà déclaré d'un autre type.")))
+            Err(reject(format!(
+                "« {path} » est déjà déclaré d'un autre type."
+            )))
         };
     }
     let id = AssetId::new();
@@ -456,9 +455,7 @@ pub fn add_asset(
 
 fn valid_identifier(name: &str) -> bool {
     let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_alphabetic() || c == '_')
+    chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
         && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '.')
         && !matches!(name, "true" | "false")
 }
@@ -579,11 +576,17 @@ pub fn variable_users(story: &Story, name: &str) -> Vec<NodeId> {
 /// Declares a variable.
 pub fn add_variable(project: &mut Project, decl: VarDecl) -> Result<(), ProjectError> {
     if !valid_identifier(&decl.name) {
-        return Err(reject(format!("« {} » n'est pas un nom de variable valide (lettres, chiffres et _).", decl.name)));
+        return Err(reject(format!(
+            "« {} » n'est pas un nom de variable valide (lettres, chiffres et _).",
+            decl.name
+        )));
     }
     let mut variables = project.story().variables.clone();
     if variables.iter().any(|v| v.name == decl.name) {
-        return Err(reject(format!("La variable « {} » existe déjà.", decl.name)));
+        return Err(reject(format!(
+            "La variable « {} » existe déjà.",
+            decl.name
+        )));
     }
     variables.push(decl);
     project.execute(Command::SetVariables { variables })
@@ -615,7 +618,9 @@ pub fn rename_variable(project: &mut Project, old: &str, new: &str) -> Result<()
         return Ok(());
     }
     if !valid_identifier(new) {
-        return Err(reject(format!("« {new} » n'est pas un nom de variable valide (lettres, chiffres et _).")));
+        return Err(reject(format!(
+            "« {new} » n'est pas un nom de variable valide (lettres, chiffres et _)."
+        )));
     }
     let story = project.story();
     if story.variables.iter().any(|v| v.name == new) {
@@ -634,7 +639,11 @@ pub fn rename_variable(project: &mut Project, old: &str, new: &str) -> Result<()
         .filter_map(|n| {
             let kind = match &n.kind {
                 NodeKind::SetVar { var, value } => NodeKind::SetVar {
-                    var: if var == old { new.to_owned() } else { var.clone() },
+                    var: if var == old {
+                        new.to_owned()
+                    } else {
+                        var.clone()
+                    },
                     value: rename_in_expr(value, old, new),
                 },
                 NodeKind::If {

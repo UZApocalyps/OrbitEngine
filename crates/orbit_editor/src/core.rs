@@ -641,7 +641,9 @@ impl EditorCore {
                 .project
                 .dispatch(&ProjectEvent::Changed(&event));
             let story = session.project.story();
-            self.state.node_selection.retain(|id| story.locate(*id).is_some());
+            self.state
+                .node_selection
+                .retain(|id| story.locate(*id).is_some());
             match self.state.selection {
                 Some(Selection::Node(id)) if story.locate(id).is_none() => {
                     self.state.selection = None;

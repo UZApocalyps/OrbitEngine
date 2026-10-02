@@ -68,6 +68,10 @@ pub struct EditorApp {
     host: Vec<HostRequest>,
     title: String,
     capture_done: bool,
+    /// CPU time of each frame, with `--autoscroll` (ms).
+    frame_ms: Vec<f32>,
+    /// Time between two presented frames, with `--autoscroll` (ms).
+    interval_ms: Vec<f32>,
 }
 
 impl EditorApp {
@@ -103,6 +107,7 @@ impl EditorApp {
         }
         let mut core = EditorCore::new(options, &egui_ctx);
         core.show_frame_counter = args.frame_counter;
+        core.state.debug_autoscroll = args.autoscroll;
         if let Some(path) = &args.project {
             core.open_project(path);
             if let Some(n) = args.select_node {
@@ -170,6 +175,8 @@ impl EditorApp {
             host: Vec::new(),
             title,
             capture_done: false,
+            frame_ms: Vec::new(),
+            interval_ms: Vec::new(),
         }
     }
 
@@ -458,6 +465,13 @@ impl App for EditorApp {
         }
         textures_delta.clear();
 
+        if self.args.autoscroll.is_some() {
+            self.frame_ms.push(now.elapsed().as_secs_f32() * 1000.0);
+            if let Some(t) = self.last_frame.filter(|_| presented) {
+                self.interval_ms
+                    .push(now.duration_since(t).as_secs_f32() * 1000.0);
+            }
+        }
         if presented {
             self.frames += 1;
             if self.frames == 1 {
@@ -514,6 +528,29 @@ impl App for EditorApp {
                 log::error!("screenshot failed: {e}");
             }
             self.host.push(HostRequest::Quit);
+        }
+        if self.deadline_hit && !self.frame_ms.is_empty() {
+            let stats = |v: &[f32]| {
+                let mut sorted = v.to_vec();
+                sorted.sort_by(f32::total_cmp);
+                let avg = sorted.iter().sum::<f32>() / sorted.len() as f32;
+                let p95 = sorted[((sorted.len() as f32 * 0.95) as usize).min(sorted.len() - 1)];
+                (avg, p95, sorted[sorted.len() - 1])
+            };
+            let (avg, p95, max) = stats(&self.frame_ms);
+            log::info!(
+                target: "orbit_editor::perf",
+                "autoscroll: {} frames, CPU per frame avg {avg:.2} ms, p95 {p95:.2} ms, max {max:.2} ms",
+                self.frame_ms.len()
+            );
+            if !self.interval_ms.is_empty() {
+                let (avg, p95, max) = stats(&self.interval_ms);
+                log::info!(
+                    target: "orbit_editor::perf",
+                    "autoscroll: presented every avg {avg:.2} ms ({:.0} fps), p95 {p95:.2} ms, max {max:.2} ms",
+                    1000.0 / avg
+                );
+            }
         }
         if self.deadline_hit {
             let idle = self.last_frame.map_or(0.0, |t| {

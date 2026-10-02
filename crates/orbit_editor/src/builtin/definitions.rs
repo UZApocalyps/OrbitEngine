@@ -14,8 +14,7 @@ use orbit_core::{
 };
 use orbit_editor_api::fields::{self, asset_picker, position_picker, to_color32, type_name};
 use orbit_editor_api::{
-    DockSlot, EditorContext, EditorPlugin, EditorRegistry, PanelDef, Plugin, PluginManifest,
-    icons,
+    DockSlot, EditorContext, EditorPlugin, EditorRegistry, PanelDef, Plugin, PluginManifest, icons,
 };
 use orbit_project::{Command, ops};
 
@@ -96,11 +95,17 @@ fn characters_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Characters
             if story.characters.is_empty() {
                 ui.add_space(20.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new(icons::USERS_THREE).size(30.0).color(faint(ui)));
+                    ui.label(
+                        RichText::new(icons::USERS_THREE)
+                            .size(30.0)
+                            .color(faint(ui)),
+                    );
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new("Aucun personnage.\nCréez-en un pour écrire des répliques à son nom.")
-                            .color(weak(ui)),
+                        RichText::new(
+                            "Aucun personnage.\nCréez-en un pour écrire des répliques à son nom.",
+                        )
+                        .color(weak(ui)),
                     );
                 });
             }
@@ -178,7 +183,12 @@ fn usage(ctx: &EditorContext<'_>, id: CharacterId) -> (usize, usize) {
     (says, stage)
 }
 
-fn character_details(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &CharactersUi, id: CharacterId) {
+fn character_details(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    state: &CharactersUi,
+    id: CharacterId,
+) {
     let Some(story) = ctx.story() else { return };
     let Some(def) = story.character(id).cloned() else {
         return;
@@ -193,7 +203,9 @@ fn character_details(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Character
         ui.set_width(ui.available_width());
         // Name and color.
         section_title(ui, "Identité");
-        if let Some(n) = fields::text_field(ui, ("char_name", id), &name, "Nom affiché", 1, &mut done) {
+        if let Some(n) =
+            fields::text_field(ui, ("char_name", id), &name, "Nom affiché", 1, &mut done)
+        {
             pending.push((
                 Command::SetString {
                     id: def.name_id,
@@ -239,9 +251,9 @@ fn character_details(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Character
         ui.label(RichText::new("Position par défaut").small().color(weak(ui)));
         let mut change: Option<Option<Position>> = None;
         ui.horizontal(|ui| {
-            let mut has = def.default_position.is_some();
-            if ui.checkbox(&mut has, "").changed() {
-                change = Some(has.then_some(Position::Center));
+            let has = def.default_position.is_some();
+            if let Some(on) = fields::checkbox(ui, has, "") {
+                change = Some(on.then_some(Position::Center));
             }
             if let Some(p) = &def.default_position
                 && let Some(new) = position_picker(ui, ("char_pos", id), story, p)
@@ -279,9 +291,11 @@ fn character_details(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Character
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(format!("Utilisé dans {says} réplique(s) et {stage} affichage(s)."))
-                .small()
-                .color(weak(ui)),
+            RichText::new(format!(
+                "Utilisé dans {says} réplique(s) et {stage} affichage(s)."
+            ))
+            .small()
+            .color(weak(ui)),
         );
     });
     ui.add_space(4.0);
@@ -427,7 +441,11 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
                 }
             };
             let name = ops::unique_name(
-                if def.expressions.is_empty() { "neutral" } else { "expression" },
+                if def.expressions.is_empty() {
+                    "neutral"
+                } else {
+                    "expression"
+                },
                 def.expressions.iter().map(|e| e.name.as_str()),
             );
             new.expressions.push(Expression { name, image });
@@ -464,14 +482,24 @@ fn positions_section(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             }
             ui.label(RichText::new("x").small().color(weak(ui)));
             if ui
-                .add(DragValue::new(&mut new[i].x).speed(0.005).range(0.0..=1.0).max_decimals(3))
+                .add(
+                    DragValue::new(&mut new[i].x)
+                        .speed(0.005)
+                        .range(0.0..=1.0)
+                        .max_decimals(3),
+                )
                 .changed()
             {
                 changed = true;
             }
             ui.label(RichText::new("y").small().color(weak(ui)));
             if ui
-                .add(DragValue::new(&mut new[i].y).speed(0.005).range(0.0..=1.0).max_decimals(3))
+                .add(
+                    DragValue::new(&mut new[i].y)
+                        .speed(0.005)
+                        .range(0.0..=1.0)
+                        .max_decimals(3),
+                )
                 .changed()
             {
                 changed = true;
@@ -499,7 +527,9 @@ fn positions_section(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             matches!(&n.kind, NodeKind::Show { position: Position::Custom(c), .. } if *c == name)
         });
         if used {
-            ctx.error(format!("La position « {name} » est utilisée par un affichage de personnage."));
+            ctx.error(format!(
+                "La position « {name} » est utilisée par un affichage de personnage."
+            ));
         } else {
             new.remove(i);
             changed = true;
@@ -648,7 +678,12 @@ fn variable_row(ui: &mut Ui, ctx: &mut EditorContext<'_>, decl: &VarDecl) {
                 .selected_text(type_name(ty))
                 .width(130.0)
                 .show_ui(ui, |ui| {
-                    for t in [ValueType::Bool, ValueType::Int, ValueType::Float, ValueType::Str] {
+                    for t in [
+                        ValueType::Bool,
+                        ValueType::Int,
+                        ValueType::Float,
+                        ValueType::Str,
+                    ] {
                         if ui.selectable_label(t == ty, type_name(t)).clicked() && t != ty {
                             action = Some(Do::Type(t));
                         }
@@ -665,7 +700,9 @@ fn variable_row(ui: &mut Ui, ctx: &mut EditorContext<'_>, decl: &VarDecl) {
                 .selected_text(scope_name(decl.scope))
                 .show_ui(ui, |ui| {
                     for s in [VarScope::Game, VarScope::Persistent] {
-                        if ui.selectable_label(decl.scope == s, scope_name(s)).clicked()
+                        if ui
+                            .selectable_label(decl.scope == s, scope_name(s))
+                            .clicked()
                             && decl.scope != s
                         {
                             action = Some(Do::Scope(s));
@@ -678,16 +715,19 @@ fn variable_row(ui: &mut Ui, ctx: &mut EditorContext<'_>, decl: &VarDecl) {
     let name = decl.name.clone();
     let result = match action {
         Do::Rename(new) => ctx.ops(|p| ops::rename_variable(p, &name, &new)),
-        Do::Type(t) => ctx.ops(|p| {
-            ops::update_variable(p, &name, fields::default_value(t), decl.scope)
-        }),
+        Do::Type(t) => {
+            ctx.ops(|p| ops::update_variable(p, &name, fields::default_value(t), decl.scope))
+        }
         Do::Initial(v) => {
             // Live edits of one value are one undo step.
             let mut variables = ctx.story().map(|s| s.variables.clone()).unwrap_or_default();
             if let Some(slot) = variables.iter_mut().find(|v| v.name == name) {
                 slot.initial = v;
             }
-            ctx.exec_merged(Command::SetVariables { variables }, &format!("var-init:{name}"))
+            ctx.exec_merged(
+                Command::SetVariables { variables },
+                &format!("var-init:{name}"),
+            )
         }
         Do::Scope(s) => ctx.ops(|p| ops::update_variable(p, &name, decl.initial.clone(), s)),
         Do::Delete => ctx.ops(|p| ops::delete_variable(p, &name)),

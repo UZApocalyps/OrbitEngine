@@ -204,8 +204,10 @@ pub fn asset_picker(
             }
             if !any {
                 ui.label(
-                    RichText::new(format!("Aucune ressource de type « {kind} » dans le projet."))
-                        .color(weak(ui)),
+                    RichText::new(format!(
+                        "Aucune ressource de type « {kind} » dans le projet."
+                    ))
+                    .color(weak(ui)),
                 );
             }
         });
@@ -271,6 +273,56 @@ pub fn label_picker(
             }
         });
     (chosen != current).then_some(chosen)
+}
+
+/// A checkbox with a visible box (the stock one is invisible on the editor's
+/// dark surfaces). Returns the new state when clicked.
+pub fn checkbox(ui: &mut Ui, checked: bool, label: &str) -> Option<bool> {
+    let accent = ui.visuals().selection.stroke.color;
+    let text = if label.is_empty() {
+        None
+    } else {
+        Some(ui.painter().layout_no_wrap(
+            label.to_owned(),
+            egui::FontId::proportional(13.5),
+            ui.visuals().text_color(),
+        ))
+    };
+    let box_size = 17.0;
+    let width = box_size + text.as_ref().map_or(0.0, |t| 8.0 + t.size().x);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 22.0), egui::Sense::click());
+    let box_rect = egui::Rect::from_min_size(
+        rect.left_center() - egui::vec2(0.0, box_size / 2.0),
+        egui::vec2(box_size, box_size),
+    );
+    let painter = ui.painter();
+    if checked {
+        painter.rect_filled(box_rect, egui::CornerRadius::same(5), accent);
+        painter.text(
+            box_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            egui_phosphor::regular::CHECK,
+            egui::FontId::proportional(13.0),
+            Color32::WHITE,
+        );
+    } else {
+        let stroke_color = if response.hovered() {
+            accent
+        } else {
+            ui.visuals().weak_text_color().gamma_multiply(0.8)
+        };
+        painter.rect_stroke(
+            box_rect,
+            egui::CornerRadius::same(5),
+            egui::Stroke::new(1.4, stroke_color),
+            egui::StrokeKind::Inside,
+        );
+    }
+    if let Some(t) = text {
+        let pos = egui::pos2(box_rect.right() + 8.0, rect.center().y - t.size().y / 2.0);
+        painter.galley(pos, t, ui.visuals().text_color());
+    }
+    response.clicked().then_some(!checked)
 }
 
 /// Seconds, as a drag value.
@@ -358,12 +410,7 @@ pub fn color_field(ui: &mut Ui, color: Color) -> Option<Color> {
 /// A variable value editor (type chosen by the value itself).
 pub fn value_editor(ui: &mut Ui, value: &Value) -> Option<Value> {
     match value {
-        Value::Bool(b) => {
-            let mut v = *b;
-            let label = if v { "vrai" } else { "faux" };
-            ui.checkbox(&mut v, label);
-            (v != *b).then_some(Value::Bool(v))
-        }
+        Value::Bool(b) => checkbox(ui, *b, if *b { "vrai" } else { "faux" }).map(Value::Bool),
         Value::Int(i) => {
             let mut v = *i;
             ui.add(DragValue::new(&mut v).speed(0.2));
@@ -594,7 +641,9 @@ pub fn simple_condition_editor(
             }
         }
     });
-    if new_var != var && let Some(t) = var_type(story, &new_var) {
+    if new_var != var
+        && let Some(t) = var_type(story, &new_var)
+    {
         // A new variable of another type: reset the operator and the value.
         new_lit = default_value(t);
         if t == ValueType::Bool {
@@ -640,11 +689,7 @@ pub fn custom_data_editor(ui: &mut Ui, salt: egui::Id, data: &CustomData) -> Opt
             });
             out
         }
-        CustomData::Bool(b) => {
-            let mut v = *b;
-            ui.checkbox(&mut v, "");
-            (v != *b).then_some(CustomData::Bool(v))
-        }
+        CustomData::Bool(b) => checkbox(ui, *b, "").map(CustomData::Bool),
         CustomData::Int(i) => {
             let mut v = *i;
             ui.add(DragValue::new(&mut v).speed(0.2));

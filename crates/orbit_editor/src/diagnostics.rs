@@ -2,10 +2,7 @@
 //! editor, inspector). Recomputed by the core when the project revision
 //! changes.
 
-use orbit_core::{
-    NodeId, Story, ValidationError, ValidationWarning, validate,
-    NodeKind,
-};
+use orbit_core::{NodeId, NodeKind, Story, ValidationError, ValidationWarning, validate};
 use orbit_editor_api::{Diagnostics, Level};
 
 fn label_of(story: &Story, id: NodeId) -> String {
@@ -20,7 +17,10 @@ fn character_of(story: &Story, id: orbit_core::CharacterId) -> String {
     story
         .character(id)
         .and_then(|c| story.text(c.name_id))
-        .map_or_else(|| "un personnage supprimé".to_owned(), |n| format!("« {n} »"))
+        .map_or_else(
+            || "un personnage supprimé".to_owned(),
+            |n| format!("« {n} »"),
+        )
 }
 
 /// Node an error is about, with its French message.
@@ -33,10 +33,16 @@ pub fn describe_error(story: &Story, error: &ValidationError) -> (Option<NodeId>
         ),
         E::TargetNotLabel { from, target } => (
             Some(*from),
-            format!("La cible doit être une étiquette, pas {}", label_of(story, *target)),
+            format!(
+                "La cible doit être une étiquette, pas {}",
+                label_of(story, *target)
+            ),
         ),
         E::EmptyChoice(n) => (Some(*n), "Ce choix n'a aucune option".to_owned()),
-        E::UnknownString { node, .. } => (*node, "Texte introuvable dans la table des textes".to_owned()),
+        E::UnknownString { node, .. } => (
+            *node,
+            "Texte introuvable dans la table des textes".to_owned(),
+        ),
         E::UnknownCharacter { node, character } => (
             Some(*node),
             format!("Personnage inconnu ({})", character_of(story, *character)),
@@ -52,7 +58,9 @@ pub fn describe_error(story: &Story, error: &ValidationError) -> (Option<NodeId>
                 character_of(story, *character)
             ),
         ),
-        E::UnknownAsset { node, .. } => (*node, "Ressource introuvable dans le manifeste".to_owned()),
+        E::UnknownAsset { node, .. } => {
+            (*node, "Ressource introuvable dans le manifeste".to_owned())
+        }
         E::AssetKindMismatch {
             node,
             expected,
@@ -102,14 +110,22 @@ pub fn compute(story: &Story, revision: u64) -> Diagnostics {
     for e in &report.errors {
         let (node, message) = describe_error(story, e);
         match node {
-            Some(n) => out.by_node.entry(n).or_default().push((Level::Error, message)),
+            Some(n) => out
+                .by_node
+                .entry(n)
+                .or_default()
+                .push((Level::Error, message)),
             None => out.general.push((Level::Error, message)),
         }
     }
     for w in &report.warnings {
         let (node, message) = describe_warning(w);
         match node {
-            Some(n) => out.by_node.entry(n).or_default().push((Level::Warn, message)),
+            Some(n) => out
+                .by_node
+                .entry(n)
+                .or_default()
+                .push((Level::Warn, message)),
             None => out.general.push((Level::Warn, message)),
         }
     }

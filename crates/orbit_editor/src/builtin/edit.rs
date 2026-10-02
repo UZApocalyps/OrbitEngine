@@ -135,7 +135,9 @@ pub fn insert_kind(ctx: &mut EditorContext<'_>, key: &str) -> Option<Vec<NodeId>
                 import_asset_dialog(ctx, kind)?;
             }
             Err(DraftError::NeedAsset(kind)) => {
-                ctx.error(format!("Aucune ressource de type « {kind} » dans le projet."));
+                ctx.error(format!(
+                    "Aucune ressource de type « {kind} » dans le projet."
+                ));
                 return None;
             }
             Err(DraftError::Message(m)) => {
@@ -269,7 +271,10 @@ pub fn select_all(ctx: &mut EditorContext<'_>) {
 /// Creates a scene after the current one's end and selects it.
 pub fn new_scene(ctx: &mut EditorContext<'_>) {
     let Some(story) = ctx.story() else { return };
-    let name = ops::unique_name("Nouvelle scène", story.scenes.iter().map(|s| s.name.as_str()));
+    let name = ops::unique_name(
+        "Nouvelle scène",
+        story.scenes.iter().map(|s| s.name.as_str()),
+    );
     if let Some(id) = ctx.ops_or_toast(|p| ops::add_scene(p, &name)) {
         ctx.select(Selection::Scene(id));
     }
@@ -328,10 +333,16 @@ pub fn move_scene(ctx: &mut EditorContext<'_>, id: SceneId, direction: i32) {
 
 /// Whether the clipboard holds something to paste.
 pub fn can_paste(ctx: &EditorContext<'_>) -> bool {
-    ctx.state().clipboard.as_ref().is_some_and(|c: &NodeClip| !c.is_empty())
+    ctx.state()
+        .clipboard
+        .as_ref()
+        .is_some_and(|c: &NodeClip| !c.is_empty())
 }
 
 /// Whether the scene has a `Label` kind node `id` (helper for the UI).
 pub fn is_label(story: &Story, id: NodeId) -> bool {
-    matches!(story.node(id).map(|n| &n.kind), Some(NodeKind::Label { .. }))
+    matches!(
+        story.node(id).map(|n| &n.kind),
+        Some(NodeKind::Label { .. })
+    )
 }
