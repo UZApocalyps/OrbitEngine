@@ -669,7 +669,7 @@ impl PreviewHost {
             return false;
         }
         let interacting = core.state.scene_view.interacting;
-        let story = session.project.story().clone();
+        let story = Arc::new(session.project.story().clone());
         let (shown, actors, notice) = match node.filter(|n| story.locate(*n).is_some()) {
             Some(node) => match self.draw_scene_view(&story, &key, node, target, interacting) {
                 Ok((actors, notice)) => (Some(node), actors, notice),
@@ -699,13 +699,13 @@ impl PreviewHost {
     /// `target` and returns the characters on it with the search's notice.
     fn draw_scene_view(
         &mut self,
-        story: &Story,
+        story: &Arc<Story>,
         key: &SceneKey,
         node: orbit_core::NodeId,
         target: TextureId,
         interacting: bool,
     ) -> Result<(Vec<SceneViewActor>, Option<String>), String> {
-        let arc = Arc::new(story.clone());
+        let arc = story;
         let structure = orbit_save::story_hash(story);
         let fresh = self.scene_cache.as_ref().is_some_and(|c| {
             c.generation == key.generation
@@ -716,7 +716,7 @@ impl PreviewHost {
             let started = Instant::now();
             self.scene_cache = None;
             let (source, notice) =
-                scene_view::seek_before(&arc, node, orbit_vm::SeekLimits::default())?;
+                scene_view::seek_before(arc, node, orbit_vm::SeekLimits::default())?;
             log::debug!(
                 target: "orbit_editor::perf",
                 "scene view: path to the node found in {} ms",
@@ -732,7 +732,7 @@ impl PreviewHost {
         }
         let cache = self.scene_cache.as_ref().ok_or("no path")?;
         let notice = cache.notice.clone();
-        let at = scene_view::scene_at(&arc, &cache.source, node)?;
+        let at = scene_view::scene_at(arc, &cache.source, node)?;
         let stage = scene_view::stage_state(story, &at.after);
         if let Err(e) = self.runtime.render_stage_to_target(story, &stage, target) {
             log::error!("scene view render failed: {e}");

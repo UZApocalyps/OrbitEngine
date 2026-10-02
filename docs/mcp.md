@@ -52,13 +52,13 @@ Les schémas d'entrée sont générés depuis les types Rust (`schemars`), sans 
 | `read_scene` | Lignes numérotées d'une scène : index, id du nœud, version, contenu lisible (répliques, choix et labels visés, commandes). |
 | `create_scene`, `rename_scene` | Crée / renomme une scène (noms uniques). |
 | `delete_scene` | **Destructif.** Supprime la scène et ses nœuds ; refusé tant qu'un nœud d'une autre scène saute vers elle (saut, option, saut de scène). |
-| `add_dialogue` | Réplique (locuteur, texte, `expression` + `position` optionnelles qui insèrent un `show` avant la réplique, position d'insertion `after` / `index`). |
+| `add_dialogue` | Réplique (locuteur, texte, `expression` + `position` optionnelles qui insèrent un `show` avant la réplique, avec `scale`, `flip_x`, `flip_y` ; position d'insertion `after` / `index`). `position` est un nom (`left`, `center`, `right`, position du projet) ou des coordonnées libres `{"x": 0.4, "y": 1.0}`. |
 | `edit_dialogue` | Change le texte et/ou le locuteur ; `expected_version`. |
 | `add_choice` | Choix : options (texte, label cible, condition optionnelle). |
-| `add_command` | Décor, `show` / `hide`, musique, son, transition (sur décor / show / hide), attente, `set_var`, `if`, `jump`, `jump_scene` (saut vers une autre scène, éventuellement vers une de ses étiquettes ; les scènes ne s'enchaînent jamais d'elles-mêmes), `label`, `call` / `return`, `end`, nœud de plugin (`custom`). |
+| `add_command` | Décor, `show` (position nommée ou libre `{"x", "y"}`, `scale` / `scale_y`, `flip_x` / `flip_y` ; réafficher un personnage déjà présent met à jour sa position, son échelle et son miroir) / `hide`, musique, son, transition (sur décor / show / hide), attente, `set_var`, `if`, `jump`, `jump_scene` (saut vers une autre scène, éventuellement vers une de ses étiquettes ; les scènes ne s'enchaînent jamais d'elles-mêmes), `label`, `call` / `return`, `end`, nœud de plugin (`custom`). |
 | `delete_node` | **Destructif.** Supprime un nœud ; refusé tant qu'un autre nœud saute vers lui. |
 | `move_node` | Déplace un nœud (dans la scène ou vers une autre). |
-| `list_characters`, `create_character`, `edit_character` | Personnages, couleur, expressions (nom → asset image). |
+| `list_characters`, `create_character`, `edit_character` | Personnages, couleur, expressions (nom → asset image) et `default_scale` (échelle par défaut, 0,05 à 10, 1 = taille native). |
 | `list_variables`, `declare_variable` | Variables déclarées (booléen, nombre, texte ; portée `game` ou `persistent`). |
 | `list_assets`, `import_asset` | Manifeste d'assets ; enregistre un fichier **déjà situé dans le dossier du projet** (copié sous `assets/` s'il n'y est pas). |
 | `validate` | Même contrôle que `orbit validate` (+ fichiers d'assets, validateurs de plugins). |

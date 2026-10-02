@@ -57,7 +57,9 @@ impl EditorPlugin for SceneViewPlugin {
             "sceneview",
             "Éditeur de vue",
             icons::FRAME_CORNERS,
-            DockSlot::RightTop,
+            // A big canvas: a tab next to the scene editor and the graph,
+            // with the preview (hot reload) beside it.
+            DockSlot::Center,
             panel,
         ));
         reg.action(
@@ -265,7 +267,9 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let avail = ui.available_size();
     let size = vec2(avail.x.max(40.0), (avail.y - STATUS_HEIGHT).max(40.0));
     let (area, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-    let picture = fit_16_9(area);
+    // A little room around the picture: the handles on its edges (feet,
+    // sides) stay fully visible.
+    let picture = fit_16_9(area.shrink(9.0));
     let ppp = ui.ctx().pixels_per_point();
     {
         let sv = &mut ctx.state_mut().scene_view;
@@ -395,7 +399,7 @@ impl View {
 fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) -> Toggles {
     let mut flags = toggles(ctx);
     let look = selected_show(ctx).and_then(|n| ctx.story().and_then(|s| ops::show_look(s, n)));
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.add_enabled_ui(look.is_some(), |ui| {
             let (fx, fy) = look
                 .as_ref()
@@ -1013,7 +1017,7 @@ fn status_line(
                 if look.flip_y {
                     text.push_str("  ·  miroir Y");
                 }
-                ui.label(RichText::new(text).size(11.5).color(weak(ui)));
+                ui.add(egui::Label::new(RichText::new(text).size(11.5).color(weak(ui))).truncate());
             }
             None => {
                 ui.label(
@@ -1028,13 +1032,13 @@ fn status_line(
                 .on_hover_text(notice);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                RichText::new(
-                    "glisser : placer · poignées : échelle (Maj : ratio) · flèches : ajuster",
-                )
-                .size(10.5)
-                .color(faint(ui)),
-            );
+            ui.label(RichText::new(icons::QUESTION).color(faint(ui)))
+                .on_hover_text(
+                    "Glisser : placer librement (Alt : sans magnétisme)
+                     Poignées : échelle autour des pieds (Maj : garder le ratio)
+                     Flèches : ajuster (Maj : grand pas) · Échap : annuler le geste
+                     Cliquer un autre personnage : sélectionner son « Afficher »",
+                );
         });
     });
 }
