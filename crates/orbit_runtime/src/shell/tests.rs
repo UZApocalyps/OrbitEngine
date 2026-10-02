@@ -945,3 +945,126 @@ fn saves_land_in_the_data_directory() {
     assert!(dir.join("persistent.ron").is_file());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ------------------------------------------------------- embedded (preview)
+
+fn embedded() -> Shell {
+    let mut sh = shell_with(
+        &MemoryStorage::new(),
+        ShellConfig {
+            embedded: true,
+            capture_thumbnails: false,
+            ..ShellConfig::default()
+        },
+    );
+    let vm = Vm::from_start(story()).unwrap();
+    sh.install_vm(vm, false);
+    sh
+}
+
+#[test]
+fn an_embedded_shell_plays_at_once_and_never_shows_the_main_menu() {
+    let mut sh = embedded();
+    assert!(sh.has_game());
+    play_to_end(&mut sh);
+    // Confirming on the end screen starts the story again instead of going
+    // to a main menu.
+    sh.input(ui(UiInput::Confirm));
+    assert!(sh.has_game());
+    assert_ne!(kind(&sh), FlowKind::Ended);
+    assert_eq!(sh.top(), None);
+    // The pause menu's "main menu" does the same.
+    sh.apply(UiEvent::ReturnToMainMenu);
+    assert!(sh.has_game());
+}
+
+#[test]
+fn an_embedded_shell_does_not_keep_persistent_data_between_playthroughs() {
+    let mut sh = embedded();
+    play_to_end(&mut sh);
+    sh.input(ui(UiInput::Confirm)); // restart
+    // `plays` is persistent in the demo: it is back to its initial value.
+    let plays = sh.game().unwrap().director.vm().variable("plays").cloned();
+    assert_eq!(plays, Some(Value::Int(0)));
+}
+
+#[test]
+fn a_line_waiting_for_the_player_is_a_still_image() {
+    let mut sh = embedded();
+    // The first background fades in: the picture moves.
+    assert!(sh.is_animating());
+    for _ in 0..20 {
+        sh.update(30.0);
+        if kind(&sh) == FlowKind::Say {
+            break;
+        }
+    }
+    assert_eq!(kind(&sh), FlowKind::Say);
+    assert!(sh.is_animating(), "the line is being typed");
+    sh.update(30.0);
+    assert!(!sh.is_animating(), "a complete line waiting for a click");
+    for _ in 0..50 {
+        sh.update(0.016);
+        assert!(!sh.is_animating());
+    }
+    // A choice waits too.
+    while kind(&sh) != FlowKind::Choice {
+        step(&mut sh);
+        sh.update(0.5);
+    }
+    sh.update(5.0);
+    assert!(!sh.is_animating());
+}
+
+#[test]
+fn timers_transitions_skip_and_toasts_keep_the_picture_moving() {
+    let mut sh = embedded();
+    // The first background has a fade transition somewhere before a line.
+    let mut saw_transition = false;
+    for _ in 0..40 {
+        if matches!(kind(&sh), FlowKind::Transition | FlowKind::Waiting) {
+            saw_transition = true;
+            assert!(sh.is_animating());
+        }
+        step(&mut sh);
+    }
+    assert!(saw_transition);
+    // Skip runs on its own...
+    let mut sh = embedded();
+    sh.set_skip(true);
+    assert!(sh.is_animating());
+    // ...and stops at the first choice, leaving a still image.
+    for _ in 0..400 {
+        sh.update(0.1);
+        if kind(&sh) == FlowKind::Choice {
+            break;
+        }
+    }
+    assert_eq!(kind(&sh), FlowKind::Choice);
+    sh.update(1.0);
+    assert!(!sh.is_animating());
+    // A toast (quick save) fades: animating until it is gone.
+    sh.apply(UiEvent::QuickSave);
+    sh.update(0.016);
+    assert!(sh.is_animating());
+    sh.update(10.0);
+    assert!(!sh.is_animating());
+}
+
+#[test]
+fn the_embedded_shell_reports_the_node_on_screen() {
+    let mut sh = embedded();
+    for _ in 0..20 {
+        sh.update(30.0);
+        if kind(&sh) == FlowKind::Say {
+            break;
+        }
+    }
+    let shown = sh.shown_node().expect("a line is shown");
+    let story = story();
+    let (s, n) = story.locate(shown).unwrap();
+    assert!(matches!(
+        story.scenes[s].nodes[n].kind,
+        orbit_core::NodeKind::Say { .. }
+    ));
+}

@@ -100,6 +100,9 @@ pub struct EditorCore {
     first_frame_done: bool,
     /// Frame counter overlay (debug).
     pub show_frame_counter: bool,
+    /// Bumped each time a project is opened or closed (the preview reloads
+    /// from scratch instead of resuming).
+    pub project_generation: u64,
 }
 
 impl EditorCore {
@@ -164,6 +167,7 @@ impl EditorCore {
             quit: false,
             first_frame_done: false,
             show_frame_counter: false,
+            project_generation: 0,
         }
     }
 
@@ -187,6 +191,31 @@ impl EditorCore {
         if let Some(id) = id {
             self.state.selection = Some(Selection::Node(id));
         }
+    }
+
+    /// Replaces the text of the `n`-th line (`Say` node, reading order) of
+    /// the open story, as a typed edit would (debug option `--edit-text`).
+    pub fn edit_nth_say(&mut self, n: usize, text: &str) -> Result<(), String> {
+        let session = self.session.as_mut().ok_or("aucun projet ouvert")?;
+        let id = session
+            .project
+            .story()
+            .scenes
+            .iter()
+            .flat_map(|sc| &sc.nodes)
+            .filter_map(|node| match &node.kind {
+                orbit_core::NodeKind::Say { text_id, .. } => Some(*text_id),
+                _ => None,
+            })
+            .nth(n)
+            .ok_or_else(|| format!("pas de réplique n°{n}"))?;
+        session
+            .project
+            .execute(orbit_project::Command::SetString {
+                id,
+                text: Some(text.to_owned()),
+            })
+            .map_err(|e| e.to_string())
     }
 
     /// Whether the open project has unsaved edits.
@@ -229,6 +258,7 @@ impl EditorCore {
             Some(_) => location.root.clone(),
             None => location.story_path(),
         };
+        self.project_generation += 1;
         let session = Session::open(location, story, recovery_dir);
         let pending = session.pending_recovery();
         let title = session.name.clone();
@@ -309,6 +339,7 @@ impl EditorCore {
     }
 
     fn close_now(&mut self) {
+        self.project_generation += 1;
         if let Some(session) = self.session.take() {
             self.registry.project.dispatch(&ProjectEvent::Closed);
             session.close();
@@ -486,7 +517,17 @@ impl EditorCore {
                 self.dock = dock::default_layout(&self.registry);
                 self.persist();
             }
-            EditorRequest::ShowPanel(id) => dock::show_panel(&mut self.dock, &id),
+            EditorRequest::ShowPanel(id) => {
+                self.state.maximized_panel = None;
+                dock::show_panel(&mut self.dock, &id);
+            }
+            EditorRequest::ToggleMaximizePanel(id) => {
+                self.state.maximized_panel = if self.state.maximized_panel.as_deref() == Some(&id) {
+                    None
+                } else {
+                    Some(id)
+                };
+            }
             EditorRequest::SetTheme(mode) => self.set_theme(mode, ctx),
         }
     }

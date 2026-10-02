@@ -56,6 +56,10 @@ pub struct TextBoxTheme {
     pub indicator_color: [u8; 4],
     /// Side of the diamond-shaped "continue" marker.
     pub indicator_size: f32,
+    /// The marker pulses (`true`) or stays at full opacity. A host that
+    /// draws on demand (the editor preview) turns it off so that a line
+    /// waiting for the player is a still image.
+    pub indicator_blink: bool,
 }
 
 impl Default for TextBoxTheme {
@@ -71,6 +75,7 @@ impl Default for TextBoxTheme {
             chars_per_second: 40.0,
             indicator_color: [255, 255, 255, 255],
             indicator_size: 22.0,
+            indicator_blink: true,
         }
     }
 }

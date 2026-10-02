@@ -89,6 +89,9 @@ pub struct Renderer2d {
     bar_color: [f64; 4],
     white: TextureId,
     scratch: Vec<Sprite2d>,
+    /// Physical pixels per virtual pixel to report instead of the surface's
+    /// (while drawing into a render target of another size).
+    pixel_ratio_override: Option<f32>,
 }
 
 impl Renderer2d {
@@ -117,6 +120,7 @@ impl Renderer2d {
             bar_color: [0.0, 0.0, 0.0, 1.0],
             white,
             scratch: Vec::new(),
+            pixel_ratio_override: None,
         })
     }
 
@@ -163,7 +167,15 @@ impl Renderer2d {
 
     /// Physical pixels per virtual pixel (use it to rasterize text crisply).
     pub fn pixel_ratio(&self) -> f32 {
-        self.viewport().height / self.camera.virtual_size[1].max(1.0)
+        self.pixel_ratio_override
+            .unwrap_or_else(|| self.viewport().height / self.camera.virtual_size[1].max(1.0))
+    }
+
+    /// Makes [`Renderer2d::pixel_ratio`] report `ratio` (`None`: the surface
+    /// again). Set it to `target height / virtual height` while drawing into
+    /// a render target, so text is rasterized for that target.
+    pub fn set_pixel_ratio_override(&mut self, ratio: Option<f32>) {
+        self.pixel_ratio_override = ratio.filter(|r| r.is_finite() && *r > 0.0);
     }
 
     /// Converts a surface-pixel position (mouse) to world/virtual coordinates.
@@ -299,6 +311,33 @@ impl Renderer2d {
         height: u32,
     ) -> Result<TextureId, RenderError> {
         self.create_texture_inner(label, width, height, None, TextureOptions::COLOR, true)
+    }
+
+    /// Opt-in, native only: render targets created from now on can also be
+    /// viewed as plain `Rgba8Unorm` ([`Renderer2d::target_gamma_view`]), the
+    /// way a gamma-space UI toolkit (egui) wants to sample them. A no-op on
+    /// the web (WebGL2 has no view formats).
+    pub fn enable_target_gamma_views(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.textures.target_view_formats = vec![TARGET_FORMAT.remove_srgb_suffix()];
+        }
+    }
+
+    /// A view of the render target `id` that returns its stored (sRGB
+    /// encoded) values untouched, for gamma-space consumers. `None` if the
+    /// target is unknown or was created without
+    /// [`Renderer2d::enable_target_gamma_views`].
+    pub fn target_gamma_view(&self, id: TextureId) -> Option<wgpu::TextureView> {
+        let entry = self.textures.get(id).filter(|e| e.is_target)?;
+        let gamma = TARGET_FORMAT.remove_srgb_suffix();
+        if !self.textures.target_view_formats.contains(&gamma) {
+            return None;
+        }
+        Some(entry.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(gamma),
+            ..Default::default()
+        }))
     }
 
     /// Creates a render target the size of the virtual canvas, clamped to the
@@ -456,6 +495,25 @@ impl Renderer2d {
         target: TextureId,
         scene: &Scene,
     ) -> Result<(), RenderError> {
+        self.render_to_target_with(target, scene, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT))
+    }
+
+    /// Like [`Renderer2d::render_to_target`], but draws over what the target
+    /// already holds (a second pass: the UI over the stage).
+    pub fn render_to_target_over(
+        &mut self,
+        target: TextureId,
+        scene: &Scene,
+    ) -> Result<(), RenderError> {
+        self.render_to_target_with(target, scene, wgpu::LoadOp::Load)
+    }
+
+    fn render_to_target_with(
+        &mut self,
+        target: TextureId,
+        scene: &Scene,
+        load: wgpu::LoadOp<wgpu::Color>,
+    ) -> Result<(), RenderError> {
         let entry = self
             .textures
             .get(target)
@@ -469,7 +527,7 @@ impl Renderer2d {
             TARGET_FORMAT,
             size,
             Viewport::full(size),
-            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            load,
             scene,
         );
         Ok(())
@@ -539,6 +597,65 @@ impl Renderer2d {
         transition: &Transition,
         progress: f32,
     ) -> Result<(), RenderError> {
+        let load = load_op(&mut frame.cleared, self.bar_color);
+        let (w, h) = self.gfx.size();
+        let viewport = self.viewport();
+        let format = self.gfx.surface_format();
+        let view = frame.surface.view.clone();
+        self.transition_pass(
+            &view,
+            format,
+            [w, h],
+            viewport,
+            load,
+            (from, to),
+            transition,
+            progress,
+        )
+    }
+
+    /// Like [`Renderer2d::draw_transition`], into a render target (covering
+    /// all of it, over what it already holds).
+    pub fn draw_transition_to_target(
+        &mut self,
+        target: TextureId,
+        from: TextureId,
+        to: TextureId,
+        transition: &Transition,
+        progress: f32,
+    ) -> Result<(), RenderError> {
+        let entry = self
+            .textures
+            .get(target)
+            .ok_or(RenderError::UnknownTexture(target))?;
+        if !entry.is_target {
+            return Err(RenderError::NotATarget(target));
+        }
+        let (view, size) = (entry.view.clone(), [entry.width, entry.height]);
+        self.transition_pass(
+            &view,
+            TARGET_FORMAT,
+            size,
+            Viewport::full(size),
+            wgpu::LoadOp::Load,
+            (from, to),
+            transition,
+            progress,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn transition_pass(
+        &mut self,
+        view: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
+        size: [u32; 2],
+        viewport: Viewport,
+        load: wgpu::LoadOp<wgpu::Color>,
+        (from, to): (TextureId, TextureId),
+        transition: &Transition,
+        progress: f32,
+    ) -> Result<(), RenderError> {
         let mask_id = match transition {
             Transition::MaskDissolve { mask, .. } => *mask,
             _ => self.white,
@@ -551,7 +668,6 @@ impl Renderer2d {
             .queue()
             .write_buffer(&self.transitions.uniform, 0, bytemuck::bytes_of(&uniform));
 
-        let format = self.gfx.surface_format();
         self.transitions.pipeline(self.gfx.device(), format);
         let bind_group = self
             .gfx
@@ -583,9 +699,6 @@ impl Renderer2d {
                 ],
             });
 
-        let load = load_op(&mut frame.cleared, self.bar_color);
-        let (w, h) = self.gfx.size();
-        let viewport = self.viewport();
         let mut encoder =
             self.gfx
                 .device()
@@ -596,7 +709,7 @@ impl Renderer2d {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("orbit2d transition pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &frame.surface.view,
+                    view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -609,7 +722,7 @@ impl Renderer2d {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            set_viewport(&mut pass, viewport, [w, h]);
+            set_viewport(&mut pass, viewport, size);
             if let Some(pipeline) = self.transitions.pipeline_ref(format) {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, Some(&bind_group), &[]);

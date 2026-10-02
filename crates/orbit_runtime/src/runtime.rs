@@ -34,6 +34,10 @@ use crate::shell::{AutosaveConfig, Effect, Shell, ShellConfig};
 use crate::stage::{CANVAS, StageState, character_size, cover_size, to_virtual};
 use orbit_ui::UiInput;
 
+mod embedded;
+
+pub use embedded::{EmbeddedConfig, LoadOutcome, Notice, PlayFrom, PlaySpeed, PlayStatus};
+
 /// Largest frame time fed to the simulation (a stall must not skip content).
 const MAX_DT: f32 = 0.1;
 /// How often the story file is checked for changes (native hot reload).
@@ -231,6 +235,60 @@ enum Phase {
     Ready(Box<Shell>),
     Running(Box<Shell>),
     Failed(String),
+    /// Hosted by an editor and not playing: a blank stage.
+    Stopped,
+}
+
+/// Where a frame is drawn: the window surface, or an offscreen render target
+/// (the editor preview).
+enum Output<'a> {
+    Surface(&'a mut Frame),
+    Target {
+        id: TextureId,
+        /// Something was already drawn into the target this frame.
+        drawn: bool,
+    },
+}
+
+impl Output<'_> {
+    /// Draws `scene`; over what is there, except for the first one of a
+    /// target (which starts from a clean slate).
+    fn scene(&mut self, renderer: &mut Renderer2d, scene: &Scene) -> Result<(), RenderError> {
+        match self {
+            Output::Surface(frame) => renderer.draw_scene(frame, scene),
+            Output::Target { id, drawn } => {
+                let result = if *drawn {
+                    renderer.render_to_target_over(*id, scene)
+                } else {
+                    renderer.render_to_target(*id, scene)
+                };
+                *drawn = true;
+                result
+            }
+        }
+    }
+
+    fn transition(
+        &mut self,
+        renderer: &mut Renderer2d,
+        from: TextureId,
+        to: TextureId,
+        transition: &Transition,
+        progress: f32,
+    ) -> Result<(), RenderError> {
+        match self {
+            Output::Surface(frame) => {
+                renderer.draw_transition(frame, from, to, transition, progress)
+            }
+            Output::Target { id, drawn } => {
+                if !*drawn {
+                    renderer.render_to_target(*id, &Scene::new())?;
+                    *drawn = true;
+                }
+                renderer.draw_transition_to_target(*id, from, to, transition, progress)
+            }
+        }
+    }
 }
 
 /// GPU-side drawing context.
@@ -364,11 +422,28 @@ pub struct Runtime {
     boot_texts: Texts,
     ui_sounds: UiSoundBank,
     host_requests: Vec<HostRequest>,
+    /// Set when hosted by an editor (see [`Runtime::new_embedded`]).
+    embedded: Option<embedded::Embedded>,
 }
 
 impl Runtime {
     /// Builds the runtime and starts loading the fonts and the story.
-    pub fn new(mut renderer: Renderer2d, config: RuntimeConfig) -> Result<Self, RuntimeError> {
+    pub fn new(renderer: Renderer2d, config: RuntimeConfig) -> Result<Self, RuntimeError> {
+        Self::build(renderer, config, None)
+    }
+
+    fn build(
+        mut renderer: Renderer2d,
+        mut config: RuntimeConfig,
+        embedded: Option<EmbeddedConfig>,
+    ) -> Result<Self, RuntimeError> {
+        if let Some(embedded) = &embedded {
+            config.fonts.clear();
+            config.font_family = embedded.font_family.clone();
+            config.theme = embedded.theme.clone();
+            config.theme.textbox.indicator_blink = false;
+            config.autosave.enabled = false;
+        }
         let text_renderer = TextRenderer::new(&mut renderer)?;
         let targets = [
             renderer.create_canvas_target("stage from")?,
@@ -387,20 +462,37 @@ impl Runtime {
             .collect();
         let mut text_engine = TextEngine::new();
         text_engine.set_default_family(config.font_family.clone());
+        if let Some(embedded) = &embedded {
+            let added = embedded
+                .fonts
+                .iter()
+                .filter(|bytes| text_engine.add_font_data(bytes.to_vec()) > 0)
+                .count();
+            if added == 0 {
+                log::error!("no preview font could be loaded: text will not be displayed");
+            }
+        }
 
         let story_loader = AssetLoader::new(config.story_root.clone());
         let assets_loader = AssetLoader::new(config.assets_root.clone());
-        log::info!(
-            "runtime: story `{}` (root `{}`), assets root `{}`",
-            config.story_path,
-            story_loader.root(),
-            assets_loader.root()
-        );
-        let story = load_story(&story_loader, &config.story_path);
-        let translations = TranslationLoad::start(
-            &story_loader,
-            &translations_path(&config.story_path, &config.translations_dir),
-        );
+        if embedded.is_none() {
+            log::info!(
+                "runtime: story `{}` (root `{}`), assets root `{}`",
+                config.story_path,
+                story_loader.root(),
+                assets_loader.root()
+            );
+        }
+        let phase = if embedded.is_some() {
+            Phase::Stopped
+        } else {
+            let story = load_story(&story_loader, &config.story_path);
+            let translations = TranslationLoad::start(
+                &story_loader,
+                &translations_path(&config.story_path, &config.translations_dir),
+            );
+            Phase::Loading(LoadingState::new(story, translations, false))
+        };
         let white = renderer.white_texture();
         let boot_language = orbit_platform::system_language().unwrap_or_else(|| "en".into());
         let ui_sounds = UiSoundBank::new(&config.theme, &assets_loader);
@@ -422,12 +514,12 @@ impl Runtime {
             story_loader,
             assets_loader,
             font_handles,
-            fonts_ready: false,
+            fonts_ready: embedded.is_some(),
             targets,
             thumbnail_target,
             captures: Vec::new(),
             mapper: InputMapper::default(),
-            phase: Phase::Loading(LoadingState::new(story, translations, false)),
+            phase,
             started_once: false,
             time: 0.0,
             screens: Screens::default(),
@@ -435,6 +527,7 @@ impl Runtime {
             boot_texts: Texts::builtin(&boot_language),
             ui_sounds,
             host_requests: Vec::new(),
+            embedded: embedded.map(embedded::Embedded::new),
             config,
         })
     }
@@ -541,16 +634,23 @@ impl Runtime {
             .game_id
             .clone()
             .unwrap_or_else(|| slug(&story.title));
-        let (storage, storage_ok) = open_storage(&self.config, &game_id);
+        let embedded = self.embedded.is_some();
+        // The preview never touches the real saves of the game.
+        let (storage, storage_ok) = if embedded {
+            (Box::new(MemoryStorage::new()) as Box<dyn Storage>, true)
+        } else {
+            open_storage(&self.config, &game_id)
+        };
         let cfg = ShellConfig {
             save: self.config.save,
             autosave: self.config.autosave,
             ui_overrides: self.config.ui_text_overrides.clone(),
             system_language: orbit_platform::system_language(),
             utc_offset_minutes: orbit_platform::local_utc_offset_minutes(),
-            fullscreen_supported: orbit_platform::FULLSCREEN_SUPPORTED,
-            quit_supported: orbit_platform::FULLSCREEN_SUPPORTED,
-            capture_thumbnails: true,
+            fullscreen_supported: orbit_platform::FULLSCREEN_SUPPORTED && !embedded,
+            quit_supported: orbit_platform::FULLSCREEN_SUPPORTED && !embedded,
+            capture_thumbnails: !embedded,
+            embedded,
         };
         let mut shell = Box::new(Shell::new(
             story.clone(),
@@ -599,10 +699,12 @@ impl Runtime {
         for effect in effects {
             match effect {
                 Effect::Audio(command) => {
-                    play_command(&mut self.audio, &self.store, &story, command);
+                    if let Some(command) = self.filter_audio(command) {
+                        play_command(&mut self.audio, &self.store, &story, command);
+                    }
                 }
                 Effect::UiSound(sound) => self.ui_sounds.play(sound, &mut self.audio),
-                Effect::SetVolume(bus, volume) => self.audio.set_bus_volume(bus_of(bus), volume),
+                Effect::SetVolume(bus, volume) => self.set_volume(bus, volume),
                 Effect::SetFullscreen(on) => {
                     self.host_requests.push(HostRequest::SetFullscreen(on))
                 }
@@ -611,6 +713,17 @@ impl Runtime {
         }
         if let Some(message) = failure {
             self.phase = Phase::Failed(message);
+        }
+    }
+
+    fn set_volume(&mut self, bus: AudioBus, volume: f32) {
+        match &mut self.embedded {
+            // The host mutes and pauses through the master bus.
+            Some(embedded) if bus == AudioBus::Master => {
+                embedded.master = volume;
+                self.apply_embedded_volume();
+            }
+            _ => self.audio.set_bus_volume(bus_of(bus), volume),
         }
     }
 
@@ -709,7 +822,7 @@ impl Runtime {
 
     // ------------------------------------------------------------- drawing
 
-    fn draw(&mut self, frame: &mut Frame) -> Result<(), RenderError> {
+    fn draw(&mut self, out: &mut Output<'_>) -> Result<(), RenderError> {
         let language = match &self.phase {
             Phase::Ready(shell) | Phase::Running(shell) => shell.language().to_owned(),
             _ => self.screens_language.clone(),
@@ -751,8 +864,8 @@ impl Runtime {
                             );
                             renderer.render_to_target(self.targets[0], &from)?;
                             renderer.render_to_target(self.targets[1], &scene)?;
-                            renderer.draw_transition(
-                                frame,
+                            out.transition(
+                                renderer,
                                 self.targets[0],
                                 self.targets[1],
                                 &render_transition(tr.kind),
@@ -766,13 +879,13 @@ impl Runtime {
                                 game.director.stage(),
                                 &mut scene,
                             );
-                            renderer.draw_scene(frame, &scene)?;
+                            out.scene(renderer, &scene)?;
                         }
                     }
                     None => {
                         let mut scene = Scene::new();
                         scene.clear = Some(tint(theme.screens.background));
-                        renderer.draw_scene(frame, &scene)?;
+                        out.scene(renderer, &scene)?;
                     }
                 }
                 if fonts_ready {
@@ -787,7 +900,7 @@ impl Runtime {
                         white: *white,
                     };
                     shell.draw_ui(&mut ctx, !transitioning);
-                    renderer.draw_scene(frame, &ui_scene)?;
+                    out.scene(renderer, &ui_scene)?;
                 }
                 Ok(())
             }
@@ -923,9 +1036,9 @@ impl Runtime {
                             );
                         }
                     }
-                    Phase::Running(_) => {}
+                    Phase::Running(_) | Phase::Stopped => {}
                 }
-                renderer.draw_scene(frame, &scene)
+                out.scene(renderer, &scene)
             }
         }
     }
@@ -1103,7 +1216,7 @@ impl App for Runtime {
                 return;
             }
         };
-        if let Err(err) = self.draw(&mut frame) {
+        if let Err(err) = self.draw(&mut Output::Surface(&mut frame)) {
             log::error!("render error: {err}");
         }
         self.ctx.renderer.end_frame(frame);

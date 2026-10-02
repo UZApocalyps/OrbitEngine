@@ -8,6 +8,7 @@ use orbit_core::{NodeId, SceneId, Story};
 use orbit_project::{Command, Project, ProjectError, Transaction};
 use serde::{Deserialize, Serialize};
 
+use crate::preview::{PreviewCommand, PreviewState};
 use crate::registry::EditorRegistry;
 
 /// Light or dark UI.
@@ -132,6 +133,9 @@ pub enum EditorRequest {
     SetTheme(ThemeMode),
     /// Runs an action by full id.
     RunAction(String),
+    /// Shows a panel (full id) alone, filling the window, or brings the
+    /// layout back when it already is.
+    ToggleMaximizePanel(String),
 }
 
 /// State owned by the editor, separate from the project: never undoable.
@@ -150,6 +154,10 @@ pub struct EditorState {
     pub theme: ThemeMode,
     /// Frames drawn so far, when the debug counter is on.
     pub debug_frames: Option<u64>,
+    /// The panel (full id) shown alone over the whole window, if any.
+    pub maximized_panel: Option<String>,
+    /// The preview: what the host published and what the panel posted.
+    pub preview: PreviewState,
 }
 
 impl EditorState {
@@ -337,6 +345,17 @@ impl<'a> EditorContext<'a> {
     /// Writes to the console only (no toast).
     pub fn log(&mut self, level: Level, message: impl Into<String>) {
         self.state.console.push(level, message);
+    }
+
+    /// Posts a command to the preview (applied by the host between frames).
+    pub fn preview_command(&mut self, command: PreviewCommand) {
+        self.state.preview.command(command);
+    }
+
+    /// "Play from here": a new playthrough with the state a player would
+    /// have at `node`.
+    pub fn play_from(&mut self, node: NodeId) {
+        self.state.preview.command(PreviewCommand::PlayFrom(node));
     }
 
     /// Asks the host to do something between frames.

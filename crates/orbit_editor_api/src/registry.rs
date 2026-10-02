@@ -12,6 +12,8 @@ pub enum DockSlot {
     Left,
     Center,
     Right,
+    /// Above the `Right` panels (the preview).
+    RightTop,
     Bottom,
     /// Not in the default layout; opened from the View menu or the palette.
     Hidden,

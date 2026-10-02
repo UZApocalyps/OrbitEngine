@@ -73,6 +73,18 @@ impl EditorCore {
             egui::CentralPanel::default()
                 .frame(Frame::new().fill(theme.bg()))
                 .show(ui, |ui| {
+                    // A maximized panel (the preview) replaces the dock.
+                    let maximized = ectx
+                        .state()
+                        .maximized_panel
+                        .clone()
+                        .and_then(|id| ectx.registry().find_panel(&id).map(|p| (id, p)));
+                    if let Some((id, panel)) = maximized {
+                        ui.push_id(("orbit_panel_ui", id.as_str()), |ui| {
+                            (panel.def.ui)(ui, &mut ectx);
+                        });
+                        return;
+                    }
                     let style = theme.dock_style(ui.style());
                     DockArea::new(dock)
                         .style(style)

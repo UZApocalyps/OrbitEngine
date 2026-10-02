@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use orbit_editor_api::{PreviewCommand, Selection};
 use orbit_gfx::{Gfx, wgpu};
 use orbit_platform::{
     App, AppConfig, EventResponse, HostRequest, PhysicalSize, PlatformError, PlatformWindow,
@@ -19,6 +20,7 @@ use orbit_platform::{
 use crate::args::Args;
 use crate::core::{CoreOptions, EditorCore};
 use crate::logging;
+use crate::preview_host::PreviewHost;
 
 /// Frames needed for egui to settle (layout passes, font atlas) before a
 /// screenshot taken without `--exit-after`.
@@ -42,7 +44,8 @@ pub fn run(args: Args, t0: Instant) -> Result<(), PlatformError> {
 
 pub struct EditorApp {
     window: Arc<PlatformWindow>,
-    gfx: Gfx,
+    /// The preview owns the runtime, which owns the `Gfx` shared with egui.
+    preview: PreviewHost,
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
     renderer: egui_wgpu::Renderer,
@@ -57,6 +60,11 @@ pub struct EditorApp {
     skipped: u32,
     deadline: Option<Instant>,
     deadline_hit: bool,
+    preview_capture_done: bool,
+    /// Frame wanted by the preview (animation, hot reload debounce).
+    preview_wake: Option<Instant>,
+    /// Debug: edit the text of a line this long after the start.
+    edit_at: Option<Instant>,
     host: Vec<HostRequest>,
     title: String,
     capture_done: bool,
@@ -70,6 +78,10 @@ impl EditorApp {
             .expect("GPU initialization failed");
         gfx.enable_gamma_view();
         let gpu_ready = t0.elapsed();
+        let max_texture = gfx.max_texture_dimension();
+        let device = gfx.device().clone();
+        let gamma_format = gfx.gamma_view_format();
+        let preview = PreviewHost::new(gfx).expect("preview runtime initialization failed");
 
         let egui_ctx = egui::Context::default();
         let config_dir = if args.no_config {
@@ -96,23 +108,31 @@ impl EditorApp {
             if let Some(n) = args.select_node {
                 core.select_nth_node(n);
             }
+            if args.play_preview {
+                core.state.preview.command(PreviewCommand::Play);
+                if args.preview_skip {
+                    core.state.preview.command(PreviewCommand::SetSkip(true));
+                }
+            }
+            if args.play_from_selection
+                && let Some(Selection::Node(id)) = core.state.selection
+            {
+                core.state.preview.command(PreviewCommand::PlayFrom(id));
+            }
         }
         for action in &args.run_actions {
             core.run_action_now(action, &egui_ctx);
         }
 
-        let renderer = egui_wgpu::Renderer::new(
-            gfx.device(),
-            gfx.gamma_view_format(),
-            egui_wgpu::RendererOptions::default(),
-        );
+        let renderer =
+            egui_wgpu::Renderer::new(&device, gamma_format, egui_wgpu::RendererOptions::default());
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
             egui::ViewportId::ROOT,
             &*window,
             Some(window.scale_factor() as f32),
             None,
-            Some(gfx.max_texture_dimension() as usize),
+            Some(max_texture as usize),
         );
         log::info!(
             "editor ready: GPU {} ms, UI + project {} ms after process start",
@@ -124,9 +144,13 @@ impl EditorApp {
             .map(|s| Instant::now() + Duration::from_secs_f32(s.max(0.0)));
         let title = core.window_title();
         window.set_title(&title);
+        let edit_at = args
+            .edit_text
+            .is_some()
+            .then(|| Instant::now() + Duration::from_secs_f32(args.edit_delay.max(0.0)));
         Self {
             window,
-            gfx,
+            preview,
             egui_ctx,
             egui_state,
             renderer,
@@ -140,9 +164,32 @@ impl EditorApp {
             skipped: 0,
             deadline,
             deadline_hit: false,
+            preview_capture_done: false,
+            preview_wake: None,
+            edit_at,
             host: Vec::new(),
             title,
             capture_done: false,
+        }
+    }
+
+    /// Debug option `--edit-text`: edits a line once, as typing would.
+    fn apply_debug_edit(&mut self, now: Instant) {
+        let Some(at) = self.edit_at else { return };
+        if now < at {
+            return;
+        }
+        self.edit_at = None;
+        if let Some((n, text)) = self.args.edit_text.clone() {
+            let started = Instant::now();
+            match self.core.edit_nth_say(n, &text) {
+                Ok(()) => log::info!(
+                    target: "orbit_editor::perf",
+                    "debug edit applied to line {n} ({} ms)",
+                    started.elapsed().as_millis()
+                ),
+                Err(e) => log::error!("--edit-text: {e}"),
+            }
         }
     }
 
@@ -164,9 +211,9 @@ impl EditorApp {
         jobs: &[egui::ClippedPrimitive],
         screen: &egui_wgpu::ScreenDescriptor,
     ) -> Result<(), String> {
-        let (width, height) = self.gfx.size();
-        let format = self.gfx.gamma_view_format();
-        let device = self.gfx.device();
+        let (width, height) = self.preview.gfx().size();
+        let format = self.preview.gfx().gamma_view_format();
+        let device = self.preview.gfx().device();
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("editor screenshot"),
             size: wgpu::Extent3d {
@@ -235,13 +282,14 @@ impl EditorApp {
                 depth_or_array_layers: 1,
             },
         );
-        self.gfx.queue().submit(Some(encoder.finish()));
+        self.preview.gfx().queue().submit(Some(encoder.finish()));
 
         let (tx, rx) = std::sync::mpsc::channel();
         buffer.slice(..).map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        self.gfx
+        self.preview
+            .gfx()
             .device()
             .poll(wgpu::PollType::wait_indefinitely())
             .map_err(|e| format!("GPU poll failed: {e}"))?;
@@ -295,7 +343,7 @@ impl App for EditorApp {
         let now = Instant::now();
         self.egui_wake = None;
         self.retry_wake = None;
-        let (width, height) = self.gfx.size();
+        let (width, height) = self.preview.gfx().size();
         if width == 0 || height == 0 || self.window.inner_size().width == 0 {
             return;
         }
@@ -310,6 +358,14 @@ impl App for EditorApp {
             let core = &mut self.core;
             self.egui_ctx.run_ui(raw_input, |ui| core.ui(ui))
         };
+        // The preview: story sync, commands, input, the game's frame into its
+        // target (before egui paints it), state for the next UI pass.
+        self.apply_debug_edit(now);
+        let wake = self.preview.update(&mut self.core, &mut self.renderer, now);
+        self.preview_wake = wake.at;
+        if wake.redraw {
+            self.host.push(HostRequest::RequestRedraw);
+        }
         let egui::FullOutput {
             platform_output,
             mut textures_delta,
@@ -341,8 +397,8 @@ impl App for EditorApp {
             size_in_pixels: [width, height],
             pixels_per_point,
         };
-        let device = self.gfx.device().clone();
-        let queue = self.gfx.queue().clone();
+        let device = self.preview.gfx().device().clone();
+        let queue = self.preview.gfx().queue().clone();
         // Texture uploads must happen even when the frame ends up skipped.
         for (id, deltas) in &textures_delta.set {
             for delta in deltas {
@@ -356,9 +412,9 @@ impl App for EditorApp {
             .renderer
             .update_buffers(&device, &queue, &mut encoder, &jobs, &screen);
         let mut presented = false;
-        match self.gfx.begin_frame() {
+        match self.preview.gfx_mut().begin_frame() {
             Ok(Some(frame)) => {
-                let view = self.gfx.gamma_view(&frame);
+                let view = self.preview.gfx().gamma_view(&frame);
                 {
                     let mut pass = encoder
                         .begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -381,7 +437,7 @@ impl App for EditorApp {
                     self.renderer.render(&mut pass, &jobs, &screen);
                 }
                 queue.submit(extra.into_iter().chain(Some(encoder.finish())));
-                self.gfx.end_frame(frame);
+                self.preview.gfx_mut().end_frame(frame);
                 presented = true;
                 self.skipped = 0;
             }
@@ -434,6 +490,20 @@ impl App for EditorApp {
         }
 
         // ---- screenshot, exit
+        if let Some(path) = self.args.preview_capture.clone()
+            && !self.preview_capture_done
+            && (self.deadline_hit
+                || (self.args.exit_after.is_none() && self.frames >= SETTLE_FRAMES))
+        {
+            self.preview_capture_done = true;
+            match self.preview.start_capture() {
+                Some(mut readback) => match self.preview.write_capture(&mut readback, &path) {
+                    Ok(()) => log::info!("preview capture written: {}", path.display()),
+                    Err(e) => log::error!("preview capture failed: {e}"),
+                },
+                None => log::error!("preview capture: nothing drawn yet"),
+            }
+        }
         if let Some(path) = self.args.screenshot.clone()
             && !self.capture_done
             && (self.deadline_hit
@@ -463,11 +533,19 @@ impl App for EditorApp {
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>, _scale_factor: f64) {
-        self.gfx.resize(size.width, size.height);
+        self.preview.gfx_mut().resize(size.width, size.height);
     }
 
     fn window_event(&mut self, event: &WindowEvent) -> EventResponse {
         let response = self.egui_state.on_window_event(&self.window, event);
+        if let WindowEvent::Focused(focused) = event {
+            // The preview mutes and stops its clock while the editor is in
+            // the background; one frame applies it.
+            if !self.args.always_active {
+                self.preview.set_window_focused(*focused);
+                self.host.push(HostRequest::RequestRedraw);
+            }
+        }
         if response.repaint && log::log_enabled!(target: "orbit_editor::perf", log::Level::Trace) {
             let text = format!("{event:?}");
             log::trace!(
@@ -499,6 +577,8 @@ impl App for EditorApp {
             self.egui_wake,
             self.retry_wake,
             deadline,
+            self.preview_wake,
+            self.edit_at,
             self.core.next_wake(),
         ]
         .into_iter()

@@ -59,6 +59,25 @@ impl AssetStore {
     pub fn contains(&self, path: &str) -> bool {
         self.textures.contains_key(path) || self.sounds.contains_key(path)
     }
+
+    /// Drops the asset at `path` (a file that changed on disk): the next
+    /// loading pass fetches it again. The texture, if any, is released.
+    pub fn forget(&mut self, renderer: &mut Renderer2d, path: &str) -> bool {
+        let texture = self.textures.remove(path);
+        if let Some(texture) = texture {
+            renderer.release_texture(texture);
+        }
+        let sound = self.sounds.remove(path);
+        texture.is_some() || sound.is_some()
+    }
+
+    /// Drops every asset (the asset root changed).
+    pub fn clear(&mut self, renderer: &mut Renderer2d) {
+        for (_, texture) in self.textures.drain() {
+            renderer.release_texture(texture);
+        }
+        self.sounds.clear();
+    }
 }
 
 enum Handle {

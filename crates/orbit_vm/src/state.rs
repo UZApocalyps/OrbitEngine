@@ -118,6 +118,14 @@ pub struct VmState {
 }
 
 impl VmState {
+    /// The choice node the VM is waiting on, if any.
+    pub fn pending_choice_node(&self) -> Option<NodeId> {
+        match &self.pending {
+            Pending::Choice { node, .. } => Some(*node),
+            Pending::None => None,
+        }
+    }
+
     /// Every node id this state points to (program counter, call stack,
     /// pending choice, shown interaction): they must exist in the story for
     /// the state to be restorable.

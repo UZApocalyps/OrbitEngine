@@ -121,6 +121,7 @@ fn builtin_plugins_register_panels_actions_and_the_sample_plugin() {
         "orbit.inspector.inspector",
         "orbit.console.console",
         "orbit.welcome.welcome",
+        "orbit.preview.preview",
         "orbit.sample.panel",
     ] {
         assert!(reg.find_panel(panel).is_some(), "missing panel {panel}");
@@ -630,4 +631,273 @@ fn keyboard_shortcuts_drive_the_registry_actions() {
     assert!(!core.palette.is_open(), "Ctrl+K again closes");
     press(&mut core, &ctx, Key::P, ctrl(true), 18.0);
     assert!(core.palette.is_open(), "Ctrl+Shift+P");
+}
+
+// ------------------------------------------------------------------ preview
+
+/// One frame with raw events (pointer, keys); the preview state is read from
+/// `core.state.preview` afterwards.
+fn frame_with(core: &mut EditorCore, ctx: &Context, time: f64, events: Vec<egui::Event>) {
+    let input = RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1360.0, 820.0))),
+        time: Some(time),
+        events,
+        ..RawInput::default()
+    };
+    let output = ctx.run_ui(input, |ui| core.ui(ui));
+    output.drop_without_applying_deltas();
+}
+
+fn key_event(key: egui::Key, pressed: bool) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: Some(key),
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+fn click_events(pos: Pos2, pressed: bool) -> Vec<egui::Event> {
+    vec![
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]
+}
+
+/// A project with a running preview, as the host would publish it.
+fn playing_preview(tag: &str) -> (EditorCore, Context, TempDir, egui::Rect) {
+    let ctx = Context::default();
+    let dir = TempDir::new(tag);
+    let project = demo_project(dir.path());
+    let mut core = EditorCore::new(options(None), &ctx);
+    core.open_project(&project);
+    settle(&mut core, &ctx, (1360.0, 820.0));
+    core.state.preview.available = true;
+    core.state.preview.status = orbit_editor_api::PreviewStatus::Playing;
+    frame_with(&mut core, &ctx, 20.0, Vec::new());
+    let rect = core
+        .state
+        .preview
+        .picture_rect
+        .expect("the preview panel is in the default layout and drawn");
+    assert!(core.state.preview.visible, "the panel reports itself drawn");
+    core.state.preview.input.clear();
+    (core, ctx, dir, rect)
+}
+
+#[test]
+fn the_preview_panel_is_in_the_default_layout_and_has_its_actions() {
+    let ctx = Context::default();
+    let core = EditorCore::new(options(None), &ctx);
+    assert!(
+        orbit_editor::dock::open_panels(&core.dock).contains(&"orbit.preview.preview".to_owned())
+    );
+    for action in [
+        "orbit.preview.play_pause",
+        "orbit.preview.stop",
+        "orbit.preview.restart",
+        "orbit.preview.play_from_here",
+        "orbit.preview.mute",
+        "orbit.preview.follow",
+        "orbit.preview.fullscreen",
+    ] {
+        assert!(
+            core.registry.find_action(action).is_some(),
+            "missing {action}"
+        );
+    }
+}
+
+#[test]
+fn preview_actions_post_commands_and_play_from_here_needs_a_node() {
+    use orbit_editor_api::{PreviewCommand, PreviewStatus};
+
+    let ctx = Context::default();
+    let dir = TempDir::new("preview-actions");
+    let project = demo_project(dir.path());
+    let mut core = EditorCore::new(options(None), &ctx);
+
+    let enabled = |core: &mut EditorCore, id: &str| {
+        let action = core.registry.find_action(id).unwrap();
+        let ectx = EditorContext::new(
+            core.session.as_mut().map(|s| &mut s.project),
+            &mut core.state,
+            &core.registry,
+        );
+        (action.def.enabled)(&ectx)
+    };
+    // Without a project nothing can be played.
+    assert!(!enabled(&mut core, "orbit.preview.play_pause"));
+
+    core.open_project(&project);
+    settle(&mut core, &ctx, (1360.0, 820.0));
+    assert!(enabled(&mut core, "orbit.preview.play_pause"));
+
+    // "Play from here" waits for a selected node.
+    assert!(!enabled(&mut core, "orbit.preview.play_from_here"));
+    let node = first_say(&core);
+    core.state.selection = Some(Selection::Node(node));
+    assert!(enabled(&mut core, "orbit.preview.play_from_here"));
+
+    core.run_action_now("orbit.preview.play_from_here", &ctx);
+    assert_eq!(
+        core.state.preview.commands.pop(),
+        Some(PreviewCommand::PlayFrom(node))
+    );
+
+    // Play when stopped, pause when playing.
+    core.run_action_now("orbit.preview.play_pause", &ctx);
+    assert_eq!(
+        core.state.preview.commands.pop(),
+        Some(PreviewCommand::Play)
+    );
+    core.state.preview.status = PreviewStatus::Playing;
+    core.run_action_now("orbit.preview.play_pause", &ctx);
+    assert_eq!(
+        core.state.preview.commands.pop(),
+        Some(PreviewCommand::Pause)
+    );
+    core.run_action_now("orbit.preview.mute", &ctx);
+    assert_eq!(
+        core.state.preview.commands.pop(),
+        Some(PreviewCommand::SetMuted(true))
+    );
+}
+
+#[test]
+fn the_preview_gets_pointer_and_keys_only_while_it_has_the_focus() {
+    use orbit_editor_api::PreviewInput;
+
+    let (mut core, ctx, _dir, rect) = playing_preview("preview-focus");
+    let center = rect.center();
+
+    // No focus yet: keys and a wandering pointer go nowhere.
+    frame_with(
+        &mut core,
+        &ctx,
+        21.0,
+        vec![egui::Event::PointerMoved(center)],
+    );
+    frame_with(
+        &mut core,
+        &ctx,
+        22.0,
+        vec![key_event(egui::Key::Enter, true)],
+    );
+    assert!(!core.state.preview.focused);
+    assert!(
+        core.state.preview.input.is_empty(),
+        "nothing before the focus: {:?}",
+        core.state.preview.input
+    );
+
+    // A press on the picture takes the focus and goes through, in virtual
+    // pixels (the middle of the picture is the middle of the canvas).
+    frame_with(&mut core, &ctx, 23.0, click_events(center, true));
+    assert!(core.state.preview.focused);
+    let input = std::mem::take(&mut core.state.preview.input);
+    assert!(
+        input.contains(&PreviewInput::Primary { pressed: true }),
+        "{input:?}"
+    );
+    let moved: Vec<[f32; 2]> = input
+        .iter()
+        .filter_map(|i| match i {
+            PreviewInput::PointerMoved(p) => Some(*p),
+            _ => None,
+        })
+        .collect();
+    assert!(!moved.is_empty());
+    let [x, y] = moved[moved.len() - 1];
+    assert!(
+        (x - 960.0).abs() < 4.0 && (y - 540.0).abs() < 4.0,
+        "{x} {y}"
+    );
+    frame_with(&mut core, &ctx, 24.0, click_events(center, false));
+    core.state.preview.input.clear();
+
+    // With the focus, keys the game knows are sent...
+    frame_with(
+        &mut core,
+        &ctx,
+        25.0,
+        vec![key_event(egui::Key::Space, true)],
+    );
+    let input = std::mem::take(&mut core.state.preview.input);
+    assert!(
+        input.iter().any(|i| matches!(
+            i,
+            PreviewInput::Key {
+                key: egui::Key::Space,
+                pressed: true,
+                ..
+            }
+        )),
+        "{input:?}"
+    );
+    // ...and keys it does not know are not.
+    frame_with(&mut core, &ctx, 26.0, vec![key_event(egui::Key::Z, true)]);
+    assert!(core.state.preview.input.is_empty());
+
+    // Clicking another widget (a row of the explorer) takes the focus away.
+    let outside = Pos2::new(100.0, 140.0);
+    frame_with(&mut core, &ctx, 27.0, click_events(outside, true));
+    frame_with(&mut core, &ctx, 28.0, click_events(outside, false));
+    core.state.preview.input.clear();
+    assert!(!core.state.preview.focused);
+    frame_with(
+        &mut core,
+        &ctx,
+        29.0,
+        vec![key_event(egui::Key::Enter, true)],
+    );
+    assert!(
+        core.state.preview.input.is_empty(),
+        "{:?}",
+        core.state.preview.input
+    );
+}
+
+#[test]
+fn a_stopped_preview_takes_no_input_and_maximizing_swaps_the_layout() {
+    let (mut core, ctx, _dir, rect) = playing_preview("preview-maximize");
+    core.state.preview.status = orbit_editor_api::PreviewStatus::Stopped;
+    frame_with(&mut core, &ctx, 30.0, click_events(rect.center(), true));
+    assert!(
+        core.state.preview.input.is_empty(),
+        "the game is not running: {:?}",
+        core.state.preview.input
+    );
+
+    // Full panel: the preview alone fills the window, then comes back.
+    let before = rect.width();
+    core.run_action_now("orbit.preview.fullscreen", &ctx);
+    assert_eq!(
+        core.state.maximized_panel.as_deref(),
+        Some("orbit.preview.preview")
+    );
+    frame_with(&mut core, &ctx, 31.0, Vec::new());
+    let big = core.state.preview.picture_rect.unwrap();
+    assert!(big.width() > before * 1.5, "{} vs {before}", big.width());
+    core.run_action_now("orbit.preview.fullscreen", &ctx);
+    assert_eq!(core.state.maximized_panel, None);
+    frame_with(&mut core, &ctx, 32.0, Vec::new());
+    assert!((core.state.preview.picture_rect.unwrap().width() - before).abs() < 1.0);
+}
+
+#[test]
+fn a_still_preview_does_not_make_the_ui_redraw() {
+    // A game waiting for the player is a still texture: the UI around it
+    // must settle like it does without a preview.
+    let (mut core, ctx, _dir, _) = playing_preview("preview-idle");
+    let settled = settle(&mut core, &ctx, (1360.0, 820.0));
+    assert!(settled < 30);
+    let delay = frame(&mut core, &ctx, 100.0, (1360.0, 820.0));
+    assert_ne!(delay, Duration::ZERO, "no repaint wanted when idle");
 }

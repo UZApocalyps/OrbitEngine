@@ -51,6 +51,9 @@ pub(crate) struct TextureStore {
     pub layout: wgpu::BindGroupLayout,
     linear: wgpu::Sampler,
     nearest: wgpu::Sampler,
+    /// Extra view formats of the render targets (see
+    /// `Renderer2d::enable_target_gamma_views`).
+    pub(crate) target_view_formats: Vec<wgpu::TextureFormat>,
 }
 
 impl TextureStore {
@@ -93,6 +96,7 @@ impl TextureStore {
             layout,
             linear: sampler(wgpu::FilterMode::Linear, "orbit2d linear"),
             nearest: sampler(wgpu::FilterMode::Nearest, "orbit2d nearest"),
+            target_view_formats: Vec::new(),
         }
     }
 
@@ -161,7 +165,11 @@ impl TextureStore {
             dimension: wgpu::TextureDimension::D2,
             format,
             usage,
-            view_formats: &[],
+            view_formats: if is_target {
+                &self.target_view_formats
+            } else {
+                &[]
+            },
         });
         if let Some(data) = rgba {
             queue.write_texture(

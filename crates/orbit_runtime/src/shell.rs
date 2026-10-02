@@ -92,6 +92,10 @@ pub(crate) struct ShellConfig {
     /// Take a thumbnail with each save (needs a GPU: the runtime answers the
     /// capture requests).
     pub capture_thumbnails: bool,
+    /// Hosted by the editor preview: no main menu (leaving the game starts
+    /// it again), skip goes through everything, nothing persists between
+    /// playthroughs.
+    pub embedded: bool,
 }
 
 /// A screen over the base view.
@@ -285,10 +289,14 @@ impl Shell {
         cfg: ShellConfig,
     ) -> Self {
         let saves = SaveManager::new(storage, story.clone(), cfg.save);
-        let prefs = saves.load_prefs().unwrap_or_else(|err| {
+        let mut prefs = saves.load_prefs().unwrap_or_else(|err| {
             log::warn!("preferences unreadable, using defaults: {err}");
             Preferences::default()
         });
+        if cfg.embedded {
+            // Nothing is "already read" in a fresh preview: skip everything.
+            prefs.skip_mode = orbit_save::SkipMode::All;
+        }
         let persistent = saves.load_persistent().unwrap_or_else(|err| {
             log::warn!("persistent data unreadable, starting empty: {err}");
             PersistentData::default()
@@ -510,6 +518,50 @@ impl Shell {
         self.last_scene = None;
     }
 
+    /// Continues from `vm` (a hot reload, or "play from here"): the stage and
+    /// the music are rebuilt from its state without any transition, then the
+    /// story runs on. `instant` shows the line already on screen whole
+    /// instead of typing it out again.
+    pub fn install_vm(&mut self, vm: Vm, instant: bool) {
+        self.leave_music();
+        let director = Director::resumed(vm, self.loc.clone());
+        self.install_game(director);
+        self.play_time = 0.0;
+        self.last_progress = self.game.as_ref().map_or(0, |g| g.director.progress());
+        self.last_scene = self.current_scene();
+        if instant && let Some(game) = &mut self.game {
+            game.dialogue.advance();
+        }
+    }
+
+    /// Turns the skip mode on or off from the outside (the preview toolbar).
+    pub fn set_skip(&mut self, on: bool) {
+        if let Some(game) = &mut self.game {
+            game.set_skip(on);
+        }
+    }
+
+    /// The node of the line or choice on screen.
+    pub fn shown_node(&self) -> Option<orbit_core::NodeId> {
+        self.game
+            .as_ref()
+            .and_then(|g| g.director.shown())
+            .map(orbit_vm::Interaction::node)
+    }
+
+    /// Whether the picture changes with time alone (typewriter, pauses,
+    /// transitions, skip / auto, toasts): the host must keep drawing frames.
+    /// `false` means a still image until the next input.
+    pub fn is_animating(&self) -> bool {
+        if !self.toasts.is_empty() {
+            return true;
+        }
+        if self.top().is_some() {
+            return false;
+        }
+        self.game.as_ref().is_some_and(Game::is_animating)
+    }
+
     fn leave_music(&mut self) {
         if self.game.is_some() {
             self.effects.push(Effect::Audio(AudioCommand::StopMusic {
@@ -574,8 +626,13 @@ impl Shell {
         }
     }
 
-    /// Back to the main menu (game over, or the player's choice).
+    /// Back to the main menu (game over, or the player's choice). The editor
+    /// preview has no main menu: the story starts again.
     fn leave_game(&mut self) {
+        if self.cfg.embedded {
+            self.start_new_game();
+            return;
+        }
         self.flush_persistent();
         self.leave_music();
         self.game = None;
@@ -604,6 +661,9 @@ impl Shell {
 
     /// Persistent variables and read lines of the running game, to disk.
     fn flush_persistent(&mut self) {
+        if self.cfg.embedded {
+            return;
+        }
         if let Some(game) = &self.game {
             self.persistent = PersistentData::from_vm(game.director.vm());
         }

@@ -158,6 +158,23 @@ impl Game {
         self.auto
     }
 
+    /// Whether anything moves without input: a typewriter, a timed pause, a
+    /// transition, skip or auto mode.
+    pub fn is_animating(&self) -> bool {
+        match self.kind() {
+            FlowKind::Waiting | FlowKind::Transition => true,
+            FlowKind::Say => !self.dialogue.is_complete() || self.skipping() || self.auto,
+            FlowKind::Choice | FlowKind::Ended | FlowKind::Failed => false,
+        }
+    }
+
+    /// Sets the Skip button state (it still stops by itself at a choice).
+    pub fn set_skip(&mut self, on: bool) {
+        if self.skip_toggled != on {
+            self.toggle_skip();
+        }
+    }
+
     pub fn toggle_skip(&mut self) {
         self.skip_toggled = !self.skip_toggled;
         self.auto = false;

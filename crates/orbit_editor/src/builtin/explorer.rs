@@ -2,7 +2,7 @@
 //! edits that prove the command chain (add / delete a line). The full scene
 //! editor is M3c.
 
-use egui::{Align2, FontId, Key, Modifiers, Ui};
+use egui::{Align2, FontId, Key, Modifiers, Rect, Ui};
 use orbit_core::{Node, NodeId, NodeKind, Story, StringId};
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Plugin,
@@ -12,7 +12,9 @@ use orbit_project::Command;
 
 use super::ids;
 use super::nodeinfo::{kind_icon, kind_label, summary};
-use super::ui_util::{accent, faint, icon_button, list_row, primary_button, section_title, weak};
+use super::ui_util::{
+    accent, faint, icon_button, list_row, primary_button, section_title, success, weak,
+};
 
 pub struct ExplorerPlugin;
 
@@ -160,6 +162,14 @@ fn rows(story: &Story, collapsed: &std::collections::HashSet<orbit_core::SceneId
     rows
 }
 
+/// Whether the pointer press that selected a row was on its play button.
+fn play_rect_clicked(ui: &Ui, rect: Rect, selected: bool) -> bool {
+    selected
+        && ui
+            .input(|i| i.pointer.interact_pos())
+            .is_some_and(|p| rect.contains(p))
+}
+
 fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     if !ctx.has_project() {
         ui.add_space(24.0);
@@ -202,8 +212,15 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let Some(story) = ctx.story() else { return };
     let rows = rows(story, &ctx.state().collapsed_scenes);
     let selection = ctx.selection();
+    let playing_node = {
+        let p = &ctx.state().preview;
+        (p.status != orbit_editor_api::PreviewStatus::Stopped)
+            .then_some(p.current_node)
+            .flatten()
+    };
     // What a click did this frame, applied after the list borrows the story.
     let mut clicked: Option<Selection> = None;
+    let mut play_from: Option<NodeId> = None;
     let mut toggled: Option<orbit_core::SceneId> = None;
 
     egui::ScrollArea::vertical()
@@ -278,6 +295,54 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                         let painter = ui.painter_at(rect);
                         let mid = rect.center().y;
                         let x0 = rect.left() + 30.0;
+                        // The line the preview is playing.
+                        if playing_node == Some(node.id) {
+                            painter.rect_filled(
+                                rect.shrink2(egui::vec2(2.0, 0.0)),
+                                egui::CornerRadius::same(5),
+                                success().gamma_multiply(0.18),
+                            );
+                            painter.text(
+                                egui::pos2(rect.left() + 12.0, mid),
+                                Align2::CENTER_CENTER,
+                                icons::PLAY,
+                                FontId::proportional(11.0),
+                                success(),
+                            );
+                        }
+                        // "Play from here" on the selected row.
+                        let play_rect = Rect::from_center_size(
+                            egui::pos2(rect.right() - 16.0, mid),
+                            egui::vec2(22.0, 20.0),
+                        );
+                        if selected {
+                            let play = ui
+                                .interact(
+                                    play_rect,
+                                    ui.id().with(("play_here", node.id)),
+                                    egui::Sense::click(),
+                                )
+                                .on_hover_text("Jouer depuis ici (F7)");
+                            painter.text(
+                                play_rect.center(),
+                                Align2::CENTER_CENTER,
+                                icons::CROSSHAIR,
+                                FontId::proportional(14.0),
+                                if play.hovered() { accent(ui) } else { weak(ui) },
+                            );
+                            if play.clicked() {
+                                play_from = Some(node.id);
+                            }
+                        }
+                        response.context_menu(|ui| {
+                            if ui
+                                .button(format!("{}  Jouer depuis ici", icons::CROSSHAIR))
+                                .clicked()
+                            {
+                                play_from = Some(node.id);
+                                ui.close();
+                            }
+                        });
                         painter.text(
                             egui::pos2(x0 + 8.0, mid),
                             Align2::CENTER_CENTER,
@@ -322,7 +387,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                                 egui::Color32::WHITE,
                             );
                         }
-                        if response.clicked() {
+                        if response.clicked() && !play_rect_clicked(ui, play_rect, selected) {
                             clicked = Some(Selection::Node(node.id));
                         }
                     }
@@ -332,6 +397,11 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
 
     if let Some(selection) = clicked {
         ctx.select(selection);
+    }
+    if let Some(id) = play_from {
+        ctx.select(Selection::Node(id));
+        ctx.play_from(id);
+        ctx.request(EditorRequest::ShowPanel(super::panels::PREVIEW.to_owned()));
     }
     if let Some(id) = toggled {
         let collapsed = &mut ctx.state_mut().collapsed_scenes;

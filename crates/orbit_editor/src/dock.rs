@@ -17,10 +17,11 @@ pub fn default_layout(registry: &EditorRegistry) -> DockState<String> {
             .map(|p| p.def.id.clone())
             .collect()
     };
-    let (left, center, right, bottom) = (
+    let (left, center, right, right_top, bottom) = (
         tabs(DockSlot::Left),
         tabs(DockSlot::Center),
         tabs(DockSlot::Right),
+        tabs(DockSlot::RightTop),
         tabs(DockSlot::Bottom),
     );
 
@@ -31,12 +32,17 @@ pub fn default_layout(registry: &EditorRegistry) -> DockState<String> {
     // `split_right` and `split_below`.
     let mut middle = NodeIndex::root();
     if !left.is_empty() {
-        let [old, _] = main.split_left(middle, 0.2, left);
+        let [old, _] = main.split_left(middle, 0.17, left);
         middle = old;
     }
-    if !right.is_empty() {
-        let [old, _] = main.split_right(middle, 0.76, right);
+    if !right.is_empty() || !right_top.is_empty() {
+        // The right column is wide enough for a 16:9 preview over the inspector.
+        let width = if right_top.is_empty() { 0.76 } else { 0.5 };
+        let [old, column] = main.split_right(middle, width, right);
         middle = old;
+        if !right_top.is_empty() {
+            main.split_above(column, 0.5, right_top);
+        }
     }
     if !bottom.is_empty() {
         let [old, _] = main.split_below(middle, 0.7, bottom);

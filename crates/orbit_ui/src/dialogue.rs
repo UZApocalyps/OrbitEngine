@@ -132,7 +132,11 @@ impl DialogueBox {
         };
         text.draw(engine, text_renderer, renderer, scene, &params);
         if text.is_complete() {
-            let blink = 0.55 + 0.45 * (self.time * 5.0).sin();
+            let blink = if t.indicator_blink {
+                0.55 + 0.45 * (self.time * 5.0).sin()
+            } else {
+                1.0
+            };
             let size = t.indicator_size;
             scene.push(
                 Sprite2d::new(

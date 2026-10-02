@@ -38,6 +38,7 @@ pub mod format;
 mod game;
 pub mod input;
 pub mod loading;
+pub mod preview;
 mod runtime;
 mod shell;
 pub mod stage;
@@ -46,7 +47,8 @@ pub use director::{AudioCommand, Director, Flow, Line, StageTransition};
 pub use input::{Hotkey, InputAction, InputMapper};
 pub use loading::{AssetStore, LoadedStory, parse_story};
 pub use runtime::{
-    Runtime, RuntimeConfig, RuntimeError, error_markup, escape_markup, parse_translation_index,
+    EmbeddedConfig, LoadOutcome, Notice, PlayFrom, PlaySpeed, PlayStatus, Runtime, RuntimeConfig,
+    RuntimeError, error_markup, escape_markup, parse_translation_index,
 };
 pub use shell::AutosaveConfig;
 pub use stage::{StageCharacter, StageEffect, StageState};

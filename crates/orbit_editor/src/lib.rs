@@ -13,6 +13,7 @@ pub mod dock;
 pub mod fuzzy;
 pub mod logging;
 pub mod palette;
+pub mod preview_host;
 pub mod session;
 pub mod storage;
 pub mod theme;

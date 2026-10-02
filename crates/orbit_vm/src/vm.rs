@@ -145,6 +145,34 @@ impl Vm {
         }
     }
 
+    /// Like [`Vm::step`], but stops *before* executing `target`: returns
+    /// `None` as soon as the next node to execute is `target` (the state is
+    /// then exactly what a player would have right before that node runs).
+    /// Any other result is the one `step()` would give. Used to reach an
+    /// arbitrary node ("play from here"), see [`crate::seek`].
+    pub fn step_to(&mut self, target: NodeId) -> Option<StepResult> {
+        if let Some(err) = &self.fault {
+            return Some(StepResult::Error(err.clone()));
+        }
+        if let Pending::Choice { node, visible } = &self.state.pending {
+            return Some(self.choice_result(*node, visible));
+        }
+        self.history.ahead = true;
+        match self.run_until(Some(target)) {
+            Ok(None) => None,
+            Ok(Some(result)) => {
+                if matches!(result, StepResult::Say { .. } | StepResult::Choice { .. }) {
+                    self.history.record(&self.state);
+                }
+                Some(result)
+            }
+            Err(err) => {
+                self.fault = Some(err.clone());
+                Some(StepResult::Error(err))
+            }
+        }
+    }
+
     /// Answers the pending `Choice` with an index into the options returned
     /// by `step()`. Invalid calls leave the VM untouched.
     pub fn choose(&mut self, index: usize) -> Result<(), VmError> {
@@ -230,11 +258,20 @@ impl Vm {
     }
 
     fn run(&mut self) -> Result<StepResult, VmError> {
+        Ok(self.run_until(None)?.unwrap_or(StepResult::End))
+    }
+
+    /// Executes nodes until a blocking point, or (`None`) until the next node
+    /// to execute is `stop`.
+    fn run_until(&mut self, stop: Option<NodeId>) -> Result<Option<StepResult>, VmError> {
         let story = Arc::clone(&self.story);
         for _ in 0..MAX_NODES_PER_STEP {
             let Some(pc) = self.state.pc else {
-                return Ok(StepResult::End);
+                return Ok(Some(StepResult::End));
             };
+            if stop == Some(pc) {
+                return Ok(None);
+            }
             let &(si, ni) = self.index.get(&pc).ok_or(VmError::UnknownNode(pc))?;
             let node = &story.scenes[si].nodes[ni];
             let next = self.next_after(pc);
@@ -249,12 +286,12 @@ impl Vm {
                         string_id: *text_id,
                     });
                     let already_read = !self.read.insert(pc);
-                    return Ok(StepResult::Say {
+                    return Ok(Some(StepResult::Say {
                         node: pc,
                         speaker: *speaker,
                         string_id: *text_id,
                         already_read,
-                    });
+                    }));
                 }
                 NodeKind::Choice { options } => {
                     let mut visible = Vec::with_capacity(options.len());
@@ -278,7 +315,7 @@ impl Vm {
                         });
                     }
                     self.state.pending = Pending::Choice { node: pc, visible };
-                    return Ok(result);
+                    return Ok(Some(result));
                 }
                 NodeKind::Jump { target } => self.jump(*target)?,
                 NodeKind::SetVar { var, value } => {
@@ -311,7 +348,7 @@ impl Vm {
                         transition: *transition,
                     });
                     if let Some(duration) = blocking_duration(transition) {
-                        return Ok(StepResult::WaitTransition { duration });
+                        return Ok(Some(StepResult::WaitTransition { duration }));
                     }
                 }
                 NodeKind::Show {
@@ -363,7 +400,7 @@ impl Vm {
                         transition: *transition,
                     });
                     if let Some(duration) = blocking_duration(transition) {
-                        return Ok(StepResult::WaitTransition { duration });
+                        return Ok(Some(StepResult::WaitTransition { duration }));
                     }
                 }
                 NodeKind::Hide {
@@ -383,7 +420,7 @@ impl Vm {
                             transition: *transition,
                         });
                         if let Some(duration) = blocking_duration(transition) {
-                            return Ok(StepResult::WaitTransition { duration });
+                            return Ok(Some(StepResult::WaitTransition { duration }));
                         }
                     }
                 }
@@ -417,7 +454,7 @@ impl Vm {
                 }
                 NodeKind::Wait { seconds } => {
                     self.state.pc = next;
-                    return Ok(StepResult::WaitTime(*seconds));
+                    return Ok(Some(StepResult::WaitTime(*seconds)));
                 }
                 NodeKind::Call { label } => {
                     if self.state.call_stack.len() >= MAX_CALL_DEPTH {

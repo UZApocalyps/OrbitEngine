@@ -10,6 +10,7 @@
 //! the editor state (selection, toasts, requests to the host).
 
 mod context;
+mod preview;
 mod registry;
 
 pub use context::{
@@ -17,6 +18,7 @@ pub use context::{
     ProjectInfo, RecentProject, Selection, ThemeMode, Toast,
 };
 pub use orbit_plugin_api::{API_VERSION, Plugin, PluginError, PluginManifest, ProjectRegistry};
+pub use preview::{PreviewCommand, PreviewInput, PreviewSpeed, PreviewState, PreviewStatus};
 pub use registry::{
     ActionDef, DockSlot, EditorRegistry, InspectorDef, MenuDef, MenuSlot, PanelDef,
     RegisteredAction, RegisteredPanel, shortcut_text,

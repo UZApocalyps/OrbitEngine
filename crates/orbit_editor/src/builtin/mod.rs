@@ -7,6 +7,7 @@ mod console;
 mod explorer;
 mod inspector;
 mod nodeinfo;
+mod preview;
 mod sample;
 mod ui_util;
 mod welcome;
@@ -16,6 +17,7 @@ use orbit_editor_api::{
 };
 
 pub use nodeinfo::{kind_icon, kind_key, kind_label, summary};
+pub use preview::{CANVAS as PREVIEW_CANVAS, fit_16_9, to_virtual};
 pub use sample::SamplePlugin;
 
 /// Plugin ids of the built-in tools.
@@ -24,6 +26,7 @@ pub mod ids {
     pub const EXPLORER: &str = "orbit.explorer";
     pub const INSPECTOR: &str = "orbit.inspector";
     pub const CONSOLE: &str = "orbit.console";
+    pub const PREVIEW: &str = "orbit.preview";
     pub const WELCOME: &str = "orbit.welcome";
     pub const SAMPLE: &str = "orbit.sample";
 }
@@ -33,6 +36,7 @@ pub mod panels {
     pub const EXPLORER: &str = "orbit.explorer.explorer";
     pub const INSPECTOR: &str = "orbit.inspector.inspector";
     pub const CONSOLE: &str = "orbit.console.console";
+    pub const PREVIEW: &str = "orbit.preview.preview";
     pub const WELCOME: &str = "orbit.welcome.welcome";
     pub const SAMPLE: &str = "orbit.sample.panel";
 }
@@ -45,6 +49,7 @@ pub fn plugins() -> Vec<Box<dyn EditorPlugin>> {
         Box::new(welcome::WelcomePlugin),
         Box::new(explorer::ExplorerPlugin),
         Box::new(inspector::InspectorPlugin),
+        Box::new(preview::PreviewPlugin),
         Box::new(console::ConsolePlugin),
         Box::new(SamplePlugin::default()),
     ]

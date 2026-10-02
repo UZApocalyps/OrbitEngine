@@ -12,6 +12,7 @@ mod error;
 mod event;
 mod history;
 mod rollback;
+mod seek;
 mod state;
 mod vm;
 
@@ -25,5 +26,6 @@ pub use history::{
     Presentation, RollbackHistory,
 };
 pub use rollback::scene_events;
+pub use seek::{ChoiceStep, SeekLimits, SeekOutcome, SeekPath, seek};
 pub use state::{CharacterOnStage, Interaction, MusicState, Pending, Rng, SceneState, VmState};
 pub use vm::{MAX_CALL_DEPTH, MAX_NODES_PER_STEP, Vm};
