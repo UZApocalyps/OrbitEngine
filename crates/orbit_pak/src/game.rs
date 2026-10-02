@@ -120,7 +120,12 @@ mod tests {
         assert!(GamePack::is_pack(&bytes));
         assert_eq!(GamePack::from_bytes(&bytes).unwrap(), pack);
         // Smaller than the RON it comes from.
-        assert!(bytes.len() < DEMO.len(), "{} vs {}", bytes.len(), DEMO.len());
+        assert!(
+            bytes.len() < DEMO.len(),
+            "{} vs {}",
+            bytes.len(),
+            DEMO.len()
+        );
     }
 
     #[test]
@@ -128,13 +133,19 @@ mod tests {
         let mut pack = demo_pack();
         pack.story.characters[0].default_position = Some(orbit_core::Position::Right);
         let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
-        assert_eq!(back.story.characters[0].default_position, pack.story.characters[0].default_position);
+        assert_eq!(
+            back.story.characters[0].default_position,
+            pack.story.characters[0].default_position
+        );
         assert_eq!(back, pack);
     }
 
     #[test]
     fn bad_packs_are_refused() {
-        assert_eq!(GamePack::from_bytes(b"(schema_version: 5)").unwrap_err(), PackError::BadMagic);
+        assert_eq!(
+            GamePack::from_bytes(b"(schema_version: 5)").unwrap_err(),
+            PackError::BadMagic
+        );
         let mut bytes = demo_pack().to_bytes().unwrap();
         assert!(matches!(
             GamePack::from_bytes(&bytes[..20]),

@@ -24,6 +24,9 @@ use orbit_runtime::{
 };
 
 use crate::core::EditorCore;
+use crate::live::{PreviewBackend, PreviewOutput};
+use orbit_mcp::ToolError;
+use orbit_mcp::live_tools::{ChoiceSelector, LiveCall};
 
 /// A reload waits for this long without a new edit (typing is a stream of
 /// edits)...
@@ -32,6 +35,12 @@ pub const RELOAD_QUIET: Duration = Duration::from_millis(100);
 pub const RELOAD_MAX_WAIT: Duration = Duration::from_millis(250);
 /// Interval between two frames while the game animates.
 const FRAME_INTERVAL: Duration = Duration::from_millis(12);
+/// Size of the pictures the live MCP's screenshot tool returns (16:9).
+const MCP_CAPTURE_SIZE: [u32; 2] = [1280, 720];
+/// `PreviewHost::settle`: game time per step, steps and real time at most.
+const SETTLE_TICK: Duration = Duration::from_millis(100);
+const SETTLE_MAX_TICKS: usize = 80;
+const SETTLE_WALL_LIMIT: Duration = Duration::from_secs(6);
 /// Smallest and largest preview targets (16:9).
 const MIN_TARGET: [u32; 2] = [320, 180];
 const MAX_TARGET: [u32; 2] = [1920, 1080];
@@ -641,8 +650,8 @@ impl PreviewHost {
         self.runtime.renderer().start_readback(target.id).ok()
     }
 
-    /// Waits for a capture and writes it as a PNG (debug option, tests).
-    pub fn write_capture(&self, readback: &mut Readback, path: &Path) -> Result<(), String> {
+    /// Waits for a capture: `(width, height, RGBA8 pixels)`.
+    pub fn read_capture(&self, readback: &mut Readback) -> Result<(u32, u32, Vec<u8>), String> {
         loop {
             match self.runtime.renderer().poll_readback(readback) {
                 ReadbackStatus::Pending => {
@@ -655,16 +664,277 @@ impl PreviewHost {
                     width,
                     height,
                     rgba,
-                } => {
-                    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                    }
-                    return image::save_buffer(path, &rgba, width, height, image::ColorType::Rgba8)
-                        .map_err(|e| e.to_string());
-                }
+                } => return Ok((width, height, rgba)),
                 ReadbackStatus::Failed => return Err("readback failed".to_owned()),
             }
         }
+    }
+
+    /// Waits for a capture and writes it as a PNG (debug option, tests).
+    pub fn write_capture(&self, readback: &mut Readback, path: &Path) -> Result<(), String> {
+        let (width, height, rgba) = self.read_capture(readback)?;
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        image::save_buffer(path, &rgba, width, height, image::ColorType::Rgba8)
+            .map_err(|e| e.to_string())
+    }
+
+    // ------------------------------------------------- scripted (live MCP)
+
+    /// Lets what animates by itself finish (typewriter, transition, timed
+    /// pause, assets loading) so that a state read or a screenshot shows the
+    /// settled picture. Bounded: a few seconds of game time and of waiting.
+    fn settle(&mut self) {
+        let give_up = Instant::now() + SETTLE_WALL_LIMIT;
+        for _ in 0..SETTLE_MAX_TICKS {
+            if !self.runtime.is_animating() || Instant::now() > give_up {
+                break;
+            }
+            self.runtime.tick(SETTLE_TICK);
+            // Assets load on other threads: give them real time.
+            std::thread::sleep(Duration::from_millis(4));
+        }
+    }
+
+    /// The game drawn into a fresh 1280x720 target of its own (independent
+    /// of the panel's size and visibility), as PNG bytes.
+    fn capture_png(&mut self) -> Result<Vec<u8>, String> {
+        let [width, height] = MCP_CAPTURE_SIZE;
+        let id = self
+            .runtime
+            .renderer_mut()
+            .create_render_target("mcp capture", width, height)
+            .map_err(|e| format!("cannot create the capture target: {e}"))?;
+        let result = (|| {
+            self.runtime
+                .render_to_target(id)
+                .map_err(|e| format!("cannot draw the preview: {e}"))?;
+            let mut readback = self
+                .runtime
+                .renderer()
+                .start_readback(id)
+                .map_err(|e| format!("cannot read the picture back: {e}"))?;
+            let (w, h, rgba) = self.read_capture(&mut readback)?;
+            let mut png = Vec::new();
+            image::ImageEncoder::write_image(
+                image::codecs::png::PngEncoder::new(&mut png),
+                &rgba,
+                w,
+                h,
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(|e| format!("cannot encode the PNG: {e}"))?;
+            Ok(png)
+        })();
+        self.runtime.renderer_mut().release_texture(id);
+        result
+    }
+
+    /// The preview as the AI reads it.
+    fn state_text(&self, core: &EditorCore) -> String {
+        let status = match self.runtime.status() {
+            PlayStatus::Stopped => "stopped",
+            PlayStatus::Playing => "playing",
+            PlayStatus::Paused => "paused",
+        };
+        let snapshot = self.runtime.snapshot();
+        let value = match core.story() {
+            Some(story) => crate::live::preview_state_json(story, status, snapshot.as_ref()),
+            None => serde_json::json!({"status": status}),
+        };
+        serde_json::to_string_pretty(&value).unwrap_or_default()
+    }
+
+    /// Runs one live-only preview tool (see `crate::live`).
+    fn mcp_run(
+        &mut self,
+        core: &mut EditorCore,
+        egui_renderer: &mut egui_wgpu::Renderer,
+        now: Instant,
+        call: &LiveCall,
+    ) -> Result<PreviewOutput, ToolError> {
+        // A pending edit reaches the runtime before anything else.
+        if self.debounce.pending() {
+            self.load(core, now);
+        }
+        match call {
+            LiveCall::PreviewPlay { from_node } => {
+                let command = match from_node {
+                    Some(text) => {
+                        let id: orbit_core::NodeId = orbit_mcp::convert::parse_id(text, "node")?;
+                        if core.story().is_none_or(|s| s.locate(id).is_none()) {
+                            return Err(ToolError::not_found(format!("no node {id}")));
+                        }
+                        PreviewCommand::PlayFrom(id)
+                    }
+                    None => PreviewCommand::Restart,
+                };
+                core.state.preview.command(command);
+                self.update(core, egui_renderer, now);
+                if self.runtime.status() == PlayStatus::Stopped {
+                    let why = self
+                        .runtime
+                        .last_error()
+                        .map(|e| e.lines().next().unwrap_or("").to_owned())
+                        .or_else(|| {
+                            core.state
+                                .console
+                                .entries()
+                                .back()
+                                .map(|e| e.message.clone())
+                        })
+                        .unwrap_or_default();
+                    return Err(ToolError::refused(format!(
+                        "the preview could not start: {why}. Fix the story (validate) and retry."
+                    )));
+                }
+                self.settle();
+            }
+            LiveCall::PreviewStep {
+                steps,
+                until_choice,
+            } => {
+                self.require_running()?;
+                let mut advanced = 0;
+                for _ in 0..*steps {
+                    if *until_choice && self.at_a_stop() {
+                        break;
+                    }
+                    if !self.runtime.advance_one() {
+                        break;
+                    }
+                    advanced += 1;
+                }
+                self.settle();
+                self.update(core, egui_renderer, now);
+                return Ok(PreviewOutput {
+                    text: format!("advanced {advanced} step(s)\n{}", self.state_text(core)),
+                    png: None,
+                });
+            }
+            LiveCall::PreviewChoose(selector) => {
+                self.require_running()?;
+                let options = match self.runtime.flow() {
+                    Some(orbit_runtime::Flow::Choice(options)) => options.clone(),
+                    _ => {
+                        return Err(ToolError::refused(
+                            "the preview is not showing a choice right now (see preview_state)",
+                        ));
+                    }
+                };
+                let index = resolve_option(&options, selector)?;
+                if !self.runtime.choose_option(index) {
+                    return Err(ToolError::refused("the option could not be picked"));
+                }
+                self.settle();
+            }
+            LiveCall::PreviewState => {}
+            LiveCall::PreviewStop => {
+                core.state.preview.command(PreviewCommand::Stop);
+            }
+            LiveCall::PreviewScreenshot => {
+                self.require_running()?;
+                self.settle();
+                let png = self.capture_png().map_err(|e| {
+                    ToolError::new(
+                        orbit_mcp::ErrorKind::Internal,
+                        format!("screenshot failed: {e}"),
+                    )
+                })?;
+                self.update(core, egui_renderer, now);
+                return Ok(PreviewOutput {
+                    text: self.state_text(core),
+                    png: Some(png),
+                });
+            }
+            LiveCall::SelectNode { .. } | LiveCall::Export(_) => {
+                return Err(ToolError::new(
+                    orbit_mcp::ErrorKind::Internal,
+                    "not a preview tool",
+                ));
+            }
+        }
+        self.update(core, egui_renderer, now);
+        Ok(PreviewOutput {
+            text: self.state_text(core),
+            png: None,
+        })
+    }
+
+    fn require_running(&self) -> Result<(), ToolError> {
+        if self.runtime.status() == PlayStatus::Stopped {
+            Err(ToolError::refused(
+                "the preview is not running: call preview_play first",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// The story waits for a pick, is over or failed.
+    fn at_a_stop(&self) -> bool {
+        !matches!(
+            self.runtime.flow(),
+            Some(
+                orbit_runtime::Flow::Say(_)
+                    | orbit_runtime::Flow::Transition { .. }
+                    | orbit_runtime::Flow::Waiting { .. }
+            )
+        )
+    }
+}
+
+/// Which option a selector designates: an index, an exact text (case
+/// insensitive) or the beginning of exactly one option.
+fn resolve_option(options: &[String], selector: &ChoiceSelector) -> Result<usize, ToolError> {
+    let list = || {
+        options
+            .iter()
+            .enumerate()
+            .map(|(i, t)| format!("{i}: {t}"))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    match selector {
+        ChoiceSelector::Index(i) if *i < options.len() => Ok(*i),
+        ChoiceSelector::Index(i) => Err(ToolError::invalid(format!(
+            "option {i} does not exist; options are {}",
+            list()
+        ))),
+        ChoiceSelector::Text(text) => {
+            let wanted = text.trim().to_lowercase();
+            if let Some(i) = options.iter().position(|o| o.to_lowercase() == wanted) {
+                return Ok(i);
+            }
+            let starts: Vec<usize> = options
+                .iter()
+                .enumerate()
+                .filter(|(_, o)| o.to_lowercase().starts_with(&wanted))
+                .map(|(i, _)| i)
+                .collect();
+            match starts.as_slice() {
+                [one] if !wanted.is_empty() => Ok(*one),
+                _ => Err(ToolError::invalid(format!(
+                    "no unique option matches `{text}`; options are {}",
+                    list()
+                ))),
+            }
+        }
+    }
+}
+
+/// The preview as the live MCP's backend: borrows the host and what it needs
+/// for one pump of the queue.
+pub struct PreviewBridge<'a> {
+    pub host: &'a mut PreviewHost,
+    pub renderer: &'a mut egui_wgpu::Renderer,
+    pub now: Instant,
+}
+
+impl PreviewBackend for PreviewBridge<'_> {
+    fn run(&mut self, core: &mut EditorCore, call: &LiveCall) -> Result<PreviewOutput, ToolError> {
+        self.host.mcp_run(core, self.renderer, self.now, call)
     }
 }
 
@@ -708,6 +978,28 @@ mod tests {
         // A fixed origin per test run.
         static ORIGIN: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         *ORIGIN.get_or_init(Instant::now) + Duration::from_millis(ms)
+    }
+
+    #[test]
+    fn a_choice_is_picked_by_index_exact_text_or_a_unique_beginning() {
+        let options: Vec<String> = ["Go left", "Go right", "Stay"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        let pick = |s: ChoiceSelector| resolve_option(&options, &s);
+        assert_eq!(pick(ChoiceSelector::Index(2)).unwrap(), 2);
+        assert_eq!(pick(ChoiceSelector::Text("stay".into())).unwrap(), 2);
+        assert_eq!(pick(ChoiceSelector::Text("Go r".into())).unwrap(), 1);
+        // Ambiguous, unknown and out of range: the error lists the options.
+        for bad in [
+            ChoiceSelector::Text("Go".into()),
+            ChoiceSelector::Text("nope".into()),
+            ChoiceSelector::Text(String::new()),
+            ChoiceSelector::Index(3),
+        ] {
+            let err = pick(bad).unwrap_err();
+            assert!(err.message.contains("0: Go left"), "{}", err.message);
+        }
     }
 
     #[test]

@@ -2,9 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use orbit_project::{
-    DEFAULT_STORY_FILE, ExportProfile, MANIFEST_FILE, ProjectManifest,
-};
+use orbit_project::{DEFAULT_STORY_FILE, ExportProfile, MANIFEST_FILE, ProjectManifest};
 
 use crate::error::{ExportError, Result};
 
@@ -45,9 +43,10 @@ impl ExportProject {
                 Some(p) if !p.as_os_str().is_empty() => p,
                 _ => Path::new("."),
             };
-            let story_file = path
-                .file_name()
-                .map_or_else(|| DEFAULT_STORY_FILE.to_owned(), |n| n.to_string_lossy().into_owned());
+            let story_file = path.file_name().map_or_else(
+                || DEFAULT_STORY_FILE.to_owned(),
+                |n| n.to_string_lossy().into_owned(),
+            );
             (root.to_owned(), story_file, None)
         } else {
             return Err(ExportError::Project(format!(
@@ -104,16 +103,19 @@ impl ExportProject {
         let profiles = self.profiles();
         match name {
             None => Ok(profiles.into_iter().next().expect("at least one profile")),
-            Some(name) => profiles.into_iter().find(|p| p.name == name).ok_or_else(|| {
-                ExportError::Project(format!(
-                    "the project has no export profile `{name}` (profiles: {})",
-                    self.profiles()
-                        .iter()
-                        .map(|p| p.name.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ))
-            }),
+            Some(name) => profiles
+                .into_iter()
+                .find(|p| p.name == name)
+                .ok_or_else(|| {
+                    ExportError::Project(format!(
+                        "the project has no export profile `{name}` (profiles: {})",
+                        self.profiles()
+                            .iter()
+                            .map(|p| p.name.clone())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))
+                }),
         }
     }
 }

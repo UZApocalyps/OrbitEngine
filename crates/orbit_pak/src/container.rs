@@ -39,7 +39,9 @@ const MIN_COMPRESS_LEN: usize = 64;
 pub enum PakError {
     #[error("not an OrbitEngine pak (bad magic)")]
     BadMagic,
-    #[error("pak format version {found} is not supported (this build reads up to {FORMAT_VERSION})")]
+    #[error(
+        "pak format version {found} is not supported (this build reads up to {FORMAT_VERSION})"
+    )]
     UnsupportedVersion { found: u32 },
     #[error("the pak is truncated")]
     Truncated,
@@ -396,7 +398,9 @@ impl PakWriter {
     /// The pak as bytes.
     pub fn to_bytes(self) -> (Vec<u8>, WriteStats) {
         let mut out = Vec::new();
-        let stats = self.write_to(&mut out).expect("writing to a Vec cannot fail");
+        let stats = self
+            .write_to(&mut out)
+            .expect("writing to a Vec cannot fail");
         (out, stats)
     }
 }
@@ -426,9 +430,15 @@ mod tests {
         assert_eq!(index.entry("a.txt").unwrap().codec, Codec::Lz4);
         // Already compressed formats stay raw.
         assert_eq!(index.entry("img/b.png").unwrap().codec, Codec::Raw);
-        assert_eq!(index.read_from(&bytes, "img/b.png").unwrap(), vec![7u8; 300]);
+        assert_eq!(
+            index.read_from(&bytes, "img/b.png").unwrap(),
+            vec![7u8; 300]
+        );
         assert_eq!(index.read_from(&bytes, "empty.bin").unwrap(), b"");
-        assert_eq!(index.read_from(&bytes, "a.txt").unwrap(), b"hello ".repeat(100));
+        assert_eq!(
+            index.read_from(&bytes, "a.txt").unwrap(),
+            b"hello ".repeat(100)
+        );
     }
 
     #[test]
@@ -473,7 +483,10 @@ mod tests {
         assert!(w.add("/x", b"").is_err());
         assert!(w.add("a\\b", b"").is_err());
         w.add("x", b"1").unwrap();
-        assert_eq!(w.add("x", b"2").unwrap_err(), PakError::Duplicate("x".into()));
+        assert_eq!(
+            w.add("x", b"2").unwrap_err(),
+            PakError::Duplicate("x".into())
+        );
     }
 
     #[test]

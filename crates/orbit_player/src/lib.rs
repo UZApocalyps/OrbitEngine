@@ -103,16 +103,13 @@ pub fn run() -> Result<(), PlayerError> {
         ));
     }
     let config = launch.runtime_config();
-    orbit_platform::run(
-        window_config(&launch),
-        |window| async move {
-            let size = window.inner_size();
-            let gfx = Gfx::new(window, (size.width, size.height))
-                .await
-                .expect("GPU initialization failed");
-            let renderer = Renderer2d::new(gfx).expect("renderer initialization failed");
-            Runtime::new(renderer, config).expect("runtime initialization failed")
-        },
-    )?;
+    orbit_platform::run(window_config(&launch), |window| async move {
+        let size = window.inner_size();
+        let gfx = Gfx::new(window, (size.width, size.height))
+            .await
+            .expect("GPU initialization failed");
+        let renderer = Renderer2d::new(gfx).expect("renderer initialization failed");
+        Runtime::new(renderer, config).expect("runtime initialization failed")
+    })?;
     Ok(())
 }

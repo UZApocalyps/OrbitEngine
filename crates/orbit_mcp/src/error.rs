@@ -25,6 +25,9 @@ pub enum ErrorKind {
     Plugin,
     /// Bug in the server (a panic was caught).
     Internal,
+    /// The feature needs something this editor does not have right now (no
+    /// GPU for the preview, no export plugin, no project open...).
+    Unavailable,
 }
 
 impl ErrorKind {
@@ -38,6 +41,7 @@ impl ErrorKind {
             ErrorKind::Io => "io_error",
             ErrorKind::Plugin => "plugin_error",
             ErrorKind::Internal => "internal_error",
+            ErrorKind::Unavailable => "unavailable",
         }
     }
 }
@@ -68,6 +72,10 @@ impl ToolError {
 
     pub fn refused(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Refused, message)
+    }
+
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Unavailable, message)
     }
 }
 
@@ -100,7 +108,7 @@ impl From<ProjectError> for ToolError {
         let mut message = cmd.to_string();
         if kind == ErrorKind::VersionConflict {
             message.push_str(
-                ". Re-read the scene (read_scene) to get the current version, then retry.",
+                ". The node was changed since you read it (possibly by the user in the editor).                  Re-read the scene (read_scene) to get the current version, then retry.",
             );
         }
         Self::new(kind, message)

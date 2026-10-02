@@ -296,7 +296,8 @@ mod web_visibility {
                 let state = forced.unwrap_or_else(current);
                 let _ = proxy.send_event(UserEvent::Visibility(state));
             });
-            let _ = target.add_event_listener_with_callback(name, callback.as_ref().unchecked_ref());
+            let _ =
+                target.add_event_listener_with_callback(name, callback.as_ref().unchecked_ref());
             // Lives as long as the page.
             callback.forget();
         };

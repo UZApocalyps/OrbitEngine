@@ -71,7 +71,10 @@ mod tests {
     #[test]
     fn dir_option() {
         let args = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(parse_dir(&args(&["--dir", "x"])).unwrap(), PathBuf::from("x"));
+        assert_eq!(
+            parse_dir(&args(&["--dir", "x"])).unwrap(),
+            PathBuf::from("x")
+        );
         assert!(parse_dir(&args(&["--dir"])).is_err());
         assert!(parse_dir(&[]).unwrap().ends_with("target/web"));
     }

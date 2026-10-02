@@ -1,6 +1,8 @@
-# Serveur MCP d'OrbitEngine (mode headless, M3f)
+# Serveur MCP d'OrbitEngine (headless M3f, live dans l'éditeur M4)
 
 `orbit mcp --project <dossier|fichier.ron>` expose un projet OrbitEngine à une IA via le [Model Context Protocol](https://modelcontextprotocol.io) : l'IA lit et modifie l'histoire (scènes, répliques, choix, personnages, variables, assets) comme un collaborateur, sans interface graphique ni GPU.
+
+Deux modes, mêmes outils : **headless** (`orbit mcp`, ci-dessous) et **live** (l'éditeur ouvert expose le MCP en HTTP, voir « Mode live » plus bas).
 
 * Transport : **stdio** (le client lance le processus). Rien d'autre que le protocole n'est écrit sur la sortie standard ; les diagnostics vont sur la sortie d'erreur.
 * Implémentation : SDK Rust officiel **`rmcp` 3.5.0** (licence Apache-2.0, aucune nouvelle exception dans `deny.toml`), crate `orbit_mcp`. Versions de protocole négociées par `rmcp` (dont 2025-06-18).
@@ -87,19 +89,126 @@ validate {}
 simulate {"choices": [0]}      # puis {"choices": ["Droite"]}
 ```
 
-## Sécurité
+## Mode live : l'éditeur ouvert (M4)
+
+L'éditeur expose le même MCP en **HTTP streamable** sur `127.0.0.1`. L'IA travaille sur **le projet ouvert dans l'éditeur** (le même `Project` que vous) : ses modifications apparaissent en direct à côté des vôtres, chacune est **une entrée d'annulation** que vous pouvez défaire, et elle peut aussi **lancer et regarder la preview** (état, capture d'écran), sélectionner un nœud pour vous le montrer, et construire et exporter le jeu (`build_project`, `export_game`).
+
+### Activer le serveur
+
+Le serveur est **désactivé par défaut** : rien n'écoute tant que vous ne l'avez pas demandé.
+
+1. Ouvrez un projet, puis le panneau **Assistant IA** (menu Affichage, ou la palette de commandes ; il est dans la zone du bas, à côté de la console).
+2. Choisissez le port (7878 par défaut ; modifiable tant que le serveur est arrêté) puis **Activer le serveur MCP**. L'état passe à « À l'écoute », puis à « N client(s) connecté(s) » quand un client a une session ouverte.
+3. Un **jeton d'accès** est généré une fois pour toutes (conservé dans la configuration de l'éditeur) : il est masqué, avec des boutons pour l'afficher, le copier, et en **générer un nouveau** (le serveur redémarre, l'ancien jeton cesse de fonctionner immédiatement).
+4. Les boutons **Commande Claude Code** et **.mcp.json** copient une configuration prête à coller, avec l'en-tête d'autorisation.
+
+Pour les scripts et les captures automatisées, l'éditeur accepte `--mcp-port <port>` (démarre le serveur au lancement) et `--mcp-token <jeton>` (jeton imposé).
+
+### Brancher Claude Code
+
+```sh
+claude mcp add --transport http orbit http://127.0.0.1:7878/mcp --header "Authorization: Bearer orbit_<jeton>"
+```
+
+ou, dans le `.mcp.json` du dépôt de l'IA :
+
+```json
+{
+  "mcpServers": {
+    "orbit": {
+      "type": "http",
+      "url": "http://127.0.0.1:7878/mcp",
+      "headers": { "Authorization": "Bearer orbit_<jeton>" }
+    }
+  }
+}
+```
+
+(Le port et le jeton à utiliser sont ceux affichés dans le panneau.) Le point d'entrée est `/mcp`. Sans client MCP, un `curl` suffit pour essayer : `POST /mcp` avec `Authorization: Bearer <jeton>`, `Accept: application/json, text/event-stream` et un message JSON-RPC `initialize` ; le serveur répond avec un en-tête `Mcp-Session-Id` à renvoyer ensuite.
+
+### Comment ça marche
+
+```
+client ──HTTP──▶ [fil du serveur : tokio, jeton, rmcp]
+                      │ fil MCP (un appel à la fois)
+                      ▼
+               LiveHost ──▶ file de commandes ──▶ fil de l'éditeur
+                      ▲                              │ exécute l'outil sur le Project ouvert
+                      └──────── réponse ◀────────────┘ (une entrée d'annulation), puis réveille la boucle
+```
+
+* Le serveur tourne sur **son propre thread** ; il ne touche jamais au projet. Chaque appel est posté dans une **file de commandes** (`orbit_mcp::live::CommandQueue`), l'éditeur la vide **sur son fil**, entre deux frames (avant le dessin de l'interface), exécute l'outil par `Project::group` (une entrée d'annulation par appel, tout ou rien) et renvoie le résultat. Le `Waker` de la plateforme réveille la boucle à chaque requête : l'éditeur reste à 0 frame au repos.
+* **Les outils sont ceux du mode headless** (`orbit_mcp::host::ToolRunner`, même code, mêmes schémas) ; `ProjectHost` a une implémentation « éditeur » (`LiveHost`, qui ne possède rien et délègue à l'éditeur). Les outils des plugins (`plugin_id.outil`) sont ceux des plugins **chargés dans l'éditeur** (les intégrés y sont).
+* **Rien n'est écrit sur le disque tant que vous n'enregistrez pas** (Ctrl+S) : les modifications de l'IA sont des modifications non enregistrées comme les vôtres (sauvegarde automatique de récupération comprise). L'outil `save` écrit tout de suite si l'IA doit lancer ensuite un outil qui lit le disque. Le titre de la fenêtre et la barre d'état le montrent.
+* **Conflits** : chaque nœud a une version, partagée entre vous et l'IA. Si vous modifiez un nœud après que l'IA l'a lu, son `edit_dialogue` / `delete_node` / `move_node` avec l'ancien `expected_version` échoue avec `version_conflict` (« le nœud a été modifié depuis votre lecture, peut-être par l'utilisateur dans l'éditeur ; relisez ») et **rien n'est appliqué**. `undo` / `redo` (outils) partagent l'historique de l'éditeur.
+* Un appel de l'IA est **annulable en bloc** : bouton « Annuler la dernière action de l'IA » du panneau (n'agit que si cette action est encore la dernière de l'historique : il ne défait jamais vos propres modifications) ou Ctrl+Z.
+
+### Outils supplémentaires (live uniquement)
+
+| Outil | Rôle |
+|---|---|
+| `preview_play` | Lance (ou relance) la preview, depuis le début ou depuis un nœud (`from_node` : l'état réel qu'un joueur aurait à ce nœud). Renvoie l'état de la preview. |
+| `preview_step` | Avance de `steps` pas (défaut 1) ou jusqu'au prochain choix (`until_choice`, borné à 500 pas) : termine la machine à écrire, passe à la réplique suivante, saute transitions et pauses. |
+| `preview_choose` | Choisit une option du choix affiché (`option` : indice 0-based, texte exact ou début de texte non ambigu). |
+| `preview_state` | Lit la preview : statut, nœud courant (id, scène, rang), réplique ou choix affiché, **variables**, **scène déclarative** (décor, personnages en scène avec expression et position, musique). |
+| `preview_stop` | Arrête la preview. |
+| `preview_screenshot` | **Capture d'écran de la preview** : PNG 1280×720 renvoyé en **contenu image MCP** (base64), après avoir laissé finir la machine à écrire et les transitions ; texte : l'état de la preview. Indépendante de la taille et de la visibilité du panneau Preview. |
+| `select_node` | Sélectionne et révèle un nœud dans l'éditeur (le panneau scène défile, l'inspecteur l'affiche). |
+| `build_project`, `export_game` | **Destructifs** (`destructiveHint`). Passent par `ProjectHost::export` puis `orbit_export::run_request` (le même code que le panneau Export et `orbit build` / `orbit export`) : `build_project {profile?, out_dir?}` valide, compile et écrit le pak (`build/` par défaut) ; `export_game {target: windows\|linux\|web, profile?, out_dir?}` écrit le zip, le tar.gz ou le dossier web (`export/` par défaut). `out_dir` reste **dans le projet**. Les modifications non enregistrées sont enregistrées d'abord ; la réponse liste les avertissements ; une histoire invalide, un asset manquant ou un template de player absent donnent une erreur lisible (`invalid_arguments` pour une cible, un profil ou un dossier faux). |
+
+Une preview qui ne peut pas démarrer (histoire invalide) renvoie l'erreur de validation. `preview_step` / `preview_choose` / `preview_screenshot` sans preview en cours disent d'appeler `preview_play` d'abord.
+
+**[edge] Éditeur sans GPU** : les outils `preview_*` répondent `unavailable: the preview is not available: this editor has no GPU…` ; **tous les autres outils fonctionnent** (lecture, édition, `validate`, `simulate`, `select_node`...). C'est le cas de `EditorCore` sans fenêtre (testé). La fenêtre de l'éditeur elle-même exige un GPU : un éditeur sans GPU « en CI » est le cœur d'éditeur des tests, pas l'exécutable.
+
+### Le panneau « Assistant IA »
+
+* **État** : arrêté / à l'écoute / client(s) connecté(s) (un client est « connecté » tant qu'il a une session ouverte et a écrit dans les 90 dernières secondes), adresse, port, jeton (masqué), requêtes refusées.
+* **Journal en direct** de ce que fait l'IA : outil, arguments résumés, résultat, durée, « annulable », et un lien **« révéler »** (sélectionne le nœud touché dans l'éditeur). Les erreurs y sont en rouge. Le même journal est écrit dans `<projet>/.orbit/mcp.log`.
+* **Indicateur discret** quand l'IA modifie le projet : « L'IA modifie le projet » dans le panneau et « IA : modification en cours » dans la barre d'état (« IA : MCP actif » sinon).
+* **Annuler la dernière action de l'IA** ; vider le journal.
+
+### Sécurité du mode live
+
+* **Désactivé par défaut**, activation explicite dans le panneau ; l'état « activé » n'est pas mémorisé (au prochain lancement, il faut le réactiver).
+* **Écoute uniquement sur `127.0.0.1`** (jamais `0.0.0.0`) ; une connexion qui ne vient pas de la boucle locale est refusée (403).
+* **Jeton obligatoire** : toute requête sans `Authorization: Bearer <jeton>` valide est refusée (**401**, avec `WWW-Authenticate: Bearer`), jeton absent, mauvais, tronqué ou d'un autre schéma ; comparaison en temps constant ; jeton de 256 bits aléatoires (`getrandom`, préfixe `orbit_`). Le nombre de refus est affiché.
+* **Anti-rebond DNS** : l'en-tête `Host` doit être `localhost`, `127.0.0.1` ou `::1` (contrôle de `rmcp`) ; un site web ne peut pas atteindre le serveur par un nom de domaine qui pointerait vers 127.0.0.1 (403).
+* Le jeton est conservé **en clair** dans la configuration de l'éditeur (dossier de configuration de l'utilisateur, comme ses projets récents) : traitez-le comme un mot de passe local. Regénérez-le si vous le montrez par accident (capture d'écran, journal de terminal).
+* Mêmes protections que le mode headless : périmètre = dossier du projet (`Sandbox`), erreurs structurées, paniques interceptées, tout ou rien par appel. `build_project` / `export_game` sont signalés destructifs.
+* Limite : un client **authentifié** a la même puissance que vous sur le projet ouvert (c'est le but) ; le jeton est la seule barrière, d'où le localhost et l'activation explicite.
+
+### Éditeur et `orbit mcp` sur le même projet : le verrou `.orbit/lock`
+
+L'éditeur et `orbit mcp` gardent chacun le projet en mémoire et le réécrivent en entier : ouverts ensemble sur le même dossier, le dernier enregistrement écraserait l'autre **sans rien dire**. Chaque côté pose donc un **fichier de verrou** `<projet>/.orbit/lock` (propriétaire, pid, battement de cœur réécrit toutes les 3 s ; un verrou sans battement depuis 12 s est un reste de plantage et est ignoré) et **avertit dans les deux sens** :
+
+* `orbit mcp` sur un projet que l'éditeur tient : **refus**, avec le message d'utiliser plutôt le MCP live de l'éditeur (panneau Assistant IA), de fermer l'autre côté, ou de passer `--force` pour passer outre (avertissement sur la sortie d'erreur, et le verrou est repris).
+* L'éditeur qui ouvre un projet tenu par un `orbit mcp` : avertissement dans la console, un message d'attention et un bandeau dans le panneau Assistant IA (l'éditeur ne prend pas le verrou : l'autre côté le garde). Si un `orbit mcp --force` reprend ensuite le verrou d'un projet déjà ouvert dans l'éditeur, l'éditeur le voit au battement suivant et avertit de même.
+* Un fichier d'histoire ouvert seul (sans `orbit.project.ron`) n'a pas de dossier de projet : l'éditeur n'y crée pas de `.orbit/lock` (mais en lit un s'il existe).
+* Le verrou est **consultatif** : il ne bloque pas un éditeur de texte ni `git`. Le watcher de l'éditeur détecte aussi toute modification du fichier d'histoire par un autre outil (question « recharger ? »).
+
+## Sécurité (mode headless)
 
 * **Périmètre = le dossier du projet.** Tout chemin reçu passe par `Sandbox::resolve` : chemins vides ou contenant NUL refusés, tout composant `..` refusé, chemins absolus acceptés seulement s'ils tombent dans le projet, **liens symboliques et jonctions résolus** (un lien qui sort du dossier, ou un lien pendant, est refusé), vérification sur le chemin canonique. Aucune opération ne lit ni n'écrit hors du dossier (`import_asset` ne copie qu'un fichier déjà dans le projet ; le nom de destination est assaini).
 * **Opérations destructrices signalées** (`destructiveHint`) : suppression de scène et de nœud. Toutes les modifications sont annulables (`undo`).
 * **Journal des actions** : `<projet>/.orbit/mcp.log`, une ligne par appel (horodatage Unix en ms, outil, succès ou erreur, arguments et résultat tronqués). Les erreurs y sont aussi.
 * **Aucune panique sur entrée invalide** : arguments mal typés, ids invalides, index géants, JSON absurde → erreur structurée, projet inchangé (test de robustesse + interception des paniques).
-* Le serveur écoute sur l'entrée standard du processus que le client a lancé : il n'ouvre aucun port réseau. (Le mode live HTTP de l'éditeur, M4, sera sur 127.0.0.1, désactivé par défaut, avec jeton.)
+* Le serveur écoute sur l'entrée standard du processus que le client a lancé : il n'ouvre aucun port réseau (le mode live HTTP de l'éditeur est décrit plus haut : 127.0.0.1, désactivé par défaut, jeton).
 * Limite de taille d'import : 256 Mio par fichier.
 
 ## Dettes et limites (M3f)
 
-* Pas de surveillance des fichiers : si le projet est modifié sur disque pendant que le serveur tourne (éditeur ouvert en même temps), le serveur n'en sait rien et écrasera à la prochaine sauvegarde. Le mode live (M4) donne un seul propriétaire du projet.
+* Pas de surveillance des fichiers : si le projet est modifié sur disque pendant que le serveur tourne, le serveur n'en sait rien et écrasera à la prochaine sauvegarde. Contre l'éditeur ouvert en même temps, le verrou `.orbit/lock` (voir plus haut) refuse le démarrage (`--force` pour passer outre) ; le mode live donne un seul propriétaire du projet.
 * Les plugins intégrés de l'éditeur (`orbit_editor`) ne sont pas chargés par `orbit mcp` : seuls les outils du cœur sont exposés tant qu'aucun plugin n'est installé (`HeadlessHost::install_plugin` existe pour les hôtes et les tests).
 * Les assets sont enregistrés et copiés mais leur contenu n'est pas inspecté (un faux PNG est accepté ; `validate` ne vérifie que l'existence du fichier).
-* Pas de suppression de personnage, de variable ni d'asset, ni d'édition des nœuds autres que les répliques (supprimer puis recréer) ; pas d'outil de build / export ni de capture d'écran de la preview (M4, mode live).
+* Pas de suppression de personnage, de variable ni d'asset, ni d'édition des nœuds autres que les répliques (supprimer puis recréer) ; pas d'outil de build / export, de preview ni de capture d'écran en headless (ils n'existent qu'en mode live).
 * Les libellés d'undo des commandes d'`orbit_project` sont en français ; ceux des appels MCP sont « MCP : <outil> ».
+
+## Dettes et limites du mode live (M4)
+
+* **Export** : branché sur `orbit_export` (`orbit_editor::live::export`). L'export tourne sur le fil de l'éditeur : la fenêtre est occupée (quelques secondes, plus avec la compression brotli du web) et la progression n'est pas montrée ; le panneau Export, lui, travaille sur un fil à part. Le serveur headless n'expose pas ces outils (`orbit export` en ligne de commande).
+* **File « commune » avec l'UI** : l'éditeur vide la file de commandes du MCP et ses propres requêtes (`EditorRequest`) sur le même fil, l'une après l'autre (même sérialisation, mêmes versions de nœud), mais l'UI appelle encore `Project` directement : une file unique de `Command` typées pour l'UI reste à faire.
+* **`validate` sur une histoire ouverte seule** (sans dossier de projet) : la vérification des fichiers d'assets part du dossier de l'histoire, pas du dossier d'assets que l'éditeur retrouve plus haut (la démo en montre des « fichier absent » factices). Les projets avec manifeste ne sont pas concernés.
+* **Une seule preview** : `preview_*` pilote la preview de l'éditeur (celle que vous voyez) ; pas de preview concurrente. `preview_step` / `preview_choose` agissent sur la partie en cours ; après une modification de l'histoire, la preview recharge à chaud comme pour vous.
+* **Éditeur sans GPU** : seul le cœur d'éditeur (tests) tourne sans GPU ; l'exécutable à fenêtre exige un GPU (comme le player). Les erreurs `unavailable` sont testées sur le cœur.
+* **Pas de notifications serveur → client** (resources mises à jour, journal) : le client relit ; les sessions HTTP ne sont pas reprises après un redémarrage du serveur (le client se réinitialise).
+* Le jeton est en clair dans la configuration utilisateur (voir Sécurité) ; pas de jetons à portée limitée (lecture seule) ni d'expiration.

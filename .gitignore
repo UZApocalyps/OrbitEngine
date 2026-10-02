@@ -5,3 +5,6 @@
 .vscode/
 Cargo.lock.bak
 .orbit/
+
+# Claude Code agent worktrees
+/.claude/

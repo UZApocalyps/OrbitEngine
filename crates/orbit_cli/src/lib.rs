@@ -2,7 +2,7 @@
 //!
 //! * `orbit validate <project|file> [--check-files] [--root <dir>]`
 //! * `orbit run-text <file> [--step] [--save-dir <dir>]`
-//! * `orbit mcp --project <dir|file.ron>` (MCP server over stdio, see `orbit_mcp`)
+//! * `orbit mcp --project <dir|file.ron>` (MCP server over stdio, see `orbit_mcp`; `--force` takes a project the editor holds)
 //! * `orbit build` and `orbit export <target>` (see `orbit_export`)
 //!
 //! The logic lives in [`run`], which takes its streams as parameters so it can
@@ -39,12 +39,14 @@ USAGE:
           b [n]   roll back n steps (default 1)     f [n]  roll forward
           s <slot>  save      l <slot>  load        h      show the history
         <slot> is a number (manual slot), q (quicksave) or a (last autosave).
-    orbit mcp --project <dir|file.ron>
+    orbit mcp --project <dir|file.ron> [--force]
         Serve the project to an AI client over the Model Context Protocol
         (stdio, no GPU). Every edit goes through the project command API, is
         saved atomically and is one undo entry; file access is limited to
         the project folder. The log is kept in <project>/.orbit/mcp.log.
         Protocol on stdout: nothing else is printed there.
+        Refused while the editor (or another `orbit mcp`) holds the project
+        (.orbit/lock): use the editor's live MCP instead, or --force.
 {export_usage}    orbit help
 ";
 
@@ -136,19 +138,21 @@ fn print_report(report: &ValidationReport, err: &mut dyn Write) {
 /// belongs to the protocol).
 fn mcp_cmd(args: &[String], err: &mut dyn Write) -> Result<u8, String> {
     let mut project: Option<PathBuf> = None;
+    let mut force = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--project" => {
                 project = Some(PathBuf::from(it.next().ok_or("--project needs a path")?));
             }
+            "--force" => force = true,
             flag if flag.starts_with("--") => return Err(format!("unknown option `{flag}`")),
-            _ => return Err("usage: orbit mcp --project <dir|file.ron>".into()),
+            _ => return Err("usage: orbit mcp --project <dir|file.ron> [--force]".into()),
         }
     }
-    let project = project.ok_or("usage: orbit mcp --project <dir|file.ron>")?;
+    let project = project.ok_or("usage: orbit mcp --project <dir|file.ron> [--force]")?;
     let _ = writeln!(err, "orbit mcp: serving {} on stdio", project.display());
-    orbit_mcp::serve_stdio(&project)?;
+    orbit_mcp::serve_stdio_with(&project, force)?;
     Ok(0)
 }
 

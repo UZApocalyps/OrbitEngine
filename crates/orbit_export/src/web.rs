@@ -69,7 +69,13 @@ fn js_string(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn render_index(profile: &ExportProfile, pak_crc: u32, js_crc: u32, wasm_crc: u32, wasm_bytes: usize) -> String {
+fn render_index(
+    profile: &ExportProfile,
+    pak_crc: u32,
+    js_crc: u32,
+    wasm_crc: u32,
+    wasm_bytes: usize,
+) -> String {
     let lang = profile
         .default_language
         .as_deref()
@@ -83,7 +89,10 @@ fn render_index(profile: &ExportProfile, pak_crc: u32, js_crc: u32, wasm_crc: u3
         .replace("@@LOGO@@", "orbit-logo.png")
         .replace("@@PAK@@", &js_string(&format!("game.pak?v={pak_crc:08x}")))
         .replace("@@JS@@", &format!("orbit_player.js?v={js_crc:08x}"))
-        .replace("@@WASM@@", &format!("orbit_player_bg.wasm?v={wasm_crc:08x}"))
+        .replace(
+            "@@WASM@@",
+            &format!("orbit_player_bg.wasm?v={wasm_crc:08x}"),
+        )
         .replace("@@WASM_BYTES@@", &wasm_bytes.to_string())
 }
 
@@ -134,7 +143,12 @@ fn clean_previous(dir: &Path) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
         return;
     };
-    for name in value["files"].as_array().into_iter().flatten().filter_map(|v| v.as_str()) {
+    for name in value["files"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str())
+    {
         if !name.contains("..") && !name.starts_with('/') && !name.contains('\\') {
             let _ = std::fs::remove_file(dir.join(name));
         }
@@ -207,8 +221,11 @@ pub(crate) fn export(
         "files": names,
     });
     let manifest_path = dir.join(MANIFEST);
-    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap_or_default())
-        .map_err(ExportError::io(&manifest_path))?;
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).unwrap_or_default(),
+    )
+    .map_err(ExportError::io(&manifest_path))?;
     written.push(manifest_path);
     rep.step(1.0, "Web bundle written");
     Ok(WebWritten {

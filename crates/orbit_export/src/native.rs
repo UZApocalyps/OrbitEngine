@@ -36,7 +36,11 @@ pub(crate) fn file_safe(name: &str) -> String {
         })
         .collect();
     let trimmed = cleaned.trim().trim_matches('.').to_owned();
-    if trimmed.is_empty() { "game".to_owned() } else { trimmed }
+    if trimmed.is_empty() {
+        "game".to_owned()
+    } else {
+        trimmed
+    }
 }
 
 /// Name of the archive: `<id>-<version>-<target>.<ext>`.
@@ -150,10 +154,8 @@ fn write_tar_gz(
     folder: &str,
 ) -> Result<()> {
     let file = File::create(output).map_err(ExportError::io(output))?;
-    let encoder = flate2::write::GzEncoder::new(
-        std::io::BufWriter::new(file),
-        flate2::Compression::new(6),
-    );
+    let encoder =
+        flate2::write::GzEncoder::new(std::io::BufWriter::new(file), flate2::Compression::new(6));
     let mut tar = tar::Builder::new(encoder);
     let io = |e: std::io::Error| package_err(output, e);
 
@@ -161,10 +163,7 @@ fn write_tar_gz(
     header.set_size((player.len() + pak.len() + trailer.len()) as u64);
     header.set_mode(0o755);
     header.set_mtime(0);
-    let body = std::io::Read::chain(
-        std::io::Read::chain(player, pak),
-        trailer,
-    );
+    let body = std::io::Read::chain(std::io::Read::chain(player, pak), trailer);
     tar.append_data(&mut header, exe_name, body).map_err(io)?;
 
     for (name, text) in [
@@ -175,7 +174,8 @@ fn write_tar_gz(
         header.set_size(text.len() as u64);
         header.set_mode(0o644);
         header.set_mtime(0);
-        tar.append_data(&mut header, name, text.as_bytes()).map_err(io)?;
+        tar.append_data(&mut header, name, text.as_bytes())
+            .map_err(io)?;
     }
     let encoder = tar.into_inner().map_err(io)?;
     let mut inner = encoder.finish().map_err(io)?;
@@ -193,7 +193,13 @@ mod tests {
         assert_eq!(file_safe("  .. "), "game");
         assert_eq!(file_safe("Caf\u{e9}"), "Caf\u{e9}");
         let p = ExportProfile::new("release", "Mon jeu");
-        assert_eq!(archive_name(&p, ExportTarget::Windows), "mon-jeu-1.0.0-windows.zip");
-        assert_eq!(archive_name(&p, ExportTarget::Linux), "mon-jeu-1.0.0-linux.tar.gz");
+        assert_eq!(
+            archive_name(&p, ExportTarget::Windows),
+            "mon-jeu-1.0.0-windows.zip"
+        );
+        assert_eq!(
+            archive_name(&p, ExportTarget::Linux),
+            "mon-jeu-1.0.0-linux.tar.gz"
+        );
     }
 }

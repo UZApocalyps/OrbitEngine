@@ -39,7 +39,9 @@ use orbit_ui::UiInput;
 
 mod embedded;
 
-pub use embedded::{EmbeddedConfig, LoadOutcome, Notice, PlayFrom, PlaySpeed, PlayStatus};
+pub use embedded::{
+    EmbeddedConfig, LoadOutcome, Notice, PlayFrom, PlaySpeed, PlayStatus, PreviewSnapshot,
+};
 
 /// Largest frame time fed to the simulation (a stall must not skip content).
 const MAX_DT: f32 = 0.1;

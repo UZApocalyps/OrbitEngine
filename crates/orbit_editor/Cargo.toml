@@ -27,6 +27,8 @@ orbit_runtime.workspace = true
 orbit_assets.workspace = true
 orbit_audio.workspace = true
 orbit_export.workspace = true
+orbit_mcp.workspace = true
+orbit_vm.workspace = true
 orbit_ui.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
@@ -41,9 +43,9 @@ log.workspace = true
 env_logger.workspace = true
 image = { workspace = true, features = ["jpeg"] }
 pollster.workspace = true
+serde_json = "1"
 
 [dev-dependencies]
-orbit_vm.workspace = true
 hound.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]

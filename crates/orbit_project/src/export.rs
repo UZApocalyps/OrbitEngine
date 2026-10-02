@@ -15,7 +15,11 @@ pub enum ExportTarget {
 }
 
 impl ExportTarget {
-    pub const ALL: [ExportTarget; 3] = [ExportTarget::Windows, ExportTarget::Linux, ExportTarget::Web];
+    pub const ALL: [ExportTarget; 3] = [
+        ExportTarget::Windows,
+        ExportTarget::Linux,
+        ExportTarget::Web,
+    ];
 
     /// Name used on the command line and in folder names.
     pub fn id(self) -> &'static str {
@@ -163,7 +167,9 @@ impl ExportProfile {
         if let Some(icon) = &self.icon
             && (icon.starts_with('/') || icon.contains("..") || icon.contains('\\'))
         {
-            out.push(format!("the icon path `{icon}` must be relative to the project"));
+            out.push(format!(
+                "the icon path `{icon}` must be relative to the project"
+            ));
         }
         out
     }

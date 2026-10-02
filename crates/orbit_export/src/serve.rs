@@ -29,7 +29,8 @@ impl Server {
     /// Serves `root` on `127.0.0.1`. `port` `None` lets the system pick a
     /// free port (see [`Server::port`]).
     pub fn start(root: PathBuf, port: Option<u16>, log: Option<RequestLog>) -> io::Result<Self> {
-        let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port.unwrap_or(0))))?;
+        let listener =
+            TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port.unwrap_or(0))))?;
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
         let stop = Arc::new(AtomicBool::new(false));
@@ -74,7 +75,12 @@ impl Drop for Server {
     }
 }
 
-fn accept_loop(listener: TcpListener, root: PathBuf, stop: Arc<AtomicBool>, log: Option<RequestLog>) {
+fn accept_loop(
+    listener: TcpListener,
+    root: PathBuf,
+    stop: Arc<AtomicBool>,
+    log: Option<RequestLog>,
+) {
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, _)) => {
@@ -180,7 +186,9 @@ fn parse_range(header: Option<&String>, len: u64) -> RangeRequest {
     let (start, end) = match (a.trim().parse::<u64>(), b.trim().parse::<u64>()) {
         (Ok(a), Ok(b)) => (a, b.min(len.saturating_sub(1))),
         (Ok(a), Err(_)) if b.trim().is_empty() => (a, len.saturating_sub(1)),
-        (Err(_), Ok(n)) if a.trim().is_empty() && n > 0 => (len.saturating_sub(n), len.saturating_sub(1)),
+        (Err(_), Ok(n)) if a.trim().is_empty() && n > 0 => {
+            (len.saturating_sub(n), len.saturating_sub(1))
+        }
         _ => return RangeRequest::Whole,
     };
     if len == 0 || start >= len || start > end {
@@ -192,8 +200,12 @@ fn parse_range(header: Option<&String>, len: u64) -> RangeRequest {
 
 fn wants(accept: Option<&String>, coding: &str) -> bool {
     accept.is_some_and(|a| {
-        a.split(',')
-            .any(|c| c.trim().split(';').next().is_some_and(|n| n.trim() == coding))
+        a.split(',').any(|c| {
+            c.trim()
+                .split(';')
+                .next()
+                .is_some_and(|n| n.trim() == coding)
+        })
     })
 }
 
@@ -269,7 +281,10 @@ fn answer(root: &Path, method: &str, target: &str, headers: &HashMap<String, Str
             },
         },
         RangeRequest::Part(start, end) => {
-            out_headers.push(("Content-Range".to_owned(), format!("bytes {start}-{end}/{len}")));
+            out_headers.push((
+                "Content-Range".to_owned(),
+                format!("bytes {start}-{end}/{len}"),
+            ));
             Response {
                 status: "206 Partial Content",
                 headers: out_headers,
@@ -295,7 +310,11 @@ fn body_len(body: &Body) -> u64 {
     }
 }
 
-fn handle(mut stream: TcpStream, root: &Path, log: Option<&(dyn Fn(String) + Send + Sync)>) -> io::Result<()> {
+fn handle(
+    mut stream: TcpStream,
+    root: &Path,
+    log: Option<&(dyn Fn(String) + Send + Sync)>,
+) -> io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
     reader.read_line(&mut request_line)?;
@@ -315,7 +334,9 @@ fn handle(mut stream: TcpStream, root: &Path, log: Option<&(dyn Fn(String) + Sen
     let response = answer(root, method, target, &headers);
 
     if let Some(log) = log {
-        let range = headers.get("range").map_or(String::new(), |r| format!(" {r}"));
+        let range = headers
+            .get("range")
+            .map_or(String::new(), |r| format!(" {r}"));
         log(format!(
             "{method} {target} {}{range}",
             response.status.split(' ').next().unwrap_or("")
@@ -326,7 +347,10 @@ fn handle(mut stream: TcpStream, root: &Path, log: Option<&(dyn Fn(String) + Sen
     for (k, v) in &response.headers {
         head.push_str(&format!("{k}: {v}\r\n"));
     }
-    head.push_str(&format!("Content-Length: {}\r\nConnection: close\r\n\r\n", body_len(&response.body)));
+    head.push_str(&format!(
+        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body_len(&response.body)
+    ));
     stream.write_all(head.as_bytes())?;
     if head_only {
         return Ok(());
@@ -406,7 +430,10 @@ mod tests {
     #[test]
     fn paths_cannot_escape_the_root() {
         let root = Path::new("root");
-        assert_eq!(resolve(root, "/a/b.js?v=1"), Some(root.join("a").join("b.js")));
+        assert_eq!(
+            resolve(root, "/a/b.js?v=1"),
+            Some(root.join("a").join("b.js"))
+        );
         assert_eq!(resolve(root, "/%2e%2e/x"), None);
         assert_eq!(resolve(root, "/../x"), None);
         assert_eq!(resolve(root, "/a\\b"), None);
@@ -417,13 +444,34 @@ mod tests {
     fn range_headers() {
         let h = |s: &str| Some(s.to_owned());
         assert_eq!(parse_range(None, 100), RangeRequest::Whole);
-        assert_eq!(parse_range(h("bytes=0-9").as_ref(), 100), RangeRequest::Part(0, 9));
-        assert_eq!(parse_range(h("bytes=90-").as_ref(), 100), RangeRequest::Part(90, 99));
-        assert_eq!(parse_range(h("bytes=-10").as_ref(), 100), RangeRequest::Part(90, 99));
-        assert_eq!(parse_range(h("bytes=0-1000").as_ref(), 100), RangeRequest::Part(0, 99));
-        assert_eq!(parse_range(h("bytes=200-300").as_ref(), 100), RangeRequest::Unsatisfiable);
-        assert_eq!(parse_range(h("bytes=5-2").as_ref(), 100), RangeRequest::Unsatisfiable);
-        assert_eq!(parse_range(h("items=1-2").as_ref(), 100), RangeRequest::Whole);
+        assert_eq!(
+            parse_range(h("bytes=0-9").as_ref(), 100),
+            RangeRequest::Part(0, 9)
+        );
+        assert_eq!(
+            parse_range(h("bytes=90-").as_ref(), 100),
+            RangeRequest::Part(90, 99)
+        );
+        assert_eq!(
+            parse_range(h("bytes=-10").as_ref(), 100),
+            RangeRequest::Part(90, 99)
+        );
+        assert_eq!(
+            parse_range(h("bytes=0-1000").as_ref(), 100),
+            RangeRequest::Part(0, 99)
+        );
+        assert_eq!(
+            parse_range(h("bytes=200-300").as_ref(), 100),
+            RangeRequest::Unsatisfiable
+        );
+        assert_eq!(
+            parse_range(h("bytes=5-2").as_ref(), 100),
+            RangeRequest::Unsatisfiable
+        );
+        assert_eq!(
+            parse_range(h("items=1-2").as_ref(), 100),
+            RangeRequest::Whole
+        );
     }
 
     #[test]
@@ -464,7 +512,12 @@ mod tests {
 
         assert!(get(port, "/nope", "").0.starts_with("HTTP/1.1 404"));
         assert!(get(port, "/../x", "").0.starts_with("HTTP/1.1 400"));
-        assert!(seen.lock().unwrap().iter().any(|l| l.contains("/game.pak?v=1 206 bytes=10-13")));
+        assert!(
+            seen.lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.contains("/game.pak?v=1 206 bytes=10-13"))
+        );
         server.stop();
     }
 }

@@ -286,6 +286,8 @@ pub struct EditorState {
     pub maximized_panel: Option<String>,
     /// The preview: what the host published and what the panel posted.
     pub preview: PreviewState,
+    /// The AI assistant (live MCP server): status, journal, settings.
+    pub ai: crate::ai::AiState,
     /// Positions of the graph blocks (`.layout` sidecar).
     pub graph: crate::GraphState,
 }

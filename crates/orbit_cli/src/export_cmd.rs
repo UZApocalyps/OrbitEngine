@@ -126,11 +126,22 @@ pub fn build_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> R
         .clone()
         .ok_or("usage: orbit build --project <dir> [--out <dir>] [--profile <name>]")?;
     let project = ExportProject::open(&project_path).map_err(|e| e.to_string())?;
-    let profile = project.profile(common.profile.as_deref()).map_err(|e| e.to_string())?;
-    let out_dir = common.out.clone().unwrap_or_else(|| project.root.join("build"));
+    let profile = project
+        .profile(common.profile.as_deref())
+        .map_err(|e| e.to_string())?;
+    let out_dir = common
+        .out
+        .clone()
+        .unwrap_or_else(|| project.root.join("build"));
     let result = {
         let mut progress = printer(err);
-        build(&project, &profile, &out_dir, &options(&common), &mut progress)
+        build(
+            &project,
+            &profile,
+            &out_dir,
+            &options(&common),
+            &mut progress,
+        )
     };
     match result {
         Ok(report) => {
@@ -149,8 +160,7 @@ pub fn build_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> R
 }
 
 pub fn export_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Result<u8, String> {
-    const USAGE_LINE: &str =
-        "usage: orbit export <windows|linux|web|all> --project <dir> --out <dir> [--profile <name>]";
+    const USAGE_LINE: &str = "usage: orbit export <windows|linux|web|all> --project <dir> --out <dir> [--profile <name>]";
     let (positional, common) = parse(args)?;
     let [target] = positional.as_slice() else {
         return Err(USAGE_LINE.into());
@@ -158,7 +168,9 @@ pub fn export_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
     let project_path = common.project.clone().ok_or(USAGE_LINE)?;
     let out_dir = common.out.clone().ok_or(USAGE_LINE)?;
     let project = ExportProject::open(&project_path).map_err(|e| e.to_string())?;
-    let profile = project.profile(common.profile.as_deref()).map_err(|e| e.to_string())?;
+    let profile = project
+        .profile(common.profile.as_deref())
+        .map_err(|e| e.to_string())?;
     let targets: Vec<ExportTarget> = if target.eq_ignore_ascii_case("all") {
         profile.targets.clone()
     } else {
@@ -171,7 +183,14 @@ pub fn export_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
     }
     let result = {
         let mut progress = printer(err);
-        export_many(&project, &profile, &targets, &out_dir, &options(&common), &mut progress)
+        export_many(
+            &project,
+            &profile,
+            &targets,
+            &out_dir,
+            &options(&common),
+            &mut progress,
+        )
     };
     let reports = match result {
         Ok(reports) => reports,
@@ -192,7 +211,12 @@ pub fn export_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
         let log: orbit_export::serve::RequestLog = Arc::new(|line| eprintln!("  {line}"));
         let server = Server::start(report.output.clone(), common.port, Some(log))
             .map_err(|e| format!("cannot start the server: {e}"))?;
-        let _ = writeln!(out, "Serving {} on {} (Ctrl+C to stop)", report.output.display(), server.url());
+        let _ = writeln!(
+            out,
+            "Serving {} on {} (Ctrl+C to stop)",
+            report.output.display(),
+            server.url()
+        );
         let _ = out.flush();
         if !common.no_open {
             let _ = open_in_browser(&server.url());

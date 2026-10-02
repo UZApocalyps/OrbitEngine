@@ -75,7 +75,12 @@ pub fn build_pak(
         writer.add(&asset.path, &bytes)?;
         rep.step(
             i as f32 / total as f32,
-            &format!("Packing {} ({}/{})", asset.path, i + 1, compiled.assets.len()),
+            &format!(
+                "Packing {} ({}/{})",
+                asset.path,
+                i + 1,
+                compiled.assets.len()
+            ),
         );
     }
     let (bytes, stats) = writer.to_bytes();
@@ -113,7 +118,9 @@ mod tests {
         // 1 pack + 8 assets + 3 fonts.
         assert_eq!(index.entries().len(), 12);
         // The pack decodes back to the story.
-        let pack = orbit_pak::GamePack::from_bytes(&index.read_from(&built.bytes, "game.pack").unwrap()).unwrap();
+        let pack =
+            orbit_pak::GamePack::from_bytes(&index.read_from(&built.bytes, "game.pack").unwrap())
+                .unwrap();
         assert_eq!(pack.story.title, "Demo");
         assert_eq!(pack.translations.len(), 1);
         // Compression helps on the wave file and the fonts.

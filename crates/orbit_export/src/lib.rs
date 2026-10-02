@@ -47,6 +47,7 @@ pub mod serve;
 mod templates;
 #[doc(hidden)]
 pub mod testing;
+mod tool;
 mod web;
 
 use std::path::Path;
@@ -61,6 +62,7 @@ pub use project::ExportProject;
 pub use report::{BuildReport, Event, ExportReport, LogLevel, ProgressFn, Reporter};
 pub use serve::{Server, open_in_browser, open_path};
 pub use templates::{ENV_VAR as TEMPLATES_ENV_VAR, Templates, WebTemplate};
+pub use tool::{ToolFailure, run_request};
 
 /// What an export needs besides the project.
 #[derive(Clone, Debug, Default)]
@@ -210,7 +212,14 @@ pub fn export_many(
             }
             native => {
                 let template = options.templates.native(*native)?;
-                let written = native::export(&prepared.pak, profile, *native, &template, out_dir, &mut rep)?;
+                let written = native::export(
+                    &prepared.pak,
+                    profile,
+                    *native,
+                    &template,
+                    out_dir,
+                    &mut rep,
+                )?;
                 (written.output, written.files)
             }
         };

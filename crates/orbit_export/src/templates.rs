@@ -128,7 +128,10 @@ impl Templates {
 
     /// The targets whose template is available.
     pub fn available(&self) -> Vec<ExportTarget> {
-        ExportTarget::ALL.into_iter().filter(|t| self.has(*t)).collect()
+        ExportTarget::ALL
+            .into_iter()
+            .filter(|t| self.has(*t))
+            .collect()
     }
 }
 
@@ -149,7 +152,10 @@ mod tests {
         assert!(templates.native(ExportTarget::Windows).is_ok());
         assert!(matches!(
             templates.native(ExportTarget::Linux),
-            Err(ExportError::TemplateMissing { target: "linux", .. })
+            Err(ExportError::TemplateMissing {
+                target: "linux",
+                ..
+            })
         ));
         // The web template needs both files.
         assert!(templates.web().is_err());

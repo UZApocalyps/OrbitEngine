@@ -60,9 +60,13 @@ fn parse(args: &[String]) -> Result<Options> {
             "--out" => o.out = PathBuf::from(it.next().ok_or("--out needs a folder")?),
             "--no-native" => o.native = false,
             "--no-web" => o.web = false,
-            "--wasm-opt" => o.wasm_opt = Some(PathBuf::from(it.next().ok_or("--wasm-opt needs a path")?)),
+            "--wasm-opt" => {
+                o.wasm_opt = Some(PathBuf::from(it.next().ok_or("--wasm-opt needs a path")?))
+            }
             "--skip-wasm-opt" => o.skip_wasm_opt = true,
-            "--target" => o.targets.push(it.next().ok_or("--target needs a triple")?.clone()),
+            "--target" => o
+                .targets
+                .push(it.next().ok_or("--target needs a triple")?.clone()),
             "--check-budget" => o.check_budget = true,
             other => return Err(format!("unknown option `{other}`").into()),
         }
@@ -100,7 +104,13 @@ fn native_template(out: &Path, triple: Option<&str>, host: &str) -> Result {
         return Ok(());
     };
     let mut build = cargo();
-    build.args(["build", "--release", "-p", "orbit_player", "--no-default-features"]);
+    build.args([
+        "build",
+        "--release",
+        "-p",
+        "orbit_player",
+        "--no-default-features",
+    ]);
     if let Some(triple) = triple {
         build.args(["--target", triple]);
     }
@@ -114,16 +124,28 @@ fn native_template(out: &Path, triple: Option<&str>, host: &str) -> Result {
         }
         return Err(err);
     }
-    let exe = if os == "windows" { "orbit_player.exe" } else { "orbit_player" };
+    let exe = if os == "windows" {
+        "orbit_player.exe"
+    } else {
+        "orbit_player"
+    };
     let release = match triple {
         Some(t) => workspace_root().join("target").join(t).join("release"),
         None => workspace_root().join("target/release"),
     };
     let dest_dir = out.join(os);
     fs::create_dir_all(&dest_dir)?;
-    let dest = dest_dir.join(if os == "windows" { "orbit-player.exe" } else { "orbit-player" });
+    let dest = dest_dir.join(if os == "windows" {
+        "orbit-player.exe"
+    } else {
+        "orbit-player"
+    });
     fs::copy(release.join(exe), &dest)?;
-    println!("{os} template: {} ({:.1} MiB)", dest.display(), mib(fs::metadata(&dest)?.len()));
+    println!(
+        "{os} template: {} ({:.1} MiB)",
+        dest.display(),
+        mib(fs::metadata(&dest)?.len())
+    );
     Ok(())
 }
 
@@ -145,9 +167,17 @@ fn find_wasm_opt(explicit: Option<&Path>) -> Option<PathBuf> {
     candidates.push(PathBuf::from("wasm-opt"));
     if let Some(home) = std::env::var_os("CARGO_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(|h| PathBuf::from(h).join(".cargo")))
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(|h| PathBuf::from(h).join(".cargo"))
+        })
     {
-        candidates.push(home.join("bin").join(if cfg!(windows) { "wasm-opt.exe" } else { "wasm-opt" }));
+        candidates.push(home.join("bin").join(if cfg!(windows) {
+            "wasm-opt.exe"
+        } else {
+            "wasm-opt"
+        }));
     }
     candidates.into_iter().find(|p| works(p))
 }
@@ -327,7 +357,13 @@ mod tests {
     #[test]
     fn options() {
         let args = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let o = parse(&args(&["--no-web", "--target", "x86_64-unknown-linux-gnu", "--skip-wasm-opt"])).unwrap();
+        let o = parse(&args(&[
+            "--no-web",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--skip-wasm-opt",
+        ]))
+        .unwrap();
         assert!(!o.web && o.native && o.skip_wasm_opt);
         assert_eq!(o.targets, ["x86_64-unknown-linux-gnu"]);
         assert!(parse(&args(&["--bogus"])).is_err());

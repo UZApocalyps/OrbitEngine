@@ -51,7 +51,11 @@ pub(crate) fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
     Some((w, h))
 }
 
-fn load_icon(project: &ExportProject, profile: &ExportProfile, warnings: &mut Vec<String>) -> Result<Option<Vec<u8>>> {
+fn load_icon(
+    project: &ExportProject,
+    profile: &ExportProfile,
+    warnings: &mut Vec<String>,
+) -> Result<Option<Vec<u8>>> {
     let Some(icon) = &profile.icon else {
         return Ok(None);
     };
@@ -67,9 +71,13 @@ fn load_icon(project: &ExportProject, profile: &ExportProfile, warnings: &mut Ve
         });
     };
     if w != h {
-        warnings.push(format!("the icon `{icon}` is {w}x{h}: a square icon looks better"));
+        warnings.push(format!(
+            "the icon `{icon}` is {w}x{h}: a square icon looks better"
+        ));
     } else if w < 64 {
-        warnings.push(format!("the icon `{icon}` is only {w}x{h}: 256x256 is recommended"));
+        warnings.push(format!(
+            "the icon `{icon}` is only {w}x{h}: 256x256 is recommended"
+        ));
     }
     Ok(Some(bytes))
 }
@@ -116,14 +124,20 @@ fn load_translations(
                 message: "the language tag (`lang`) is empty".to_owned(),
             });
         }
-        if translation.lang.eq_ignore_ascii_case(&story.strings.source_lang) {
+        if translation
+            .lang
+            .eq_ignore_ascii_case(&story.strings.source_lang)
+        {
             warnings.push(format!(
                 "translation `{name}` is in the source language of the story ({}): ignored",
                 translation.lang
             ));
             continue;
         }
-        if out.iter().any(|t| t.lang.eq_ignore_ascii_case(&translation.lang)) {
+        if out
+            .iter()
+            .any(|t| t.lang.eq_ignore_ascii_case(&translation.lang))
+        {
             warnings.push(format!(
                 "translation `{name}`: the language {} is already provided by another file: ignored",
                 translation.lang
@@ -166,13 +180,21 @@ fn untracked_files(root: &Path, declared: &HashSet<String>) -> Option<String> {
     if files.is_empty() {
         return None;
     }
-    let listed: Vec<&str> = files.iter().take(LISTED_FILES).map(String::as_str).collect();
+    let listed: Vec<&str> = files
+        .iter()
+        .take(LISTED_FILES)
+        .map(String::as_str)
+        .collect();
     let more = files.len().saturating_sub(LISTED_FILES);
     Some(format!(
         "{} file(s) under assets/ are not declared in the story and are not exported: {}{}",
         files.len(),
         listed.join(", "),
-        if more > 0 { format!(" (+{more} more)") } else { String::new() }
+        if more > 0 {
+            format!(" (+{more} more)")
+        } else {
+            String::new()
+        }
     ))
 }
 
@@ -235,14 +257,19 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
     }
     // The shipped story only knows the assets it ships.
     let keep: HashSet<&str> = assets.iter().map(|a| a.path.as_str()).collect();
-    story.assets.assets.retain(|a| keep.contains(a.path.as_str()));
+    story
+        .assets
+        .assets
+        .retain(|a| keep.contains(a.path.as_str()));
 
     let translations = load_translations(project, &story, &mut warnings)?;
     if let Some(lang) = &profile.default_language
         && !lang.trim().is_empty()
     {
         let known = lang.eq_ignore_ascii_case(&story.strings.source_lang)
-            || translations.iter().any(|t| t.lang.eq_ignore_ascii_case(lang));
+            || translations
+                .iter()
+                .any(|t| t.lang.eq_ignore_ascii_case(lang));
         if !known {
             warnings.push(format!(
                 "the default language `{lang}` is neither the source language ({}) nor a translation of the game: it will be ignored",
@@ -277,7 +304,7 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{demo_project, TempDir};
+    use crate::testing::{TempDir, demo_project};
 
     #[test]
     fn the_demo_compiles_with_its_translation() {
@@ -302,17 +329,26 @@ mod tests {
         // A missing used asset blocks the export.
         std::fs::remove_file(dir.path().join("assets/demo/bg_room.png")).unwrap();
         let err = compile(&project, &profile).unwrap_err();
-        assert!(matches!(err, ExportError::MissingAssets(ref m) if m.len() == 1), "{err}");
+        assert!(
+            matches!(err, ExportError::MissingAssets(ref m) if m.len() == 1),
+            "{err}"
+        );
         crate::testing::restore_demo_assets(dir.path());
 
         // A broken story blocks it too.
         let story = std::fs::read_to_string(dir.path().join("story.ron")).unwrap();
         std::fs::write(
             dir.path().join("story.ron"),
-            story.replace("\"01JBX0T0000000000000000004\": \"Hello! Welcome to OrbitEngine.\",", ""),
+            story.replace(
+                "\"01JBX0T0000000000000000004\": \"Hello! Welcome to OrbitEngine.\",",
+                "",
+            ),
         )
         .unwrap();
-        assert!(matches!(compile(&project, &profile), Err(ExportError::Invalid(_))));
+        assert!(matches!(
+            compile(&project, &profile),
+            Err(ExportError::Invalid(_))
+        ));
         std::fs::write(dir.path().join("story.ron"), &story).unwrap();
 
         // An asset nothing uses is warned about and left out.
@@ -326,9 +362,27 @@ mod tests {
         .unwrap();
         let compiled = compile(&project, &profile).unwrap();
         assert_eq!(compiled.unreferenced, ["assets/demo/mask_wipe.png"]);
-        assert!(compiled.assets.iter().all(|a| a.path != "assets/demo/mask_wipe.png"));
-        assert!(compiled.pack.story.assets.assets.iter().all(|a| a.path != "assets/demo/mask_wipe.png"));
-        assert!(compiled.warnings.iter().any(|w| w.contains("mask_wipe.png")));
+        assert!(
+            compiled
+                .assets
+                .iter()
+                .all(|a| a.path != "assets/demo/mask_wipe.png")
+        );
+        assert!(
+            compiled
+                .pack
+                .story
+                .assets
+                .assets
+                .iter()
+                .all(|a| a.path != "assets/demo/mask_wipe.png")
+        );
+        assert!(
+            compiled
+                .warnings
+                .iter()
+                .any(|w| w.contains("mask_wipe.png"))
+        );
     }
 
     #[test]
@@ -337,18 +391,28 @@ mod tests {
         let project = demo_project(dir.path());
         let mut profile = project.profile(None).unwrap();
         profile.icon = Some("assets/demo/music_theme.wav".into());
-        assert!(matches!(compile(&project, &profile), Err(ExportError::Icon { .. })));
+        assert!(matches!(
+            compile(&project, &profile),
+            Err(ExportError::Icon { .. })
+        ));
         profile.icon = Some("assets/demo/bg_room.png".into());
         let compiled = compile(&project, &profile).unwrap();
         assert!(compiled.icon.is_some());
         assert!(compiled.warnings.iter().any(|w| w.contains("square")));
         profile.game_id = "Bad Id".into();
-        assert!(matches!(compile(&project, &profile), Err(ExportError::Profile(_))));
+        assert!(matches!(
+            compile(&project, &profile),
+            Err(ExportError::Profile(_))
+        ));
     }
 
     #[test]
     fn png_header_is_read() {
-        let png = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/brand/icon-256.png")).unwrap();
+        let png = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/brand/icon-256.png"
+        ))
+        .unwrap();
         assert_eq!(png_size(&png), Some((256, 256)));
         assert_eq!(png_size(b"nope"), None);
     }

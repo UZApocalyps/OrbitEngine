@@ -69,7 +69,11 @@ impl ProjectManifest {
     /// without profiles gets an implicit `release` profile named after it.
     pub fn profile(&self, name: Option<&str>) -> Option<ExportProfile> {
         match name {
-            Some(name) => self.export_profiles.iter().find(|p| p.name == name).cloned(),
+            Some(name) => self
+                .export_profiles
+                .iter()
+                .find(|p| p.name == name)
+                .cloned(),
             None => Some(
                 self.export_profiles
                     .first()
@@ -219,7 +223,8 @@ mod tests {
         assert_eq!(back.profile(Some("demo")), Some(demo.clone()));
         assert_eq!(back.profile(None), Some(demo));
         // A manifest written before profiles existed still loads.
-        let old = ProjectManifest::from_ron("(format: 1, name: \"x\", story: \"story.ron\")").unwrap();
+        let old =
+            ProjectManifest::from_ron("(format: 1, name: \"x\", story: \"story.ron\")").unwrap();
         assert!(old.export_profiles.is_empty());
     }
 

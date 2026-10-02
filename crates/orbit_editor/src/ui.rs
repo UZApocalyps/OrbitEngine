@@ -364,6 +364,25 @@ fn status_bar(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme, frame_counte
                             .small()
                             .color(theme.text_faint()),
                     );
+                    // The live MCP: a discreet light, brighter while the AI edits.
+                    if ectx.state().ai.status.is_running() {
+                        ui.separator();
+                        let editing = ectx.state().ai.edited_within(2.5);
+                        let (color, text) = if editing {
+                            (theme.accent(), "IA : modification en cours")
+                        } else {
+                            (theme.success(), "IA : MCP actif")
+                        };
+                        ui.label(
+                            RichText::new(format!("{} {text}", icons::ROBOT))
+                                .small()
+                                .color(color),
+                        );
+                        if editing {
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_millis(400));
+                        }
+                    }
                 });
             });
         });

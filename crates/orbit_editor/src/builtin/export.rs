@@ -149,10 +149,10 @@ impl ExportJob {
                 wake.wake();
             })
             .ok();
-        if thread.is_none() {
-            if let Ok(mut s) = shared.lock() {
-                s.outcome = Some(Err("impossible de démarrer le fil d'export".to_owned()));
-            }
+        if thread.is_none()
+            && let Ok(mut s) = shared.lock()
+        {
+            s.outcome = Some(Err("impossible de démarrer le fil d'export".to_owned()));
         }
         Self {
             shared,
@@ -312,7 +312,10 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let shared = shared_state(ui.ctx());
     let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
     if state.templates_dir.is_empty() {
-        state.templates_dir = ctx.pref(ids::EXPORT, PREF_TEMPLATES).unwrap_or("").to_owned();
+        state.templates_dir = ctx
+            .pref(ids::EXPORT, PREF_TEMPLATES)
+            .unwrap_or("")
+            .to_owned();
     }
     state.ensure_loaded(&info.root, &info.story_file, info.has_manifest, &info.name);
     state.poll();
@@ -326,16 +329,18 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     }
 
     let mut messages: Vec<(bool, String)> = Vec::new();
-    ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        ui.add_space(4.0);
-        profile_form(ui, &mut state, &info.root, &mut messages);
-        ui.add_space(6.0);
-        targets_and_output(ui, &mut state);
-        ui.add_space(8.0);
-        run_controls(ui, &mut state, ctx, &info, &mut messages);
-        ui.add_space(8.0);
-        journal(ui, &mut state, &mut messages);
-    });
+    ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.add_space(4.0);
+            profile_form(ui, &mut state, &info.root, &mut messages);
+            ui.add_space(6.0);
+            targets_and_output(ui, &mut state);
+            ui.add_space(8.0);
+            run_controls(ui, &mut state, ctx, &info, &mut messages);
+            ui.add_space(8.0);
+            journal(ui, &mut state, &mut messages);
+        });
     let templates_dir = state.templates_dir.trim().to_owned();
     drop(state);
     if templates_dir != ctx.pref(ids::EXPORT, PREF_TEMPLATES).unwrap_or("") {
@@ -350,7 +355,12 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     }
 }
 
-fn profile_form(ui: &mut Ui, state: &mut ExportUi, root: &Path, messages: &mut Vec<(bool, String)>) {
+fn profile_form(
+    ui: &mut Ui,
+    state: &mut ExportUi,
+    root: &Path,
+    messages: &mut Vec<(bool, String)>,
+) {
     section_title(ui, "Profil d'export");
     let names: Vec<String> = state.profiles.iter().map(|p| p.name.clone()).collect();
     let mut changed = false;
@@ -534,7 +544,11 @@ fn targets_and_output(ui: &mut Ui, state: &mut ExportUi) {
         });
 }
 
-fn start_export(state: &mut ExportUi, ctx: &mut EditorContext<'_>, info: &orbit_editor_api::ProjectInfo) {
+fn start_export(
+    state: &mut ExportUi,
+    ctx: &mut EditorContext<'_>,
+    info: &orbit_editor_api::ProjectInfo,
+) {
     let profile = state.profile().clone();
     let problems = profile.problems();
     if !problems.is_empty() {
@@ -621,35 +635,65 @@ fn journal(ui: &mut Ui, state: &mut ExportUi, messages: &mut Vec<(bool, String)>
         match result {
             Err(message) => {
                 card(ui, |ui| {
-                    ui.label(RichText::new(format!("{}  Export échoué", icons::WARNING_CIRCLE)).color(danger(ui)).strong());
+                    ui.label(
+                        RichText::new(format!("{}  Export échoué", icons::WARNING_CIRCLE))
+                            .color(danger(ui))
+                            .strong(),
+                    );
                     ui.label(RichText::new(message).color(danger(ui)));
                 });
             }
             Ok(reports) => {
                 let reports = reports.clone();
                 card(ui, |ui| {
-                    ui.label(RichText::new(format!("{}  Export terminé", icons::CHECK_CIRCLE)).color(success()).strong());
+                    ui.label(
+                        RichText::new(format!("{}  Export terminé", icons::CHECK_CIRCLE))
+                            .color(success())
+                            .strong(),
+                    );
                     for report in &reports {
-                        ui.label(format!("{} : {} ({})", report.target.label(), report.output.display(), human_size(report.bytes)));
+                        ui.label(format!(
+                            "{} : {} ({})",
+                            report.target.label(),
+                            report.output.display(),
+                            human_size(report.bytes)
+                        ));
                     }
                     ui.horizontal(|ui| {
-                        if ui.button(format!("{}  Ouvrir le dossier", icons::FOLDER_OPEN)).clicked() {
+                        if ui
+                            .button(format!("{}  Ouvrir le dossier", icons::FOLDER_OPEN))
+                            .clicked()
+                        {
                             let dir = reports
                                 .first()
-                                .map(|r| if r.output.is_dir() { r.output.clone() } else { r.output.parent().map(Path::to_owned).unwrap_or_default() })
+                                .map(|r| {
+                                    if r.output.is_dir() {
+                                        r.output.clone()
+                                    } else {
+                                        r.output.parent().map(Path::to_owned).unwrap_or_default()
+                                    }
+                                })
                                 .unwrap_or_default();
                             if let Err(e) = orbit_export::open_path(&dir) {
-                                messages.push((true, format!("Impossible d'ouvrir {} : {e}", dir.display())));
+                                messages.push((
+                                    true,
+                                    format!("Impossible d'ouvrir {} : {e}", dir.display()),
+                                ));
                             }
                         }
                         if let Some(web) = reports.iter().find(|r| r.target == ExportTarget::Web)
-                            && ui.button(format!("{}  Tester dans le navigateur", icons::GLOBE)).clicked()
+                            && ui
+                                .button(format!("{}  Tester dans le navigateur", icons::GLOBE))
+                                .clicked()
                         {
                             test_in_browser(state, &web.output, messages);
                         }
                     });
                     if let Some(server) = &state.server {
-                        ui.label(RichText::new(format!("Serveur local : {}", server.url())).color(weak(ui)));
+                        ui.label(
+                            RichText::new(format!("Serveur local : {}", server.url()))
+                                .color(weak(ui)),
+                        );
                         if ui.small_button("Arrêter le serveur").clicked() {
                             state.server = None;
                         }
@@ -673,8 +717,16 @@ fn journal(ui: &mut Ui, state: &mut ExportUi, messages: &mut Vec<(bool, String)>
                     LogLevel::Warning => warning(ui),
                     LogLevel::Info => weak(ui),
                 };
-                let prefix = if line.level == LogLevel::Warning { "avertissement : " } else { "" };
-                ui.label(RichText::new(format!("{prefix}{}", line.text)).color(color).small());
+                let prefix = if line.level == LogLevel::Warning {
+                    "avertissement : "
+                } else {
+                    ""
+                };
+                ui.label(
+                    RichText::new(format!("{prefix}{}", line.text))
+                        .color(color)
+                        .small(),
+                );
             }
         });
 }
@@ -686,13 +738,19 @@ fn test_in_browser(state: &mut ExportUi, dir: &Path, messages: &mut Vec<(bool, S
         Ok(server) => {
             let url = server.url();
             if let Err(e) = orbit_export::open_in_browser(&url) {
-                messages.push((true, format!("Le navigateur ne s'ouvre pas ({e}) : ouvrez {url} à la main.")));
+                messages.push((
+                    true,
+                    format!("Le navigateur ne s'ouvre pas ({e}) : ouvrez {url} à la main."),
+                ));
             } else {
                 messages.push((false, format!("Jeu servi sur {url}.")));
             }
             state.server = Some(server);
         }
-        Err(e) => messages.push((true, format!("Impossible de démarrer le serveur local : {e}"))),
+        Err(e) => messages.push((
+            true,
+            format!("Impossible de démarrer le serveur local : {e}"),
+        )),
     }
 }
 
@@ -728,7 +786,10 @@ mod tests {
             if let Some(outcome) = status.outcome {
                 return (log, outcome);
             }
-            assert!(started.elapsed() < Duration::from_secs(60), "the export hangs");
+            assert!(
+                started.elapsed() < Duration::from_secs(60),
+                "the export hangs"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
     }

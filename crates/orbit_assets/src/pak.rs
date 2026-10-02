@@ -136,12 +136,11 @@ impl PakSource {
                     path: path.to_owned(),
                     message: "the pak is truncated".to_owned(),
                 })?,
-            Backend::File { path: file, base } => {
-                native::read_at(file, base + start, len as usize).map_err(|e| AssetError::Io {
+            Backend::File { path: file, base } => native::read_at(file, base + start, len as usize)
+                .map_err(|e| AssetError::Io {
                     path: path.to_owned(),
                     message: e.to_string(),
-                })?
-            }
+                })?,
         };
         entry.decode(&stored).map_err(|e| AssetError::Decode {
             path: path.to_owned(),
@@ -186,8 +185,9 @@ impl PakSource {
         let (path, base) = native::locate(location).map_err(io_error)?;
         let header_bytes = native::read_at(&path, base, HEADER_LEN).map_err(io_error)?;
         let header = Header::parse(&header_bytes).map_err(pak_error)?;
-        let index_bytes = native::read_at(&path, base + HEADER_LEN as u64, header.index_len as usize)
-            .map_err(io_error)?;
+        let index_bytes =
+            native::read_at(&path, base + HEADER_LEN as u64, header.index_len as usize)
+                .map_err(io_error)?;
         let index = PakIndex::from_bytes(&index_bytes).map_err(pak_error)?;
         Ok(Self {
             inner: Arc::new(Inner {
@@ -219,12 +219,12 @@ impl PakSource {
                 if len == 0 {
                     Vec::new()
                 } else {
-                    web::read_range(url, start, len).await.map_err(|message| {
-                        AssetError::Io {
+                    web::read_range(url, start, len)
+                        .await
+                        .map_err(|message| AssetError::Io {
                             path: path.to_owned(),
                             message,
-                        }
-                    })?
+                        })?
                 }
             }
         };

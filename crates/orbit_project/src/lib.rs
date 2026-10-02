@@ -9,11 +9,12 @@
 //! This crate has no graphics or platform dependency and compiles to wasm.
 
 mod command;
-mod ext;
 pub mod export;
+mod ext;
 pub mod graph;
 pub mod graph_layout;
 pub mod graph_ops;
+pub mod lock;
 pub mod ops;
 mod project;
 pub mod sandbox;

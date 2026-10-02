@@ -20,7 +20,7 @@ use orbit_platform::{
 use crate::args::Args;
 use crate::core::{CoreOptions, EditorCore};
 use crate::logging;
-use crate::preview_host::PreviewHost;
+use crate::preview_host::{PreviewBridge, PreviewHost};
 
 /// Frames needed for egui to settle (layout passes, font atlas) before a
 /// screenshot taken without `--exit-after`.
@@ -136,6 +136,16 @@ impl EditorApp {
         }
         for action in &args.run_actions {
             core.run_action_now(action, &egui_ctx);
+        }
+        // Debug option: the live MCP server starts at once (it is off by default).
+        if let Some(port) = args.mcp_port {
+            core.state.ai.port = port;
+            if let Some(token) = &args.mcp_token {
+                core.state.ai.token.clone_from(token);
+            }
+            if let Err(e) = crate::live::start(&mut core) {
+                log::error!("--mcp-port: {e}");
+            }
         }
 
         let renderer =
@@ -367,6 +377,17 @@ impl App for EditorApp {
             self.core.state.console.push(level, message);
         }
         self.core.state.debug_frames = self.args.frame_counter.then_some(self.frames + 1);
+
+        // ---- the live MCP: calls of the AI run here, on the editor thread,
+        // before the UI so that the frame shows their effect.
+        {
+            let mut bridge = PreviewBridge {
+                host: &mut self.preview,
+                renderer: &mut self.renderer,
+                now,
+            };
+            self.core.pump_live(&mut bridge);
+        }
 
         // ---- UI
         let raw_input = self.egui_state.take_egui_input(&self.window);

@@ -352,6 +352,16 @@ impl Game {
         self.confirm(theme)
     }
 
+    /// Picks option `index` of the choice on screen (the preview's MCP tools).
+    /// `false`, and nothing changes, when no choice is shown or the index is
+    /// out of range.
+    pub fn choose_index(&mut self, index: usize, theme: &Theme) -> bool {
+        self.interrupt();
+        let done = self.kind() == FlowKind::Choice && self.director.choose(index);
+        self.sync(theme);
+        done
+    }
+
     /// Pointer moved (selects a hovered choice).
     pub fn hover(&mut self, point: [f32; 2]) {
         if let Some(menu) = &mut self.menu {
