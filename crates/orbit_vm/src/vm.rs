@@ -365,7 +365,7 @@ impl Vm {
                     self.state.scene.background = Some(*asset);
                     self.events.push(PresentationEvent::Background {
                         asset: *asset,
-                        transition: *transition,
+                        transition: transition.clone(),
                     });
                     if let Some(duration) = blocking_duration(transition) {
                         return Ok(Some(StepResult::WaitTransition { duration }));
@@ -432,7 +432,7 @@ impl Vm {
                         scale,
                         flip_x: *flip_x,
                         flip_y: *flip_y,
-                        transition: *transition,
+                        transition: transition.clone(),
                     });
                     if let Some(duration) = blocking_duration(transition) {
                         return Ok(Some(StepResult::WaitTransition { duration }));
@@ -452,7 +452,7 @@ impl Vm {
                     if self.state.scene.characters.len() != before {
                         self.events.push(PresentationEvent::Hide {
                             character: *character,
-                            transition: *transition,
+                            transition: transition.clone(),
                         });
                         if let Some(duration) = blocking_duration(transition) {
                             return Ok(Some(StepResult::WaitTransition { duration }));
@@ -774,7 +774,7 @@ impl Vm {
 }
 
 fn blocking_duration(transition: &Option<Transition>) -> Option<f32> {
-    transition.map(|t| t.duration).filter(|d| *d > 0.0)
+    transition.as_ref().map(|t| t.duration).filter(|d| *d > 0.0)
 }
 
 fn build_index(story: &Story) -> HashMap<NodeId, (usize, usize)> {

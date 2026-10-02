@@ -11,6 +11,7 @@
 
 pub mod ai;
 mod context;
+pub mod curve_editor;
 pub mod errors;
 pub mod fields;
 mod graph_state;

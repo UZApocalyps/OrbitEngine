@@ -1,5 +1,8 @@
 //! The story IR: definitions and scenes made of nodes.
 
+use std::collections::BTreeMap;
+
+use orbit_anim::Curve;
 use serde::{Deserialize, Serialize};
 
 use crate::custom::CustomData;
@@ -14,7 +17,7 @@ use crate::migrate;
 use crate::validate;
 
 /// Version of the on-disk schema produced by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 8;
+pub const CURRENT_SCHEMA_VERSION: u32 = 9;
 
 /// A whole story: definitions (characters, assets, strings...) and an ordered
 /// list of scenes. Execution starts at the first node of the first non-empty
@@ -40,6 +43,9 @@ pub struct Story {
     /// Declared variables with their initial values.
     #[serde(default)]
     pub variables: Vec<VarDecl>,
+    /// Named easing curves (schema v9), referenced by `Curve::Named`.
+    #[serde(default)]
+    pub curves: BTreeMap<String, Curve>,
     pub scenes: Vec<Scene>,
 }
 
@@ -238,6 +244,7 @@ impl Story {
             characters: Vec::new(),
             positions: Vec::new(),
             variables: Vec::new(),
+            curves: BTreeMap::new(),
             scenes: Vec::new(),
         }
     }

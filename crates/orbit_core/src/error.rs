@@ -90,6 +90,28 @@ pub enum ValidationError {
     },
     #[error("asset {asset} file `{path}` does not exist")]
     MissingAssetFile { asset: AssetId, path: String },
+    /// A curve has a non-finite control point.
+    #[error("{} has an invalid curve (control points must be finite)", curve_owner(.owner))]
+    InvalidCurve { owner: CurveOwner },
+    /// A named curve is defined as a reference to another named curve.
+    #[error("named curve `{0}` refers to another named curve (not allowed)")]
+    NamedCurveChain(String),
+}
+
+/// Where a curve lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CurveOwner {
+    /// The transition of a node.
+    Node(NodeId),
+    /// A named curve of `Story::curves`.
+    Named(String),
+}
+
+fn curve_owner(o: &CurveOwner) -> String {
+    match o {
+        CurveOwner::Node(n) => format!("node {n}"),
+        CurveOwner::Named(n) => format!("curve `{n}`"),
+    }
 }
 
 fn owner(node: &Option<NodeId>) -> String {
@@ -126,6 +148,10 @@ pub enum ValidationWarning {
         scene: SceneId,
         node: Option<NodeId>,
     },
+    /// A transition or named curve refers to a curve that is not defined in
+    /// `Story::curves`: it is played as linear.
+    #[error("{} refers to the unknown curve `{name}`: it is played as linear", curve_owner(.owner))]
+    UnknownCurve { owner: CurveOwner, name: String },
 }
 
 /// Errors from loading / saving / migrating a story.

@@ -2452,6 +2452,7 @@ version = "0.1.0"
 dependencies = [
  "libm",
  "ron",
+ "schemars",
  "serde",
 ]
 
@@ -2499,6 +2500,7 @@ name = "orbit_core"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
+ "orbit_anim",
  "ron",
  "schemars",
  "serde",

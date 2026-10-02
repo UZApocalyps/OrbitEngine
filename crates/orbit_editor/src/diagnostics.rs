@@ -232,6 +232,13 @@ pub fn describe_warning(
                 &[("expression", expression)],
             ),
         ),
+        W::UnknownCurve { owner, name } => (
+            match owner {
+                orbit_core::CurveOwner::Node(n) => Some(*n),
+                orbit_core::CurveOwner::Named(_) => None,
+            },
+            texts.format("problem.unknown_curve", &[("name", name)]),
+        ),
         W::AllOptionsConditional(n) => (Some(*n), texts.get("problem.all_options_conditional")),
     }
 }

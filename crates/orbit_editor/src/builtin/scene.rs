@@ -1966,7 +1966,7 @@ fn apply_actions(
                 let kind = ctx.story().and_then(|s| match s.node(id).map(|n| &n.kind) {
                     Some(NodeKind::Background { transition, .. }) => Some(NodeKind::Background {
                         asset,
-                        transition: *transition,
+                        transition: transition.clone(),
                     }),
                     Some(NodeKind::PlayMusic {
                         fade_in, looping, ..

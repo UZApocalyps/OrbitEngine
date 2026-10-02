@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! "ORBITGAM"  magic (8 bytes)
-//! version     u32 LE  (currently 2)
+//! version     u32 LE  (currently 3)
 //! postcard    GamePack
 //! ```
 //!
@@ -28,7 +28,7 @@ pub const ICON_ENTRY: &str = "meta/icon.png";
 
 const MAGIC: &[u8; 8] = b"ORBITGAM";
 /// Current game pack version.
-pub const PACK_VERSION: u32 = 2;
+pub const PACK_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum PackError {
@@ -68,12 +68,23 @@ pub struct GamePack {
 }
 
 /// The layout of version 1 (no `ui`): postcard is not self-describing, so
-/// the old format keeps its own struct.
+/// the old format keeps its own struct. Versions 1 and 2 were written with
+/// the story of schema v8 and before (no `curves`, no transition easing),
+/// read through the frozen mirrors of [`crate::legacy`].
 #[derive(Deserialize)]
 struct GamePackV1 {
     info: GameInfo,
-    story: Story,
+    story: crate::legacy::StoryV8,
     translations: Vec<Translation>,
+}
+
+/// Version 2: version 1 plus the `ui` bundle.
+#[derive(Deserialize)]
+struct GamePackV2 {
+    info: GameInfo,
+    story: crate::legacy::StoryV8,
+    translations: Vec<Translation>,
+    ui: Option<Vec<u8>>,
 }
 
 impl GamePack {
@@ -108,9 +119,19 @@ impl GamePack {
                 postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))?;
             return Ok(GamePack {
                 info: old.info,
-                story: old.story,
+                story: old.story.into(),
                 translations: old.translations,
                 ui: None,
+            });
+        }
+        if version == 2 {
+            let old: GamePackV2 =
+                postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))?;
+            return Ok(GamePack {
+                info: old.info,
+                story: old.story.into(),
+                translations: old.translations,
+                ui: old.ui,
             });
         }
         postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))
@@ -223,28 +244,57 @@ mod tests {
         assert_eq!(back.ui, pack.ui);
     }
 
+    /// Written by the build that still produced pack version 2 (story of
+    /// schema v8): `examples/fixtures/compat/pak_v2/game.pack`, never regenerate.
+    const PACK_V2: &[u8] = include_bytes!("../../../examples/fixtures/compat/pak_v2/game.pack");
+
     #[test]
-    fn a_version_1_pack_still_loads_without_ui() {
-        let pack = fixture_pack();
-        let v1 = GamePackV1Out {
-            info: &pack.info,
-            story: &pack.story,
-            translations: &pack.translations,
-        };
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(MAGIC);
-        bytes.extend_from_slice(&1u32.to_le_bytes());
-        bytes.extend_from_slice(&postcard::to_stdvec(&v1).unwrap());
-        let back = GamePack::from_bytes(&bytes).unwrap();
-        assert_eq!(back, pack);
+    fn a_version_2_pack_still_loads_with_linear_transitions_and_no_curves() {
+        assert_eq!(&PACK_V2[8..12], &2u32.to_le_bytes());
+        let back = GamePack::from_bytes(PACK_V2).unwrap();
+        assert_eq!(back.info.id, "compat");
         assert!(back.ui.is_none());
+        assert!(back.story.curves.is_empty());
+        // Same story as the file it was built from, migrated to the current schema.
+        assert_eq!(back.story, Story::from_ron_unchecked(FIXTURE).unwrap());
+        // And it re-encodes in the current format.
+        let again = GamePack::from_bytes(&back.to_bytes().unwrap()).unwrap();
+        assert_eq!(again, back);
     }
 
-    #[derive(Serialize)]
-    struct GamePackV1Out<'a> {
-        info: &'a GameInfo,
-        story: &'a Story,
-        translations: &'a Vec<Translation>,
+    #[test]
+    fn a_version_1_pack_still_loads_without_ui() {
+        // Version 1 is version 2 without the trailing `ui` (a single 0 byte
+        // for `None`) and with the old version number.
+        let mut bytes = PACK_V2[..PACK_V2.len() - 1].to_vec();
+        bytes[8..12].copy_from_slice(&1u32.to_le_bytes());
+        let back = GamePack::from_bytes(&bytes).unwrap();
+        assert!(back.ui.is_none());
+        assert_eq!(back.story, Story::from_ron_unchecked(FIXTURE).unwrap());
+    }
+
+    #[test]
+    fn named_curves_and_transition_easing_survive_postcard() {
+        use orbit_core::{Curve, Ease, NodeKind, Transition};
+        let mut pack = fixture_pack();
+        pack.story
+            .curves
+            .insert("snappy".into(), Curve::bezier(0.2, 0.0, 0.1, 1.4));
+        pack.story
+            .curves
+            .insert("bouncy".into(), Curve::Preset(Ease::OutBounce));
+        let mut eased = 0;
+        for node in pack.story.scenes.iter_mut().flat_map(|s| &mut s.nodes) {
+            if let NodeKind::Background { transition, .. } = &mut node.kind {
+                *transition = Some(
+                    Transition::dissolve(0.5).with_ease(Curve::Named("snappy".into())),
+                );
+                eased += 1;
+            }
+        }
+        assert!(eased > 0);
+        let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
+        assert_eq!(back, pack);
     }
 
     #[test]

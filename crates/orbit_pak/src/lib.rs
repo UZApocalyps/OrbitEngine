@@ -18,6 +18,7 @@
 pub mod container;
 mod crc;
 pub mod game;
+mod legacy;
 pub mod trailer;
 
 pub use container::{

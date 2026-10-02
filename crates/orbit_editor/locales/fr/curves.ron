@@ -1,0 +1,18 @@
+{
+    // ---- the easing-curve editor widget and the project curves panel
+    "curve.panel.title": "Courbes",
+    "curve.panel.hint": "Courbes d'accélération nommées, réutilisables par toutes les transitions du projet.",
+    "curve.panel.empty": "Aucune courbe nommée pour l'instant. Créez-en une, puis choisissez-la dans une transition.",
+    "curve.panel.new": "Nouvelle",
+    "curve.panel.default_name": "courbe",
+    "curve.panel.used": "Utilisée par {count} transition(s)",
+    "curve.panel.unused": "Pas encore utilisée",
+    "curve.panel.delete": "Supprimer cette courbe",
+    "curve.panel.name": "Nom",
+    "curve.easing": "Accélération",
+    "curve.custom": "Bézier personnalisée",
+    "curve.css.ease": "ease",
+    "curve.css.ease_in": "ease-in",
+    "curve.css.ease_out": "ease-out",
+    "curve.css.ease_in_out": "ease-in-out",
+}

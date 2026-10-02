@@ -49,6 +49,12 @@ pub enum Command {
     SetPositions {
         positions: Vec<orbit_core::PositionDef>,
     },
+    /// Creates or replaces (`Some`) or removes (`None`) a named easing curve
+    /// of `Story::curves` (schema v9).
+    SetCurve {
+        name: String,
+        curve: Option<orbit_core::Curve>,
+    },
     /// Moves a node to `index` of `scene` (an index counted once the node has
     /// been taken out of its current place).
     MoveNode {
@@ -119,6 +125,10 @@ pub enum CommandError {
     AssetInUse(AssetId, NodeId),
     #[error("asset {0} is still used by an expression of character {1}")]
     AssetInUseByCharacter(AssetId, CharacterId),
+    #[error("a curve needs a non-empty name")]
+    EmptyCurveName,
+    #[error("named curve `{0}` cannot refer to another named curve")]
+    CurveChain(String),
     #[error("version conflict on node {node}: expected {expected}, found {actual}")]
     VersionConflict {
         node: NodeId,
@@ -170,6 +180,7 @@ impl Command {
             Command::MoveNode { .. } => "Déplacer un nœud",
             Command::MoveScene { .. } => "Déplacer la scène",
             Command::SetPositions { .. } => "Modifier les positions",
+            Command::SetCurve { .. } => "Modifier une courbe",
             Command::SetNodeKind { .. } => "Modifier un nœud",
             Command::SetCharacter { .. } => "Modifier un personnage",
             Command::SetVariable { .. } => "Modifier une variable",
@@ -308,6 +319,7 @@ impl Command {
             | Command::RenameScene { .. }
             | Command::MoveScene { .. }
             | Command::SetPositions { .. }
+            | Command::SetCurve { .. }
             | Command::MoveNode { .. }
             | Command::SetNodeKind { .. }
             | Command::SetCharacter { .. }

@@ -20,6 +20,9 @@
 //! * v7 -> v8 (animated characters): `Expression` gains an optional `motion`
 //!   (frame animation or the reserved `Rigged`). Absent = still image, so a v7
 //!   document is a valid v8 document.
+//! * v8 -> v9 (animation): `Story::curves` (named easing curves) and an
+//!   optional `ease` on transitions. Absent = no curves / linear, so a v8
+//!   document is a valid v9 document.
 
 use std::borrow::Cow;
 
@@ -43,7 +46,7 @@ pub fn read_version(source: &str) -> Result<u32, CoreError> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -270,6 +273,16 @@ fn v3_to_v4(source: &str) -> Result<String, CoreError> {
 
     let mut story: Story = ron::from_str(source)?;
     story.schema_version = 4;
+    story.to_ron()
+}
+
+/// v8 -> v9. `Story::curves` and `Transition::ease` default (empty / linear):
+/// only the version number changes.
+fn v8_to_v9(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 9;
     story.to_ron()
 }
 

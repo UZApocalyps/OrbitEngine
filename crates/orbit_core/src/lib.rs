@@ -17,13 +17,14 @@ pub mod value;
 pub mod varops;
 
 pub use custom::CustomData;
+pub use orbit_anim::{Curve, Ease};
 pub use defs::{
     AnimFrames, Animation, AssetEntry, AssetKind, AssetManifest, Character, Color, Expression,
     FREE_POSITION_RANGE, LoopMode, Motion,
     Position, PositionDef, SCALE_MAX, SCALE_MIN, StringTable, Transition, TransitionKind, VarDecl,
     VarScope, scale_is_valid,
 };
-pub use error::{AnimationIssue, CoreError, ValidationError, ValidationWarning};
+pub use error::{AnimationIssue, CoreError, CurveOwner, ValidationError, ValidationWarning};
 pub use expr::{BinOp, EvalError, Expr, ParseError, TypeError, UnOp};
 pub use ids::{AssetId, CharacterId, NodeId, SceneId, StringId};
 pub use story::{CURRENT_SCHEMA_VERSION, ChoiceOption, Node, NodeKind, Scene, Story};

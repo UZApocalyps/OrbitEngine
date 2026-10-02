@@ -947,6 +947,66 @@ fn plugin_tools_are_exposed_grouped_and_rolled_back() {
 }
 
 #[test]
+fn easing_curves_can_be_listed_created_used_and_deleted() {
+    let mut f = Fixture::new("curves");
+    f.write_asset_source("incoming/room.png");
+    f.ok("import_asset", json!({"source": "incoming/room.png"}));
+    f.ok("create_scene", json!({"name": "s"}));
+    assert_eq!(f.ok("list_curves", json!({})), json!([]));
+
+    f.ok("set_curve", json!({"name": "snappy", "bezier": [0.2, 0.0, 0.0, 1.0]}));
+    f.ok("set_curve", json!({"name": "bouncy", "ease": "OutBounce"}));
+    // Not exactly one definition, a bad bezier, or a name chain are refused.
+    for bad in [
+        json!({"name": "x"}),
+        json!({"name": "x", "ease": "OutQuad", "bezier": [0, 0, 1, 1]}),
+        json!({"name": "x", "bezier": [2.0, 0.0, 0.0, 1.0]}),
+        json!({"name": "x", "ease": "snappy"}),
+    ] {
+        assert!(f.call("set_curve", bad).is_err());
+    }
+    assert_eq!(f.story().curves.len(), 2);
+
+    // Transitions take a preset, a story curve or a bezier; unknown names are refused.
+    for ease in [
+        json!({"ease": "inoutquad"}),
+        json!({"ease": "snappy"}),
+        json!({"bezier": [0.1, 0.1, 0.9, 0.9]}),
+    ] {
+        let mut transition = json!({"kind": "dissolve", "duration": 1.0});
+        transition
+            .as_object_mut()
+            .unwrap()
+            .extend(ease.as_object().unwrap().clone());
+        f.ok(
+            "add_command",
+            json!({"scene": "s", "command": {"type": "background", "asset": "room", "transition": transition}}),
+        );
+    }
+    assert!(
+        f.call(
+            "add_command",
+            json!({"scene": "s", "command": {"type": "background", "asset": "room",
+                   "transition": {"kind": "dissolve", "ease": "nope"}}}),
+        )
+        .is_err()
+    );
+    let listed = f.ok("list_curves", json!({}));
+    let snappy = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "snappy")
+        .unwrap();
+    assert_eq!(snappy["used_by"], 1);
+    assert!(f.call("delete_curve", json!({"name": "snappy"})).is_err(), "in use");
+    f.ok("delete_curve", json!({"name": "bouncy"}));
+    assert_eq!(f.story().curves.len(), 1);
+    f.ok("save", json!({}));
+    assert_eq!(&f.on_disk(), f.story());
+}
+
+#[test]
 fn story_survives_a_restart() {
     let mut f = Fixture::new("restart");
     build_story(&mut f);

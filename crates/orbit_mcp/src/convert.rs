@@ -457,3 +457,47 @@ mod tests {
         assert!(insertion_index(&refs, Some("start"), Some(0)).is_err());
     }
 }
+
+/// An easing curve requested by a client: a preset name (`InOutQuad`...), the
+/// name of one of the story's curves, or four CSS Bézier numbers
+/// (`x1, y1, x2, y2`). `None` when neither is given.
+pub fn parse_curve(
+    ease: Option<&str>,
+    bezier: Option<[f32; 4]>,
+    story: &orbit_core::Story,
+) -> Result<Option<orbit_core::Curve>, ToolError> {
+    use orbit_core::{Curve, Ease};
+    match (ease, bezier) {
+        (Some(_), Some(_)) => Err(ToolError::invalid(
+            "give either `ease` or `bezier`, not both",
+        )),
+        (None, None) => Ok(None),
+        (None, Some([x1, y1, x2, y2])) => {
+            if ![x1, y1, x2, y2].iter().all(|v| v.is_finite()) {
+                return Err(ToolError::invalid("bezier values must be finite numbers"));
+            }
+            if !(0.0..=1.0).contains(&x1) || !(0.0..=1.0).contains(&x2) {
+                return Err(ToolError::invalid(
+                    "bezier x1 and x2 must be within 0..=1 (y1 and y2 may overshoot)",
+                ));
+            }
+            Ok(Some(Curve::bezier(x1, y1, x2, y2)))
+        }
+        (Some(name), None) => {
+            if let Some(e) = Ease::ALL
+                .into_iter()
+                .find(|e| e.name().eq_ignore_ascii_case(name))
+            {
+                return Ok(Some(Curve::Preset(e)));
+            }
+            if story.curves.contains_key(name) {
+                return Ok(Some(Curve::Named(name.to_owned())));
+            }
+            Err(ToolError::not_found(format!(
+                "unknown easing `{name}`: use a preset ({}) or one of the story curves ({}); create one with set_curve",
+                Ease::ALL.map(Ease::name).join(", "),
+                story.curves.keys().cloned().collect::<Vec<_>>().join(", ")
+            )))
+        }
+    }
+}
