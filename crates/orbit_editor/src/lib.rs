@@ -15,6 +15,7 @@ pub mod core;
 pub mod diagnostics;
 pub mod dock;
 pub mod fuzzy;
+pub mod live;
 pub mod logging;
 pub mod palette;
 pub mod preview_host;

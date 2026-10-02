@@ -67,6 +67,27 @@ impl Session {
             .unwrap_or_default()
     }
 
+    /// Number of change events waiting to be delivered (not consumed).
+    pub fn pending_changes(&self) -> usize {
+        self.changes.lock().map_or(0, |q| q.len())
+    }
+
+    /// The nodes touched by the events queued after the first `from` ones,
+    /// without consuming them (what one MCP call changed).
+    pub fn touched_since(&self, from: usize) -> Vec<orbit_core::NodeId> {
+        let mut out = Vec::new();
+        if let Ok(queue) = self.changes.lock() {
+            for event in queue.iter().skip(from) {
+                for id in &event.touched {
+                    if !out.contains(id) {
+                        out.push(*id);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Whether the story differs from what is on disk. Cached per revision.
     pub fn modified(&mut self) -> bool {
         let revision = self.project.revision();

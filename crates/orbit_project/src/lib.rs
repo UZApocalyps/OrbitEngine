@@ -13,6 +13,7 @@ mod ext;
 pub mod graph;
 pub mod graph_layout;
 pub mod graph_ops;
+pub mod lock;
 pub mod ops;
 mod project;
 pub mod sandbox;

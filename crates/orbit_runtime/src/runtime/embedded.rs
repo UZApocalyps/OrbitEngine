@@ -42,6 +42,17 @@ pub enum PlayStatus {
     Paused,
 }
 
+/// What the preview shows, as plain data (the MCP's `preview_state`).
+#[derive(Clone, Debug)]
+pub struct PreviewSnapshot {
+    pub flow: Flow,
+    /// The node of the line or choice on screen.
+    pub node: Option<NodeId>,
+    pub variables: std::collections::BTreeMap<String, orbit_core::Value>,
+    /// Background, characters on stage and music (declarative state).
+    pub scene: orbit_vm::SceneState,
+}
+
 /// Time multiplier of the preview.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlaySpeed {
@@ -518,6 +529,76 @@ impl Runtime {
         self.ctx.renderer.set_pixel_ratio_override(None);
         self.emb_mut().dirty = false;
         result
+    }
+
+    // -------------------------------------------- scripted driving (MCP)
+
+    /// One logical step forward, as the player would take it: on a line the
+    /// typewriter completes and then the next step runs; a transition or a
+    /// timed pause is cut short. `false` when nothing could advance (stopped,
+    /// at a choice, at the end, after a failure).
+    pub fn advance_one(&mut self) -> bool {
+        if self.emb().status == PlayStatus::Stopped {
+            return false;
+        }
+        let progress = |rt: &Self| match &rt.phase {
+            Phase::Running(shell) => shell.game().map(|g| g.director.progress()),
+            _ => None,
+        };
+        let Some(before) = progress(self) else {
+            return false;
+        };
+        match self.flow() {
+            Some(Flow::Say(_)) => {
+                // The first confirmation may only complete the typewriter.
+                for _ in 0..2 {
+                    self.on_action(InputAction::Ui(UiInput::Confirm));
+                    if progress(self) != Some(before) {
+                        break;
+                    }
+                }
+            }
+            Some(Flow::Transition { .. }) => self.on_action(InputAction::Ui(UiInput::Confirm)),
+            Some(Flow::Waiting { remaining }) => {
+                let seconds = *remaining + 0.01;
+                if let Phase::Running(shell) = &mut self.phase {
+                    shell.update(seconds);
+                }
+                self.after_shell();
+            }
+            _ => return false,
+        }
+        self.emb_mut().dirty = true;
+        progress(self) != Some(before)
+    }
+
+    /// Picks option `index` of the choice on screen. `false` when none is
+    /// shown or the index is out of range.
+    pub fn choose_option(&mut self, index: usize) -> bool {
+        let done = match &mut self.phase {
+            Phase::Running(shell) => shell.choose_option(index),
+            _ => false,
+        };
+        if done {
+            self.after_shell();
+            self.emb_mut().dirty = true;
+        }
+        done
+    }
+
+    /// What the preview shows, as plain data; `None` without a playthrough.
+    pub fn snapshot(&self) -> Option<PreviewSnapshot> {
+        let Phase::Running(shell) = &self.phase else {
+            return None;
+        };
+        let game = shell.game()?;
+        let vm = game.director.vm();
+        Some(PreviewSnapshot {
+            flow: game.director.flow().clone(),
+            node: game.director.shown().map(orbit_vm::Interaction::node),
+            variables: vm.variables().clone(),
+            scene: vm.scene().clone(),
+        })
     }
 
     // ------------------------------------------------------- observation

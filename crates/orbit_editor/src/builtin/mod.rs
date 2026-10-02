@@ -3,6 +3,7 @@
 //! the editor itself has no privileged UI code.
 
 mod actions;
+mod assistant;
 mod console;
 mod definitions;
 pub mod drafts;
@@ -51,6 +52,7 @@ pub mod ids {
     pub const LIBRARY: &str = "orbit.library";
     pub const PROBLEMS: &str = "orbit.problems";
     pub const SEARCH: &str = "orbit.search";
+    pub const ASSISTANT: &str = "orbit.assistant";
 }
 
 /// Full ids of the built-in panels.
@@ -68,6 +70,7 @@ pub mod panels {
     pub const LIBRARY: &str = "orbit.library.library";
     pub const PROBLEMS: &str = "orbit.problems.problems";
     pub const SEARCH: &str = "orbit.search.search";
+    pub const ASSISTANT: &str = "orbit.assistant.assistant";
 }
 
 /// State the built-in plugins share with the editor core.
@@ -102,6 +105,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(console::ConsolePlugin),
         Box::new(problems::ProblemsPlugin),
         Box::new(search::SearchPlugin::new(shared.search.clone())),
+        Box::new(assistant::AssistantPlugin),
         Box::new(SamplePlugin::default()),
     ]
 }

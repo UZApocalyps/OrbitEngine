@@ -541,6 +541,17 @@ impl Shell {
         }
     }
 
+    /// Picks option `index` of the choice on screen, as a click would.
+    pub fn choose_option(&mut self, index: usize) -> bool {
+        let theme = self.theme.clone();
+        let done = self
+            .game
+            .as_mut()
+            .is_some_and(|game| game.choose_index(index, &theme));
+        self.after_input();
+        done
+    }
+
     /// The node of the line or choice on screen.
     pub fn shown_node(&self) -> Option<orbit_core::NodeId> {
         self.game

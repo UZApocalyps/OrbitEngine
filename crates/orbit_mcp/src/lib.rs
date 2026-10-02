@@ -18,6 +18,8 @@
 pub mod convert;
 pub mod error;
 pub mod host;
+pub mod live;
+pub mod live_tools;
 pub use orbit_project::sandbox;
 pub mod schema;
 pub mod server;
@@ -25,5 +27,8 @@ pub mod tools;
 pub mod views;
 
 pub use error::{ErrorKind, ToolError};
-pub use host::{HeadlessHost, LOG_FILE, ProjectHost, ResourceInfo, ToolInfo};
-pub use server::{OrbitMcpServer, serve_stdio};
+pub use host::{
+    ExportRequest, HeadlessHost, LOG_FILE, ProjectHost, ResourceInfo, ToolInfo, ToolOutput,
+    ToolRunner, UNDO_PREFIX,
+};
+pub use server::{LIVE_INSTRUCTIONS, OrbitMcpServer, serve_stdio, serve_stdio_with};
