@@ -25,6 +25,8 @@ pub struct Env<'a> {
     pub images: &'a [String],
     /// Variables declared by the story (for conditions, operations, bindings).
     pub vars: &'a [VarInfo],
+    /// Scenes of the story as `(id, name)` (targets of `SceneGoto`).
+    pub scenes: &'a [(String, String)],
 }
 
 impl Env<'_> {
@@ -385,6 +387,40 @@ fn id_editor(ui: &mut Ui, env: &Env, salt: &str, id: &mut String, with_builtin: 
     let _ = salt;
 }
 
+/// Target of a `SceneGoto`: a list of the story's scenes (stores the scene
+/// id, shows its name). Without a story, a plain text field.
+fn scene_editor(ui: &mut Ui, env: &Env, salt: &str, scene: &mut String) {
+    if env.scenes.is_empty() {
+        ui.add(egui::TextEdit::singleline(scene).desired_width(140.0));
+        return;
+    }
+    let current = scene_label(env.scenes, scene);
+    let text = match &current {
+        Some(name) => name.clone(),
+        None if scene.trim().is_empty() => env.t("uied.scene_pick"),
+        None => format!("{} ({scene})", env.t("uied.scene_unknown")),
+    };
+    ComboBox::from_id_salt((salt, "scene"))
+        .selected_text(text)
+        .show_ui(ui, |ui| {
+            for (id, name) in env.scenes {
+                if ui.selectable_label(scene == id, name).clicked() {
+                    scene.clone_from(id);
+                }
+            }
+        });
+}
+
+/// Name of the scene `key` designates (by id, or by name), if any.
+fn scene_label(scenes: &[(String, String)], key: &str) -> Option<String> {
+    let key = key.trim();
+    scenes
+        .iter()
+        .find(|(id, _)| id == key)
+        .or_else(|| scenes.iter().find(|(_, name)| name == key))
+        .map(|(_, name)| name.clone())
+}
+
 // ---------------------------------------------------------------- actions
 
 const ACTION_NAMES: [&str; 17] = [
@@ -468,9 +504,10 @@ fn action_editor(ui: &mut Ui, env: &Env, salt: &str, action: &mut UiAction) {
     }
     match action {
         UiAction::Open(id) | UiAction::Replace(id) => id_editor(ui, env, salt, id, true),
-        UiAction::PlaySound(path) | UiAction::SceneGoto(path) => {
+        UiAction::PlaySound(path) => {
             ui.add(egui::TextEdit::singleline(path).desired_width(140.0));
         }
+        UiAction::SceneGoto(scene) => scene_editor(ui, env, salt, scene),
         UiAction::Custom { name, args } => {
             ui.add(egui::TextEdit::singleline(name).desired_width(90.0));
             let mut joined = args.join(", ");
@@ -887,6 +924,17 @@ fn sound_field(ui: &mut Ui, s: &mut Style, hover: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scene_targets_show_the_scene_name() {
+        let scenes = vec![
+            ("01JBX0S0000000000000000001".to_owned(), "prologue".to_owned()),
+            ("01JBX0S0000000000000000002".to_owned(), "epilogue".to_owned()),
+        ];
+        assert_eq!(scene_label(&scenes, "01JBX0S0000000000000000002").as_deref(), Some("epilogue"));
+        assert_eq!(scene_label(&scenes, "prologue").as_deref(), Some("prologue"));
+        assert_eq!(scene_label(&scenes, "nope"), None);
+    }
 
     #[test]
     fn action_indices_round_trip_for_every_variant() {

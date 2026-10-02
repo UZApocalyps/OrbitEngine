@@ -24,7 +24,7 @@ pub use theme::{
     StateColors, Style, StyleSounds, TextBoxTheme, Theme, UiSounds, WidgetTheme,
     resolve_style,
 };
-pub use validate::{Issue, Severity, validate, validate_with_vars, variable_issues};
+pub use validate::{Issue, Severity, scene_issues, validate, validate_with_vars, variable_issues};
 pub use widget::{
     Cond, LayoutDef, ScreenAsset, SlotsMode, TextRef, UI_VERSION, WidgetDef, WidgetKind, from_ron,
     to_ron,

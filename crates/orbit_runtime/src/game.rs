@@ -396,6 +396,15 @@ impl Game {
         self.sync(theme);
     }
 
+    /// Jumps to a scene (`UiAction::SceneGoto`). Like a choice, it stops
+    /// skip and auto. Returns whether the jump happened.
+    pub fn goto_scene(&mut self, scene: &str, theme: &Theme) -> bool {
+        self.interrupt();
+        let moved = self.director.goto_scene(scene);
+        self.sync(theme);
+        moved
+    }
+
     /// One step back in time. Returns whether anything changed.
     pub fn rollback(&mut self, theme: &Theme) -> bool {
         self.interrupt();

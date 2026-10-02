@@ -593,6 +593,48 @@ impl Vm {
         Ok(())
     }
 
+    /// Finds a scene by id (canonical ULID text) or, failing that, by name
+    /// (first match). `UiAction::SceneGoto` stores the id.
+    pub fn find_scene(&self, key: &str) -> Option<orbit_core::SceneId> {
+        let key = key.trim();
+        if let Ok(id) = key.parse::<orbit_core::SceneId>()
+            && self.story.scenes.iter().any(|s| s.id == id)
+        {
+            return Some(id);
+        }
+        self.story.scenes.iter().find(|s| s.name == key).map(|s| s.id)
+    }
+
+    /// Jumps to the start of `scene` from outside a node (a UI button, a
+    /// host): the next `step()` runs the scene's first node.
+    ///
+    /// The call stack and anything pending (choice, pause, transition) are
+    /// dropped and a previous error is cleared. Variables, the RNG and the
+    /// declarative stage (background, sprites, music) are kept: the target
+    /// scene sets up its own stage. For rollback the jump behaves like
+    /// picking another choice: the checkpoint on screen stays the rollback
+    /// point (one rollback step re-shows it, with the state it had before
+    /// the jump) and the known future after it is cut. Saves need nothing
+    /// special: the state after the jump is an ordinary `VmState`.
+    ///
+    /// An empty scene ends the story at the next `step()`. Unknown scene:
+    /// `VmError::UnknownScene`, nothing changes.
+    pub fn goto_scene(&mut self, scene: orbit_core::SceneId) -> Result<(), VmError> {
+        let target = self
+            .story
+            .scenes
+            .iter()
+            .find(|s| s.id == scene)
+            .ok_or(VmError::UnknownScene(scene))?;
+        self.state.pc = target.nodes.first().map(|n| n.id);
+        self.state.pending = Pending::None;
+        self.state.call_stack.clear();
+        self.fault = None;
+        self.events.clear();
+        self.history.on_goto();
+        Ok(())
+    }
+
     /// Evaluates a no-code condition against the current variables. An
     /// evaluation error (unknown variable, type mismatch) counts as `false`
     /// and records a warning.

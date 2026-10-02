@@ -170,6 +170,15 @@ impl UiBundle {
             .collect()
     }
 
+    /// Warnings for `SceneGoto` actions to scenes the story does not have
+    /// (`known` says whether a scene id or name exists).
+    pub fn scene_issues(&self, known: &dyn Fn(&str) -> bool) -> Vec<Issue> {
+        self.screens
+            .iter()
+            .flat_map(|s| crate::validate::scene_issues(s, known))
+            .collect()
+    }
+
     /// Problems of every screen and splash (errors make a bundle unusable).
     pub fn validate(&self) -> Vec<Issue> {
         let mut out = Vec::new();

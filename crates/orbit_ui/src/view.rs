@@ -228,6 +228,9 @@ pub enum UiEvent {
     Custom { name: String, args: Vec<String> },
     /// Apply a no-code variable operation to the running game.
     VarOp(orbit_core::VarOp),
+    /// Jump the running game to a scene (scene id, or name), see
+    /// `UiAction::SceneGoto`.
+    SceneGoto(String),
     /// Show a short notification (already localized).
     Toast(String),
     /// Play a UI sound (see `Theme::sounds`).

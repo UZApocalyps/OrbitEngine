@@ -1764,3 +1764,170 @@ fn set_var_node_is_a_noop_on_division_by_zero_and_keeps_int_type() {
     assert_eq!(vm.variable("gold"), Some(&Value::Int(13)));
     assert_eq!(vm.take_warnings().len(), 1);
 }
+
+// ------------------------------------------------------------ scene goto
+
+/// `rb_story` plus a second scene "bonus": Bonus1, Bonus2, End.
+fn goto_story() -> (RbStory, SceneId, NodeId, NodeId) {
+    let mut s = rb_story();
+    let b1_text = s.story.strings.add("Bonus1");
+    let b2_text = s.story.strings.add("Bonus2");
+    let (b1, b2) = (NodeId::new(), NodeId::new());
+    let scene = SceneId::new();
+    s.story.scenes.push(Scene {
+        id: scene,
+        name: "bonus".into(),
+        nodes: vec![
+            Node {
+                id: b1,
+                kind: NodeKind::Say {
+                    speaker: None,
+                    text_id: b1_text,
+                },
+            },
+            Node {
+                id: b2,
+                kind: NodeKind::Say {
+                    speaker: None,
+                    text_id: b2_text,
+                },
+            },
+            Node {
+                id: NodeId::new(),
+                kind: NodeKind::End,
+            },
+        ],
+    });
+    (s, scene, b1, b2)
+}
+
+#[test]
+fn scenes_are_found_by_id_or_name() {
+    let (s, scene, _, _) = goto_story();
+    let vm = vm_for(s.story);
+    assert_eq!(vm.find_scene("bonus"), Some(scene));
+    assert_eq!(vm.find_scene(&scene.to_string()), Some(scene));
+    assert_eq!(vm.find_scene(" bonus "), Some(scene));
+    assert_eq!(vm.find_scene("nope"), None);
+    assert_eq!(vm.find_scene(&SceneId::new().to_string()), None);
+}
+
+#[test]
+fn goto_scene_jumps_and_rollback_returns_before_the_jump() {
+    let (s, scene, b1, b2) = goto_story();
+    let mut vm = vm_for(s.story);
+    assert_eq!(next_interaction(&mut vm), s.l1);
+    assert_eq!(next_interaction(&mut vm), s.l2);
+    let before = vm.snapshot();
+
+    let unknown = SceneId::new();
+    assert_eq!(vm.goto_scene(unknown), Err(VmError::UnknownScene(unknown)));
+    assert_eq!(vm.snapshot(), before, "a failed goto changes nothing");
+
+    vm.goto_scene(scene).unwrap();
+    assert_eq!(next_interaction(&mut vm), b1);
+    let lines: Vec<NodeId> = vm.backlog().iter().map(|b| b.node).collect();
+    assert_eq!(lines, [s.l1, s.l2, b1]);
+
+    // One step back: the line shown when the jump happened, with the state
+    // it had (the next step continues the original scene).
+    let p = vm.rollback(1).unwrap();
+    assert_eq!(shown_node(&p), s.l2);
+    assert_eq!(vm.snapshot(), before);
+    assert_eq!(next_interaction(&mut vm), s.choice);
+    // The bonus branch was replaced by the normal flow.
+    assert!(!vm.can_roll_forward());
+
+    // A second jump from the pending choice drops the choice.
+    vm.goto_scene(scene).unwrap();
+    assert_eq!(next_interaction(&mut vm), b1);
+    assert_eq!(next_interaction(&mut vm), b2);
+    assert_eq!(vm.step(), StepResult::End);
+    let p = vm.rollback(2).unwrap();
+    assert_eq!(shown_node(&p), b1);
+    let p = vm.rollback(1).unwrap();
+    assert_eq!(shown_node(&p), s.choice);
+    assert!(matches!(vm.snapshot().pending, Pending::Choice { .. }));
+}
+
+#[test]
+fn goto_scene_cuts_the_known_future() {
+    let (s, scene, b1, _) = goto_story();
+    let mut vm = vm_for(s.story);
+    for _ in 0..3 {
+        next_interaction(&mut vm);
+    }
+    vm.choose(0).unwrap();
+    assert_eq!(next_interaction(&mut vm), s.a_line);
+    // Back to L2 (the future is kept), then jump away: it is cut.
+    vm.rollback(2).unwrap();
+    assert!(vm.can_roll_forward());
+    vm.goto_scene(scene).unwrap();
+    assert!(!vm.can_roll_forward());
+    assert_eq!(next_interaction(&mut vm), b1);
+    let lines: Vec<NodeId> = vm.backlog().iter().map(|b| b.node).collect();
+    assert_eq!(lines, [s.l1, s.l2, b1]);
+}
+
+#[test]
+fn goto_scene_clears_the_call_stack() {
+    let (mut s, scene, b1, _) = goto_story();
+    // The main scene first calls a subroutine that shows a line.
+    let sub = NodeId::new();
+    let text_id = s.story.strings.add("Sub");
+    let sub_line = NodeId::new();
+    let main = &mut s.story.scenes[0].nodes;
+    main.insert(
+        0,
+        Node {
+            id: NodeId::new(),
+            kind: NodeKind::Call { label: sub },
+        },
+    );
+    main.push(Node {
+        id: sub,
+        kind: NodeKind::Label { name: "sub".into() },
+    });
+    main.push(Node {
+        id: sub_line,
+        kind: NodeKind::Say {
+            speaker: None,
+            text_id,
+        },
+    });
+    main.push(Node {
+        id: NodeId::new(),
+        kind: NodeKind::Return,
+    });
+    let mut vm = vm_for(s.story);
+    assert_eq!(next_interaction(&mut vm), sub_line);
+    assert_eq!(vm.call_depth(), 1);
+    vm.goto_scene(scene).unwrap();
+    assert_eq!(vm.call_depth(), 0);
+    assert_eq!(next_interaction(&mut vm), b1);
+}
+
+#[test]
+fn save_and_load_after_goto_scene() {
+    let (s, scene, b1, b2) = goto_story();
+    let mut vm = vm_for(s.story.clone());
+    next_interaction(&mut vm);
+    next_interaction(&mut vm);
+    vm.goto_scene(scene).unwrap();
+    assert_eq!(next_interaction(&mut vm), b1);
+
+    let state = vm.snapshot();
+    let history = vm.history_snapshot(100, 100);
+    let text = ron::to_string(&(&state, &history)).unwrap();
+    let (state2, history2): (VmState, RollbackHistory) = ron::from_str(&text).unwrap();
+    let mut loaded = vm_for(s.story);
+    loaded.restore_with_history(state2, history2).unwrap();
+    assert_eq!(loaded.presentation(), vm.presentation());
+    assert_eq!(loaded.backlog(), vm.backlog());
+    assert_eq!(next_interaction(&mut loaded), b2);
+    // Rollback still crosses the jump after a load.
+    loaded.rollback(1).unwrap();
+    let p = loaded.rollback(1).unwrap();
+    assert_eq!(shown_node(&p), s.l2);
+    assert_eq!(next_interaction(&mut loaded), s.choice);
+}

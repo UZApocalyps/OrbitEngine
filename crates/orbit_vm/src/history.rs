@@ -177,6 +177,18 @@ impl History {
             .unwrap_or(0)
     }
 
+    /// The VM jumped to another scene from outside a node: the checkpoint on
+    /// screen stays the rollback point, the known future is cut, and one
+    /// rollback step re-shows it.
+    pub fn on_goto(&mut self) {
+        if self.entries.is_empty() {
+            return;
+        }
+        self.cursor = self.cursor.min(self.entries.len() - 1);
+        self.truncate_future();
+        self.ahead = true;
+    }
+
     /// Called when an interaction was just presented by `step()`.
     pub fn record(&mut self, state: &VmState) {
         self.ahead = false;
