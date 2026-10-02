@@ -117,6 +117,17 @@ impl AssetLoader {
 
     /// Loads and decodes a PNG/JPEG image to RGBA8.
     pub fn load_image(&self, path: &str) -> AssetHandle<ImageData> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            // On the web the browser decodes JPEG (smaller bundle).
+            let (handle, slot) = AssetHandle::new_pair();
+            match normalize_path(path) {
+                Ok(p) => io::spawn_load_image(self.source.clone(), p, slot),
+                Err(err) => slot.fail(err),
+            }
+            handle
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         self.load_with(path, |_, bytes| decode_image(&bytes))
     }
 

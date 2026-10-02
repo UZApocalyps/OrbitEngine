@@ -9,17 +9,21 @@ publish.workspace = true
 
 [dependencies]
 orbit_pak.workspace = true
-image = { workspace = true, features = ["jpeg"] }
+image.workspace = true
 hound.workspace = true
 lewton.workspace = true
 log.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# JPEG: native decoder only; on the web the browser decodes JPEG (bundle size).
+image = { workspace = true, features = ["jpeg"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
-web-sys = { workspace = true, features = ["Window", "Response", "Request", "RequestInit", "Headers"] }
+web-sys = { workspace = true, features = ["Window", "Response", "Request", "RequestInit", "Headers", "Blob", "ImageBitmap", "ImageBitmapOptions", "PremultiplyAlpha", "ColorSpaceConversion", "OffscreenCanvas", "OffscreenCanvasRenderingContext2d", "ImageData"] }
 
 [lints]
 workspace = true

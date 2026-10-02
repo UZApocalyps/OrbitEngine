@@ -76,6 +76,12 @@ jobs:
           cargo install wasm-opt --locked
       - name: Build the templates (and check the wasm size budget)
         run: cargo xtask templates ${{ matrix.args }}
+      - name: Size report (twiggy, informational)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          cargo install twiggy --locked
+          twiggy top -n 25 target/templates/web/orbit_player_bg.wasm | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: templates-${{ runner.os }}
