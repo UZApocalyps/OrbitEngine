@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -90,6 +92,78 @@ jobs:
             orbit-editor-windows.zip
             orbit-editor-linux.tar.gz
           if-no-files-found: error
+
+  # Installers: MSI + NSIS (Windows), AppImage + deb (Linux), built with
+  # cargo-packager. On a `v*` tag or by hand; never pushes a tag: the GitHub
+  # Release stays a draft until the maintainer publishes it.
+  release:
+    name: installers ${{ matrix.os }}
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            formats: wix,nsis
+          - os: ubuntu-latest
+            formats: appimage,deb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxkbcommon-dev             libxkbcommon-x11-dev libwayland-dev libvulkan-dev libegl1-mesa-dev             libgl1-mesa-dev pkg-config libfuse2 file desktop-file-utils
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+      - name: Build the editor (release)
+        run: cargo build --release -p orbit_editor
+      - name: Build the installers
+        working-directory: crates/orbit_editor
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: cargo packager --release --formats ${{ matrix.formats }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ runner.os }}
+          path: |
+            target/packager/*.msi
+            target/packager/*-setup.exe
+            target/packager/*.AppImage
+            target/packager/*.deb
+          if-no-files-found: error
+
+  release-draft:
+    name: draft GitHub Release
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          path: installers
+          merge-multiple: true
+      - name: Release tag name (the pushed tag, or v<workspace version> by hand)
+        id: tag
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "name=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            VERSION=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+            echo "name=v$VERSION" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          draft: true
+          files: installers/*
 
   wasm:
     name: wasm32 (WebGL2)

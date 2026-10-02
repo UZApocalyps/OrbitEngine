@@ -339,6 +339,13 @@ fn status_bar(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme, frame_counte
                     }
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    // The workspace version (also the installers' version).
+                    ui.label(
+                        RichText::new(format!("OrbitEngine {}", env!("CARGO_PKG_VERSION")))
+                            .small()
+                            .color(theme.text_faint()),
+                    );
+                    ui.separator();
                     if frame_counter {
                         let frames = ectx.state().debug_frames.unwrap_or(0);
                         ui.label(

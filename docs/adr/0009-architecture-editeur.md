@@ -137,6 +137,8 @@ NodeKind::Custom { plugin_id: String, kind: String, version: u32, data: CustomDa
 
 Windows et Linux : archive portable produite par la CI dès M3 (zip / tar.gz du binaire + `assets/`), puis installeurs en M4 : `cargo-packager` 0.11 (MIT / Apache-2.0 ; MSI via WiX, NSIS, AppImage, deb) ou `cargo-dist` 0.32 (MIT / Apache-2.0) selon la qualité des sorties, le choix se fait au moment de l'implémentation. Auto-update : backlog (non nécessaire pour un moteur à gros jalons). Signature de code Windows : question de budget, hors périmètre.
 
+**Note (M4, implémenté)** : `cargo-packager` 0.11.8 retenu (MIT / Apache-2.0) ; `cargo-dist` cible la publication d'archives et s'accommode mal d'un `Cargo.toml` de workspace sans dépôt de release configuré. Les installeurs ne contiennent que l'exécutable, la démo et le dossier `templates/` : NSIS (zlib / bzip2 / CPL pour l'outillage, stub zlib) et WiX 3 (MS-RL, outil de build seulement, rien n'est intégré à l'installeur) sont téléchargés au moment du build, aucun code tiers de ces outils n'entre dans les dépendances Rust (`cargo deny` inchangé). L'éditeur n'a aucune dépendance aux chemins du dépôt à l'exécution (polices et logo via `include_bytes!`) ; la configuration est dans `crates/orbit_editor/Cargo.toml`, le job CI `release` crée une Release en brouillon (aucun tag n'est créé par la CI).
+
 ### 9. Performance (budgets mesurés en CI quand c'est possible)
 
 - Démarrage < 1 s jusqu'à la première frame utile sur le projet démo (fenêtre visible immédiatement, chargement des polices et du projet ensuite, journalisation du temps).
