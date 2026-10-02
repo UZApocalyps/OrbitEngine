@@ -37,6 +37,8 @@
     "defs.anim.count": "Images",
     "defs.anim.frame_size": "Taille d'une image",
     "defs.anim.add_frame": "Ajouter une image",
+    "defs.anim.import_gif": "GIF / APNG…",
+    "defs.anim.import_gif.hint": "Remplace les images par celles d'un GIF ou APNG animé (cadence comprise).",
     "defs.anim.fps": "ips",
     "defs.anim.loop.loop": "Boucle",
     "defs.anim.loop.once": "Une seule fois",

@@ -39,10 +39,10 @@ use crate::shell::{AutosaveConfig, Effect, Shell, ShellConfig};
 use crate::splash::{AfterLoad, SplashPhase, SplashState};
 use crate::splash_draw::SplashAssets;
 use crate::stage::{
-    AnimClock, CANVAS, StageCharacter, StageState, character_placement, cover_size,
+    AnimClock, CANVAS, StageCharacter, StageState, character_placement, cover_size, frame_scale,
 };
-use orbit_core::AnimFrames;
 use orbit_core::anim::{FrameRef, sheet_cell_size, sheet_uv};
+use orbit_core::AnimFrames;
 use orbit_ui::UiInput;
 
 mod embedded;
@@ -1559,6 +1559,9 @@ struct CharacterFrame {
     texture: TextureId,
     uv: Option<[f32; 4]>,
     size: [u32; 2],
+    /// Size of the animation's first frame (`size` for a still): the
+    /// character's standard height is that of this frame.
+    reference: [u32; 2],
 }
 
 /// Picks the frame of `c` at its animation time: the current cell / image of
@@ -1580,35 +1583,49 @@ fn character_frame(
         .and_then(|ch| ch.expression(&c.expression))
         .and_then(|e| e.animation());
     let elapsed = anims.map_or(0.0, |a| a.elapsed(c.character, &c.expression));
+    let load = |a: &orbit_core::Animation, frame: FrameRef| match frame {
+        FrameRef::Image(id) => {
+            let tex = texture(id)?;
+            let size = renderer.texture_size(tex)?;
+            Some(CharacterFrame {
+                texture: tex,
+                uv: None,
+                size,
+                reference: size,
+            })
+        }
+        FrameRef::Sheet { asset, index } => {
+            let tex = texture(asset)?;
+            let sheet = renderer.texture_size(tex)?;
+            let AnimFrames::SpriteSheet {
+                cols,
+                rows,
+                frame_size,
+                ..
+            } = &a.frames
+            else {
+                return None;
+            };
+            let size = sheet_cell_size(*cols, *rows, *frame_size, sheet);
+            Some(CharacterFrame {
+                texture: tex,
+                uv: Some(sheet_uv(index, *cols, *rows, *frame_size, sheet)?),
+                size,
+                reference: size,
+            })
+        }
+    };
     let animated = animation
         .and_then(|a| a.frame_at(elapsed).map(|f| (a, f)))
-        .and_then(|(a, frame)| match frame {
-            FrameRef::Image(id) => {
-                let tex = texture(id)?;
-                Some(CharacterFrame {
-                    texture: tex,
-                    uv: None,
-                    size: renderer.texture_size(tex)?,
-                })
+        .and_then(|(a, frame)| {
+            let mut shown = load(a, frame)?;
+            // Frames of a sequence may differ in size: they are laid out
+            // relative to the first frame (whose size sets the character's
+            // scale), not each stretched to the standard height.
+            if let Some(first) = a.frame_at(0.0).and_then(|f| load(a, f)) {
+                shown.reference = first.size;
             }
-            FrameRef::Sheet { asset, index } => {
-                let tex = texture(asset)?;
-                let sheet = renderer.texture_size(tex)?;
-                let AnimFrames::SpriteSheet {
-                    cols,
-                    rows,
-                    frame_size,
-                    ..
-                } = &a.frames
-                else {
-                    return None;
-                };
-                Some(CharacterFrame {
-                    texture: tex,
-                    uv: Some(sheet_uv(index, *cols, *rows, *frame_size, sheet)?),
-                    size: sheet_cell_size(*cols, *rows, *frame_size, sheet),
-                })
-            }
+            Some(shown)
         });
     if animated.is_some() {
         return animated;
@@ -1628,10 +1645,12 @@ fn character_frame(
         }
     }
     let tex = texture(c.image)?;
+    let size = renderer.texture_size(tex)?;
     Some(CharacterFrame {
         texture: tex,
         uv: None,
-        size: renderer.texture_size(tex)?,
+        size,
+        reference: size,
     })
 }
 
@@ -1663,8 +1682,10 @@ fn stage_scene(
         let Some(frame) = character_frame(renderer, store, story, c, anims) else {
             continue;
         };
-        let placement = character_placement(c, frame.size);
-        let mut sprite = Sprite2d::new(frame.texture, placement.anchor, placement.size)
+        let placement = character_placement(c, frame.reference);
+        let fs = frame_scale(frame.size, frame.reference);
+        let size = [placement.size[0] * fs[0], placement.size[1] * fs[1]];
+        let mut sprite = Sprite2d::new(frame.texture, placement.anchor, size)
             .anchor([0.5, 1.0])
             .scale(placement.scale);
         if let Some(uv) = frame.uv {

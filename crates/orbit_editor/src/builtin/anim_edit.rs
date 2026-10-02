@@ -94,6 +94,20 @@ pub fn sync_poster(e: &mut Expression) {
     }
 }
 
+/// Makes the expression a frame sequence of `frames` at `fps` (looping),
+/// e.g. the frames of an imported GIF. Does nothing without frames.
+pub fn set_sequence(e: &mut Expression, frames: Vec<AssetId>, fps: f32) {
+    if frames.is_empty() {
+        return;
+    }
+    e.motion = Some(Motion::Animation(Animation {
+        frames: AnimFrames::Sequence(frames),
+        fps: fps.clamp(FPS_MIN, FPS_MAX),
+        loop_mode: LoopMode::Loop,
+    }));
+    sync_poster(e);
+}
+
 fn anim_mut(e: &mut Expression) -> Option<&mut Animation> {
     match &mut e.motion {
         Some(Motion::Animation(a)) => Some(a),
@@ -233,6 +247,8 @@ pub enum Outcome {
     Replace(Expression, Option<String>),
     /// The user asked for a file to be imported as a new sequence frame.
     ImportFrame,
+    /// The user asked to replace the frames with those of a GIF / APNG file.
+    ImportAnimation,
 }
 
 fn loop_label(ui: &Ui, mode: LoopMode) -> String {
@@ -424,6 +440,13 @@ pub fn editor(
                 {
                     outcome = Some(Outcome::ImportFrame);
                 }
+                if ui
+                    .small_button(format!("{}  {}", icons::FILE_PLUS, ui.t("defs.anim.import_gif")))
+                    .on_hover_text(ui.t("defs.anim.import_gif.hint"))
+                    .clicked()
+                {
+                    outcome = Some(Outcome::ImportAnimation);
+                }
             });
         }
     }
@@ -558,6 +581,21 @@ mod tests {
         assert_eq!(e.animation().unwrap().frames, AnimFrames::Sequence(vec![img]));
         set_kind(&mut e, Kind::Still);
         assert_eq!(e, Expression::still("happy", img));
+    }
+
+    #[test]
+    fn an_imported_gif_becomes_a_looping_sequence_with_its_poster() {
+        let (mut e, _) = still();
+        let frames = vec![AssetId::new(), AssetId::new(), AssetId::new()];
+        set_sequence(&mut e, frames.clone(), 12.0);
+        let a = e.animation().unwrap();
+        assert_eq!(a.frames, AnimFrames::Sequence(frames.clone()));
+        assert_eq!((a.fps, a.loop_mode), (12.0, LoopMode::Loop));
+        assert_eq!(e.image, frames[0]);
+        // No frames: untouched.
+        let before = e.clone();
+        set_sequence(&mut e, Vec::new(), 12.0);
+        assert_eq!(e, before);
     }
 
     #[test]

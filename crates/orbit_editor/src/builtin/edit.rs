@@ -62,6 +62,63 @@ pub fn import_asset_dialog(ctx: &mut EditorContext<'_>, kind: AssetKind) -> Opti
     register_asset_file(ctx, &file, kind)
 }
 
+/// Asks for an animated GIF / APNG and imports its frames as images of the
+/// project. Returns their ids in order and the frame rate.
+pub fn import_animation_dialog(ctx: &mut EditorContext<'_>) -> Option<(Vec<AssetId>, f32)> {
+    let root = ctx.project_info()?.root.clone();
+    let file = rfd::FileDialog::new()
+        .set_title(ctx.t("edit.pick_animation"))
+        .set_directory(&root)
+        .add_filter("GIF / APNG", &["gif", "png"])
+        .pick_file()?;
+    register_animation_file(ctx, &file)
+}
+
+/// The non-interactive half of [`import_animation_dialog`]: splits `file`
+/// into `<name>_001.png`, `<name>_002.png`... under `assets/` and returns the
+/// frame ids and fps.
+pub fn register_animation_file(
+    ctx: &mut EditorContext<'_>,
+    file: &Path,
+) -> Option<(Vec<AssetId>, f32)> {
+    let decoded = std::fs::read(file)
+        .map_err(|e| e.to_string())
+        .and_then(|bytes| super::importers::decode_animation(&bytes));
+    let decoded = match decoded {
+        Ok(d) => d,
+        Err(e) => {
+            ctx.error(e);
+            return None;
+        }
+    };
+    let stem = file
+        .file_stem()
+        .map_or_else(|| "animation".to_owned(), |s| s.to_string_lossy().into_owned());
+    let dir = std::env::temp_dir().join(format!("orbit_anim_{}_{}", std::process::id(), stem));
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        ctx.error(e.to_string());
+        return None;
+    }
+    let mut paths = Vec::new();
+    for (i, png) in decoded.frames.iter().enumerate() {
+        let path = dir.join(format!("{stem}_{:03}.png", i + 1));
+        if let Err(e) = std::fs::write(&path, png) {
+            ctx.error(e.to_string());
+            let _ = std::fs::remove_dir_all(&dir);
+            return None;
+        }
+        paths.push(path);
+    }
+    let report = super::import_paths(ctx, &paths);
+    let _ = std::fs::remove_dir_all(&dir);
+    if report.imported.len() != paths.len() {
+        // `import_paths` already reported each refusal.
+        return None;
+    }
+    let ids = report.imported.iter().map(|i| i.id).collect();
+    Some((ids, decoded.fps))
+}
+
 /// The non-interactive half of [`import_asset_dialog`]: imports `file` and
 /// returns its id, or reports why not. A file of another kind than wanted
 /// (a sound where an image is expected) is refused.

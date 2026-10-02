@@ -406,6 +406,7 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
         Import(usize),
         Replace(usize, Expression, Option<String>),
         ImportFrame(usize),
+        ImportAnimation(usize),
     }
     let mut action: Option<Do> = None;
     if def.expressions.is_empty() {
@@ -450,6 +451,9 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
                             }
                             Some(anim_edit::Outcome::ImportFrame) => {
                                 action = Some(Do::ImportFrame(i));
+                            }
+                            Some(anim_edit::Outcome::ImportAnimation) => {
+                                action = Some(Do::ImportAnimation(i));
                             }
                             None => {}
                         }
@@ -537,6 +541,12 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
                 return;
             };
             anim_edit::push_frame(&mut new.expressions[i], a);
+        }
+        Do::ImportAnimation(i) => {
+            let Some((frames, fps)) = edit::import_animation_dialog(ctx) else {
+                return;
+            };
+            anim_edit::set_sequence(&mut new.expressions[i], frames, fps);
         }
         Do::Remove(i) => {
             new.expressions.remove(i);

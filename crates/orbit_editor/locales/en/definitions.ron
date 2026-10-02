@@ -37,6 +37,8 @@
     "defs.anim.count": "Frames",
     "defs.anim.frame_size": "Frame size",
     "defs.anim.add_frame": "Add a frame",
+    "defs.anim.import_gif": "GIF / APNG…",
+    "defs.anim.import_gif.hint": "Replace the frames with those of an animated GIF or APNG (frame rate included).",
     "defs.anim.fps": "fps",
     "defs.anim.loop.loop": "Loop",
     "defs.anim.loop.once": "Play once",
