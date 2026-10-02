@@ -19,6 +19,13 @@ use thiserror::Error;
 /// Name of the pak entry that holds the game pack.
 pub const GAME_PACK_ENTRY: &str = "game.pack";
 
+/// Folder of the pak that holds the files of the engine itself (the fonts):
+/// a requested `assets/fonts/Inter-Regular.ttf` is `engine/assets/fonts/...`.
+pub const ENGINE_PREFIX: &str = "engine";
+
+/// Pak entry of the game icon (a PNG).
+pub const ICON_ENTRY: &str = "meta/icon.png";
+
 const MAGIC: &[u8; 8] = b"ORBITGAM";
 /// Current game pack version.
 pub const PACK_VERSION: u32 = 1;

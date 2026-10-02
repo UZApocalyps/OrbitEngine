@@ -1,0 +1,24 @@
+[package]
+name = "orbit_export"
+description = "OrbitEngine game export: compiles a project (story pack, asset pak) and packages it for Windows, Linux and the web. No GUI: used by the CLI, the editor and the MCP server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_core.workspace = true
+orbit_project.workspace = true
+orbit_i18n.workspace = true
+orbit_pak.workspace = true
+thiserror.workspace = true
+log.workspace = true
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+tar = "0.4.46"
+flate2 = "1.1.10"
+brotli = "9.0.0"
+serde_json = "1.0.151"
+
+[lints]
+workspace = true

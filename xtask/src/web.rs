@@ -11,7 +11,7 @@ const FAVICON_PNG: &[u8] = include_bytes!("../../assets/brand/icon-64.png");
 const ICON_PNG: &[u8] = include_bytes!("../../assets/brand/icon-256.png");
 
 /// Version of the `wasm-bindgen` crate resolved in Cargo.lock.
-fn locked_wasm_bindgen_version() -> Result<String> {
+pub(crate) fn locked_wasm_bindgen_version() -> Result<String> {
     let lock = fs::read_to_string(workspace_root().join("Cargo.lock"))?;
     let mut lines = lock.lines();
     while let Some(line) = lines.next() {
@@ -27,7 +27,7 @@ fn locked_wasm_bindgen_version() -> Result<String> {
     Err("wasm-bindgen is not in Cargo.lock".into())
 }
 
-fn ensure_wasm_bindgen_cli(expected: &str) -> Result {
+pub(crate) fn ensure_wasm_bindgen_cli(expected: &str) -> Result {
     let out = Command::new("wasm-bindgen").arg("--version").output().map_err(|_| {
         format!(
             "wasm-bindgen CLI not found. Install it with:\n  cargo install wasm-bindgen-cli --version {expected} --locked"

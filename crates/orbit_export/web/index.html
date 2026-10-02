@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="@@LANG@@">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>@@TITLE@@</title>
+  <meta name="description" content="@@TITLE@@ - made with OrbitEngine">
+  <link rel="icon" type="image/png" href="@@FAVICON@@">
+  <link rel="apple-touch-icon" href="@@ICON@@">
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #0b1020; overflow: hidden; }
+    #orbit-canvas { display: block; width: 100vw !important; height: 100vh !important; touch-action: none; outline: none; }
+    #loader { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+              gap: 16px; background: #0b1020; color: #c7d0e0; font: 15px/1.4 system-ui, sans-serif; transition: opacity .4s; }
+    #loader.done { opacity: 0; pointer-events: none; }
+    #loader .icon { width: 96px; height: 96px; object-fit: contain; border-radius: 18px; }
+    #loader h1 { margin: 0; font-size: 22px; font-weight: 600; color: #fff; text-align: center; padding: 0 16px; }
+    .bar { width: min(320px, 70vw); height: 6px; border-radius: 3px; background: #1b2440; overflow: hidden; }
+    .bar > div { height: 100%; width: 0; background: linear-gradient(90deg, #7c6cf0, #38bdf8); transition: width .12s linear; }
+    #status { min-height: 1.4em; font-size: 13px; color: #8b97b0; }
+    #loader .made { position: absolute; bottom: 16px; height: 28px; opacity: .75; }
+    #loader.failed .bar { display: none; }
+    #loader.failed #status { color: #ff9a9a; max-width: 80vw; text-align: center; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <canvas id="orbit-canvas" tabindex="0"></canvas>
+  <div id="loader" role="status" aria-live="polite">
+    <img class="icon" src="@@ICON@@" alt="">
+    <h1>@@TITLE@@</h1>
+    <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><div id="fill"></div></div>
+    <div id="status">Loading...</div>
+    <img class="made" src="@@LOGO@@" alt="Made with OrbitEngine">
+  </div>
+  <noscript>This game needs JavaScript and WebGL2.</noscript>
+  <script>window.ORBIT_PAK = "@@PAK@@";</script>
+  <script type="module">
+    import init from "./@@JS@@";
+
+    const WASM_URL = "@@WASM@@";
+    const WASM_BYTES = @@WASM_BYTES@@;
+    const loader = document.getElementById("loader");
+    const fill = document.getElementById("fill");
+    const status = document.getElementById("status");
+    const bar = document.querySelector(".bar");
+
+    function progress(ratio, text) {
+      const percent = Math.round(Math.max(0, Math.min(1, ratio)) * 100);
+      fill.style.width = percent + "%";
+      bar.setAttribute("aria-valuenow", String(percent));
+      if (text) status.textContent = text;
+    }
+
+    function fail(message) {
+      loader.classList.add("failed");
+      loader.classList.remove("done");
+      status.textContent = message;
+    }
+
+    // The module is read through a stream so the bar follows the real bytes
+    // received (the size is known at export time: the server may compress).
+    async function fetchModule() {
+      const response = await fetch(WASM_URL);
+      if (!response.ok) throw new Error("HTTP " + response.status + " for " + WASM_URL);
+      if (!response.body || !response.body.getReader) return response;
+      const reader = response.body.getReader();
+      let received = 0;
+      const stream = new ReadableStream({
+        async pull(controller) {
+          const { done, value } = await reader.read();
+          if (done) { controller.close(); return; }
+          received += value.length;
+          progress(received / WASM_BYTES, "Loading... " + Math.round(received / 1048576 * 10) / 10 + " / " + Math.round(WASM_BYTES / 1048576 * 10) / 10 + " MB");
+          controller.enqueue(value);
+        },
+        cancel(reason) { return reader.cancel(reason); },
+      });
+      return new Response(stream, { headers: { "Content-Type": "application/wasm" } });
+    }
+
+    window.addEventListener("error", (event) => {
+      if (!loader.classList.contains("done")) fail("Failed to start: " + (event.message || "unknown error"));
+    });
+
+    try {
+      progress(0, "Loading...");
+      await init({ module_or_path: fetchModule() });
+    } catch (err) {
+      // winit unwinds the start function with a control-flow "exception":
+      // the game is running, it is not an error.
+      if (!String(err).includes("control flow")) {
+        console.error(err);
+        fail("Failed to start: " + err + "\nThis game needs a browser with WebGL2.");
+      }
+    }
+    if (!loader.classList.contains("failed")) {
+      progress(1, "Starting...");
+      loader.classList.add("done");
+      setTimeout(() => loader.remove(), 600);
+      document.getElementById("orbit-canvas").focus();
+    }
+  </script>
+</body>
+</html>

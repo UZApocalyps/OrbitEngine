@@ -8,8 +8,17 @@
 //!   of the M1 renderer, see [`demo`];
 //! * UI gallery: `--ui-gallery` natively, `?ui-gallery` on the web: every M2
 //!   menu screen with fake data, see [`gallery`].
+//!
+//! The demo and the gallery are the `showcase` feature (on by default); the
+//! player templates used to export games are built without it.
+//!
+//! An exported game is this same program with a **pak** (see `orbit_pak`):
+//! glued to the executable, `game.pak` beside it, `--pak <file>`, or the
+//! `ORBIT_PAK` global of the web page.
 
+#[cfg(feature = "showcase")]
 mod demo;
+#[cfg(feature = "showcase")]
 mod gallery;
 mod launch;
 
@@ -43,21 +52,59 @@ pub fn init_logging() {
     }
 }
 
+/// The window of the player: the OrbitEngine one, or, for an exported game
+/// read natively, its name and icon (stored in the pak). On the web the page
+/// has the title and the favicon.
+fn window_config(launch: &Launch) -> AppConfig {
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
+    let mut config = AppConfig {
+        title: "OrbitEngine Player".to_owned(),
+        ..Default::default()
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(location) = &launch.pak {
+        use orbit_assets::PakSource;
+        use orbit_platform::WindowIcon;
+        match PakSource::open_blocking(location) {
+            Ok(pak) => {
+                if let Some(name) = pak.meta("name") {
+                    config.title = name.to_owned();
+                }
+                if let Some(icon) = pak
+                    .meta("icon")
+                    .and_then(|path| pak.read_blocking(path).ok())
+                    .and_then(|png| WindowIcon::from_png(&png))
+                {
+                    config.icon = Some(icon);
+                }
+            }
+            // The runtime reports the same problem on its error screen.
+            Err(err) => log::error!("cannot read the game pak: {err}"),
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = launch;
+    config
+}
+
 /// Opens the window and runs the player until it is closed.
 pub fn run() -> Result<(), PlayerError> {
     let launch = Launch::from_environment().map_err(PlayerError::Args)?;
-    if launch.demo {
-        return demo::run();
-    }
-    if launch.ui_gallery {
-        return gallery::run();
+    if launch.demo || launch.ui_gallery {
+        #[cfg(feature = "showcase")]
+        return if launch.demo {
+            demo::run()
+        } else {
+            gallery::run()
+        };
+        #[cfg(not(feature = "showcase"))]
+        return Err(PlayerError::Args(
+            "this player was built without the demo and the UI gallery".to_owned(),
+        ));
     }
     let config = launch.runtime_config();
     orbit_platform::run(
-        AppConfig {
-            title: "OrbitEngine Player".to_owned(),
-            ..Default::default()
-        },
+        window_config(&launch),
         |window| async move {
             let size = window.inner_size();
             let gfx = Gfx::new(window, (size.width, size.height))

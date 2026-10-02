@@ -3,9 +3,12 @@
 //! * `orbit validate <project|file> [--check-files] [--root <dir>]`
 //! * `orbit run-text <file> [--step] [--save-dir <dir>]`
 //! * `orbit mcp --project <dir|file.ron>` (MCP server over stdio, see `orbit_mcp`)
+//! * `orbit build` and `orbit export <target>` (see `orbit_export`)
 //!
 //! The logic lives in [`run`], which takes its streams as parameters so it can
 //! be tested without spawning a process.
+
+mod export_cmd;
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -42,8 +45,13 @@ USAGE:
         saved atomically and is one undo entry; file access is limited to
         the project folder. The log is kept in <project>/.orbit/mcp.log.
         Protocol on stdout: nothing else is printed there.
-    orbit help
+{export_usage}    orbit help
 ";
+
+/// The help text (the export commands are documented next to their code).
+fn usage() -> String {
+    USAGE.replace("{export_usage}", export_cmd::USAGE)
+}
 
 /// Runs the CLI and returns the process exit code.
 pub fn run(
@@ -56,8 +64,10 @@ pub fn run(
         Some("validate") => validate_cmd(&args[1..], out, err),
         Some("run-text") => run_text_cmd(&args[1..], input, out, err),
         Some("mcp") => mcp_cmd(&args[1..], err),
+        Some("build") => export_cmd::build_cmd(&args[1..], out, err),
+        Some("export") => export_cmd::export_cmd(&args[1..], out, err),
         Some("help" | "--help" | "-h") | None => {
-            let _ = write!(out, "{USAGE}");
+            let _ = write!(out, "{}", usage());
             Ok(0)
         }
         Some(other) => Err(format!("unknown command `{other}` (try `orbit help`)")),

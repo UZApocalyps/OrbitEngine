@@ -45,9 +45,9 @@ pub mod stage;
 
 pub use director::{AudioCommand, Director, Flow, Line, StageTransition};
 pub use input::{Hotkey, InputAction, InputMapper};
-pub use loading::{AssetStore, LoadedStory, parse_story};
+pub use loading::{AssetStore, LoadedStory, parse_story, scene_asset_paths, successor_scenes};
 pub use runtime::{
-    EmbeddedConfig, LoadOutcome, Notice, PlayFrom, PlaySpeed, PlayStatus, Runtime, RuntimeConfig,
+    ENGINE_PAK_PREFIX, EmbeddedConfig, LoadOutcome, Notice, PlayFrom, PlaySpeed, PlayStatus, Runtime, RuntimeConfig,
     RuntimeError, error_markup, escape_markup, parse_translation_index,
 };
 pub use shell::AutosaveConfig;

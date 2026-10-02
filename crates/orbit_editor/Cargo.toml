@@ -26,6 +26,7 @@ orbit_render2d.workspace = true
 orbit_runtime.workspace = true
 orbit_assets.workspace = true
 orbit_audio.workspace = true
+orbit_export.workspace = true
 orbit_ui.workspace = true
 egui.workspace = true
 egui-winit.workspace = true

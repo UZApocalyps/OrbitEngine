@@ -85,6 +85,9 @@ pub(crate) struct ShellConfig {
     pub ui_overrides: HashMap<String, Vec<(String, String)>>,
     /// BCP 47 tag of the system language, if known.
     pub system_language: Option<String>,
+    /// Language of the game for a player without a saved preference (it
+    /// takes precedence over the system language).
+    pub default_language: Option<String>,
     /// Minutes east of UTC.
     pub utc_offset_minutes: i32,
     pub fullscreen_supported: bool,
@@ -301,7 +304,7 @@ impl Shell {
             log::warn!("persistent data unreadable, starting empty: {err}");
             PersistentData::default()
         });
-        Self::pick_language(&mut loc, &prefs, cfg.system_language.as_deref());
+        Self::pick_language(&mut loc, &prefs, &cfg);
         let texts = make_texts(loc.language(), &cfg.ui_overrides);
         let loc = Arc::new(loc);
 
@@ -382,14 +385,23 @@ impl Shell {
         shell
     }
 
-    /// Initial language: the saved preference, else the system language,
-    /// else the story's source language.
-    fn pick_language(loc: &mut Localizer, prefs: &Preferences, system: Option<&str>) {
+    /// Initial language: the saved preference, else the game's default
+    /// language, else the system language, else the story's source language.
+    fn pick_language(loc: &mut Localizer, prefs: &Preferences, cfg: &ShellConfig) {
         let chosen = prefs
             .language
             .as_deref()
             .and_then(|l| loc.resolve_language(l))
-            .or_else(|| system.and_then(|l| loc.resolve_language(l)));
+            .or_else(|| {
+                cfg.default_language
+                    .as_deref()
+                    .and_then(|l| loc.resolve_language(l))
+            })
+            .or_else(|| {
+                cfg.system_language
+                    .as_deref()
+                    .and_then(|l| loc.resolve_language(l))
+            });
         if let Some(tag) = chosen {
             loc.set_language(&tag);
         }
@@ -654,7 +666,9 @@ impl Shell {
         self.flush_prefs();
     }
 
-    fn current_scene(&self) -> Option<usize> {
+    /// Index (in `story.scenes`) of the scene of the line or choice on
+    /// screen.
+    pub(crate) fn current_scene(&self) -> Option<usize> {
         let node = self.game.as_ref()?.director.shown()?.node();
         self.story.locate(node).map(|(scene, _)| scene)
     }
@@ -1125,7 +1139,7 @@ impl Shell {
         let mut loc = (*self.loc).clone();
         let source = loc.source_language().to_owned();
         loc.set_language(&source);
-        Self::pick_language(&mut loc, &self.prefs, self.cfg.system_language.as_deref());
+        Self::pick_language(&mut loc, &self.prefs, &self.cfg);
         self.install_language(Arc::new(loc));
         self.apply_prefs_effects();
         self.prefs_screen.set_view(self.prefs_view());

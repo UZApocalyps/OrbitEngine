@@ -97,9 +97,14 @@ opt-level = 1
 lto = "thin"
 opt-level = 3
 
+# The player templates (`cargo xtask templates`): smallest wasm first.
 [profile.release-wasm]
 inherits = "release"
-opt-level = "s"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
 
 # Vendored egui-snarl 0.12.0, unmodified except for its Cargo.toml: egui is
 # depended on with default-features = false (upstream enables egui default_fonts,
