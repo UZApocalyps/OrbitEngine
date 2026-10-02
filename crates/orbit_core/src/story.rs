@@ -122,17 +122,17 @@ pub enum NodeKind {
         transition: Option<Transition>,
         /// Sprite scale (uniform, or horizontal when `scale_y` is set).
         /// `None` uses the character's `default_scale` (schema v6).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         scale: Option<f32>,
         /// Vertical scale for a non-uniform stretch; `None` keeps the
         /// horizontal scale (schema v6).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         scale_y: Option<f32>,
         /// Mirrors the sprite on the X axis (schema v6).
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default)]
         flip_x: bool,
         /// Mirrors the sprite on the Y axis (schema v6).
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default)]
         flip_y: bool,
     },
     /// Removes a character from the stage.
@@ -265,7 +265,9 @@ impl Story {
     /// Serializes to pretty RON.
     pub fn to_ron(&self) -> Result<String, CoreError> {
         let cfg = ron::ser::PrettyConfig::new().indentor("    ".to_owned());
-        Ok(ron::ser::to_string_pretty(self, cfg)?)
+        Ok(strip_default_fields(&ron::ser::to_string_pretty(
+            self, cfg,
+        )?))
     }
 
     /// Finds a node and returns `(scene index, node index)`.
@@ -342,8 +344,27 @@ impl Story {
     }
 }
 
-fn is_false(value: &bool) -> bool {
-    !*value
+/// Lines `to_ron` leaves out: the v6 look fields of `Show` and the character
+/// scale at their default. They are always written by `Serialize` (a binary,
+/// non self-describing format such as the postcard game pack would misalign
+/// on a skipped field) and dropped from the human-readable RON, where each
+/// field is on its own line and these names appear nowhere else as keys.
+const DEFAULT_LINES: [&str; 5] = [
+    "scale: None,",
+    "scale_y: None,",
+    "flip_x: false,",
+    "flip_y: false,",
+    "default_scale: 1.0,",
+];
+
+fn strip_default_fields(ron: &str) -> String {
+    let mut out = String::with_capacity(ron.len());
+    for line in ron.split_inclusive('\n') {
+        if !DEFAULT_LINES.contains(&line.trim()) {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

@@ -141,6 +141,34 @@ mod tests {
     }
 
     #[test]
+    fn scale_mirror_and_free_positions_survive_postcard() {
+        let mut pack = demo_pack();
+        pack.story.characters[0].default_scale = 0.75;
+        let mut styled = 0;
+        for node in pack.story.scenes.iter_mut().flat_map(|s| &mut s.nodes) {
+            if let orbit_core::NodeKind::Show {
+                position,
+                scale,
+                scale_y,
+                flip_x,
+                ..
+            } = &mut node.kind
+            {
+                if styled % 2 == 0 {
+                    *position = orbit_core::Position::Free { x: 0.4, y: 0.9 };
+                    *scale = Some(0.5);
+                    *scale_y = Some(1.5);
+                    *flip_x = true;
+                }
+                styled += 1;
+            }
+        }
+        assert!(styled > 1);
+        let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
+        assert_eq!(back, pack);
+    }
+
+    #[test]
     fn bad_packs_are_refused() {
         assert_eq!(
             GamePack::from_bytes(b"(schema_version: 5)").unwrap_err(),

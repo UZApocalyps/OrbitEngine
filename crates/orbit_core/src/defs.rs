@@ -143,16 +143,12 @@ pub struct Character {
     pub default_position: Option<Position>,
     /// Scale applied when a `Show` does not override it (schema v6). `1.0`
     /// is the native size; not written to the file when it is `1.0`.
-    #[serde(default = "default_scale", skip_serializing_if = "is_default_scale")]
+    #[serde(default = "default_scale")]
     pub default_scale: f32,
 }
 
 fn default_scale() -> f32 {
     1.0
-}
-
-fn is_default_scale(scale: &f32) -> bool {
-    *scale == 1.0
 }
 
 /// Written by hand (instead of `skip_serializing_if`) so that the field is
@@ -163,7 +159,11 @@ impl Serialize for Character {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let write_default = self.default_position.is_some() || !serializer.is_human_readable();
-        let mut st = serializer.serialize_struct("Character", 4 + usize::from(write_default))?;
+        let write_scale = self.default_scale != 1.0 || !serializer.is_human_readable();
+        let mut st = serializer.serialize_struct(
+            "Character",
+            4 + usize::from(write_default) + usize::from(write_scale),
+        )?;
         st.serialize_field("id", &self.id)?;
         st.serialize_field("name_id", &self.name_id)?;
         st.serialize_field("color", &self.color)?;
@@ -172,6 +172,11 @@ impl Serialize for Character {
             st.serialize_field("default_position", &self.default_position)?;
         } else {
             st.skip_field("default_position")?;
+        }
+        if write_scale {
+            st.serialize_field("default_scale", &self.default_scale)?;
+        } else {
+            st.skip_field("default_scale")?;
         }
         st.end()
     }
