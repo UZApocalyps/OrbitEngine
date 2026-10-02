@@ -168,6 +168,9 @@ impl Ui {
             self.set_slider_from_x(id, p[0], out);
             return;
         }
+        if self.drag_list(p) {
+            return;
+        }
         self.focus_visible = false;
         let hit = self.hit_test(p);
         if hit != self.hover {
@@ -184,6 +187,7 @@ impl Ui {
     fn pointer_down(&mut self, p: [f32; 2], out: &mut Vec<WidgetEvent>) {
         self.pointer = p;
         self.focus_visible = false;
+        self.begin_list_drag(p);
         let Some(id) = self.hit_test(p) else { return };
         self.focus = Some(id);
         self.hover = Some(id);
@@ -205,7 +209,9 @@ impl Ui {
     fn pointer_up(&mut self, p: [f32; 2], out: &mut Vec<WidgetEvent>) {
         self.pointer = p;
         self.drag = None;
+        let dragged = matches!(self.list_drag.take(), Some((_, _, _, true)));
         if let Some(id) = self.pressed.take()
+            && !dragged
             && self.hit_test(p) == Some(id)
         {
             self.activate(id, out);
@@ -444,6 +450,54 @@ impl Ui {
         }
         *first = new;
         self.layout();
+        true
+    }
+
+    /// Remembers the scroll list under a pressed pointer (when it has rows
+    /// out of view) so a vertical drag can scroll it.
+    fn begin_list_drag(&mut self, p: [f32; 2]) {
+        self.list_drag = None;
+        let mut found = None;
+        for (i, n) in self.nodes.iter().enumerate() {
+            if let Kind::ScrollList { first, shown } = n.kind
+                && n.visible
+                && n.enabled
+                && contains(n.rect, p)
+                && shown < n.children.len()
+            {
+                found = Some((NodeId(i), p[1], first, false));
+            }
+        }
+        self.list_drag = found;
+    }
+
+    /// Scrolls the list being dragged; `true` while a drag is in progress
+    /// (the pointer then no longer hovers/presses widgets).
+    fn drag_list(&mut self, p: [f32; 2]) -> bool {
+        const THRESHOLD: f32 = 8.0;
+        let Some((list, y0, first0, mut active)) = self.list_drag else {
+            return false;
+        };
+        if !active && (p[1] - y0).abs() < THRESHOLD {
+            return false;
+        }
+        if !active {
+            active = true;
+            // The press turned into a scroll: it must not click a row.
+            self.pressed = None;
+            self.list_drag = Some((list, y0, first0, true));
+        }
+        let (rect_h, first, shown) = match self.nodes[list.0].kind {
+            Kind::ScrollList { first, shown } => (self.nodes[list.0].rect[3], first, shown),
+            _ => return false,
+        };
+        let pitch = (rect_h / shown.max(1) as f32).max(24.0);
+        // Content follows the pointer: dragging down shows earlier rows.
+        let target = first0 as i32 - ((p[1] - y0) / pitch).round() as i32;
+        let delta = target - first as i32;
+        if delta != 0 {
+            self.scroll_by(list, delta);
+        }
         true
     }
 

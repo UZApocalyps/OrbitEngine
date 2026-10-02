@@ -9,9 +9,30 @@ use orbit_gfx::wgpu;
 
 use crate::sprite::{
     Batch, INDICES_PER_SPRITE, Sprite2d, VERTEX_SIZE, VERTICES_PER_SPRITE, Vertex, build_batches,
-    fill_indices,
+    clip_to_scissor, fill_indices,
 };
 use crate::texture::TextureStore;
+
+/// Where scissor rectangles land: camera visible world rect, viewport and
+/// target size of the pass being drawn.
+pub(crate) struct ClipSpace {
+    pub visible: [f32; 4],
+    pub viewport: crate::camera::Viewport,
+    pub size: [u32; 2],
+}
+
+impl ClipSpace {
+    /// The scissor installed with the viewport (restored after clipped
+    /// batches).
+    fn viewport_scissor(&self) -> [u32; 4] {
+        let (size, vp) = (self.size, self.viewport);
+        let x = (vp.x.max(0.0) as u32).min(size[0].saturating_sub(1));
+        let y = (vp.y.max(0.0) as u32).min(size[1].saturating_sub(1));
+        let w = (vp.width as u32).clamp(1, size[0].saturating_sub(x).max(1));
+        let h = (vp.height as u32).clamp(1, size[1].saturating_sub(y).max(1));
+        [x, y, w, h]
+    }
+}
 
 const INITIAL_CAPACITY: usize = 256; // sprites
 
@@ -187,6 +208,7 @@ impl SpriteGpu {
         pass: &mut wgpu::RenderPass<'_>,
         format: wgpu::TextureFormat,
         textures: &TextureStore,
+        clip: &ClipSpace,
     ) {
         let Some(pipeline) = self.pipelines.get(&format) else {
             return;
@@ -198,7 +220,18 @@ impl SpriteGpu {
         pass.set_bind_group(0, Some(&self.globals_bind_group), &[]);
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        let full = clip.viewport_scissor();
         for batch in &self.batches {
+            let scissor = match batch.clip {
+                Some(rect) => {
+                    match clip_to_scissor(rect, clip.visible, clip.viewport, clip.size) {
+                        Some(s) => s,
+                        None => continue,
+                    }
+                }
+                None => full,
+            };
+            pass.set_scissor_rect(scissor[0], scissor[1], scissor[2], scissor[3]);
             let Some(entry) = textures.get(batch.texture) else {
                 log::debug!("sprite uses a released texture {:?}", batch.texture);
                 continue;

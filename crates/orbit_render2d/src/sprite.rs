@@ -38,6 +38,9 @@ pub struct Sprite2d {
     pub tint: [f32; 4],
     /// Sub-region of the texture: `[u0, v0, u1, v1]`.
     pub uv: [f32; 4],
+    /// Optional scissor rectangle `[x, y, w, h]` in world pixels: the sprite
+    /// is only visible inside it. Usually set through [`Scene::push_clip`].
+    pub clip: Option<[f32; 4]>,
 }
 
 impl Sprite2d {
@@ -53,7 +56,14 @@ impl Sprite2d {
             anchor: [0.5, 0.5],
             tint: [1.0; 4],
             uv: [0.0, 0.0, 1.0, 1.0],
+            clip: None,
         }
+    }
+
+    /// Restricts the sprite to the world rectangle `[x, y, w, h]`.
+    pub fn clip(mut self, rect: [f32; 4]) -> Self {
+        self.clip = Some(rect);
+        self
     }
 
     pub fn layer(mut self, layer: Layer) -> Self {
@@ -119,6 +129,16 @@ pub struct Scene {
     /// `None` to leave the target as it is.
     pub clear: Option<[f32; 4]>,
     sprites: Vec<Sprite2d>,
+    clips: Vec<[f32; 4]>,
+}
+
+/// Intersection of two `[x, y, w, h]` rectangles (zero size when disjoint).
+pub fn intersect_rects(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let x0 = a[0].max(b[0]);
+    let y0 = a[1].max(b[1]);
+    let x1 = (a[0] + a[2]).min(b[0] + b[2]);
+    let y1 = (a[1] + a[3]).min(b[1] + b[3]);
+    [x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)]
 }
 
 impl Scene {
@@ -126,12 +146,36 @@ impl Scene {
         Self::default()
     }
 
-    pub fn push(&mut self, sprite: Sprite2d) {
+    /// Adds a sprite, clipped to the active clip stack (see
+    /// [`Scene::push_clip`]).
+    pub fn push(&mut self, mut sprite: Sprite2d) {
+        if let Some(&top) = self.clips.last() {
+            sprite.clip = Some(match sprite.clip {
+                Some(own) => intersect_rects(top, own),
+                None => top,
+            });
+        }
         self.sprites.push(sprite);
+    }
+
+    /// Clips every sprite pushed from now on to the world rectangle
+    /// `[x, y, w, h]` (intersected with the enclosing clip). Pair with
+    /// [`Scene::pop_clip`].
+    pub fn push_clip(&mut self, rect: [f32; 4]) {
+        let rect = match self.clips.last() {
+            Some(&top) => intersect_rects(top, rect),
+            None => rect,
+        };
+        self.clips.push(rect);
+    }
+
+    pub fn pop_clip(&mut self) {
+        self.clips.pop();
     }
 
     pub fn clear_sprites(&mut self) {
         self.sprites.clear();
+        self.clips.clear();
     }
 
     pub fn sprites(&self) -> &[Sprite2d] {
@@ -160,11 +204,40 @@ pub(crate) const VERTICES_PER_SPRITE: usize = 4;
 pub(crate) const INDICES_PER_SPRITE: usize = 6;
 
 /// One draw call: consecutive quads sharing a texture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Batch {
     pub texture: TextureId,
     pub first_index: u32,
     pub index_count: u32,
+    pub clip: Option<[f32; 4]>,
+}
+
+/// Converts a world clip rectangle to a pixel scissor `[x, y, w, h]` inside
+/// `viewport` (itself inside a target of `size`). `visible` is the camera
+/// visible world rect `[left, top, right, bottom]`. `None` when nothing is
+/// left to draw.
+pub(crate) fn clip_to_scissor(
+    clip: [f32; 4],
+    visible: [f32; 4],
+    viewport: crate::camera::Viewport,
+    size: [u32; 2],
+) -> Option<[u32; 4]> {
+    let ww = (visible[2] - visible[0]).max(1e-6);
+    let wh = (visible[3] - visible[1]).max(1e-6);
+    let (sx, sy) = (viewport.width / ww, viewport.height / wh);
+    let px0 = viewport.x + (clip[0] - visible[0]) * sx;
+    let py0 = viewport.y + (clip[1] - visible[1]) * sy;
+    let px1 = viewport.x + (clip[0] + clip[2] - visible[0]) * sx;
+    let py1 = viewport.y + (clip[1] + clip[3] - visible[1]) * sy;
+    // Stay inside the letterboxed viewport and the target.
+    let x0 = px0.floor().max(viewport.x.max(0.0));
+    let y0 = py0.floor().max(viewport.y.max(0.0));
+    let x1 = px1.ceil().min((viewport.x + viewport.width).min(size[0] as f32));
+    let y1 = py1.ceil().min((viewport.y + viewport.height).min(size[1] as f32));
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some([x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32])
 }
 
 /// The four corners (TL, TR, BL, BR) of a sprite in world space.
@@ -212,13 +285,14 @@ pub(crate) fn build_batches(
             });
         }
         match batches.last_mut() {
-            Some(last) if last.texture == s.texture => {
+            Some(last) if last.texture == s.texture && last.clip == s.clip => {
                 last.index_count += INDICES_PER_SPRITE as u32;
             }
             _ => batches.push(Batch {
                 texture: s.texture,
                 first_index: (n * INDICES_PER_SPRITE) as u32,
                 index_count: INDICES_PER_SPRITE as u32,
+                clip: s.clip,
             }),
         }
     }
@@ -278,6 +352,49 @@ mod tests {
         assert_eq!((b[0].first_index, b[0].index_count), (0, 12));
         assert_eq!((b[1].first_index, b[1].index_count), (12, 6));
         assert_eq!((b[2].first_index, b[2].index_count), (18, 6));
+    }
+
+    #[test]
+    fn clip_change_breaks_batches() {
+        let a = sprite(1, Layer::UI, 0.0);
+        let b = sprite(1, Layer::UI, 0.0).clip([0.0, 0.0, 5.0, 5.0]);
+        let (_, batches) = run(&[a.clone(), b.clone(), b, a]);
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[1].index_count, 12);
+        assert_eq!(batches[1].clip, Some([0.0, 0.0, 5.0, 5.0]));
+    }
+
+    #[test]
+    fn scene_clip_stack_intersects_and_stamps() {
+        let mut scene = Scene::new();
+        scene.push_clip([0.0, 0.0, 100.0, 100.0]);
+        scene.push_clip([50.0, 50.0, 100.0, 100.0]);
+        scene.push(sprite(1, Layer::UI, 0.0));
+        scene.pop_clip();
+        scene.push(sprite(1, Layer::UI, 0.0));
+        scene.pop_clip();
+        scene.push(sprite(1, Layer::UI, 0.0));
+        let s = scene.sprites();
+        assert_eq!(s[0].clip, Some([50.0, 50.0, 50.0, 50.0]));
+        assert_eq!(s[1].clip, Some([0.0, 0.0, 100.0, 100.0]));
+        assert_eq!(s[2].clip, None);
+        let none = intersect_rects([0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 5.0, 5.0]);
+        assert_eq!(none[2], 0.0);
+    }
+
+    #[test]
+    fn scissor_follows_viewport_scale_and_clamps() {
+        use crate::camera::{Camera2d, Viewport};
+        let vis = Camera2d::new(1920.0, 1080.0).visible_rect();
+        let vp = Viewport { x: 0.0, y: 0.0, width: 960.0, height: 540.0 };
+        let sc = clip_to_scissor([100.0, 100.0, 200.0, 100.0], vis, vp, [960, 540]);
+        assert_eq!(sc, Some([50, 50, 100, 50]));
+        let sc = clip_to_scissor([-50.0, 1000.0, 200.0, 200.0], vis, vp, [960, 540]);
+        assert_eq!(sc, Some([0, 500, 75, 40]));
+        assert_eq!(clip_to_scissor([3000.0, 0.0, 10.0, 10.0], vis, vp, [960, 540]), None);
+        let vp = Viewport { x: 10.0, y: 20.0, width: 960.0, height: 540.0 };
+        let sc = clip_to_scissor([0.0, 0.0, 192.0, 108.0], vis, vp, [1000, 600]);
+        assert_eq!(sc, Some([10, 20, 96, 54]));
     }
 
     #[test]

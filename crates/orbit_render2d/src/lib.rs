@@ -33,7 +33,7 @@ pub use camera::{Camera2d, Viewport, letterbox};
 pub use orbit_gfx;
 pub use orbit_gfx::SurfaceFrame;
 pub use readback::{Readback, ReadbackStatus};
-pub use sprite::{Layer, Scene, Sprite2d};
+pub use sprite::{Layer, Scene, Sprite2d, intersect_rects};
 pub use texture::{TARGET_FORMAT, TextureId, TextureOptions};
 pub use transition::Transition;
 
@@ -477,7 +477,12 @@ impl Renderer2d {
                 multiview_mask: None,
             });
             set_viewport(&mut pass, viewport, target_size);
-            self.sprites.draw(&mut pass, format, &self.textures);
+            let clip = batcher::ClipSpace {
+                visible: self.camera.visible_rect(),
+                viewport,
+                size: target_size,
+            };
+            self.sprites.draw(&mut pass, format, &self.textures, &clip);
         }
         self.gfx.queue().submit(Some(encoder.finish()));
     }

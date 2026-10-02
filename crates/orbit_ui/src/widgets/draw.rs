@@ -447,9 +447,18 @@ let color = style
             }
         }
         self.nodes[id.0].cache = cache;
+        // Rows of a scroll list never paint outside the list (long text,
+        // glows, borders).
+        let clip_list = matches!(self.nodes[id.0].kind, Kind::ScrollList { .. });
+        if clip_list {
+            self.ctx.scene.push_clip(rect);
+        }
         for i in 0..self.nodes[id.0].children.len() {
             let child = self.nodes[id.0].children[i];
             self.draw_node(child, layer);
+        }
+        if clip_list {
+            self.ctx.scene.pop_clip();
         }
     }
 }

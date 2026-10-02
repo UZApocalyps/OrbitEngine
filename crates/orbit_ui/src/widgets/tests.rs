@@ -152,6 +152,31 @@ fn scroll_list_shows_only_whole_items_that_fit() {
     assert_eq!(ui.rect_of(101).unwrap()[1], before[1] - 110.0);
 }
 
+#[test]
+fn dragging_a_scroll_list_scrolls_it_without_clicking_rows() {
+    let mut ui = ui();
+    let list = ui.add_root(Node::scroll_list(1).fixed(400.0, 250.0).gap(10.0));
+    for i in 0..10 {
+        ui.add(list, Node::button(100 + i, "x").w(Size::Fill(1.0)).h(Size::Fixed(100.0)));
+    }
+    ui.layout();
+    let y = ui.rect_of(100).unwrap()[1] + 20.0;
+    ui.handle(UiInput::PointerMove([20.0, y]));
+    ui.handle(UiInput::PointerDown([20.0, y]));
+    // Drag up by two row pitches: two rows scroll away.
+    ui.handle(UiInput::PointerMove([20.0, y - 220.0]));
+    assert_eq!(ui.scroll_first(1), Some(2));
+    let events = ui.handle(UiInput::PointerUp([20.0, y - 220.0]));
+    assert!(!events.iter().any(|e| matches!(e, WidgetEvent::Activated(_))));
+    // A plain click (no movement) still activates a row.
+    let y = ui.rect_of(102).unwrap()[1] + 20.0;
+    ui.handle(UiInput::PointerMove([20.0, y]));
+    ui.handle(UiInput::PointerDown([20.0, y]));
+    let events = ui.handle(UiInput::PointerUp([20.0, y]));
+    assert!(events.iter().any(|e| matches!(e, WidgetEvent::Activated(_))));
+    assert_eq!(ui.scroll_first(1), Some(2));
+}
+
 // ------------------------------------------------------- hit testing
 
 #[test]

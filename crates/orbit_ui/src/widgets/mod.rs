@@ -38,6 +38,9 @@ pub struct Ui {
     pub(crate) hover: Option<NodeId>,
     pub(crate) pressed: Option<NodeId>,
     pub(crate) drag: Option<NodeId>,
+    /// Touch/mouse drag of a scroll list: list, pointer Y and `first` at
+    /// press time, and whether the drag passed the threshold.
+    pub(crate) list_drag: Option<(NodeId, f32, usize, bool)>,
     /// `true` after keyboard input: the focus ring is drawn.
     pub(crate) focus_visible: bool,
     pub(crate) pointer: [f32; 2],
@@ -59,6 +62,7 @@ impl Ui {
             hover: None,
             pressed: None,
             drag: None,
+            list_drag: None,
             focus_visible: false,
             pointer: [-1.0, -1.0],
             laid_out: false,
@@ -268,6 +272,7 @@ impl Ui {
         self.hover = None;
         self.pressed = None;
         self.drag = None;
+        self.list_drag = None;
         self.laid_out = false;
         self.focus_first();
     }
@@ -282,6 +287,7 @@ impl Ui {
             self.hover = None;
             self.pressed = None;
             self.drag = None;
+            self.list_drag = None;
             self.laid_out = false;
             self.focus_first();
         }
