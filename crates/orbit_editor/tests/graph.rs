@@ -415,7 +415,7 @@ fn positions_persist_in_the_layout_sidecar_and_reload() {
     frames(&mut core, &ctx, 3);
     let (intro_scene, first) = intro(&core);
     let head = BlockId::Scene(intro_scene);
-    let sidecar = root.join(layout_file("story.ron"));
+    let sidecar = root.join(layout_file("story.orbit"));
 
     // Merely looking at the graph writes nothing.
     assert!(!sidecar.exists());
@@ -447,7 +447,7 @@ fn positions_persist_in_the_layout_sidecar_and_reload() {
     assert!(text.contains(&others[0].key()), "{text}");
     // The story file itself is untouched by positions.
     assert!(
-        !std::fs::read_to_string(root.join("story.ron"))
+        !std::fs::read_to_string(root.join("story.orbit"))
             .unwrap()
             .contains("123")
     );
@@ -496,7 +496,7 @@ fn a_200_block_graph_draws_and_every_block_has_a_position() {
     let big = generate_graph_story(225);
     orbit_project::save_story(
         &orbit_editor::storage::FsStorage::new(&root),
-        "story.ron",
+        "story.orbit",
         &big,
     )
     .unwrap();

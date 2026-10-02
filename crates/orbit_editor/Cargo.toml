@@ -84,6 +84,17 @@ resources = [
     { src = "../../packaging/templates", target = "templates" },
 ]
 
+# `.orbit` story files (TL-02): registry keys + ProgID on Windows (MSI and
+# NSIS), `.desktop` MimeType + shared-mime-info type on Linux (deb and
+# AppImage). Double-click runs `orbit-editor <file>`, which opens the project.
+# No dedicated document icon yet: the application icon is used (TODO_LATER).
+[[package.metadata.packager.file-associations]]
+extensions = ["orbit"]
+mime-type = "application/x-orbit-story"
+description = "OrbitEngine story"
+name = "OrbitEngine story"
+role = "Editor"
+
 [package.metadata.packager.nsis]
 installer-icon = "../../assets/brand/icon.ico"
 installer-mode = "both"

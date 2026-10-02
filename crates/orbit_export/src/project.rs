@@ -9,6 +9,13 @@ use orbit_project::{
 
 use crate::error::{ExportError, Result};
 
+/// Story file of a folder with no manifest: `story.orbit`, else legacy `story.ron`.
+fn default_story_of(root: &Path) -> String {
+    orbit_project::default_story_in(|f| root.join(f).is_file())
+        .unwrap_or(DEFAULT_STORY_FILE)
+        .to_owned()
+}
+
 /// A project folder (or a bare story file) ready to be compiled.
 #[derive(Debug, Clone)]
 pub struct ExportProject {
@@ -21,13 +28,13 @@ pub struct ExportProject {
 
 impl ExportProject {
     /// Opens `path`: a project folder (holding `orbit.project.ron` or
-    /// `story.ron`), the manifest itself, or a story `.ron` file (its folder,
+    /// `story.orbit` or legacy `story.ron`), the manifest itself, or a story `.orbit` or `.ron` file (its folder,
     /// or the ancestor holding its assets, is then the project root).
     pub fn open(path: &Path) -> Result<Self> {
         let root_and_story = |root: &Path, manifest: Option<ProjectManifest>| {
             let story_file = manifest
                 .as_ref()
-                .map_or_else(|| DEFAULT_STORY_FILE.to_owned(), |m| m.story.clone());
+                .map_or_else(|| default_story_of(root), |m| m.story.clone());
             (root.to_owned(), story_file, manifest)
         };
         let (root, story_file, manifest) = if path.is_dir() {
@@ -158,6 +165,7 @@ mod tests {
     fn opens_folders_manifests_and_bare_stories() {
         let dir = TempDir::new("project");
         std::fs::write(dir.path().join("story.ron"), "x").unwrap();
+        std::fs::write(dir.path().join("story.orbit"), "x").unwrap();
         // No manifest: the folder with story.ron works.
         let p = ExportProject::open(dir.path()).unwrap();
         assert!(p.manifest.is_none());

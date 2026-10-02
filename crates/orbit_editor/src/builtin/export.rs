@@ -964,7 +964,7 @@ mod tests {
         let dir = TempDir::new("editor_export_profiles");
         demo_project(dir.path());
         let mut ui = ExportUi::default();
-        ui.ensure_loaded(dir.path(), "story.ron", true, "Demo");
+        ui.ensure_loaded(dir.path(), "story.orbit", true, "Demo");
         assert_eq!(ui.profiles.len(), 1);
         ui.profile().game_name = "Mon jeu".into();
         ui.profile().version = "3.0.0".into();

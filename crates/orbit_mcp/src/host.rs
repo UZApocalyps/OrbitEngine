@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use orbit_core::Story;
 use orbit_plugin_api::{Plugin, PluginError, ProjectEvent, ProjectRegistry};
 use orbit_project::{
-    DEFAULT_STORY_FILE, MANIFEST_FILE, Project, ProjectManifest, ProjectStorage, load_manifest,
+    MANIFEST_FILE, Project, ProjectManifest, ProjectStorage, default_story_in, load_manifest,
     load_story, save_manifest, save_story,
 };
 use serde_json::{Value as Json, json};
@@ -287,7 +287,7 @@ pub struct HeadlessHost {
 }
 
 impl HeadlessHost {
-    /// Opens a project folder, or a story `.ron` file (its folder is the
+    /// Opens a project folder, or a story `.orbit` (or legacy `.ron`) file (its folder is the
     /// project). An empty folder becomes a new project.
     pub fn open(path: &Path) -> Result<Self, OpenError> {
         let (root, story_file_hint): (PathBuf, Option<String>) = if path.is_dir() {
@@ -324,14 +324,21 @@ impl HeadlessHost {
                 .to_owned();
             ProjectManifest::new(name)
         };
+        let story_file_hint_was_none = story_file_hint.is_none();
         if let Some(file) = story_file_hint {
             manifest.story = file;
+        }
+        if !manifest_exists && story_file_hint_was_none && !storage.exists(&manifest.story) {
+            // A legacy folder (`story.ron`, no manifest) keeps its story.
+            if let Some(found) = default_story_in(|f| storage.exists(f)) {
+                manifest.story = found.to_owned();
+            }
         }
         let story_file = manifest.story.clone();
 
         let story = if storage.exists(&story_file) {
             load_story(&storage, &story_file).map_err(|e| open_err(e.to_string()))?
-        } else if !manifest_exists && !storage.exists(DEFAULT_STORY_FILE) {
+        } else if !manifest_exists && default_story_in(|f| storage.exists(f)).is_none() {
             // A brand new project.
             let story = Story::new(manifest.name.clone());
             save_manifest(&storage, &manifest).map_err(|e| open_err(e.to_string()))?;

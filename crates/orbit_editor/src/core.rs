@@ -374,6 +374,14 @@ impl EditorCore {
             .project
             .dispatch(&ProjectEvent::Opened { title: &title });
         self.report_opened();
+        if self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.location.is_legacy_story())
+        {
+            let hint = self.state.t("project.convert_hint");
+            self.state.push_toast(Level::Info, hint);
+        }
         crate::live::on_project_opened(self);
         if let Some(meta) = pending {
             self.dialog = Some(Dialog::Recovery { meta });
@@ -443,6 +451,47 @@ impl EditorCore {
                 let message = self.state.tf("project.save_failed", &[("error", &e)]);
                 self.state.push_toast(Level::Error, message);
                 false
+            }
+        }
+    }
+
+    /// Renames the legacy `.ron` story of the open project to `.orbit` and
+    /// reopens the project on it. Unsaved edits are saved first.
+    pub fn convert_story(&mut self) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        if !session.location.is_legacy_story() {
+            return;
+        }
+        if self.is_modified() && !self.save() {
+            return;
+        }
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let old_story = session.location.story_path();
+        let old_remembered = match &session.location.manifest {
+            Some(_) => session.location.root.clone(),
+            None => old_story.clone(),
+        };
+        match session.location.convert_to_orbit() {
+            Ok(reopen) => {
+                self.forget(&old_remembered);
+                self.open_now(&reopen);
+                let file = self
+                    .session
+                    .as_ref()
+                    .map(|s| s.location.story_file.clone())
+                    .unwrap_or_default();
+                let message = self.state.tf("project.convert_done", &[("file", &file)]);
+                self.state.push_toast(Level::Info, message);
+            }
+            Err(error) => {
+                let message = self
+                    .state
+                    .tf("project.convert_failed", &[("error", &error)]);
+                self.state.push_toast(Level::Error, message);
             }
         }
     }
@@ -628,7 +677,7 @@ impl EditorCore {
             EditorRequest::PickOpenStory => {
                 if let Some(path) = rfd::FileDialog::new()
                     .set_title(self.state.t("host.pick_story"))
-                    .add_filter(self.state.t("host.story_filter"), &["ron"])
+                    .add_filter(self.state.t("host.story_filter"), &["orbit", "ron"])
                     .pick_file()
                 {
                     self.open_project(&path);
@@ -647,6 +696,7 @@ impl EditorCore {
             EditorRequest::Save => {
                 self.save();
             }
+            EditorRequest::ConvertStory => self.convert_story(),
             EditorRequest::CloseProject => self.close_project(),
             EditorRequest::Quit => {
                 self.request_close();
@@ -999,7 +1049,10 @@ impl EditorCore {
         }
         let Some(session) = self.session.as_mut() else {
             match paths.as_slice() {
-                [one] if one.is_dir() || one.extension().is_some_and(|e| e == "ron") => {
+                [one]
+                    if one.is_dir()
+                        || one.extension().is_some_and(|e| e == "orbit" || e == "ron") =>
+                {
                     self.open_project(one);
                 }
                 _ => {

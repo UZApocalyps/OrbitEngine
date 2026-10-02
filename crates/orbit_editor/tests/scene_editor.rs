@@ -274,7 +274,7 @@ fn a_story_is_built_with_the_editor_operations_only_and_validates() {
     // preview's VM up to the choice.
     assert!(core.save());
     let root = core.state.project.as_ref().unwrap().root.clone();
-    let on_disk = Story::from_ron(&std::fs::read_to_string(root.join("story.ron")).unwrap())
+    let on_disk = Story::from_ron(&std::fs::read_to_string(root.join("story.orbit")).unwrap())
         .expect("the saved story validates");
     assert_eq!(on_disk, story_now);
     let mut planned = orbit_runtime::preview::plan_from_beginning(&Arc::new(story_now)).unwrap();

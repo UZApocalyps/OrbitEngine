@@ -46,10 +46,10 @@ fn demo_story_path() -> PathBuf {
 fn demo_project(root: &Path) -> PathBuf {
     let project = root.join("demo-project");
     std::fs::create_dir_all(&project).unwrap();
-    std::fs::copy(demo_story_path(), project.join("story.ron")).unwrap();
+    std::fs::copy(demo_story_path(), project.join("story.orbit")).unwrap();
     std::fs::write(
         project.join(MANIFEST_FILE),
-        "(format: 1, name: \"Demo\", story: \"story.ron\", plugins: [])",
+        "(format: 1, name: \"Demo\", story: \"story.orbit\", plugins: [])",
     )
     .unwrap();
     project
@@ -276,7 +276,7 @@ fn edit_undo_redo_save_and_validate() {
     let edited = core.story().unwrap().clone();
     core.run_action_now("orbit.core.save", &ctx);
     assert!(!core.is_modified());
-    let on_disk = Story::from_ron(&std::fs::read_to_string(project.join("story.ron")).unwrap())
+    let on_disk = Story::from_ron(&std::fs::read_to_string(project.join("story.orbit")).unwrap())
         .expect("saved story validates");
     assert_eq!(on_disk, edited);
     assert!(orbit_core::validate(&on_disk).errors.is_empty());
@@ -335,7 +335,7 @@ fn crash_then_relaunch_offers_recovery() {
         let edited = core.story().unwrap().clone();
         // The snapshot is next to the project, the project file is untouched.
         assert!(project.join(".orbit/recovery/story.recovery.ron").is_file());
-        let on_disk = std::fs::read_to_string(project.join("story.ron")).unwrap();
+        let on_disk = std::fs::read_to_string(project.join("story.orbit")).unwrap();
         assert_ne!(Story::from_ron(&on_disk).unwrap(), edited);
         edited
         // `core` is dropped without `shutdown()`: a crash.
@@ -416,7 +416,7 @@ fn closing_with_unsaved_changes_asks_first() {
     core.resolve_unsaved(Pending::Quit, UnsavedChoice::Save);
     assert!(core.take_quit());
     let on_disk =
-        Story::from_ron(&std::fs::read_to_string(project.join("story.ron")).unwrap()).unwrap();
+        Story::from_ron(&std::fs::read_to_string(project.join("story.orbit")).unwrap()).unwrap();
     assert_eq!(
         on_disk.scenes.iter().map(|s| s.nodes.len()).sum::<usize>(),
         nodes + 1

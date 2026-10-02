@@ -295,7 +295,7 @@ fn an_ai_client_builds_a_scene_with_a_choice_over_stdio() {
     assert!(ok, "orbit validate failed: {output}");
     assert!(output.contains("0 error(s)"), "{output}");
     let story =
-        orbit_core::Story::from_ron(&std::fs::read_to_string(dir.join("story.ron")).unwrap())
+        orbit_core::Story::from_ron(&std::fs::read_to_string(dir.join("story.orbit")).unwrap())
             .unwrap();
     assert_eq!(story.characters.len(), 2);
     assert_eq!(story.scenes.len(), 1);

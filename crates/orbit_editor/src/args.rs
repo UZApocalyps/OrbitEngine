@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use orbit_editor_api::{Lang, ThemeMode};
 
 pub const USAGE: &str = "\
-orbit-editor [projet | histoire.ron] [options]
+orbit-editor [projet | histoire.orbit] [options]
 
 Options :
   --config-dir <dossier>   dossier de configuration utilisateur (disposition, projets récents)
@@ -34,9 +34,9 @@ Options :
   --screenshot <png>       enregistre la frame rendue dans un PNG puis quitte
   --exit-after <secondes>  quitte après ce délai (la capture est prise à ce moment) ; comme un
                            arrêt brutal : pas de confirmation, la sauvegarde automatique reste
-  --generate-story <n> <fichier.ron>
+  --generate-story <n> <fichier.orbit>
                            écrit une histoire de test d'environ <n> nœuds (un scène) puis quitte
-  --generate-graph <n> <fichier.ron>
+  --generate-graph <n> <fichier.orbit>
                            écrit une histoire de test d'environ <n> blocs de graphe (scènes liées) puis quitte
   --autoscroll <px>        fait défiler l'éditeur de scène de <px> pixels par frame ; avec --exit-after,
                            journalise le temps de frame (moyenne, p95, max) à la sortie

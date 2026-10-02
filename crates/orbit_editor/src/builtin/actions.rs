@@ -60,6 +60,18 @@ impl EditorPlugin for CorePlugin {
             .menu("file", 120),
         );
         reg.action(
+            ActionDef::new("convert_story", "action.convert_story", |c| {
+                c.request(EditorRequest::ConvertStory);
+            })
+            .icon(icons::FILM_SLATE)
+            .category("category.file")
+            .menu("file", 205)
+            .enabled(|c| {
+                c.project_info()
+                    .is_some_and(|p| orbit_project::orbit_story_name(&p.story_file).is_some())
+            }),
+        );
+        reg.action(
             ActionDef::new("save", "action.save", |c| c.request(EditorRequest::Save))
                 .icon(icons::FLOPPY_DISK)
                 .category("category.file")

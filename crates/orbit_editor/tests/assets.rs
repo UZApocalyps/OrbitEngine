@@ -592,7 +592,7 @@ fn an_error_is_displayed_within_300_ms_on_a_ten_thousand_node_story() {
         &orbit_editor::i18n::translator(orbit_editor_api::Lang::Fr),
     )
     .unwrap();
-    let story_file = root.join("story.ron");
+    let story_file = root.join("story.orbit");
     let big = orbit_editor::bench::generate_story(10_000);
     std::fs::write(&story_file, big.to_ron().unwrap()).unwrap();
     core.open_project(&root);

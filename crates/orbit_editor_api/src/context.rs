@@ -122,8 +122,10 @@ pub enum EditorRequest {
     OpenProject(PathBuf),
     /// File dialog to pick a project folder.
     PickOpenProject,
-    /// File dialog to pick a story `.ron` file.
+    /// File dialog to pick a story `.orbit` (or legacy `.ron`) file.
     PickOpenStory,
+    /// Renames the open project's legacy `.ron` story to `.orbit`.
+    ConvertStory,
     /// Opens the "new project" dialog.
     NewProjectDialog,
     Save,
