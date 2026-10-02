@@ -238,8 +238,8 @@ mod tests {
     #[test]
     fn play_from_a_branch_node_gives_the_state_of_a_full_reading() {
         let story = demo();
-        // The line Bob says in the "help" branch: after the choice.
-        let target = node("01JBX0N0000000000000000021");
+        // The line Bob says once the player takes the job: after the first choice.
+        let target = node("01JBX0N0000000000000000026");
         let planned = plan_from_node(&story, target, SeekLimits::default()).unwrap();
         assert!(matches!(planned.kind, StartKind::Path { choices: 1 }));
         assert!(planned.notice.is_none());
@@ -259,7 +259,7 @@ mod tests {
         expected.shown = None; // the preview runs the target, it does not re-show the line before
         assert_eq!(vm.snapshot(), expected);
         assert_eq!(vm.position(), Some(target));
-        assert_eq!(vm.variable("helped"), Some(&Value::Bool(true)));
+        assert_eq!(vm.variable("credits"), Some(&Value::Int(150)));
         // And it plays on exactly like the full reading does.
         let from_here = read_lines(&mut vm, 0, 200);
         let from_full = read_lines(&mut full, 0, 200);
@@ -294,9 +294,17 @@ mod tests {
         let tweaked = Arc::new(tweaked);
         let planned = plan_from_node(&tweaked, orphan, SeekLimits::default()).unwrap();
         assert_eq!(planned.kind, StartKind::Fallback);
-        assert!(planned.notice.as_deref().unwrap().contains("aucun chemin"));
+        // (The demo loops through its hub with changing credits: the search is
+        // bounded, so the notice may be either "no path" or "too long".)
+        assert!(
+            planned
+                .notice
+                .as_deref()
+                .unwrap()
+                .contains("état par défaut")
+        );
         assert_eq!(planned.vm.position(), Some(orphan));
-        assert_eq!(planned.vm.variable("helped"), Some(&Value::Bool(false)));
+        assert_eq!(planned.vm.variable("credits"), Some(&Value::Int(100)));
     }
 
     #[test]

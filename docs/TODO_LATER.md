@@ -9,6 +9,12 @@ Idées validées mais hors des jalons en cours. À replanifier dans la roadmap l
 - Plusieurs thèmes prêts à l'emploi sélectionnables depuis l'éditeur.
 - **Éditeur de thème de l'UI en jeu** (repoussé hors de M3e) : inspecteur auto-généré sur le `Theme` RON d'`orbit_ui` avec preview en direct ; à faire avec cette refonte, pas avant.
 
+## Éditeur de courbes d'easing pour les transitions
+- Éditeur visuel de courbes (Bézier cubique + presets : linear, ease-in/out, back, bounce, elastic…) avec aperçu animé.
+- Applicable aux transitions (fade, dissolve, mask dissolve) et, à terme, aux tweens/animations M5 (même composant réutilisé dans la timeline).
+- Courbes nommées réutilisables stockées dans le projet ; sérialisées dans l'IR, exécutées à l'identique en natif et web.
+- Exposé au MCP (création/assignation de courbes).
+
 ## Optimisations
 - Taille du bundle web : fait au M4 (10,2 → 4,4 Mo, budget en CI). Pistes restantes : décodage JPEG / polices chargés à la demande, `cosmic-text` sans `swash` inutile, binaryen récent, `twiggy` pour chercher les gros morceaux.
 - Profilage CPU/GPU du runtime et de l'éditeur.

@@ -277,8 +277,8 @@ mod tests {
     #[test]
     fn a_node_in_a_branch_has_the_state_of_a_full_reading() {
         let story = demo();
-        // "help" branch: SetVar(helped) right after the first choice.
-        let target = node("01JBX0N0000000000000000020");
+        // "take_job" branch: SetVar(credits) right after the first choice.
+        let target = node("01JBX0N0000000000000000025");
         let SeekOutcome::Found(path) = seek(&story, target, SeekLimits::default()) else {
             panic!("reachable");
         };
@@ -293,37 +293,40 @@ mod tests {
         assert_eq!(vm.position(), Some(target));
         assert_eq!(vm.snapshot(), reference.snapshot());
         // Real state, not defaults: the room, the music, both characters, and
-        // `helped` still false (its SetVar is the target, not yet run).
+        // `credits` still at 100 (its SetVar is the target, not yet run).
         let scene = vm.scene();
         assert!(scene.background.is_some());
         assert!(scene.music.is_some());
         assert_eq!(scene.characters.len(), 2);
-        assert_eq!(vm.variable("helped"), Some(&Value::Bool(false)));
+        assert_eq!(vm.variable("credits"), Some(&Value::Int(100)));
     }
 
     #[test]
     fn choices_and_variables_decide_which_path_is_taken() {
         let story = demo();
-        // "thanks" only runs when `helped` is true: option 0 at the choice.
-        let thanks = node("01JBX0N0000000000000000039");
-        let SeekOutcome::Found(path) = seek(&story, thanks, SeekLimits::default()) else {
+        // "haggle_ok" only runs with reputation >= 1, which "ask about the AI"
+        // (option 2, then back to the same choice) grants: two choices.
+        let ok = node("01JBX0N0000000000000000034");
+        let SeekOutcome::Found(path) = seek(&story, ok, SeekLimits::default()) else {
+            panic!("reachable");
+        };
+        assert_eq!(path.choices.len(), 2);
+        assert_eq!(path.choices[0].index, 2);
+        assert_eq!(path.choices[1].index, 1);
+        let vm = path.into_vm(&story).unwrap();
+        assert_eq!(vm.variable("rep"), Some(&Value::Int(1)));
+        assert_eq!(vm.snapshot(), played_to(&story, ok, &[2, 1]).snapshot());
+
+        // "haggle_fail" runs with no reputation: haggle straight away.
+        let fail = node("01JBX0N0000000000000000037");
+        let SeekOutcome::Found(path) = seek(&story, fail, SeekLimits::default()) else {
             panic!("reachable");
         };
         assert_eq!(path.choices.len(), 1);
-        assert_eq!(path.choices[0].index, 0);
-        let vm = path.into_vm(&story).unwrap();
-        assert_eq!(vm.variable("helped"), Some(&Value::Bool(true)));
-        assert_eq!(vm.snapshot(), played_to(&story, thanks, &[0]).snapshot());
-
-        // "grumpy" only runs when `helped` is false: option 1.
-        let grumpy = node("01JBX0N0000000000000000040");
-        let SeekOutcome::Found(path) = seek(&story, grumpy, SeekLimits::default()) else {
-            panic!("reachable");
-        };
         assert_eq!(path.choices[0].index, 1);
         let vm = path.into_vm(&story).unwrap();
-        assert_eq!(vm.variable("helped"), Some(&Value::Bool(false)));
-        assert_eq!(vm.snapshot(), played_to(&story, grumpy, &[1]).snapshot());
+        assert_eq!(vm.variable("rep"), Some(&Value::Int(0)));
+        assert_eq!(vm.snapshot(), played_to(&story, fail, &[1]).snapshot());
     }
 
     #[test]
@@ -334,7 +337,7 @@ mod tests {
             panic!("reachable");
         };
         assert!(path.choices.is_empty());
-        let target = node("01JBX0N0000000000000000010");
+        let target = node("01JBX0N0000000000000000015");
         let SeekOutcome::Found(path) = seek(&story, target, SeekLimits::default()) else {
             panic!("reachable");
         };
@@ -484,7 +487,7 @@ mod tests {
     #[test]
     fn the_result_is_deterministic() {
         let story = demo();
-        let target = node("01JBX0N0000000000000000046");
+        let target = node("01JBX0N0000000000000000034");
         let run = || match seek(&story, target, SeekLimits::default()) {
             SeekOutcome::Found(p) => (p.choices, p.state),
             other => panic!("{other:?}"),

@@ -11,15 +11,16 @@ fn demo_story_loads_and_validates_without_warnings() {
     let story = Story::from_ron(DEMO).expect("demo.ron must be valid");
     assert_eq!(story.schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(story.title, "Demo");
-    assert_eq!(story.scenes.len(), 1);
+    assert_eq!(story.scenes.len(), 8);
     let report = validate(&story);
     assert!(report.errors.is_empty(), "{:#?}", report.errors);
     assert!(report.warnings.is_empty(), "{:#?}", report.warnings);
 
     let nodes = || story.scenes.iter().flat_map(|s| &s.nodes);
     let count = |f: fn(&NodeKind) -> bool| nodes().filter(|n| f(&n.kind)).count();
-    assert!(count(|k| matches!(k, NodeKind::Say { .. })) >= 20);
-    assert_eq!(count(|k| matches!(k, NodeKind::Choice { .. })), 1);
+    assert!(count(|k| matches!(k, NodeKind::Say { .. })) >= 60);
+    assert!(count(|k| matches!(k, NodeKind::Choice { .. })) >= 7);
+    assert!(count(|k| matches!(k, NodeKind::JumpScene { .. })) >= 10);
     assert!(count(|k| matches!(k, NodeKind::PlayMusic { .. })) >= 1);
     assert!(count(|k| matches!(k, NodeKind::PlaySound { .. })) >= 1);
     assert!(count(|k| matches!(k, NodeKind::Call { .. })) >= 1);
@@ -41,11 +42,13 @@ fn demo_manifest_points_to_assets_demo() {
         files,
         [
             ("assets/demo/alice_happy.png", AssetKind::Image),
-            ("assets/demo/alice_neutral.png", AssetKind::Image),
+            ("assets/demo/alice_mad.png", AssetKind::Image),
+            ("assets/demo/alice_sad.png", AssetKind::Image),
             ("assets/demo/bg_room.png", AssetKind::Image),
             ("assets/demo/bg_street.png", AssetKind::Image),
-            ("assets/demo/bob_angry.png", AssetKind::Image),
-            ("assets/demo/bob_neutral.png", AssetKind::Image),
+            ("assets/demo/bob_happy.png", AssetKind::Image),
+            ("assets/demo/bob_mad.png", AssetKind::Image),
+            ("assets/demo/bob_sad.png", AssetKind::Image),
             ("assets/demo/music_theme.wav", AssetKind::Music),
             ("assets/demo/sfx_door.wav", AssetKind::Sound),
         ]

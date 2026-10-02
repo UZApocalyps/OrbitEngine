@@ -53,7 +53,7 @@ fn check_pak(pak: &[u8], version: &str) {
     let pack = GamePack::from_bytes(&index.read_from(pak, "game.pack").unwrap()).unwrap();
     assert_eq!(pack.story.title, "Demo");
     assert_eq!(pack.translations.len(), 1);
-    assert_eq!(pack.story.assets.assets.len(), 8);
+    assert_eq!(pack.story.assets.assets.len(), 10);
     for asset in &pack.story.assets.assets {
         // Every asset of the story is in the pak, intact (checksum checked).
         index.read_from(pak, &asset.path).expect(&asset.path);
@@ -233,7 +233,7 @@ fn a_broken_project_fails_before_writing_anything() {
     std::fs::write(
         project_dir.path().join("story.ron"),
         story.replace(
-            "\"01JBX0T0000000000000000004\": \"Hello! Welcome to OrbitEngine.\",",
+            "\"01JBX0T0000000000000000004\": \"Neo-Kyoto, 2087. Rain hammers the megatower blocks while neon bleeds across every wet window.\",",
             "",
         ),
     )

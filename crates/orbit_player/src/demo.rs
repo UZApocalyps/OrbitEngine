@@ -23,10 +23,10 @@ const CHARS_PER_SECOND: f32 = 38.0;
 const IMAGES: &[&str] = &[
     "demo/bg_room.png",
     "demo/bg_street.png",
-    "demo/alice_neutral.png",
+    "demo/alice_sad.png",
     "demo/alice_happy.png",
-    "demo/bob_neutral.png",
-    "demo/bob_angry.png",
+    "demo/bob_sad.png",
+    "demo/bob_mad.png",
     "demo/mask_wipe.png",
 ];
 const FONTS: &[&str] = &[
@@ -241,16 +241,12 @@ impl Ready {
         scene.clear_sprites();
         scene.clear = Some([0.0, 0.0, 0.0, 1.0]);
         let (bg, left, right) = if idx == 0 {
-            (
-                "demo/bg_room.png",
-                "demo/alice_neutral.png",
-                "demo/bob_neutral.png",
-            )
+            ("demo/bg_room.png", "demo/alice_sad.png", "demo/bob_sad.png")
         } else {
             (
                 "demo/bg_street.png",
                 "demo/alice_happy.png",
-                "demo/bob_angry.png",
+                "demo/bob_mad.png",
             )
         };
         scene.push(

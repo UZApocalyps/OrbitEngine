@@ -29,10 +29,10 @@ use crate::demo::asset_root;
 const IMAGES: &[&str] = &[
     "demo/bg_room.png",
     "demo/bg_street.png",
-    "demo/alice_neutral.png",
+    "demo/alice_sad.png",
     "demo/alice_happy.png",
-    "demo/bob_neutral.png",
-    "demo/bob_angry.png",
+    "demo/bob_sad.png",
+    "demo/bob_mad.png",
 ];
 const FONTS: &[&str] = &[
     "fonts/Inter-Regular.ttf",
@@ -574,7 +574,7 @@ impl Ready {
         );
         scene.push(
             Sprite2d::new(
-                self.tex("demo/alice_neutral.png"),
+                self.tex("demo/alice_sad.png"),
                 [520.0, 1080.0],
                 [600.0, 900.0],
             )
@@ -583,7 +583,7 @@ impl Ready {
         );
         scene.push(
             Sprite2d::new(
-                self.tex("demo/bob_neutral.png"),
+                self.tex("demo/bob_sad.png"),
                 [1400.0, 1080.0],
                 [600.0, 900.0],
             )

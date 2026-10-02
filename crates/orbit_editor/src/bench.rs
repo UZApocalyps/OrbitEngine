@@ -28,7 +28,7 @@ pub fn generate_story(nodes: usize) -> Story {
         kind: AssetKind::Music,
         path: "assets/demo/music_theme.wav".into(),
     });
-    let sprite = image(&mut story, "assets/demo/alice_neutral.png");
+    let sprite = image(&mut story, "assets/demo/alice_sad.png");
     let names = ["Alice", "Bob", "Clara", "David"];
     let colors = [
         Color::rgb(232, 120, 160),

@@ -313,7 +313,7 @@ mod tests {
         let profile = project.profile(None).unwrap();
         let compiled = compile(&project, &profile).unwrap();
         assert_eq!(compiled.pack.story.title, "Demo");
-        assert_eq!(compiled.assets.len(), 8);
+        assert_eq!(compiled.assets.len(), 10);
         assert_eq!(compiled.pack.translations.len(), 1);
         assert_eq!(compiled.pack.translations[0].lang, "fr");
         assert!(compiled.unreferenced.is_empty());
@@ -340,7 +340,7 @@ mod tests {
         std::fs::write(
             dir.path().join("story.ron"),
             story.replace(
-                "\"01JBX0T0000000000000000004\": \"Hello! Welcome to OrbitEngine.\",",
+                "\"01JBX0T0000000000000000004\": \"Neo-Kyoto, 2087. Rain hammers the megatower blocks while neon bleeds across every wet window.\",",
                 "",
             ),
         )

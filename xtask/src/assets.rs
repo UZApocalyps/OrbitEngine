@@ -681,12 +681,16 @@ pub fn generate() -> Result {
 
     let demo = assets.join("demo");
     std::fs::create_dir_all(&demo)?;
-    bg_room().save("bg_room.png", &demo)?;
-    bg_street().save("bg_street.png", &demo)?;
-    character(&alice(), Expression::Neutral).save("alice_neutral.png", &demo)?;
-    character(&alice(), Expression::Happy).save("alice_happy.png", &demo)?;
-    character(&bob(), Expression::Neutral).save("bob_neutral.png", &demo)?;
-    character(&bob(), Expression::Angry).save("bob_angry.png", &demo)?;
+    // The demo backgrounds and characters are hand-made art (assets/demo): the
+    // procedural placeholders go to their own folder so they never overwrite it.
+    let placeholder = assets.join("placeholder");
+    std::fs::create_dir_all(&placeholder)?;
+    bg_room().save("bg_room.png", &placeholder)?;
+    bg_street().save("bg_street.png", &placeholder)?;
+    character(&alice(), Expression::Neutral).save("alice_calm.png", &placeholder)?;
+    character(&alice(), Expression::Happy).save("alice_happy.png", &placeholder)?;
+    character(&bob(), Expression::Neutral).save("bob_calm.png", &placeholder)?;
+    character(&bob(), Expression::Angry).save("bob_furious.png", &placeholder)?;
     let mask = mask_wipe();
     let path = demo.join("mask_wipe.png");
     mask.save(&path)?;

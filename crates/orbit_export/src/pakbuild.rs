@@ -115,8 +115,8 @@ mod tests {
         ] {
             assert!(index.contains(entry), "{entry} is missing");
         }
-        // 1 pack + 8 assets + 3 fonts.
-        assert_eq!(index.entries().len(), 12);
+        // 1 pack + 10 assets + 3 fonts.
+        assert_eq!(index.entries().len(), 14);
         // The pack decodes back to the story.
         let pack =
             orbit_pak::GamePack::from_bytes(&index.read_from(&built.bytes, "game.pack").unwrap())
