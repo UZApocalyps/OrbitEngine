@@ -18,6 +18,10 @@ Options :
   --run-action <id>        exécute une action au démarrage (répétable), ex. orbit.explorer.add_say
   --open-palette           ouvre la palette de commandes au démarrage
   --palette-query <texte>  texte saisi dans la palette (avec --open-palette)
+  --search <texte>         ouvre la recherche globale avec ce texte
+  --select-asset <n>       sélectionne la n-ième ressource du manifeste (0 = première), pour les captures
+  --import <fichier>       importe un fichier (ou un dossier) dans le projet ouvert au démarrage,
+                           comme un glisser-déposer (répétable)
   --play-preview           lance la preview (depuis le début) au démarrage
   --play-from-selection    lance la preview « depuis ici » sur le nœud de --select-node
   --edit-text <n>=<texte>  modifie le texte de la n-ième réplique (0 = première) après --edit-delay,
@@ -49,6 +53,9 @@ pub struct Args {
     pub run_actions: Vec<String>,
     pub open_palette: bool,
     pub palette_query: String,
+    pub search: Option<String>,
+    pub select_asset: Option<usize>,
+    pub imports: Vec<PathBuf>,
     pub screenshot: Option<PathBuf>,
     pub exit_after: Option<f32>,
     pub play_preview: bool,
@@ -110,6 +117,13 @@ impl Args {
                 }
                 "--config-dir" => out.config_dir = Some(PathBuf::from(value("--config-dir")?)),
                 "--palette-query" => out.palette_query = value("--palette-query")?,
+                "--search" => out.search = Some(value("--search")?),
+                "--select-asset" => {
+                    let v = value("--select-asset")?;
+                    out.select_asset =
+                        Some(v.parse().map_err(|_| format!("nombre invalide : {v}"))?);
+                }
+                "--import" => out.imports.push(PathBuf::from(value("--import")?)),
                 "--screenshot" => out.screenshot = Some(PathBuf::from(value("--screenshot")?)),
                 "--theme" => {
                     out.theme = Some(match value("--theme")?.as_str() {

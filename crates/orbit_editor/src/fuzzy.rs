@@ -37,6 +37,12 @@ fn fold(c: char) -> char {
     }
 }
 
+/// Lowercases and strips the accents of `text` (one char in, one char out,
+/// so char positions of the result match the original).
+pub fn fold_str(text: &str) -> String {
+    text.chars().map(fold).collect()
+}
+
 fn is_separator(c: char) -> bool {
     c.is_whitespace() || matches!(c, '-' | '_' | '/' | '.' | ':' | '(' | ')' | '\'' | '’')
 }

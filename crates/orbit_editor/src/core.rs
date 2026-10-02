@@ -21,11 +21,16 @@ use orbit_project::{ChangeKind, load_story};
 
 use crate::builtin;
 use crate::config::{ConfigStore, UserConfig};
+use crate::diagnostics::{Extras, Live};
 use crate::dock;
 use crate::palette::Palette;
 use crate::session::{AUTOSAVE_INTERVAL, Session};
 use crate::storage::{ProjectLocation, RecoveryMeta, create_project};
 use crate::theme::{Theme, install_fonts};
+use crate::watch::{ProjectWatcher, WatchEvent};
+
+/// How often the project's files are looked at for outside changes.
+const WATCH_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Startup options of the editor core.
 #[derive(Clone, Debug)]
@@ -33,6 +38,8 @@ pub struct CoreOptions {
     /// User config folder; `None` keeps everything in memory (tests).
     pub config_dir: Option<PathBuf>,
     pub autosave_interval: Duration,
+    /// How often the project's files are looked at for outside changes.
+    pub watch_interval: Duration,
     /// Forces a theme instead of the saved one.
     pub theme: Option<ThemeMode>,
     /// Opens the command palette on the first frame (debug / screenshots).
@@ -46,6 +53,7 @@ impl Default for CoreOptions {
         Self {
             config_dir: None,
             autosave_interval: AUTOSAVE_INTERVAL,
+            watch_interval: WATCH_INTERVAL,
             theme: None,
             open_palette: false,
             palette_query: String::new(),
@@ -83,6 +91,11 @@ pub enum Dialog {
         meta: RecoveryMeta,
     },
     NewProject(NewProjectForm),
+    /// The story file changed on disk (another tool, another editor).
+    /// `conflict`: the open project also has unsaved edits.
+    ExternalChange {
+        conflict: bool,
+    },
 }
 
 pub struct EditorCore {
@@ -103,8 +116,18 @@ pub struct EditorCore {
     /// Bumped each time a project is opened or closed (the preview reloads
     /// from scratch instead of resuming).
     pub project_generation: u64,
-    /// `(project generation, revision)` the diagnostics were computed for.
-    diag_key: Option<(u64, u64)>,
+    /// Live validation (inline, or debounced on a worker for big stories).
+    live: Live,
+    /// State shared with the built-in plugins (search index, file moves).
+    pub shared: builtin::Shared,
+    /// Watches the story file and the asset folder of the open project.
+    watcher: Option<ProjectWatcher>,
+    /// Folder the manifest's relative paths resolve against.
+    assets_root: PathBuf,
+    /// The story file changed on disk and no dialog could say so yet.
+    story_changed_on_disk: bool,
+    /// Bumped when files of the asset folders changed (the preview reloads).
+    pub asset_epoch: u64,
 }
 
 impl EditorCore {
@@ -120,7 +143,8 @@ impl EditorCore {
         extra: Vec<Box<dyn EditorPlugin>>,
     ) -> Self {
         let mut registry = EditorRegistry::new();
-        for plugin in builtin::plugins().iter().chain(extra.iter()) {
+        let shared = builtin::Shared::default();
+        for plugin in builtin::plugins_with(&shared).iter().chain(extra.iter()) {
             if let Err(e) = registry.install(plugin.as_ref()) {
                 registry.errors.push(e.to_string());
             }
@@ -155,6 +179,7 @@ impl EditorCore {
                 .push(Level::Error, format!("plugin : {error}"));
         }
         let saved_layout = ron::to_string(&dock).unwrap_or_default();
+        let live = Live::new(state.waker.clone());
         Self {
             registry,
             state,
@@ -170,8 +195,18 @@ impl EditorCore {
             first_frame_done: false,
             show_frame_counter: false,
             project_generation: 0,
-            diag_key: None,
+            live,
+            shared,
+            watcher: None,
+            assets_root: PathBuf::new(),
+            story_changed_on_disk: false,
+            asset_epoch: 0,
         }
+    }
+
+    /// Lets background threads wake the window loop (see `orbit_platform::Waker`).
+    pub fn set_waker(&self, wake: impl Fn() + Send + Sync + 'static) {
+        self.state.waker.set(wake);
     }
 
     // ------------------------------------------------------------ projects
@@ -193,6 +228,18 @@ impl EditorCore {
             .map(|node| node.id);
         if let Some(id) = id {
             self.state.selection = Some(Selection::Node(id));
+        }
+    }
+
+    /// Selects the `n`-th asset of the manifest in the asset library (debug
+    /// option `--select-asset`, tests).
+    pub fn select_nth_asset(&mut self, n: usize) {
+        let id = self
+            .story()
+            .and_then(|s| s.assets.assets.get(n))
+            .map(|a| a.id);
+        if id.is_some() {
+            self.state.selected_asset = id;
         }
     }
 
@@ -271,7 +318,9 @@ impl EditorCore {
         self.state.current_scene = None;
         self.state.clipboard = None;
         self.state.collapsed_scenes.clear();
-        self.diag_key = None;
+        self.state.selected_asset = None;
+        self.state.pending_reveal = None;
+        self.reset_project_services();
         dock::show_panel(&mut self.dock, builtin::panels::SCENE);
         self.sync_info();
         self.remember(&title, &remembered);
@@ -322,6 +371,9 @@ impl EditorCore {
         self.registry.project.dispatch(&ProjectEvent::BeforeSave);
         match session.save() {
             Ok(()) => {
+                if let Some(watcher) = &self.watcher {
+                    watcher.accept_story_now();
+                }
                 let name = session.name.clone();
                 self.state
                     .push_toast(Level::Info, format!("« {name} » enregistré."));
@@ -348,6 +400,9 @@ impl EditorCore {
 
     fn close_now(&mut self) {
         self.project_generation += 1;
+        self.watcher = None;
+        self.live.reset();
+        self.shared.search.0.borrow_mut().clear();
         if let Some(session) = self.session.take() {
             self.registry.project.dispatch(&ProjectEvent::Closed);
             session.close();
@@ -587,7 +642,11 @@ impl EditorCore {
     /// autosave, layout persistence.
     pub fn after_frame(&mut self, ctx: &Context) {
         self.process_changes();
-        self.refresh_diagnostics();
+        self.poll_watcher(ctx);
+        if self.refresh_diagnostics() {
+            // Findings arrived after the UI of this frame was drawn.
+            ctx.request_repaint();
+        }
         self.sync_info();
         if let Some(session) = self.session.as_mut() {
             let now = Instant::now();
@@ -610,24 +669,255 @@ impl EditorCore {
         }
     }
 
-    /// Recomputes the per-node validation findings when the project changed.
-    pub fn refresh_diagnostics(&mut self) {
+    /// Keeps the validation findings up to date: inline for small stories,
+    /// debounced on a worker thread for big ones. `true` when new findings
+    /// were published.
+    pub fn refresh_diagnostics(&mut self) -> bool {
         let Some(session) = self.session.as_ref() else {
-            self.diag_key = None;
-            self.state.diagnostics = Default::default();
-            return;
+            if self.state.diagnostics.revision != 0 || !self.state.diagnostics.problems.is_empty() {
+                self.state.diagnostics = Default::default();
+            }
+            return false;
         };
         let key = (self.project_generation, session.project.revision());
-        if self.diag_key == Some(key) {
+        let registry = &self.registry.project;
+        let published = self.live.update(
+            Instant::now(),
+            key,
+            session.project.story(),
+            &self.assets_root,
+            |story| Extras {
+                custom: registry.validate_custom(story),
+                missing_plugins: registry.missing_plugin_nodes(story),
+                asset_issues: Vec::new(),
+            },
+        );
+        match published {
+            Some(diagnostics) => {
+                if let Some(ms) = self.live.last_run.filter(|d| *d > Duration::from_millis(8)) {
+                    log::debug!(
+                        target: "orbit_editor::perf",
+                        "validation: {} ms",
+                        ms.as_millis()
+                    );
+                }
+                self.state.diagnostics = diagnostics;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Validation timings of the last run (tests, perf logs): `(run, edit to
+    /// publication)`.
+    pub fn validation_timings(&self) -> (Option<Duration>, Option<Duration>) {
+        (self.live.last_run, self.live.last_latency)
+    }
+
+    /// Starts what depends on the open project: file watching, live
+    /// validation, the search index.
+    fn reset_project_services(&mut self) {
+        self.live.reset();
+        self.shared.search.0.borrow_mut().clear();
+        self.shared.moves.borrow_mut().0.clear();
+        self.story_changed_on_disk = false;
+        let Some(session) = &self.session else {
+            self.watcher = None;
+            return;
+        };
+        self.assets_root =
+            crate::preview_host::find_assets_root(&session.location.root, session.project.story());
+        self.watcher = Some(ProjectWatcher::start(
+            self.assets_root.clone(),
+            session.location.story_path(),
+            self.options.watch_interval,
+            self.state.waker.clone(),
+        ));
+    }
+
+    // ----------------------------------------------------- files on disk
+
+    /// Delivers what the file watcher noticed.
+    fn poll_watcher(&mut self, ctx: &Context) {
+        let events = self
+            .watcher
+            .as_ref()
+            .map(ProjectWatcher::poll)
+            .unwrap_or_default();
+        for event in events {
+            match event {
+                WatchEvent::StoryChanged => self.story_changed_on_disk = true,
+                WatchEvent::Assets {
+                    added,
+                    modified,
+                    removed,
+                } => self.on_assets_changed(ctx, &added, &modified, &removed),
+            }
+        }
+        if self.story_changed_on_disk && self.dialog.is_none() {
+            self.story_changed_on_disk = false;
+            self.check_external_story();
+            ctx.request_repaint();
+        }
+    }
+
+    fn on_assets_changed(
+        &mut self,
+        ctx: &Context,
+        added: &[String],
+        modified: &[String],
+        removed: &[String],
+    ) {
+        self.state.asset_epoch += 1;
+        self.asset_epoch += 1;
+        self.live.mark_assets_dirty();
+        let changed: Vec<String> = added
+            .iter()
+            .chain(modified)
+            .chain(removed)
+            .cloned()
+            .collect();
+        builtin::thumbs::invalidate(ctx, &self.state.waker, &changed);
+        for (verb, list) in [
+            ("ajouté", added),
+            ("modifié", modified),
+            ("supprimé", removed),
+        ] {
+            for path in list.iter().take(5) {
+                self.state.console.push(
+                    Level::Info,
+                    format!("Fichier {verb} sur le disque : {path}"),
+                );
+            }
+            if list.len() > 5 {
+                self.state.console.push(
+                    Level::Info,
+                    format!("… et {} autre(s) fichier(s) {verb}(s)", list.len() - 5),
+                );
+            }
+        }
+        ctx.request_repaint();
+    }
+
+    /// The story file changed: nothing to do when it holds what the editor
+    /// holds, otherwise ask whether to reload.
+    fn check_external_story(&mut self) {
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        match load_story(&session.location.storage(), &session.location.story_file) {
+            Ok(story) => {
+                if &story == session.saved_story() {
+                    return;
+                }
+                let conflict = session.modified();
+                self.dialog = Some(Dialog::ExternalChange { conflict });
+            }
+            Err(e) => self.state.console.push(
+                Level::Warn,
+                format!(
+                    "Le fichier de l'histoire a changé sur le disque mais n'est pas lisible : {e}"
+                ),
+            ),
+        }
+    }
+
+    /// The user answered the "file changed on disk" question.
+    pub fn resolve_external_change(&mut self, reload: bool) {
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        if !reload {
+            if let Some(watcher) = &self.watcher {
+                watcher.accept_story_now();
+            }
+            self.state.push_toast(
+                Level::Info,
+                "Fichier modifié ignoré : l'enregistrement le remplacera.",
+            );
             return;
         }
-        let started = Instant::now();
-        self.state.diagnostics =
-            crate::diagnostics::compute(session.project.story(), session.project.revision());
-        self.diag_key = Some(key);
-        let elapsed = started.elapsed();
-        if elapsed > Duration::from_millis(8) {
-            log::debug!(target: "orbit_editor::perf", "validation: {} ms", elapsed.as_millis());
+        match session.reload_from_disk() {
+            Ok(()) => {
+                self.project_generation += 1;
+                self.reset_project_services();
+                if let Some(watcher) = &self.watcher {
+                    watcher.accept_story_now();
+                }
+                self.state.selection = None;
+                self.state.node_selection.clear();
+                self.state.current_scene = None;
+                self.state.clipboard = None;
+                self.sync_info();
+                let title = self.session.as_ref().map(|s| s.name.clone());
+                if let Some(title) = title {
+                    self.registry
+                        .project
+                        .dispatch(&ProjectEvent::Opened { title: &title });
+                }
+                self.state
+                    .push_toast(Level::Info, "Histoire rechargée depuis le disque.");
+            }
+            Err(e) => self
+                .state
+                .push_toast(Level::Error, format!("Rechargement impossible : {e}")),
+        }
+    }
+
+    /// Files dropped on the window: imported as assets of the open project
+    /// (images, sounds, folders of them); with no project open, a dropped
+    /// project folder or story file opens it.
+    pub fn import_dropped(&mut self, paths: Vec<PathBuf>) {
+        if self.dialog.is_some() {
+            return;
+        }
+        let Some(session) = self.session.as_mut() else {
+            match paths.as_slice() {
+                [one] if one.is_dir() || one.extension().is_some_and(|e| e == "ron") => {
+                    self.open_project(one);
+                }
+                _ => self.state.push_toast(
+                    Level::Warn,
+                    "Ouvrez un projet avant de déposer des ressources.",
+                ),
+            }
+            return;
+        };
+        let mut ectx =
+            EditorContext::new(Some(&mut session.project), &mut self.state, &self.registry);
+        let report = builtin::import_paths(&mut ectx, &paths);
+        if !report.imported.is_empty() {
+            self.state.requests.push(EditorRequest::ShowPanel(
+                builtin::panels::LIBRARY.to_owned(),
+            ));
+        }
+    }
+
+    /// Opens the global search panel with `query` typed in (debug option
+    /// `--search`, tests).
+    pub fn open_search(&mut self, query: &str) {
+        self.state
+            .plugin_prefs
+            .entry(builtin::ids::SEARCH.to_owned())
+            .or_default()
+            .insert("initial_query".to_owned(), query.to_owned());
+        self.state.focus_panel = Some(builtin::panels::SEARCH.to_owned());
+        self.state
+            .requests
+            .push(EditorRequest::ShowPanel(builtin::panels::SEARCH.to_owned()));
+    }
+
+    /// Takes the files dropped on the window this frame, if any.
+    pub fn handle_dropped_files(&mut self, ctx: &Context) {
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            self.import_dropped(dropped);
         }
     }
 
@@ -652,6 +942,19 @@ impl EditorCore {
                     self.state.selection = None;
                 }
                 _ => {}
+            }
+            // After undo / redo, files moved by an asset rename follow the manifest.
+            if matches!(event.kind, ChangeKind::Undone | ChangeKind::Redone) {
+                let moved = crate::assets::reconcile_moves(
+                    &self.assets_root,
+                    story,
+                    &self.shared.moves.borrow(),
+                );
+                if !moved.is_empty() {
+                    self.state.asset_epoch += 1;
+                    self.asset_epoch += 1;
+                    self.live.mark_assets_dirty();
+                }
             }
             // After undo / redo the selection follows the node that changed.
             if matches!(event.kind, ChangeKind::Undone | ChangeKind::Redone)
@@ -680,7 +983,8 @@ impl EditorCore {
             .session
             .as_mut()
             .and_then(|s| s.autosave_wake(self.options.autosave_interval));
-        [toasts, autosave].into_iter().flatten().min()
+        let validation = self.live.next_wake();
+        [toasts, autosave, validation].into_iter().flatten().min()
     }
 
     /// Title of the window ("● Mon jeu — OrbitEngine").

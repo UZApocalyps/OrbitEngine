@@ -1,0 +1,684 @@
+//! Assets of the open project, without any UI: importing files (copy into
+//! the project, content validation by the registered importers, stable id,
+//! manifest entry as one undo step), renaming / moving, the case lint and
+//! the scan of the project's asset folders.
+//!
+//! Everything that writes goes through the project sandbox
+//! ([`orbit_project::sandbox`]): destinations are confined to the project
+//! folder, links resolved. Sources may live anywhere (they are only read).
+
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use orbit_core::{AssetEntry, AssetId, AssetKind, Story};
+use orbit_plugin_api::ProjectRegistry;
+use orbit_project::sandbox::Sandbox;
+use orbit_project::{Command, Project, ProjectError, ops};
+
+/// Largest file the importer reads (bytes).
+pub const MAX_IMPORT_BYTES: u64 = 256 * 1024 * 1024;
+/// Files taken from one dropped folder, at most.
+const MAX_FOLDER_FILES: usize = 500;
+
+/// Sub-folder of the project that holds assets of `kind`.
+pub fn asset_dir(kind: AssetKind) -> &'static str {
+    match kind {
+        AssetKind::Image => "assets/images",
+        AssetKind::Music => "assets/music",
+        AssetKind::Sound => "assets/sounds",
+    }
+}
+
+/// Why a file could not be imported (messages are meant for the user).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImportError {
+    /// No importer handles this extension.
+    Unsupported {
+        extension: String,
+        accepted: String,
+    },
+    TooLarge(u64),
+    Unreadable(String),
+    /// The importer refused the content (not really a PNG, truncated...).
+    Invalid(String),
+    /// Writing in the project failed.
+    Io(String),
+}
+
+impl std::fmt::Display for ImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImportError::Unsupported {
+                extension,
+                accepted,
+            } if extension.is_empty() => write!(
+                f,
+                "format non pris en charge (fichier sans extension ; formats acceptés : {accepted})"
+            ),
+            ImportError::Unsupported {
+                extension,
+                accepted,
+            } => write!(
+                f,
+                "format « .{extension} » non pris en charge (formats acceptés : {accepted})"
+            ),
+            ImportError::TooLarge(n) => write!(
+                f,
+                "fichier trop volumineux ({} Mo, limite {} Mo)",
+                n / (1024 * 1024),
+                MAX_IMPORT_BYTES / (1024 * 1024)
+            ),
+            ImportError::Unreadable(e) => write!(f, "lecture impossible : {e}"),
+            ImportError::Invalid(e) => write!(f, "contenu invalide : {e}"),
+            ImportError::Io(e) => write!(f, "écriture impossible : {e}"),
+        }
+    }
+}
+
+/// One file that is now an asset of the project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Imported {
+    pub id: AssetId,
+    pub kind: AssetKind,
+    /// Manifest path (relative, `/`).
+    pub path: String,
+    /// The file was already declared: nothing was added.
+    pub existing: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct ImportReport {
+    pub imported: Vec<Imported>,
+    pub failed: Vec<(PathBuf, ImportError)>,
+}
+
+impl ImportReport {
+    /// Newly declared assets (not the ones that already existed).
+    pub fn added(&self) -> usize {
+        self.imported.iter().filter(|i| !i.existing).count()
+    }
+}
+
+/// A file name safe on Windows, Linux and the web: letters, digits, `-`,
+/// `_`, `.`; spaces become `_`; the extension is lowercased. Never empty.
+pub fn sanitize_file_name(name: &str) -> String {
+    let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s, Some(e)),
+        _ => (name, None),
+    };
+    // Letters and digits stay; any run of other characters becomes one `_`
+    // (a lone `-` is kept).
+    let clean = |s: &str| -> String {
+        let mut out = String::new();
+        let mut run = String::new();
+        let flush = |out: &mut String, run: &mut String| {
+            if !run.is_empty() {
+                out.push(if run == "-" { '-' } else { '_' });
+                run.clear();
+            }
+        };
+        for c in s.chars() {
+            if c.is_alphanumeric() {
+                flush(&mut out, &mut run);
+                out.push(c);
+            } else {
+                run.push(c);
+            }
+        }
+        flush(&mut out, &mut run);
+        out.trim_matches(['-', '_']).to_owned()
+    };
+    let stem = clean(stem);
+    let stem = if stem.is_empty() {
+        "asset".to_owned()
+    } else {
+        stem
+    };
+    match ext
+        .map(|e| clean(e).to_ascii_lowercase())
+        .filter(|e| !e.is_empty())
+    {
+        Some(e) => format!("{stem}.{e}"),
+        None => stem,
+    }
+}
+
+/// Files directly under `dir` (names only), for collision checks.
+fn dir_names(dir: &Path) -> HashSet<String> {
+    fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().to_lowercase())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A manifest path for a new file named `name` in `dir`, free on disk **and**
+/// in the manifest, compared without regard to case (Windows would merge
+/// `A.png` and `a.png`; Linux and the web would not).
+fn free_path(root: &Path, dir: &str, name: &str, taken: &HashSet<String>) -> String {
+    let on_disk = dir_names(&root.join(dir));
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) => (s.to_owned(), format!(".{e}")),
+        None => (name.to_owned(), String::new()),
+    };
+    let mut n = 1;
+    loop {
+        let candidate = if n == 1 {
+            name.to_owned()
+        } else {
+            format!("{stem}-{n}{ext}")
+        };
+        let rel = format!("{dir}/{candidate}");
+        if !on_disk.contains(&candidate.to_lowercase()) && !taken.contains(&rel.to_lowercase()) {
+            return rel;
+        }
+        n += 1;
+    }
+}
+
+fn lower_ext(path: &Path) -> String {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default()
+}
+
+/// Files to import for the dropped / picked `paths`: folders are expanded
+/// (recursively, at most [`MAX_FOLDER_FILES`] files, dot-files skipped).
+pub fn expand_sources(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack: Vec<PathBuf> = paths.iter().rev().cloned().collect();
+    while let Some(path) = stack.pop() {
+        if path.is_dir() {
+            let mut children: Vec<PathBuf> = fs::read_dir(&path)
+                .map(|rd| rd.flatten().map(|e| e.path()).collect())
+                .unwrap_or_default();
+            children.sort();
+            children.retain(|c| {
+                !c.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with('.'))
+            });
+            stack.extend(children.into_iter().rev());
+        } else if out.len() < MAX_FOLDER_FILES {
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// What [`prepare`] decided for one file.
+struct Prepared {
+    entry: AssetEntry,
+    existing: bool,
+    /// The copy made in the project, removed again if the declaration fails.
+    copied: Option<PathBuf>,
+}
+
+/// Validates and copies one file; does not touch the manifest.
+fn prepare(
+    root: &Path,
+    sandbox: &Sandbox,
+    registry: &ProjectRegistry,
+    story: &Story,
+    taken: &mut HashSet<String>,
+    source: &Path,
+) -> Result<Prepared, ImportError> {
+    let meta = fs::metadata(source).map_err(|e| ImportError::Unreadable(e.to_string()))?;
+    if !meta.is_file() {
+        return Err(ImportError::Unreadable(
+            "ce n'est pas un fichier".to_owned(),
+        ));
+    }
+    if meta.len() > MAX_IMPORT_BYTES {
+        return Err(ImportError::TooLarge(meta.len()));
+    }
+    let ext = lower_ext(source);
+    let Some(importer) = registry.importer_for(&ext) else {
+        return Err(ImportError::Unsupported {
+            extension: ext,
+            accepted: registry.import_extensions().join(", "),
+        });
+    };
+    let bytes = fs::read(source).map_err(|e| ImportError::Unreadable(e.to_string()))?;
+    let imported = (importer.import)(&bytes).map_err(ImportError::Invalid)?;
+
+    // Already inside the project: declared as it is when it lies under
+    // `assets/`, copied otherwise.
+    let inside = fs::canonicalize(source)
+        .ok()
+        .and_then(|abs| sandbox.relative(&abs));
+    if let Some(rel) = &inside
+        && let Some(existing) = story.assets.assets.iter().find(|a| &a.path == rel)
+    {
+        return Ok(Prepared {
+            entry: existing.clone(),
+            existing: true,
+            copied: None,
+        });
+    }
+    if let Some(rel) = inside.filter(|rel| rel.starts_with("assets/")) {
+        taken.insert(rel.to_lowercase());
+        return Ok(Prepared {
+            entry: AssetEntry {
+                id: AssetId::new(),
+                kind: imported.kind,
+                path: rel,
+            },
+            existing: false,
+            copied: None,
+        });
+    }
+
+    let file_name = sanitize_file_name(
+        source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("asset"),
+    );
+    let rel = free_path(root, asset_dir(imported.kind), &file_name, taken);
+    let dest = sandbox
+        .resolve(&rel)
+        .map_err(|e| ImportError::Io(e.to_string()))?;
+    crate::storage::write_atomic(&dest, &imported.bytes)
+        .map_err(|e| ImportError::Io(e.to_string()))?;
+    taken.insert(rel.to_lowercase());
+    Ok(Prepared {
+        entry: AssetEntry {
+            id: AssetId::new(),
+            kind: imported.kind,
+            path: rel,
+        },
+        existing: false,
+        copied: Some(dest),
+    })
+}
+
+/// Imports files into the project: each one is validated by the importer of
+/// its extension (decoded: a renamed text file is refused), copied under
+/// `assets/<type>/` with a safe, unique name, and declared in the manifest
+/// under a new stable id. All the declarations are **one undo step**
+/// ("Importer N ressource(s)"); a file that fails is reported and does not
+/// stop the others.
+pub fn import_files(
+    project: &mut Project,
+    root: &Path,
+    registry: &ProjectRegistry,
+    sources: &[PathBuf],
+) -> ImportReport {
+    let mut report = ImportReport::default();
+    let sandbox = match Sandbox::new(root) {
+        Ok(s) => s,
+        Err(e) => {
+            for s in sources {
+                report
+                    .failed
+                    .push((s.clone(), ImportError::Io(e.to_string())));
+            }
+            return report;
+        }
+    };
+    let mut taken: HashSet<String> = project
+        .story()
+        .assets
+        .assets
+        .iter()
+        .map(|a| a.path.to_lowercase())
+        .collect();
+    let mut to_declare: Vec<AssetEntry> = Vec::new();
+    let mut copied: Vec<PathBuf> = Vec::new();
+    for source in expand_sources(sources) {
+        let story = project.story();
+        match prepare(root, &sandbox, registry, story, &mut taken, &source) {
+            Ok(p) => {
+                if !p.existing {
+                    copied.extend(p.copied);
+                    to_declare.push(p.entry.clone());
+                }
+                report.imported.push(Imported {
+                    id: p.entry.id,
+                    kind: p.entry.kind,
+                    path: p.entry.path,
+                    existing: p.existing,
+                });
+            }
+            Err(e) => report.failed.push((source, e)),
+        }
+    }
+    if to_declare.is_empty() {
+        return report;
+    }
+    let n = to_declare.len();
+    let label = if n == 1 {
+        "Importer une ressource".to_owned()
+    } else {
+        format!("Importer {n} ressources")
+    };
+    let base = project.story().assets.assets.len();
+    let result = project.transaction_labeled(&label, |tx| {
+        for (i, entry) in to_declare.iter().enumerate() {
+            tx.execute(Command::SetAsset {
+                id: entry.id,
+                entry: Some(entry.clone()),
+                index: Some(base + i),
+            })?;
+        }
+        Ok(())
+    });
+    if let Err(e) = result {
+        // Nothing was declared: do not leave the copies behind.
+        for file in copied {
+            let _ = fs::remove_file(file);
+        }
+        for i in std::mem::take(&mut report.imported) {
+            report
+                .failed
+                .push((PathBuf::from(&i.path), ImportError::Io(e.to_string())));
+        }
+    }
+    report
+}
+
+// ------------------------------------------------------------- rename, move
+
+/// A file move made by the editor: undoing / redoing the manifest change
+/// must move the file back / forth too ([`reconcile_moves`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MoveJournal(pub Vec<(String, String)>);
+
+fn exists_exact(root: &Path, rel: &str) -> bool {
+    // `exists` follows the OS's case rules; compare against the listing.
+    let mut dir = root.to_path_buf();
+    for seg in rel.split('/') {
+        let found = fs::read_dir(&dir)
+            .map(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy() == seg))
+            .unwrap_or(false);
+        if !found {
+            return false;
+        }
+        dir.push(seg);
+    }
+    true
+}
+
+/// Renames a file of the project and updates its manifest path (same id,
+/// one undo step; undo moves the file back through [`reconcile_moves`]).
+/// The extension cannot change; the new path must be free (case-insensitive).
+pub fn move_asset(
+    project: &mut Project,
+    root: &Path,
+    journal: &mut MoveJournal,
+    id: AssetId,
+    new_path: &str,
+) -> Result<(), ProjectError> {
+    let reject = |m: String| ProjectError::Rejected(m);
+    let entry = project
+        .story()
+        .assets
+        .get(id)
+        .cloned()
+        .ok_or_else(|| reject("Ressource introuvable.".to_owned()))?;
+    if entry.path == new_path {
+        return Ok(());
+    }
+    if !ops::is_valid_asset_path(new_path) {
+        return Err(reject(format!(
+            "« {new_path} » n'est pas un chemin valide."
+        )));
+    }
+    let ext_of = |p: &str| {
+        p.rsplit_once('.')
+            .map(|(_, e)| e.to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    if ext_of(&entry.path) != ext_of(new_path) {
+        return Err(reject(
+            "L'extension d'un fichier ne peut pas changer ici.".to_owned(),
+        ));
+    }
+    let sandbox = Sandbox::new(root).map_err(|e| reject(e.to_string()))?;
+    let from = sandbox
+        .resolve(&entry.path)
+        .map_err(|e| reject(e.to_string()))?;
+    let to = sandbox
+        .resolve(new_path)
+        .map_err(|e| reject(e.to_string()))?;
+    let case_only = entry.path.to_lowercase() == new_path.to_lowercase();
+    if !case_only && (to.exists() || exists_exact(root, new_path)) {
+        return Err(reject(format!(
+            "Le fichier « {new_path} » existe déjà dans le projet."
+        )));
+    }
+    // The manifest first: it validates the path and the collisions.
+    ops::set_asset_path(project, id, new_path)?;
+    if from.exists() {
+        let moved = to
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| fs::rename(&from, &to));
+        if let Err(e) = moved {
+            let _ = project.undo();
+            return Err(reject(format!("Déplacement impossible : {e}")));
+        }
+        journal.0.push((entry.path, new_path.to_owned()));
+    }
+    Ok(())
+}
+
+/// After an undo or a redo: puts the files back where the manifest says, for
+/// every move of the journal. A file is only moved when the manifest points
+/// at the other end and nothing is there yet.
+pub fn reconcile_moves(root: &Path, story: &Story, journal: &MoveJournal) -> Vec<(String, String)> {
+    let mut done = Vec::new();
+    for (a, b) in &journal.0 {
+        for (want, have) in [(a, b), (b, a)] {
+            let declared = story.assets.assets.iter().any(|e| &e.path == want);
+            let (want_abs, have_abs) = (root.join(want), root.join(have));
+            if declared
+                && !exists_exact(root, want)
+                && have_abs.exists()
+                && !story.assets.assets.iter().any(|e| &e.path == have)
+                && (want_abs.parent().map_or(Ok(()), fs::create_dir_all)).is_ok()
+                && fs::rename(&have_abs, &want_abs).is_ok()
+            {
+                done.push((have.clone(), want.clone()));
+            }
+        }
+    }
+    done
+}
+
+// --------------------------------------------------------------------- lint
+
+/// A problem between the manifest and the files.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AssetIssue {
+    /// The file does not exist.
+    Missing { asset: AssetId, path: String },
+    /// The file exists under another case (`Bg.png` for `bg.png`): works on
+    /// Windows, breaks on Linux and the web.
+    CaseMismatch {
+        asset: AssetId,
+        path: String,
+        actual: String,
+    },
+    /// Two assets whose paths differ only by case: one file on Windows.
+    CaseCollision {
+        asset: AssetId,
+        path: String,
+        other: String,
+    },
+}
+
+impl AssetIssue {
+    pub fn asset(&self) -> AssetId {
+        match self {
+            AssetIssue::Missing { asset, .. }
+            | AssetIssue::CaseMismatch { asset, .. }
+            | AssetIssue::CaseCollision { asset, .. } => *asset,
+        }
+    }
+
+    pub fn is_error(&self) -> bool {
+        matches!(self, AssetIssue::Missing { .. })
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            AssetIssue::Missing { path, .. } => format!("Fichier introuvable : « {path} »"),
+            AssetIssue::CaseMismatch { path, actual, .. } => format!(
+                "Casse différente : « {actual} » sur le disque, « {path} » dans le manifeste (introuvable sous Linux et sur le web)"
+            ),
+            AssetIssue::CaseCollision { path, other, .. } => format!(
+                "« {path} » et « {other} » ne diffèrent que par la casse (un seul fichier sous Windows)"
+            ),
+        }
+    }
+}
+
+/// Checks the manifest paths against the files under `root`: missing files
+/// and case mismatches (the folder listing is compared byte for byte, so the
+/// result does not depend on the OS's case rules), plus paths that differ
+/// only by case.
+pub fn lint_asset_files(root: &Path, story: &Story) -> Vec<AssetIssue> {
+    let mut issues = Vec::new();
+    let mut listings: HashMap<PathBuf, Vec<String>> = HashMap::new();
+    let mut seen: HashMap<String, String> = HashMap::new();
+    for asset in &story.assets.assets {
+        let lower = asset.path.to_lowercase();
+        if let Some(other) = seen.get(&lower) {
+            issues.push(AssetIssue::CaseCollision {
+                asset: asset.id,
+                path: asset.path.clone(),
+                other: other.clone(),
+            });
+        } else {
+            seen.insert(lower, asset.path.clone());
+        }
+        let mut dir = root.to_path_buf();
+        let mut actual: Vec<String> = Vec::new();
+        let mut exact = true;
+        let mut found = true;
+        for seg in asset.path.split('/') {
+            let names = listings.entry(dir.clone()).or_insert_with(|| {
+                fs::read_dir(&dir)
+                    .map(|rd| {
+                        rd.flatten()
+                            .map(|e| e.file_name().to_string_lossy().into_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            });
+            if names.iter().any(|n| n == seg) {
+                actual.push(seg.to_owned());
+            } else if let Some(n) = names
+                .iter()
+                .find(|n| n.to_lowercase() == seg.to_lowercase())
+            {
+                exact = false;
+                actual.push(n.clone());
+            } else {
+                found = false;
+                break;
+            }
+            dir.push(actual.last().map_or("", String::as_str));
+        }
+        if !found {
+            issues.push(AssetIssue::Missing {
+                asset: asset.id,
+                path: asset.path.clone(),
+            });
+        } else if !exact {
+            issues.push(AssetIssue::CaseMismatch {
+                asset: asset.id,
+                path: asset.path.clone(),
+                actual: actual.join("/"),
+            });
+        }
+    }
+    issues
+}
+
+// --------------------------------------------------------------------- scan
+
+/// A file found in the project's asset folders.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiskFile {
+    /// Path relative to the root, `/` separators.
+    pub path: String,
+    pub len: u64,
+    pub modified: Option<SystemTime>,
+}
+
+/// Every file under `root/assets` (recursively, dot-files and the editor's
+/// state folder skipped), sorted by path.
+pub fn scan_assets(root: &Path) -> Vec<DiskFile> {
+    let mut out = Vec::new();
+    let mut stack = vec![(root.join("assets"), "assets".to_owned())];
+    while let Some((dir, rel)) = stack.pop() {
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let child = format!("{rel}/{name}");
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                stack.push((entry.path(), child));
+            } else if meta.is_file() {
+                out.push(DiskFile {
+                    path: child,
+                    len: meta.len(),
+                    modified: meta.modified().ok(),
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_names_are_made_safe_and_stable() {
+        assert_eq!(
+            sanitize_file_name("My Room (final).PNG"),
+            "My_Room_final.png"
+        );
+        assert_eq!(sanitize_file_name("bg_room-01.png"), "bg_room-01.png");
+        assert_eq!(sanitize_file_name("../../etc/passwd"), "passwd");
+        assert_eq!(
+            sanitize_file_name("C:\\dir\\sprite one.jpg"),
+            "sprite_one.jpg"
+        );
+        assert_eq!(sanitize_file_name("..."), "asset");
+        assert_eq!(sanitize_file_name("été.wav"), "été.wav");
+    }
+
+    #[test]
+    fn only_a_clean_relative_path_is_a_manifest_path() {
+        for ok in ["assets/images/a.png", "a.png"] {
+            assert!(ops::is_valid_asset_path(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "/a.png",
+            "../a.png",
+            "a/../b.png",
+            "a//b.png",
+            "a\\b.png",
+            "C:/a.png",
+        ] {
+            assert!(!ops::is_valid_asset_path(bad), "{bad}");
+        }
+    }
+}

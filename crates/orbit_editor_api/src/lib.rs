@@ -16,7 +16,7 @@ mod registry;
 
 pub use context::{
     ConsoleEntry, ConsoleLog, Diagnostics, EditorContext, EditorError, EditorRequest, EditorState,
-    Level, ProjectInfo, RecentProject, Selection, ThemeMode, Toast,
+    Level, Location, Problem, ProjectInfo, RecentProject, Selection, ThemeMode, Toast, Waker,
 };
 pub use orbit_plugin_api::{API_VERSION, Plugin, PluginError, PluginManifest, ProjectRegistry};
 pub use preview::{PreviewCommand, PreviewInput, PreviewSpeed, PreviewState, PreviewStatus};

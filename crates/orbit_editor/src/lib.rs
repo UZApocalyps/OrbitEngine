@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod args;
+pub mod assets;
 pub mod bench;
 pub mod builtin;
 pub mod config;
@@ -16,7 +17,10 @@ pub mod fuzzy;
 pub mod logging;
 pub mod palette;
 pub mod preview_host;
+pub mod search;
 pub mod session;
 pub mod storage;
 pub mod theme;
+pub mod thumbs;
 pub mod ui;
+pub mod watch;

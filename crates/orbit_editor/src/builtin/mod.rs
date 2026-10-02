@@ -8,12 +8,17 @@ mod definitions;
 pub mod drafts;
 pub mod edit;
 mod explorer;
+mod importers;
 mod inspector;
+mod library;
 mod nodeinfo;
 mod preview;
+mod problems;
+pub mod reveal;
 mod sample;
 mod scene;
-mod thumbs;
+mod search;
+pub mod thumbs;
 mod ui_util;
 mod welcome;
 
@@ -21,6 +26,8 @@ use orbit_editor_api::{
     ActionDef, EditorPlugin, EditorRegistry, EditorRequest, Plugin, PluginManifest,
 };
 
+pub use importers::{import_audio, import_image};
+pub use library::import_paths;
 pub use nodeinfo::{kind_icon, kind_key, kind_label, summary};
 pub use preview::{CANVAS as PREVIEW_CANVAS, fit_16_9, to_virtual};
 pub use sample::SamplePlugin;
@@ -38,6 +45,10 @@ pub mod ids {
     pub const SCENE: &str = "orbit.scene";
     pub const CHARACTERS: &str = "orbit.characters";
     pub const VARIABLES: &str = "orbit.variables";
+    pub const IMPORTERS: &str = "orbit.importers";
+    pub const LIBRARY: &str = "orbit.library";
+    pub const PROBLEMS: &str = "orbit.problems";
+    pub const SEARCH: &str = "orbit.search";
 }
 
 /// Full ids of the built-in panels.
@@ -51,21 +62,42 @@ pub mod panels {
     pub const SCENE: &str = "orbit.scene.scene";
     pub const CHARACTERS: &str = "orbit.characters.characters";
     pub const VARIABLES: &str = "orbit.variables.variables";
+    pub const LIBRARY: &str = "orbit.library.library";
+    pub const PROBLEMS: &str = "orbit.problems.problems";
+    pub const SEARCH: &str = "orbit.search.search";
+}
+
+/// State the built-in plugins share with the editor core.
+#[derive(Clone, Default)]
+pub struct Shared {
+    /// The search index (search panel and command palette).
+    pub search: crate::search::SearchHandle,
+    /// File moves made by the asset library (undo / redo move them back).
+    pub moves: std::rc::Rc<std::cell::RefCell<crate::assets::MoveJournal>>,
 }
 
 /// The built-in plugins, in registration order (menus first, then panels in
 /// the order they appear in the default layout).
 pub fn plugins() -> Vec<Box<dyn EditorPlugin>> {
+    plugins_with(&Shared::default())
+}
+
+/// [`plugins`], sharing `shared` with the editor core.
+pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
     vec![
         Box::new(actions::CorePlugin),
+        Box::new(importers::ImportersPlugin),
         Box::new(welcome::WelcomePlugin),
         Box::new(scene::ScenePlugin),
         Box::new(explorer::ExplorerPlugin),
         Box::new(inspector::InspectorPlugin),
         Box::new(definitions::CharactersPlugin),
         Box::new(definitions::VariablesPlugin),
+        Box::new(library::LibraryPlugin::new(shared.moves.clone())),
         Box::new(preview::PreviewPlugin),
         Box::new(console::ConsolePlugin),
+        Box::new(problems::ProblemsPlugin),
+        Box::new(search::SearchPlugin::new(shared.search.clone())),
         Box::new(SamplePlugin::default()),
     ]
 }

@@ -7,6 +7,7 @@ Idées validées mais hors des jalons en cours. À replanifier dans la roadmap l
 - Pistes : coins arrondis / 9-slice, ombres douces, flou ou dégradés, animations d'apparition/survol, typographie et espacements revus, icônes, mise en page responsive (16:9, 4:3, portrait mobile).
 - Corriger au passage : quick menu qui chevauche la textbox, mesure de texte approximative (pas de clipping des ScrollList).
 - Plusieurs thèmes prêts à l'emploi sélectionnables depuis l'éditeur.
+- **Éditeur de thème de l'UI en jeu** (repoussé hors de M3e) : inspecteur auto-généré sur le `Theme` RON d'`orbit_ui` avec preview en direct ; à faire avec cette refonte, pas avant.
 
 ## Optimisations
 - Taille du bundle web (wasm ~10 Mo : wasm-opt, features, compression) — prévu M4.

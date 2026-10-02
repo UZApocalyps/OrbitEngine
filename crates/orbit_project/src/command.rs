@@ -115,6 +115,8 @@ pub enum CommandError {
     UnknownAsset(AssetId),
     #[error("asset {0} is still used by node {1}")]
     AssetInUse(AssetId, NodeId),
+    #[error("asset {0} is still used by an expression of character {1}")]
+    AssetInUseByCharacter(AssetId, CharacterId),
     #[error("version conflict on node {node}: expected {expected}, found {actual}")]
     VersionConflict {
         node: NodeId,

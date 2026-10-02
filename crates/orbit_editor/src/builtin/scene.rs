@@ -382,6 +382,9 @@ enum RowAction {
     /// (live text edits are commands, merged into one step per session).
     Undo,
     Redo,
+    /// An asset dragged from the library was dropped on a background /
+    /// music / sound row: the row now uses it.
+    DropAsset(NodeId, orbit_core::AssetId),
 }
 
 fn empty_state(ui: &mut Ui, icon: &str, title: &str, hint: &str) {
@@ -1143,6 +1146,29 @@ fn draw_row(
     let response = ui.interact(rect, hover_id, Sense::click_and_drag());
     let hovered = response.hovered() && env.dragging.is_none();
     let painter = ui.painter_at(rect.expand(2.0));
+    // An asset dragged from the library onto a row that holds an asset.
+    let wants = match &node.kind {
+        NodeKind::Background { .. } => Some(orbit_core::AssetKind::Image),
+        NodeKind::PlayMusic { .. } => Some(orbit_core::AssetKind::Music),
+        NodeKind::PlaySound { .. } => Some(orbit_core::AssetKind::Sound),
+        _ => None,
+    };
+    if let Some(kind) = wants {
+        if let Some(drag) = response.dnd_hover_payload::<orbit_editor_api::fields::AssetDrag>() {
+            let ok = drag.kind == kind;
+            painter.rect_stroke(
+                rect,
+                CornerRadius::same(8),
+                Stroke::new(2.0, if ok { accent(ui) } else { danger(ui) }),
+                StrokeKind::Inside,
+            );
+        }
+        if let Some(drag) = response.dnd_release_payload::<orbit_editor_api::fields::AssetDrag>()
+            && drag.kind == kind
+        {
+            actions.push(RowAction::DropAsset(node.id, drag.id));
+        }
+    }
 
     // Background.
     let visuals = ui.visuals();
@@ -1810,6 +1836,31 @@ fn apply_actions(
                             ctx.clear_selection();
                         }
                     }
+                }
+            }
+            RowAction::DropAsset(id, asset) => {
+                let kind = ctx.story().and_then(|s| match s.node(id).map(|n| &n.kind) {
+                    Some(NodeKind::Background { transition, .. }) => Some(NodeKind::Background {
+                        asset,
+                        transition: *transition,
+                    }),
+                    Some(NodeKind::PlayMusic {
+                        fade_in, looping, ..
+                    }) => Some(NodeKind::PlayMusic {
+                        asset,
+                        fade_in: *fade_in,
+                        looping: *looping,
+                    }),
+                    Some(NodeKind::PlaySound { .. }) => Some(NodeKind::PlaySound { asset }),
+                    _ => None,
+                });
+                if let Some(kind) = kind {
+                    ctx.select(Selection::Node(id));
+                    ctx.exec_or_toast(orbit_project::Command::SetNodeKind {
+                        id,
+                        kind,
+                        expected_version: ctx.node_version(id),
+                    });
                 }
             }
             RowAction::SetSpeaker { id, speaker } => {

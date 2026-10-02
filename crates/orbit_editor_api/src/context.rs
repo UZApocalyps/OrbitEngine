@@ -2,9 +2,10 @@
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use orbit_core::{NodeId, SceneId, Story};
+use orbit_core::{AssetId, CharacterId, NodeId, SceneId, Story};
 use orbit_project::ops::NodeClip;
 use orbit_project::{Command, Project, ProjectError, Transaction};
 use serde::{Deserialize, Serialize};
@@ -139,6 +140,26 @@ pub enum EditorRequest {
     ToggleMaximizePanel(String),
 }
 
+/// Something of the project the editor can show: a node, a scene, a
+/// definition. The target of a validation problem or a search hit; see
+/// [`EditorContext::reveal`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Location {
+    Node(NodeId),
+    Scene(SceneId),
+    Character(CharacterId),
+    Variable(String),
+    Asset(AssetId),
+}
+
+/// One finding of the live validation, in French, with where it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub level: Level,
+    pub message: String,
+    pub location: Option<Location>,
+}
+
 /// What validation found about nodes: errors and warnings, in French.
 #[derive(Clone, Debug, Default)]
 pub struct Diagnostics {
@@ -147,9 +168,28 @@ pub struct Diagnostics {
     pub by_node: std::collections::HashMap<NodeId, Vec<(Level, String)>>,
     /// Findings not tied to a node (definitions...).
     pub general: Vec<(Level, String)>,
+    /// Every finding (nodes, definitions, asset files), errors first, in
+    /// reading order: what the Problems panel lists.
+    pub problems: Vec<Problem>,
 }
 
 impl Diagnostics {
+    /// Number of errors.
+    pub fn error_count(&self) -> usize {
+        self.problems
+            .iter()
+            .filter(|p| p.level == Level::Error)
+            .count()
+    }
+
+    /// Number of warnings.
+    pub fn warning_count(&self) -> usize {
+        self.problems
+            .iter()
+            .filter(|p| p.level == Level::Warn)
+            .count()
+    }
+
     pub fn of(&self, node: NodeId) -> &[(Level, String)] {
         self.by_node.get(&node).map_or(&[], Vec::as_slice)
     }
@@ -167,9 +207,55 @@ impl Diagnostics {
     }
 }
 
+/// Lets background threads ask the host for a frame (the editor draws on
+/// demand). Clones share one target, set by the host once the window runs;
+/// until then (and in tests) waking does nothing.
+#[derive(Clone, Default)]
+pub struct Waker(Arc<Mutex<Option<WakeFn>>>);
+
+type WakeFn = Arc<dyn Fn() + Send + Sync>;
+
+impl Waker {
+    /// Installs what [`Waker::wake`] does, for every clone.
+    pub fn set(&self, wake: impl Fn() + Send + Sync + 'static) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = Some(Arc::new(wake));
+        }
+    }
+
+    pub fn wake(&self) {
+        let wake = self.0.lock().ok().and_then(|slot| slot.clone());
+        if let Some(wake) = wake {
+            wake();
+        }
+    }
+}
+
+impl std::fmt::Debug for Waker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Waker")
+    }
+}
+
 /// State owned by the editor, separate from the project: never undoable.
 #[derive(Default)]
 pub struct EditorState {
+    /// Wakes the event loop from background threads (thumbnails, file
+    /// watching, validation).
+    pub waker: Waker,
+    /// A thing to show that no shared panel can: the panel that owns it
+    /// takes it (characters panel, asset library...). See `reveal`.
+    pub pending_reveal: Option<Location>,
+    /// Bumped by every `reveal`, so lists (explorer) scroll to the selection.
+    pub reveal_serial: u64,
+    /// The asset selected in the asset library.
+    pub selected_asset: Option<AssetId>,
+    /// Bumped by the host when files of the project's asset folders changed
+    /// (watcher, import): lists of files look again.
+    pub asset_epoch: u64,
+    /// A panel (full id) whose text input should take the focus at its next
+    /// frame (global search).
+    pub focus_panel: Option<String>,
     pub selection: Option<Selection>,
     /// Every selected node (multi-selection); the primary one, if any, is in
     /// `selection`. Empty when no node is selected.
@@ -387,6 +473,36 @@ impl<'a> EditorContext<'a> {
 
     pub fn selection(&self) -> Option<Selection> {
         self.state.selection
+    }
+
+    /// Shows `location` to the user: selects the node or scene (the scene
+    /// editor, explorer and inspector follow), or leaves a pending reveal for
+    /// the panel that owns characters, variables and assets. Panels are
+    /// brought forward by the caller (see the built-in `reveal`).
+    pub fn reveal(&mut self, location: Location) {
+        self.state.reveal_serial += 1;
+        match location {
+            Location::Node(id) => {
+                let scene = self
+                    .story()
+                    .and_then(|s| s.locate(id).map(|(si, _)| s.scenes[si].id));
+                if let Some(scene) = scene {
+                    self.state.collapsed_scenes.remove(&scene);
+                    self.state.current_scene = Some(scene);
+                }
+                self.select(Selection::Node(id));
+            }
+            Location::Scene(id) => {
+                self.state.collapsed_scenes.remove(&id);
+                self.select(Selection::Scene(id));
+            }
+            other => {
+                if let Location::Asset(id) = other {
+                    self.state.selected_asset = Some(id);
+                }
+                self.state.pending_reveal = Some(other);
+            }
+        }
     }
 
     /// Selects one element (replaces any multi-selection).

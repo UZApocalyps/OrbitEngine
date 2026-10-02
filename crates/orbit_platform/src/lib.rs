@@ -216,6 +216,28 @@ pub trait App {
     fn host_requests(&mut self) -> Vec<HostRequest> {
         Vec::new()
     }
+    /// Called once when the app is installed: a handle other threads use to
+    /// wake the loop up (background work finished). The default drops it.
+    fn attach_waker(&mut self, _waker: Waker) {}
+}
+
+/// Wakes the event loop from any thread: the next loop iteration asks the
+/// app for a frame (on-demand mode). Cheap and harmless to call often.
+#[derive(Clone)]
+pub struct Waker {
+    proxy: EventLoopProxy<UserEvent>,
+}
+
+impl Waker {
+    pub fn wake(&self) {
+        let _ = self.proxy.send_event(UserEvent::Wake);
+    }
+}
+
+impl std::fmt::Debug for Waker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Waker")
+    }
 }
 
 #[derive(Debug, Error)]
@@ -227,10 +249,14 @@ pub enum PlatformError {
 type AppFuture = Pin<Box<dyn Future<Output = Box<dyn App>>>>;
 type AppFactory = Box<dyn FnOnce(Arc<Window>) -> AppFuture>;
 
-/// Event used to hand the asynchronously built app back to the loop (web).
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+/// Events sent to the loop from elsewhere. On native it only holds `Wake`,
+/// so the [`Waker`] is `Send` and background threads can use it; on the web
+/// the asynchronously built app is also handed back this way.
 enum UserEvent {
+    #[cfg(target_arch = "wasm32")]
     AppReady(Box<dyn App>),
+    /// A background thread asked for a frame (see [`Waker`]).
+    Wake,
 }
 
 /// Creates the window and runs the application until it is closed.
@@ -280,7 +306,6 @@ where
 struct Runner {
     config: AppConfig,
     factory: Option<AppFactory>,
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     proxy: EventLoopProxy<UserEvent>,
     window: Option<Arc<Window>>,
     app: Option<Box<dyn App>>,
@@ -363,6 +388,9 @@ impl Runner {
     }
 
     fn install_app(&mut self, mut app: Box<dyn App>) {
+        app.attach_waker(Waker {
+            proxy: self.proxy.clone(),
+        });
         if let Some(window) = &self.window {
             let size = window.inner_size();
             app.resize(size, window.scale_factor());
@@ -431,9 +459,14 @@ impl ApplicationHandler<UserEvent> for Runner {
         }
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
+            #[cfg(target_arch = "wasm32")]
             UserEvent::AppReady(app) => self.install_app(app),
+            UserEvent::Wake => {
+                self.redraw_wanted = true;
+                self.schedule(event_loop);
+            }
         }
     }
 

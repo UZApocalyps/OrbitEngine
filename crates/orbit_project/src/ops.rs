@@ -460,6 +460,120 @@ pub fn add_asset(
     Ok(id)
 }
 
+/// Whether `path` can be the manifest path of an asset: relative, `/`
+/// separators, no `..`, no empty segment, no drive or `\`.
+pub fn is_valid_asset_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && !path.contains(':')
+        && !path.contains('\0')
+        && !path.split('/').any(|seg| seg.is_empty() || seg == "..")
+}
+
+/// Changes the manifest path of an asset (its id, and so every reference to
+/// it, stays the same). Refused when the path is invalid or already used by
+/// another asset (compared without regard to case: Windows would merge two
+/// files that Linux keeps apart). The file itself is moved by the caller.
+pub fn set_asset_path(
+    project: &mut Project,
+    id: AssetId,
+    new_path: &str,
+) -> Result<(), ProjectError> {
+    let entry = project
+        .story()
+        .assets
+        .get(id)
+        .cloned()
+        .ok_or_else(|| reject("Ressource introuvable."))?;
+    if !is_valid_asset_path(new_path) {
+        return Err(reject(format!(
+            "« {new_path} » n'est pas un chemin valide."
+        )));
+    }
+    if entry.path == new_path {
+        return Ok(());
+    }
+    let lower = new_path.to_lowercase();
+    if project
+        .story()
+        .assets
+        .assets
+        .iter()
+        .any(|a| a.id != id && a.path.to_lowercase() == lower)
+    {
+        return Err(reject(format!(
+            "Une autre ressource utilise déjà le chemin « {new_path} » (la casse ne compte pas)."
+        )));
+    }
+    let index = project
+        .story()
+        .assets
+        .assets
+        .iter()
+        .position(|a| a.id == id);
+    project.transaction_labeled("Renommer la ressource", |tx| {
+        tx.execute(Command::SetAsset {
+            id,
+            entry: Some(AssetEntry {
+                path: new_path.to_owned(),
+                ..entry
+            }),
+            index,
+        })
+    })
+}
+
+/// Removes an asset from the manifest (the file stays on disk). Refused,
+/// with the reason in French, while a node or a character expression still
+/// uses it.
+pub fn remove_asset(project: &mut Project, id: AssetId) -> Result<(), ProjectError> {
+    if project.story().assets.get(id).is_none() {
+        return Err(reject("Ressource introuvable."));
+    }
+    let story = project.story();
+    let users = crate::ext::asset_users(story, id);
+    if !users.is_empty() {
+        return Err(reject(describe_asset_users(story, &users)));
+    }
+    project.transaction_labeled("Supprimer la ressource", |tx| {
+        tx.execute(Command::SetAsset {
+            id,
+            entry: None,
+            index: None,
+        })
+    })
+}
+
+fn describe_asset_users(story: &Story, users: &[crate::ext::AssetUser]) -> String {
+    use crate::ext::AssetUser;
+    let nodes = users
+        .iter()
+        .filter(|u| matches!(u, AssetUser::Node(_)))
+        .count();
+    let names: Vec<String> = users
+        .iter()
+        .filter_map(|u| match u {
+            AssetUser::Character(c) => story
+                .character(*c)
+                .and_then(|c| story.text(c.name_id))
+                .map(|n| format!("« {n} »")),
+            AssetUser::Node(_) => None,
+        })
+        .collect();
+    let mut parts = Vec::new();
+    if nodes > 0 {
+        parts.push(format!("{nodes} nœud(s)"));
+    }
+    if !names.is_empty() {
+        parts.push(format!("une expression de {}", names.join(", ")));
+    }
+    format!(
+        "Cette ressource est encore utilisée par {} : retirez-la d'abord.",
+        parts.join(" et ")
+    )
+}
+
 fn valid_identifier(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')

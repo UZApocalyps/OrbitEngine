@@ -12,9 +12,11 @@ mod command;
 mod ext;
 pub mod ops;
 mod project;
+pub mod sandbox;
 mod storage;
 
 pub use command::{Command, CommandError};
+pub use ext::{AssetUser, asset_users};
 pub use project::{ChangeEvent, ChangeKind, Project, ProjectError, SubscriptionId, Transaction};
 pub use storage::{
     DEFAULT_STORY_FILE, MANIFEST_FILE, MANIFEST_FORMAT, PluginRequirement, ProjectFileError,

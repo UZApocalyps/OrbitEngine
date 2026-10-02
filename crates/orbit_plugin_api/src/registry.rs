@@ -195,6 +195,22 @@ impl ProjectRegistry {
         &self.node_types
     }
 
+    /// Every registered importer.
+    pub fn importers(&self) -> impl Iterator<Item = &AssetImporter> {
+        self.importers.iter().map(|(_, i)| i)
+    }
+
+    /// Lowercase extensions (no dot) some importer accepts, sorted.
+    pub fn import_extensions(&self) -> Vec<String> {
+        let mut all: Vec<String> = self
+            .importers()
+            .flat_map(|i| i.extensions.iter().cloned())
+            .collect();
+        all.sort();
+        all.dedup();
+        all
+    }
+
     pub fn importer_for(&self, extension: &str) -> Option<&AssetImporter> {
         let ext = extension.trim_start_matches('.').to_ascii_lowercase();
         self.importers

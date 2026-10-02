@@ -269,6 +269,8 @@ pub struct PreviewHost {
     asset_stamps: HashMap<String, SystemTime>,
     /// Last reload latency in milliseconds, for the debug overlay and tests.
     pub last_reload_ms: Option<u128>,
+    /// `EditorCore::asset_epoch` as last seen: files changed on disk.
+    seen_asset_epoch: u64,
 }
 
 impl PreviewHost {
@@ -301,6 +303,7 @@ impl PreviewHost {
             reload_started: None,
             asset_stamps: HashMap::new(),
             last_reload_ms: None,
+            seen_asset_epoch: 0,
         })
     }
 
@@ -399,6 +402,14 @@ impl PreviewHost {
                 }
             }
             _ => {}
+        }
+        // A file of the project changed on disk (watcher): reload so the
+        // runtime fetches the new version of an image or a sound.
+        if self.seen_asset_epoch != core.asset_epoch {
+            self.seen_asset_epoch = core.asset_epoch;
+            if core.session.is_some() && self.seen.is_some() {
+                self.debounce.changed(now);
+            }
         }
         if self.debounce.due(now) {
             self.load(core, now);
