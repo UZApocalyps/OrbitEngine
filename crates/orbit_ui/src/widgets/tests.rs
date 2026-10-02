@@ -432,3 +432,66 @@ fn text_helpers() {
     assert_eq!(ellipsize("abcdefghij", 5), "abcd\u{2026}");
     assert_eq!(escape_markup("a{b}"), "a{{b}}");
 }
+
+#[test]
+fn margin_keeps_room_around_a_node() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::vbox().fixed(300.0, 400.0));
+    ui.add(
+        root,
+        Node::vbox()
+            .fixed(100.0, 50.0)
+            .margin([10.0, 20.0, 10.0, 20.0])
+            .tag(1),
+    );
+    ui.add(root, Node::vbox().fixed(80.0, 60.0).tag(2));
+    ui.layout();
+    assert_eq!(ui.rect_of(1).unwrap(), [10.0, 20.0, 100.0, 50.0]);
+    assert_eq!(ui.rect_of(2).unwrap(), [0.0, 90.0, 80.0, 60.0]);
+}
+
+#[test]
+fn a_fit_container_includes_the_margin_of_its_children() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::vbox().tag(9));
+    ui.add(root, Node::vbox().fixed(100.0, 50.0).margin([5.0, 5.0, 15.0, 5.0]));
+    ui.layout();
+    let r = ui.rect_of(9).unwrap();
+    assert_eq!((r[2], r[3]), (120.0, 60.0));
+}
+
+#[test]
+fn grid_places_cells_row_by_row_with_the_widest_column() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::grid(2).gap(10.0).fixed(1000.0, 500.0));
+    ui.add(root, Node::vbox().fixed(100.0, 40.0).tag(1));
+    ui.add(root, Node::vbox().fixed(60.0, 40.0).tag(2));
+    ui.add(root, Node::vbox().fixed(80.0, 30.0).tag(3));
+    ui.add(root, Node::vbox().fixed(60.0, 30.0).tag(4));
+    ui.add(root, Node::vbox().fixed(10.0, 10.0).tag(5));
+    ui.layout();
+    assert_eq!(ui.rect_of(1).unwrap(), [0.0, 0.0, 100.0, 40.0]);
+    assert_eq!(ui.rect_of(2).unwrap(), [110.0, 0.0, 60.0, 40.0]);
+    assert_eq!(ui.rect_of(3).unwrap(), [0.0, 50.0, 80.0, 30.0]);
+    assert_eq!(ui.rect_of(4).unwrap(), [110.0, 50.0, 60.0, 30.0]);
+    assert_eq!(ui.rect_of(5).unwrap(), [0.0, 90.0, 10.0, 10.0], "odd cell count");
+}
+
+#[test]
+fn grid_gives_spare_width_to_fill_columns() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::grid(2).gap(10.0).fixed(400.0, 100.0));
+    ui.add(root, Node::vbox().fixed(100.0, 40.0).tag(1));
+    ui.add(root, Node::vbox().w(Size::Fill(1.0)).h(Size::Fixed(40.0)).tag(2));
+    ui.layout();
+    assert_eq!(ui.rect_of(2).unwrap(), [110.0, 0.0, 290.0, 40.0]);
+}
+
+#[test]
+fn layout_types_round_trip_through_ron() {
+    let anchor = Anchor::new([0.5, 0.0], [0.5, 0.0], [0.0, 30.0]);
+    let text = ron::to_string(&(Size::Fill(2.0), Dir::Grid(3), Align::Stretch, anchor, PanelKind::Dim))
+        .unwrap();
+    let back: (Size, Dir, Align, Anchor, PanelKind) = ron::from_str(&text).unwrap();
+    assert_eq!(back, (Size::Fill(2.0), Dir::Grid(3), Align::Stretch, anchor, PanelKind::Dim));
+}

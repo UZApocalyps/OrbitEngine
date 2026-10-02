@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! "ORBITGAM"  magic (8 bytes)
-//! version     u32 LE  (currently 1)
+//! version     u32 LE  (currently 2)
 //! postcard    GamePack
 //! ```
 //!
@@ -28,7 +28,7 @@ pub const ICON_ENTRY: &str = "meta/icon.png";
 
 const MAGIC: &[u8; 8] = b"ORBITGAM";
 /// Current game pack version.
-pub const PACK_VERSION: u32 = 1;
+pub const PACK_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum PackError {
@@ -61,6 +61,19 @@ pub struct GamePack {
     pub info: GameInfo,
     pub story: Story,
     pub translations: Vec<Translation>,
+    /// The UI of the game (screens, theme, splashes) as the RON text of an
+    /// `orbit_ui::UiBundle`, kept opaque here so that this crate needs no
+    /// rendering code. `None`: the stock screens. Added in version 2.
+    pub ui: Option<Vec<u8>>,
+}
+
+/// The layout of version 1 (no `ui`): postcard is not self-describing, so
+/// the old format keeps its own struct.
+#[derive(Deserialize)]
+struct GamePackV1 {
+    info: GameInfo,
+    story: Story,
+    translations: Vec<Translation>,
 }
 
 impl GamePack {
@@ -89,7 +102,18 @@ impl GamePack {
         if version == 0 || version > PACK_VERSION {
             return Err(PackError::UnsupportedVersion { found: version });
         }
-        postcard::from_bytes(&bytes[12..]).map_err(|e| PackError::Corrupt(e.to_string()))
+        let body = &bytes[12..];
+        if version == 1 {
+            let old: GamePackV1 =
+                postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))?;
+            return Ok(GamePack {
+                info: old.info,
+                story: old.story,
+                translations: old.translations,
+                ui: None,
+            });
+        }
+        postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))
     }
 }
 
@@ -110,6 +134,7 @@ mod tests {
             },
             story: Story::from_ron_unchecked(DEMO).unwrap(),
             translations: vec![Translation::from_ron(FR).unwrap()],
+            ui: None,
         }
     }
 
@@ -166,6 +191,38 @@ mod tests {
         assert!(styled > 1);
         let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
         assert_eq!(back, pack);
+    }
+
+    #[test]
+    fn the_ui_bundle_survives_postcard() {
+        let mut pack = demo_pack();
+        pack.ui = Some(b"(screens: [])".to_vec());
+        let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
+        assert_eq!(back.ui, pack.ui);
+    }
+
+    #[test]
+    fn a_version_1_pack_still_loads_without_ui() {
+        let pack = demo_pack();
+        let v1 = GamePackV1Out {
+            info: &pack.info,
+            story: &pack.story,
+            translations: &pack.translations,
+        };
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&postcard::to_stdvec(&v1).unwrap());
+        let back = GamePack::from_bytes(&bytes).unwrap();
+        assert_eq!(back, pack);
+        assert!(back.ui.is_none());
+    }
+
+    #[derive(Serialize)]
+    struct GamePackV1Out<'a> {
+        info: &'a GameInfo,
+        story: &'a Story,
+        translations: &'a Vec<Translation>,
     }
 
     #[test]

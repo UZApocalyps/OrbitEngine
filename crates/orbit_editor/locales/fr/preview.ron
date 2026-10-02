@@ -47,6 +47,8 @@
     "preview.no_project": "Aucun projet ouvert",
     "preview.no_project_hint": "Ouvrez un projet pour le jouer ici.",
     "preview.press_play": "Appuyez sur Lecture (F6)",
+    "preview.ui_mode": "Aperçu de l’interface",
+    "preview.tip.close_ui": "Fermer l’aperçu de l’interface et revenir au jeu",
     "preview.select_node_hint": "Sélectionnez un nœud puis « Ici » pour jouer depuis là.",
     "preview.story_error": "Erreur dans l'histoire : la preview garde la dernière version valide",
 

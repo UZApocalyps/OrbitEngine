@@ -29,6 +29,10 @@ pub enum ExportError {
     MissingAssets(Vec<String>),
     #[error("translation `{file}`: {message}")]
     Translation { file: String, message: String },
+    /// The `ui/` folder of the project is invalid.
+    #[error("the UI of the project has {} error(s):
+{}", .0.len(), bullets(.0))]
+    Ui(Vec<String>),
     #[error("the icon `{path}` cannot be used: {message}")]
     Icon { path: String, message: String },
     /// No player template for the target.

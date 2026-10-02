@@ -1,0 +1,27 @@
+// French translation of test_minimal.ron (used by the engine's tests).
+// The last string is deliberately left untranslated: it falls back to English.
+(
+    lang: "fr",
+    name: "Français",
+    entries: {
+        "01JBX0T0000000000000000001": "Alice",
+        "01JBX0T0000000000000000002": "Bob",
+        "01JBX0T0000000000000000003": "Néo-Kyoto, 2087. La pluie tombe sur les mégatours.",
+        "01JBX0T0000000000000000004": "Encore une nuit, encore un contrat.",
+        "01JBX0T0000000000000000005": "Désolé de te réveiller, Alice. Un travail t'intéresse ?",
+        "01JBX0T0000000000000000006": "Accepter le travail.",
+        "01JBX0T0000000000000000007": "Marchander.",
+        "01JBX0T0000000000000000008": "Cinquante crédits d'avance. Ne les dépense pas d'un coup.",
+        "01JBX0T0000000000000000009": "Tu pousses, mais d'accord.",
+        "01JBX0T0000000000000000010": "La musique s'éteint.",
+        "01JBX0T0000000000000000012": "Dans une capsule exiguë au-dessus du Sprawl, une hackeuse ne dort pas.",
+        "01JBX0T0000000000000000013": "Quelqu'un frappe à la porte. Deux fois, puis une.",
+        "01JBX0T0000000000000000014": "Définis quelque chose.",
+        "01JBX0T0000000000000000015": "Une puce prototype. La rumeur dit qu'elle abrite une IA éveillée.",
+        "01JBX0T0000000000000000016": "Qui paie ?",
+        "01JBX0T0000000000000000017": "Helix. Ils la veulent discrètement.",
+        "01JBX0T0000000000000000018": "Je t'écoute.",
+        "01JBX0T0000000000000000019": "Alors écoute bien. Ce ne sera pas facile.",
+        "01JBX0T0000000000000000020": "La pluie continue de tomber sur la ville endormie.",
+    },
+)

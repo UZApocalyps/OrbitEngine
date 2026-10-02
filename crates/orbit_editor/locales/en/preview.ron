@@ -47,6 +47,8 @@
     "preview.no_project": "No project open",
     "preview.no_project_hint": "Open a project to play it here.",
     "preview.press_play": "Press Play (F6)",
+    "preview.ui_mode": "UI preview",
+    "preview.tip.close_ui": "Close the UI preview and go back to the game",
     "preview.select_node_hint": "Select a node, then “Here” to play from there.",
     "preview.story_error": "Error in the story: the preview keeps the last valid version",
 

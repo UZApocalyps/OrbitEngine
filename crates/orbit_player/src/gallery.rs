@@ -402,7 +402,11 @@ impl Ready {
                 UiEvent::OpenPreferences => self.go(Which::Prefs),
                 UiEvent::OpenHistory => self.go(Which::History),
                 UiEvent::OpenPause => self.go(Which::Pause),
-                UiEvent::Resume => self.jump(Which::Play),
+                UiEvent::Resume | UiEvent::CloseAll => self.jump(Which::Play),
+                UiEvent::OpenScreen(_)
+                | UiEvent::ReplaceScreen(_)
+                | UiEvent::PlaySound(_)
+                | UiEvent::Custom { .. } => {}
                 UiEvent::Back => self.pop(),
                 UiEvent::ReturnToMainMenu => self.jump(Which::Main),
                 UiEvent::Quit => self.toasts.push("Quit requested (ignored in the gallery)"),

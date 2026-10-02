@@ -79,6 +79,12 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
         include_str!("../locales/fr/preview.ron"),
     ),
     (
+        "uieditor",
+        &["uied"],
+        include_str!("../locales/en/uieditor.ron"),
+        include_str!("../locales/fr/uieditor.ron"),
+    ),
+    (
         "panels",
         &[
             "console", "problems", "explorer", "search", "draft", "edit", "util", "watch", "misc",

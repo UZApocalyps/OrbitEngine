@@ -1,0 +1,50 @@
+# ADR 0011 : UI en jeu pilotée par les données, et splash screens
+
+Statut : accepté (partie runtime faite ; l'éditeur de menus vient ensuite).
+
+## Contexte
+
+Les menus (principal, pause, préférences) étaient construits en Rust (`orbit_ui::screens`). Un auteur no-code ne pouvait ni les réagencer ni en ajouter. On veut des écrans décrits en données (RON), éditables plus tard dans l'éditeur, sans casser les jeux existants. Deuxième besoin : un splash OrbitEngine **obligatoire** au lancement, puis des splashes propres au projet.
+
+## Décisions
+
+### 1. Un écran = un document RON (`orbit_ui::asset`)
+
+* `ScreenAsset { ui_version, id, modal, pauses_game, dim_background, on_cancel, root }` ; `WidgetDef { id, kind, style, layout, visible, enabled, children, overrides }`.
+* `WidgetKind` : Panel, Stack (vertical / horizontal / superposé), Grid, Button, Label, Image, Slider, Toggle, Dropdown (= sélecteur pour l'instant), ScrollList.
+* Textes : `TextRef::{Key, Literal, Bind}` (clés `ui.*` de la table d'interface, donc localisés). `visible` / `enabled` sont des conditions typées (`Cond` : `CanContinue`, `CanSave`, `ShowQuit`, `InGame`, `Not`).
+* Actions typées (`UiAction`) au lieu de chaînes : `GameNew`, `Open`, `Replace`, `Close`, `CloseAll`, `QuickSave`, `PlaySound`, `Custom { name, args }`... `SceneGoto` et `VarSet` sont déclarées mais sans effet (avertissement de validation). Liaisons (`BindPath`) : seul `Setting(SettingKey)` fonctionne ; `Var` est réservé.
+* Versionné par `ui_version` ; `migrate.rs` suit le schéma de `orbit_core::migrate` (étapes sur le texte RON). `validate.rs` renvoie des `Issue` (erreur / avertissement) : ids dupliqués, bornes de slider, colonnes de grille, liaisons incompatibles, styles inconnus, profondeur.
+* `DataScreen` implémente le trait `Screen` : il reçoit un `DataContext` (préférences, droit de continuer / sauvegarder...) et émet les `UiEvent` existants plus `OpenScreen`, `ReplaceScreen`, `CloseAll`, `PlaySound`, `Custom`.
+
+### 2. Layout et styles
+
+* Les types de layout (`Size`, `Dir`, `Align`, `Anchor`, `PanelKind`) sont sérialisables. Ajouts : `margin` (marge extérieure) et `Dir::Grid(colonnes)`.
+* `Theme::styles: BTreeMap<String, Style>` : police, taille, couleurs par état (normal / survol / appui / désactivé), `Fill::Color`, bordure, padding, sons ; `extends` sur **un seul niveau**. `resolve_style` est pure. Les `overrides` d'un widget deviennent un style local qui étend le style nommé. `UiTexts` (mort) est supprimé.
+
+### 3. Intégration dans le `Shell`
+
+* `Overlay::Custom(i)`. Les écrans de données s'ouvrent par id ; `main_menu`, `pause` et `preferences` remplacent les écrans Rust s'ils sont fournis (par id, ou via `system_screens`). **Les écrans Rust restent le repli** : un projet sans bundle ne change pas.
+* Le jeu s'arrête selon `pauses_game` de l'écran du dessus (les écrans Rust le font toujours). Un écran `modal` est dessiné au-dessus de l'écran du dessous ; un écran ni `modal` ni `pauses_game` masque le jeu (comme les écrans plein cadre).
+* Source de données : les réglages du joueur (volumes, vitesse du texte, délai auto, mode de saut, plein écran, langue) via `PrefsView`.
+
+### 4. Chargement et export
+
+* `UiBundle { theme, screens, system_screens, splashes }` ; `UiBundle::builtin()` reprend `assets/ui/default/*.ron` (incluses par `include_str!`) : point de départ d'un projet, **pas** activé par défaut.
+* Ordre de résolution du runtime : `RuntimeConfig::ui_bundle` > `ui_dir` (dossier du projet, natif) > bundle du `GamePack`. Un bundle avec une erreur de validation est refusé (écrans Rust utilisés).
+* `GamePack` passe en **version 2** : champ `ui: Option<Vec<u8>>` (texte RON d'un `UiBundle`, opaque pour `orbit_pak`, qui reste sans dépendance de rendu). Le décodage v1 est conservé (struct dédiée : postcard n'est pas auto-descriptif).
+* `orbit_export` lit le dossier `ui/` du projet, le valide (erreur bloquante) et ajoute les images de splash au pak. Compromis : `orbit_export` dépend maintenant d'`orbit_ui` (donc des crates de rendu à la compilation). Extraire les types de données dans un crate sans rendu reste à faire.
+
+### 5. Splash screens
+
+* Séquence = **splash OrbitEngine** puis splashes du projet (`SplashDef`) puis menu principal. `SplashState` (`orbit_runtime/src/splash.rs`, sans GPU, testé) est le seul moyen de construire la séquence : le splash moteur y est codé en dur (logo `assets/brand/logo-horizontal-light.png` embarqué par `include_bytes!`, 3 s, passable après 1,5 s) ; aucun champ de config, fichier de projet ou entrée de pak ne peut le retirer, le raccourcir ou le réordonner. Les valeurs d'un splash de projet sont assainies (durée bornée, fondus, NaN).
+* `Phase::Splash` se place entre `Ready` (le clic de départ, nécessaire pour débloquer l'audio web) et `Running`. Seuls le runtime embarqué de l'éditeur (`runtime/embedded.rs`, qui passe directement en `Running`) et le redémarrage par hot reload dans une session déjà lancée l'évitent ; rien n'y mène depuis `orbit_player`.
+* Images seulement (pas de décodeur vidéo) : la variante `SplashContent::Video` est réservée et ignorée.
+
+## Addendum : sauvegardes, aperçu interactif
+
+* **`SaveSlots { mode, columns, rows }`** (widget composite) : grille paginée de cartes (miniature, date, dernière réplique), onglets de catégorie (mode `Load`), pages, suppression ; sauvegarde dans un slot utilisé et suppression passent par une confirmation. Il réutilise les `UiEvent::SaveSlot / LoadSlot / DeleteSlot` et la logique de pagination de l'écran Rust ; les données viennent de `DataContext::saves` (rempli par le shell seulement si un écran en contient un). `slots_page` est pure et testée.
+* `SYSTEM_SCREENS` gagne `save` et `load` : le shell les substitue aux écrans Rust (repli inchangé), y compris pour `OpenSave` / `OpenLoad`. `assets/ui/default/save.screen.ron` et `load.screen.ron` font partie de `UiBundle::builtin()` ; gabarits « Save » / « Load » dans l'éditeur.
+* **Aperçu de l'éditeur** : `PreviewNav` (orbit_ui, sans GPU) tient la pile d'écrans de l'aperçu, les réglages et sauvegardes fictifs, et traduit les actions « de jeu » (GameNew, Quit, SceneGoto...) en toasts « Action: ... ». Open / Replace / Close / CloseAll / Back naviguent ; l'éditeur sélectionne l'écran affiché (`PreviewState::ui_shown`).
+* **Sélection par clic** : `DataScreen::widget_at` renvoie le chemin (indices d'enfants) du widget le plus profond sous le pointeur, labels et panneaux compris (`PreviewState::ui_pick`) ; le widget sélectionné est entouré dans l'aperçu (`ui_highlight`).
+* **Corrections de chaîne** : le dossier `ui/` du projet n'était jamais donné au runtime (ni par `orbit play <projet>`, ni par le Play de l'éditeur, qui forçait aussi les écrans Rust) : `native_config` et `PreviewHost::load` fixent maintenant `ui_dir`. Chaque action de bouton est testée au niveau du shell.

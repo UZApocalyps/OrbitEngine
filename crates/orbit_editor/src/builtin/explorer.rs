@@ -123,8 +123,8 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             {
                 ctx.run_action("orbit.explorer.delete");
             }
-            if icon_button(ui, icons::PLUS, &ctx.t("explorer.add_say_tip")).clicked() {
-                ctx.run_action("orbit.explorer.add_say");
+            if icon_button(ui, icons::PLUS, &ctx.t("explorer.add_scene_tip")).clicked() {
+                ctx.run_action("orbit.scene.new_scene");
             }
         });
     });

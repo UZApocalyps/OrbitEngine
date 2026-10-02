@@ -2,6 +2,7 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use serde::{Deserialize, Serialize};
 
 use orbit_render2d::TextureId;
 use orbit_text::{TextAlign, TextBlock};
@@ -16,7 +17,7 @@ pub const NO_TAG: Tag = 0;
 pub struct NodeId(pub(crate) usize);
 
 /// How a node is sized along one axis.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Size {
     /// Content size.
     Fit,
@@ -26,7 +27,7 @@ pub enum Size {
     Fill(f32),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Align {
     #[default]
     Start,
@@ -37,17 +38,22 @@ pub enum Align {
 }
 
 /// How a container places its children.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Dir {
     Vertical,
     Horizontal,
     /// All children overlap in the content box.
     Stack,
+    /// Children fill a grid row by row, this many columns wide (0 counts as
+    /// one). Column widths and row heights follow the widest / tallest cell;
+    /// spare room goes to the columns / rows holding a `Fill` child. `gap`
+    /// separates rows and columns.
+    Grid(usize),
 }
 
 /// Where a root node sits on the canvas: `pivot` of the node is put on the
 /// `canvas` fraction point, then moved by `offset`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Anchor {
     pub canvas: [f32; 2],
     pub pivot: [f32; 2],
@@ -90,7 +96,7 @@ impl Anchor {
 }
 
 /// Background of a [`Kind::Panel`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PanelKind {
     /// Themed panel with border.
     Normal,
@@ -247,6 +253,10 @@ pub struct Node {
     pub dir: Dir,
     /// Horizontal and vertical inner margin.
     pub pad: [f32; 2],
+    /// Outer margin `[left, top, right, bottom]` kept around the node.
+    pub margin: [f32; 4],
+    /// Name of a theme style (`Theme::styles`) applied when drawing.
+    pub style: Option<String>,
     /// Gap between children.
     pub gap: f32,
     /// Placement along the container's axis (`Stretch` is treated as
@@ -273,6 +283,8 @@ impl Node {
             height: Size::Fit,
             dir: Dir::Vertical,
             pad: [0.0, 0.0],
+            margin: [0.0; 4],
+            style: None,
             gap: 0.0,
             main: Align::Start,
             cross: Align::Start,
@@ -415,6 +427,23 @@ impl Node {
     pub fn pad(mut self, x: f32, y: f32) -> Self {
         self.pad = [x, y];
         self
+    }
+
+    /// Outer margin `[left, top, right, bottom]`.
+    pub fn margin(mut self, margin: [f32; 4]) -> Self {
+        self.margin = margin;
+        self
+    }
+
+    /// Applies the theme style called `name`.
+    pub fn style(mut self, name: impl Into<String>) -> Self {
+        self.style = Some(name.into());
+        self
+    }
+
+    /// A grid container `columns` wide.
+    pub fn grid(columns: usize) -> Self {
+        Self::container(Dir::Grid(columns))
     }
 
     pub fn gap(mut self, gap: f32) -> Self {

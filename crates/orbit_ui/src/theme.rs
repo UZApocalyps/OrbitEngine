@@ -1,5 +1,7 @@
 //! The data-driven look of the in-game UI.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Converts an sRGBA byte color to the linear RGBA expected by sprite tints.
@@ -25,6 +27,9 @@ pub struct Theme {
     pub widgets: WidgetTheme,
     /// Optional UI sounds, played by the host.
     pub sounds: UiSounds,
+    /// Named styles that widgets pick with `Node::style` / `style:` in a
+    /// screen asset.
+    pub styles: BTreeMap<String, Style>,
 }
 
 impl Theme {
@@ -129,7 +134,6 @@ pub struct ScreenTheme {
     pub bar_size: [f32; 2],
     pub bar_background: [u8; 4],
     pub bar_fill: [u8; 4],
-    pub texts: UiTexts,
 }
 
 impl Default for ScreenTheme {
@@ -143,32 +147,6 @@ impl Default for ScreenTheme {
             bar_size: [700.0, 14.0],
             bar_background: [30, 36, 56, 255],
             bar_fill: [110, 160, 255, 255],
-            texts: UiTexts::default(),
-        }
-    }
-}
-
-/// Engine-provided strings (they will go through the localization table
-/// later).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct UiTexts {
-    pub loading: String,
-    pub click_to_start: String,
-    pub the_end: String,
-    pub error_title: String,
-    pub error_hint: String,
-}
-
-impl Default for UiTexts {
-    fn default() -> Self {
-        Self {
-            loading: "Chargement\u{2026}".into(),
-            click_to_start: "Cliquer pour d\u{e9}marrer".into(),
-            the_end: "Fin \u{2014} cliquer pour recommencer".into(),
-            error_title: "Impossible de lancer l'histoire".into(),
-            error_hint: "Corrigez le fichier : il sera recharg\u{e9} automatiquement (natif)."
-                .into(),
         }
     }
 }
@@ -364,6 +342,122 @@ impl Default for WidgetTheme {
     }
 }
 
+/// What a widget background is made of.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Fill {
+    Color([u8; 4]),
+}
+
+/// One optional color per widget state.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StateColors {
+    pub normal: Option<[u8; 4]>,
+    pub hover: Option<[u8; 4]>,
+    pub pressed: Option<[u8; 4]>,
+    pub disabled: Option<[u8; 4]>,
+}
+
+impl StateColors {
+    /// The color of a state: `disabled` wins, then `pressed`, then `hover`;
+    /// a missing state color falls back to `normal`.
+    pub fn pick(&self, enabled: bool, pressed: bool, hot: bool) -> Option<[u8; 4]> {
+        let state = if !enabled {
+            self.disabled
+        } else if pressed {
+            self.pressed.or(self.hover)
+        } else if hot {
+            self.hover
+        } else {
+            None
+        };
+        state.or(self.normal)
+    }
+
+    fn over(&self, base: &StateColors) -> StateColors {
+        StateColors {
+            normal: self.normal.or(base.normal),
+            hover: self.hover.or(base.hover),
+            pressed: self.pressed.or(base.pressed),
+            disabled: self.disabled.or(base.disabled),
+        }
+    }
+}
+
+/// Border of a styled widget.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Border {
+    pub color: [u8; 4],
+    pub width: f32,
+}
+
+/// Sound files of a styled widget (resolved by the host like
+/// [`UiSounds`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StyleSounds {
+    pub hover: Option<String>,
+    pub confirm: Option<String>,
+}
+
+/// A named look: every field is optional so that a style only lists what it
+/// changes. `extends` names another style whose fields fill the gaps (one
+/// level: the parent's own `extends` is ignored).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Style {
+    pub extends: Option<String>,
+    /// Font family name (`None` = the default font).
+    pub font: Option<String>,
+    pub text_size: Option<f32>,
+    pub text_colors: StateColors,
+    /// Background when no per-state color is given.
+    pub fill: Option<Fill>,
+    /// Background per state (overrides `fill`).
+    pub colors: StateColors,
+    pub border: Option<Border>,
+    pub padding: Option<[f32; 2]>,
+    pub sounds: Option<StyleSounds>,
+}
+
+impl Style {
+    /// `self` on top of `base`.
+    pub fn over(&self, base: &Style) -> Style {
+        Style {
+            extends: None,
+            font: self.font.clone().or_else(|| base.font.clone()),
+            text_size: self.text_size.or(base.text_size),
+            text_colors: self.text_colors.over(&base.text_colors),
+            fill: self.fill.clone().or_else(|| base.fill.clone()),
+            colors: self.colors.over(&base.colors),
+            border: self.border.clone().or_else(|| base.border.clone()),
+            padding: self.padding.or(base.padding),
+            sounds: self.sounds.clone().or_else(|| base.sounds.clone()),
+        }
+    }
+
+    /// Background color for a state (`colors`, then `fill`).
+    pub fn background(&self, enabled: bool, pressed: bool, hot: bool) -> Option<[u8; 4]> {
+        self.colors
+            .pick(enabled, pressed, hot)
+            .or(self.fill.as_ref().map(|Fill::Color(c)| *c))
+    }
+}
+
+/// The style called `name` with its `extends` parent merged in (the result
+/// has no `extends`). `None` when `name` is unknown; an unknown parent is
+/// ignored.
+pub fn resolve_style(styles: &BTreeMap<String, Style>, name: &str) -> Option<Style> {
+    let style = styles.get(name)?;
+    Some(match style.extends.as_deref().and_then(|p| styles.get(p)) {
+        Some(parent) => style.over(parent),
+        None => Style {
+            extends: None,
+            ..style.clone()
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +508,7 @@ mod tests {
         assert!(Theme::from_ron("(textbox: 3)").is_err());
     }
 
+#[test]    fn styles_extend_one_level_and_unknown_names_resolve_to_none() {        let theme = Theme::from_ron(            "(styles: {\"base\": (text_size: Some(20.0), fill: Some(Color((1, 2, 3, 4))),              colors: (hover: Some((9, 9, 9, 9)))), \"child\": (extends: Some(\"base\"),              text_size: Some(30.0), colors: (normal: Some((5, 5, 5, 5))))})",        )        .unwrap();        let s = resolve_style(&theme.styles, "child").unwrap();        assert_eq!(s.text_size, Some(30.0));        assert_eq!(s.fill, Some(Fill::Color([1, 2, 3, 4])));        assert_eq!(s.extends, None);        assert_eq!(s.background(true, false, false), Some([5, 5, 5, 5]));        assert_eq!(s.background(true, false, true), Some([9, 9, 9, 9]));        assert_eq!(s.background(true, true, true), Some([9, 9, 9, 9]), "pressed falls back to hover");        assert_eq!(s.background(false, false, false), Some([5, 5, 5, 5]), "disabled falls back to normal");        assert!(resolve_style(&theme.styles, "nope").is_none());    }    #[test]    fn a_grandparent_is_ignored_and_a_missing_parent_too() {        let mut styles = BTreeMap::new();        styles.insert("a".to_owned(), Style { text_size: Some(1.0), padding: Some([1.0, 1.0]), ..Default::default() });        styles.insert("b".to_owned(), Style { extends: Some("a".into()), ..Default::default() });        styles.insert("c".to_owned(), Style { extends: Some("b".into()), ..Default::default() });        styles.insert("d".to_owned(), Style { extends: Some("ghost".into()), text_size: Some(7.0), ..Default::default() });        assert_eq!(resolve_style(&styles, "c").unwrap().text_size, None);        assert_eq!(resolve_style(&styles, "b").unwrap().text_size, Some(1.0));        assert_eq!(resolve_style(&styles, "d").unwrap().text_size, Some(7.0));    }
     #[test]
     fn tint_converts_to_linear() {
         let t = tint([255, 0, 128, 51]);

@@ -5,9 +5,10 @@ use orbit_save::{FileStorage, MemoryStorage};
 
 use super::*;
 use crate::director::Flow;
+use orbit_ui::UiBundle;
 
-const DEMO: &str = include_str!("../../../../examples/stories/demo.ron");
-const FR: &str = include_str!("../../../../examples/stories/i18n/demo.fr.ron");
+const DEMO: &str = include_str!("../../../../examples/stories/test_minimal.ron");
+const FR: &str = include_str!("../../../../examples/stories/i18n/test_minimal.fr.ron");
 
 fn story() -> Arc<Story> {
     Arc::new(Story::from_ron(DEMO).unwrap())
@@ -1067,4 +1068,264 @@ fn the_embedded_shell_reports_the_node_on_screen() {
         story.scenes[s].nodes[n].kind,
         orbit_core::NodeKind::Say { .. }
     ));
+}
+
+// --------------------------------------------------- data-driven screens
+
+fn with_bundle(bundle: &UiBundle) -> Shell {
+    let mut sh = shell();
+    sh.set_ui_bundle(bundle);
+    sh
+}
+
+fn bundle_of(screens: &[&str]) -> UiBundle {
+    UiBundle::from_parts(None, screens).unwrap()
+}
+
+const HUD: &str = "(id: \"hud\", modal: true, root: (kind: Stack(dir: Vertical)))";
+const BLOCKER: &str = "(id: \"blocker\", pauses_game: true, on_cancel: [Close], \
+    root: (kind: Stack(dir: Vertical), children: [(kind: Button(text: Literal(\"x\"), action: [Close]))]))";
+
+#[test]
+fn a_data_main_menu_replaces_the_stock_one() {
+    let mut sh = with_bundle(&UiBundle::builtin());
+    assert!(sh.sys_main.is_some() && sh.sys_pause.is_some() && sh.sys_prefs.is_some());
+    sh.input(ui(UiInput::Confirm)); // first button: New game
+    assert!(sh.has_game());
+}
+
+#[test]
+fn stock_screens_stay_when_the_bundle_provides_none() {
+    let mut sh = with_bundle(&bundle_of(&[HUD]));
+    assert!(sh.sys_main.is_none() && sh.sys_pause.is_none() && sh.sys_prefs.is_none());
+    sh.input(ui(UiInput::Confirm));
+    assert!(sh.has_game(), "the Rust main menu still starts the game");
+    sh.apply(UiEvent::OpenPause);
+    assert_eq!(sh.top(), Some(Overlay::Pause));
+}
+
+#[test]
+fn the_data_pause_menu_pauses_the_game_and_cancel_resumes() {
+    let mut sh = with_bundle(&UiBundle::builtin());
+    sh.start_new_game();
+    sh.update(0.5);
+    sh.apply(UiEvent::OpenPause);
+    let Some(Overlay::Custom(_)) = sh.top() else {
+        panic!("{:?}", sh.top())
+    };
+    let before = sh.play_time;
+    sh.update(0.5);
+    assert_eq!(sh.play_time, before, "the game is paused");
+    sh.input(ui(UiInput::Cancel));
+    assert_eq!(sh.top(), None, "on_cancel: CloseAll");
+    sh.update(0.5);
+    assert!(sh.play_time > before);
+}
+
+#[test]
+fn a_screen_without_pauses_game_lets_the_game_run() {
+    let mut sh = with_bundle(&bundle_of(&[HUD, BLOCKER]));
+    sh.start_new_game();
+    sh.apply(UiEvent::OpenScreen("hud".into()));
+    assert!(matches!(sh.top(), Some(Overlay::Custom(_))));
+    let t = sh.play_time;
+    sh.update(0.5);
+    assert!(sh.play_time > t, "hud does not pause");
+    sh.apply(UiEvent::ReplaceScreen("blocker".into()));
+    let t = sh.play_time;
+    sh.update(0.5);
+    assert_eq!(sh.play_time, t, "blocker pauses");
+}
+
+#[test]
+fn screens_open_replace_and_close_by_id_with_stock_fallbacks() {
+    let mut sh = with_bundle(&bundle_of(&[HUD, BLOCKER]));
+    sh.start_new_game();
+    sh.apply(UiEvent::OpenScreen("preferences".into()));
+    assert_eq!(sh.top(), Some(Overlay::Prefs), "no data screen: the stock one");
+    sh.apply(UiEvent::ReplaceScreen("hud".into()));
+    assert!(matches!(sh.top(), Some(Overlay::Custom(_))));
+    assert_eq!(sh.stack.len(), 1);
+    sh.apply(UiEvent::OpenScreen("blocker".into()));
+    sh.apply(UiEvent::OpenScreen("nope".into()));
+    assert_eq!(sh.stack.len(), 2, "unknown ids are ignored");
+    sh.apply(UiEvent::CloseAll);
+    assert_eq!(sh.top(), None);
+}
+
+#[test]
+fn data_preferences_edit_the_player_settings() {
+    let mut sh = with_bundle(&UiBundle::builtin());
+    sh.take_effects();
+    sh.apply(UiEvent::OpenPreferences);
+    assert!(matches!(sh.top(), Some(Overlay::Custom(_))));
+    sh.input(ui(UiInput::Left)); // the first widget is the master slider
+    assert!(sh.prefs().volumes.master < 1.0);
+    let effects = sh.take_effects();
+    assert!(
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::SetVolume(AudioBus::Master, v) if *v < 1.0)),
+        "{effects:?}"
+    );
+    sh.input(ui(UiInput::Cancel));
+    assert_eq!(sh.top(), None, "Close");
+}
+
+#[test]
+fn play_sound_and_custom_actions_become_effects() {
+    let mut sh = shell();
+    sh.apply(UiEvent::PlaySound("click.ogg".into()));
+    sh.apply(UiEvent::Custom {
+        name: "hi".into(),
+        args: vec!["a".into()],
+    });
+    let effects = sh.take_effects();
+    assert!(effects.contains(&Effect::PlayAsset("click.ogg".into())));
+    assert!(effects.contains(&Effect::Custom {
+        name: "hi".into(),
+        args: vec!["a".into()]
+    }));
+}
+
+#[test]
+fn data_save_and_load_screens_stand_in_for_the_stock_ones() {
+    // A bundle without them: the Rust screens stay.
+    let mut sh = with_bundle(&bundle_of(&[HUD]));
+    assert!(sh.sys_save.is_none() && sh.sys_load.is_none() && !sh.slots_wanted);
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 1);
+    sh.apply(UiEvent::OpenSave);
+    assert_eq!(sh.top(), Some(Overlay::Save));
+
+    // The built-in bundle provides both.
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.set_ui_bundle(&UiBundle::builtin());
+    let (save, load) = (sh.sys_save.unwrap(), sh.sys_load.unwrap());
+    assert!(sh.slots_wanted);
+    // On the title nothing can be saved, even by id.
+    sh.apply(UiEvent::OpenScreen("save".into()));
+    assert_eq!(sh.top(), None);
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 1);
+    sh.apply(UiEvent::OpenSave);
+    assert_eq!(sh.top(), Some(Overlay::Custom(save)));
+    // The first card is the empty slot 1: picking it saves.
+    sh.input(ui(UiInput::Confirm));
+    for _ in 0..20 {
+        sh.update(0.1);
+    }
+    assert!(storage.read("saves/manual_001.sav").unwrap().is_some());
+    assert_eq!(
+        sh.data_context().saves[0].slots[0].state,
+        UiSlotState::Used,
+        "the screen's slots follow the storage"
+    );
+    sh.input(ui(UiInput::Cancel));
+    assert_eq!(sh.top(), None, "on_cancel: Close");
+    sh.apply(UiEvent::OpenLoad);
+    assert_eq!(sh.top(), Some(Overlay::Custom(load)));
+}
+
+// ----------------------------------- every action of a button, end to end
+
+/// A shell showing the screen `t` (one button running `action`, a RON
+/// action list entry) and a second screen `p2`; `setup` runs first. The
+/// button is then pressed with the keyboard.
+fn press(actions: &str, setup: impl FnOnce(&mut Shell)) -> (Shell, MemoryStorage) {
+    let t = format!(
+        "(id: \"t\", on_cancel: [Close], root: (kind: Stack(dir: Vertical), children: [\
+         (kind: Button(text: Literal(\"x\"), action: [{actions}]))]))"
+    );
+    let p2 = "(id: \"p2\", root: (kind: Stack(dir: Vertical), children: [\
+              (kind: Button(text: Literal(\"y\"), action: [Close]))]))";
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.set_ui_bundle(&bundle_of(&[&t, p2]));
+    setup(&mut sh);
+    sh.apply(UiEvent::OpenScreen("t".into()));
+    assert!(matches!(sh.top(), Some(Overlay::Custom(_))), "{:?}", sh.top());
+    sh.take_effects();
+    sh.input(ui(UiInput::Confirm));
+    (sh, storage)
+}
+
+fn in_game(sh: &mut Shell) {
+    sh.apply(UiEvent::StartGame);
+    play_lines(sh, 1);
+}
+
+fn is_screen(sh: &Shell, id: &str) -> bool {
+    matches!(sh.top(), Some(Overlay::Custom(i)) if sh.data[i].id() == id)
+}
+
+#[test]
+fn a_button_opens_replaces_and_closes_screens() {
+    let (sh, _) = press("Open(\"p2\")", |_| {});
+    assert!(is_screen(&sh, "p2") && sh.stack.len() == 2);
+    let (sh, _) = press("Replace(\"p2\")", |_| {});
+    assert!(is_screen(&sh, "p2") && sh.stack.len() == 1);
+    let (sh, _) = press("Close", |_| {});
+    assert_eq!(sh.top(), None);
+    let (sh, _) = press("CloseAll", |sh| sh.apply(UiEvent::OpenScreen("p2".into())));
+    assert_eq!(sh.top(), None, "every screen is closed");
+}
+
+#[test]
+fn a_button_drives_the_game_flow() {
+    let (sh, _) = press("GameNew", |_| {});
+    assert!(sh.has_game());
+    let (sh, _) = press("ReturnToTitle", |sh| sh.apply(UiEvent::StartGame));
+    assert!(!sh.has_game());
+    let (mut sh, effects) = press("GameQuit", |_| {});
+    let _ = effects;
+    assert!(sh.take_effects().contains(&Effect::Quit));
+}
+
+#[test]
+fn a_button_continues_from_the_last_save() {
+    let (sh, storage) = press("GameContinue", |sh| {
+        in_game(sh);
+        sh.apply(UiEvent::SaveSlot(slot(0)));
+        for _ in 0..20 {
+            sh.update(0.1);
+        }
+        sh.apply(UiEvent::ReturnToMainMenu);
+    });
+    assert!(storage.read("saves/manual_001.sav").unwrap().is_some());
+    assert!(sh.has_game(), "Continue loaded the save");
+}
+
+#[test]
+fn a_button_saves_and_loads_quick_and_opens_the_slot_screens() {
+    let (mut sh, _) = press("QuickSave", in_game);
+    for _ in 0..20 {
+        sh.update(0.1);
+    }
+    assert_eq!(sh.category_views()[2].slots[0].state, UiSlotState::Used);
+    let (sh, _) = press("QuickLoad", |_| {});
+    assert!(!sh.toasts.is_empty(), "no quicksave: the player is told");
+    let (sh, _) = press("OpenSave", in_game);
+    assert_eq!(sh.top(), Some(Overlay::Save));
+    let (sh, _) = press("OpenLoad", in_game);
+    assert_eq!(sh.top(), Some(Overlay::Load));
+}
+
+#[test]
+fn a_button_resets_preferences_plays_sounds_and_calls_hooks() {
+    let (sh, _) = press("ResetPreferences", |sh| {
+        sh.apply(UiEvent::SetVolume(AudioBus::Master, 0.3));
+    });
+    assert_eq!(sh.prefs().volumes.master, Preferences::default().volumes.master);
+    let (mut sh, _) = press(
+        "PlaySound(\"click.ogg\"), Custom(name: \"hi\", args: [\"a\"])",
+        |_| {},
+    );
+    let effects = sh.take_effects();
+    assert!(effects.contains(&Effect::PlayAsset("click.ogg".into())), "{effects:?}");
+    assert!(effects.contains(&Effect::Custom {
+        name: "hi".into(),
+        args: vec!["a".into()]
+    }));
 }

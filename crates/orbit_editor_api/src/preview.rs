@@ -66,6 +66,19 @@ pub enum PreviewInput {
     Ctrl(bool),
 }
 
+/// What the UI editor asks the preview to show instead of the game. The
+/// bundle travels as RON text (the host parses it): the plugin API stays free
+/// of the UI crate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UiPreviewRequest {
+    /// A screen of the bundle.
+    Screen { bundle_ron: String, id: String },
+    /// The splash sequence of the bundle (after the engine splash), looping.
+    Splashes { bundle_ron: String },
+    /// Back to the game.
+    Off,
+}
+
 /// Everything about the preview that is not the runtime itself.
 #[derive(Debug, Default)]
 pub struct PreviewState {
@@ -83,6 +96,14 @@ pub struct PreviewState {
     pub current_node: Option<NodeId>,
     /// What the story is doing, in a few words ("Réplique", "Choix", "Fin").
     pub flow: String,
+    /// The preview shows a UI screen or the splashes, not the game.
+    pub ui_active: bool,
+    /// The screen the UI preview shows (it follows navigation actions
+    /// clicked inside the preview).
+    pub ui_shown: Option<String>,
+    /// The widget (screen id, child indices from its root) the pointer went
+    /// down on in the UI preview, taken by the UI editor.
+    pub ui_pick: Option<(String, Vec<usize>)>,
     /// Why the last edit could not be played (validation errors), if so.
     pub error: Option<String>,
 
@@ -100,6 +121,10 @@ pub struct PreviewState {
     /// Commands and input for the host.
     pub commands: Vec<PreviewCommand>,
     pub input: Vec<PreviewInput>,
+    /// A UI preview asked for by the UI editor, taken by the host.
+    pub ui_request: Option<UiPreviewRequest>,
+    /// Widget of the shown screen to outline in the UI preview.
+    pub ui_highlight: Option<Vec<usize>>,
 }
 
 impl PreviewState {

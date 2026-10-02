@@ -216,6 +216,16 @@ pub enum UiEvent {
     /// Language code.
     SetLanguage(String),
     ResetPreferences,
+    /// Open a screen by id above the current one (data-driven screens).
+    OpenScreen(String),
+    /// Replace the top screen by another one.
+    ReplaceScreen(String),
+    /// Close every screen (resume the game).
+    CloseAll,
+    /// Play a sound asset by path.
+    PlaySound(String),
+    /// Free-form hook for the host or a plugin.
+    Custom { name: String, args: Vec<String> },
     /// Show a short notification (already localized).
     Toast(String),
     /// Play a UI sound (see `Theme::sounds`).

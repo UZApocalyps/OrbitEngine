@@ -37,7 +37,15 @@ impl Ui {
 
     fn label_size(&self, node: &Node) -> f32 {
         match &node.kind {
-            Kind::Label(l) => l.size.unwrap_or(self.theme.widgets.text_size),
+            Kind::Label(l) => l
+                .size
+                .or_else(|| {
+                    node.style
+                        .as_deref()
+                        .and_then(|n| crate::theme::resolve_style(&self.theme.styles, n))
+                        .and_then(|s| s.text_size)
+                })
+                .unwrap_or(self.theme.widgets.text_size),
             _ => self.theme.widgets.text_size,
         }
     }
@@ -59,6 +67,13 @@ impl Ui {
                 Dir::Vertical => [max(0), sum(1) + gaps],
                 Dir::Horizontal => [sum(0) + gaps, max(1)],
                 Dir::Stack => [max(0), max(1)],
+                Dir::Grid(cols) => {
+                    let (cw, rh) = grid_tracks(&prefs, cols);
+                    [
+                        cw.iter().sum::<f32>() + gap * cw.len().saturating_sub(1) as f32,
+                        rh.iter().sum::<f32>() + gap * rh.len().saturating_sub(1) as f32,
+                    ]
+                }
             }
         };
         let content = match &node.kind {
@@ -113,15 +128,16 @@ impl Ui {
                 c
             }
         };
+        let m = node.margin;
         let pref = [
             match node.width {
                 Size::Fixed(v) => v,
                 _ => padded(content[0], node.pad[0]),
-            },
+            } + m[0] + m[2],
             match node.height {
                 Size::Fixed(v) => v,
                 _ => padded(content[1], node.pad[1]),
-            },
+            } + m[1] + m[3],
         ];
         self.nodes[id.0].pref = pref;
         pref
@@ -129,6 +145,13 @@ impl Ui {
 
     /// Places a subtree in `rect`.
     fn arrange(&mut self, id: NodeId, rect: [f32; 4], visible: bool) {
+        let m = self.nodes[id.0].margin;
+        let rect = [
+            rect[0] + m[0],
+            rect[1] + m[1],
+            (rect[2] - m[0] - m[2]).max(0.0),
+            (rect[3] - m[1] - m[3]).max(0.0),
+        ];
         let (children, pad, gap, dir, main, cross, is_list) = {
             let n = &mut self.nodes[id.0];
             n.rect = rect;
@@ -154,6 +177,10 @@ impl Ui {
         ];
         if is_list {
             self.arrange_list(id, &children, inner, gap, visible);
+            return;
+        }
+        if let Dir::Grid(cols) = dir {
+            self.arrange_grid(&children, inner, gap, cols.max(1), main, cross, visible);
             return;
         }
         if dir == Dir::Stack {
@@ -222,6 +249,48 @@ impl Ui {
             r[2 + c] = cross_size;
             pos += main_size + gap;
             self.arrange(ch, r, visible);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn arrange_grid(
+        &mut self,
+        children: &[NodeId],
+        inner: [f32; 4],
+        gap: f32,
+        cols: usize,
+        main: Align,
+        cross: Align,
+        visible: bool,
+    ) {
+        let prefs: Vec<[f32; 2]> = children.iter().map(|c| self.nodes[c.0].pref).collect();
+        let (mut cw, mut rh) = grid_tracks(&prefs, cols);
+        let mut fill_c = vec![false; cw.len()];
+        let mut fill_r = vec![false; rh.len()];
+        for (i, &ch) in children.iter().enumerate() {
+            let n = &self.nodes[ch.0];
+            fill_c[i % cols] |= matches!(n.width, Size::Fill(_));
+            fill_r[i / cols] |= matches!(n.height, Size::Fill(_));
+        }
+        spread(&mut cw, &fill_c, inner[2], gap);
+        spread(&mut rh, &fill_r, inner[3], gap);
+        let mut ys = Vec::with_capacity(rh.len());
+        let mut y = inner[1];
+        for h in &rh {
+            ys.push(y);
+            y += h + gap;
+        }
+        let mut xs = Vec::with_capacity(cw.len());
+        let mut x = inner[0];
+        for w in &cw {
+            xs.push(x);
+            x += w + gap;
+        }
+        for (i, &ch) in children.iter().enumerate() {
+            let (c, r) = (i % cols, i / cols);
+            let cell = [xs[c], ys[r], cw[c], rh[r]];
+            let rect = self.place_in(ch, cell, main, cross);
+            self.arrange(ch, rect, visible);
         }
     }
 
@@ -314,6 +383,33 @@ impl Ui {
                 return 0;
             }
             first -= 1;
+        }
+    }
+}
+
+/// Natural column widths and row heights of a grid `cols` wide.
+fn grid_tracks(prefs: &[[f32; 2]], cols: usize) -> (Vec<f32>, Vec<f32>) {
+    let cols = cols.max(1);
+    let rows = prefs.len().div_ceil(cols);
+    let mut cw = vec![0.0f32; cols.min(prefs.len())];
+    let mut rh = vec![0.0f32; rows];
+    for (i, p) in prefs.iter().enumerate() {
+        cw[i % cols] = cw[i % cols].max(p[0]);
+        rh[i / cols] = rh[i / cols].max(p[1]);
+    }
+    (cw, rh)
+}
+
+/// Shares the room left in `avail` among the tracks flagged in `fill`.
+fn spread(tracks: &mut [f32], fill: &[bool], avail: f32, gap: f32) {
+    let used: f32 = tracks.iter().sum::<f32>() + gap * tracks.len().saturating_sub(1) as f32;
+    let count = fill.iter().filter(|f| **f).count();
+    let free = avail - used;
+    if count > 0 && free > 0.0 {
+        for (t, f) in tracks.iter_mut().zip(fill) {
+            if *f {
+                *t += free / count as f32;
+            }
         }
     }
 }

@@ -1,0 +1,809 @@
+//! Property editors of the UI editor: a widget, a style, the small enums
+//! and lists they are made of. Every editor mutates the value it is given;
+//! the caller compares it with the original to know whether something changed.
+
+use egui::{ComboBox, DragValue, RichText, Ui};
+use orbit_editor_api::{Translator, icons};
+use orbit_ui::{
+    Align, Anchor, BindPath, Border, Cond, Dir, Fill, LayoutDef, PanelKind, SettingKey, Size,
+    StateColors, Style, StyleSounds, TextRef, UiAction, WidgetDef, WidgetKind,
+};
+
+use super::model::{BUILTIN_SCREEN_IDS, KindTag};
+use crate::builtin::ui_util::{faint, weak};
+
+/// What the editors need to offer choices and speak the editor's language.
+pub struct Env<'a> {
+    pub tr: &'a Translator,
+    /// Ids of the screens of the project.
+    pub screens: &'a [String],
+    /// Names of the styles of the theme.
+    pub styles: &'a [String],
+    /// Image assets of the project (paths).
+    pub images: &'a [String],
+}
+
+impl Env<'_> {
+    /// Label of an enum variant (`uied.v.<name>`).
+    fn v(&self, name: &str) -> String {
+        self.tr.t(&format!("uied.v.{name}"))
+    }
+
+    fn t(&self, key: &str) -> String {
+        self.tr.t(key)
+    }
+}
+
+const SETTINGS: [(SettingKey, &str); 9] = [
+    (SettingKey::MasterVolume, "master_volume"),
+    (SettingKey::MusicVolume, "music_volume"),
+    (SettingKey::SfxVolume, "sfx_volume"),
+    (SettingKey::VoiceVolume, "voice_volume"),
+    (SettingKey::TextSpeed, "text_speed"),
+    (SettingKey::AutoDelay, "auto_delay"),
+    (SettingKey::SkipMode, "skip_mode"),
+    (SettingKey::Fullscreen, "fullscreen"),
+    (SettingKey::Language, "language"),
+];
+
+fn setting_name(key: SettingKey) -> &'static str {
+    SETTINGS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map_or("master_volume", |(_, n)| n)
+}
+
+/// A caption on the left, the editor on the right.
+fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [92.0, 20.0],
+            egui::Label::new(RichText::new(label).small().color(weak(ui))).truncate(),
+        );
+        add(ui);
+    });
+}
+
+fn heading(ui: &mut Ui, text: &str) {
+    ui.add_space(8.0);
+    ui.label(RichText::new(text).strong());
+    ui.separator();
+}
+
+fn num(ui: &mut Ui, value: &mut f32, speed: f32) {
+    ui.add(DragValue::new(value).speed(speed).max_decimals(2));
+}
+
+fn color(ui: &mut Ui, c: &mut [u8; 4]) {
+    ui.color_edit_button_srgba_unmultiplied(c);
+}
+
+/// An optional value: a checkbox that adds / removes it, then the editor.
+fn optional<T: Clone>(
+    ui: &mut Ui,
+    value: &mut Option<T>,
+    default: T,
+    edit: impl FnOnce(&mut Ui, &mut T),
+) {
+    let mut on = value.is_some();
+    if ui.checkbox(&mut on, "").changed() {
+        *value = on.then(|| default.clone());
+    }
+    if let Some(v) = value {
+        edit(ui, v);
+    }
+}
+
+/// A combo over `(id, label)` options, setting `current` to the picked id.
+fn pick<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    current: &mut T,
+    options: &[(T, String)],
+) {
+    let text = options
+        .iter()
+        .find(|(v, _)| v == current)
+        .map(|(_, l)| l.as_str())
+        .unwrap_or("?");
+    ComboBox::from_id_salt(salt)
+        .selected_text(text)
+        .show_ui(ui, |ui| {
+            for (v, label) in options {
+                ui.selectable_value(current, *v, label);
+            }
+        });
+}
+
+// ------------------------------------------------------------------ enums
+
+fn align_editor(ui: &mut Ui, env: &Env, salt: &str, a: &mut Align) {
+    let options = [
+        (Align::Start, env.v("start")),
+        (Align::Center, env.v("center")),
+        (Align::End, env.v("end")),
+        (Align::Stretch, env.v("stretch")),
+    ];
+    pick(ui, salt, a, &options);
+}
+
+fn size_editor(ui: &mut Ui, env: &Env, salt: &str, size: &mut Size) {
+    let tag = match size {
+        Size::Fit => 0,
+        Size::Fixed(_) => 1,
+        Size::Fill(_) => 2,
+    };
+    let mut new = tag;
+    pick(
+        ui,
+        salt,
+        &mut new,
+        &[(0, env.v("fit")), (1, env.v("fixed")), (2, env.v("fill"))],
+    );
+    if new != tag {
+        *size = match new {
+            0 => Size::Fit,
+            1 => Size::Fixed(200.0),
+            _ => Size::Fill(1.0),
+        };
+    }
+    match size {
+        Size::Fixed(v) | Size::Fill(v) => num(ui, v, 1.0),
+        Size::Fit => {}
+    }
+}
+
+fn dir_editor(ui: &mut Ui, env: &Env, salt: &str, dir: &mut Dir) {
+    let tag = match dir {
+        Dir::Vertical => 0,
+        Dir::Horizontal => 1,
+        Dir::Stack => 2,
+        Dir::Grid(_) => 3,
+    };
+    let mut new = tag;
+    pick(
+        ui,
+        salt,
+        &mut new,
+        &[
+            (0, env.v("vertical")),
+            (1, env.v("horizontal")),
+            (2, env.v("stack")),
+            (3, env.v("grid")),
+        ],
+    );
+    if new != tag {
+        *dir = match new {
+            0 => Dir::Vertical,
+            1 => Dir::Horizontal,
+            2 => Dir::Stack,
+            _ => Dir::Grid(2),
+        };
+    }
+    if let Dir::Grid(columns) = dir {
+        ui.add(DragValue::new(columns).range(1..=12));
+    }
+}
+
+fn cond_editor(ui: &mut Ui, env: &Env, salt: &str, cond: &mut Cond) {
+    let (negated, base) = match &*cond {
+        Cond::Not(inner) => (true, (**inner).clone()),
+        other => (false, other.clone()),
+    };
+    let names = [
+        (Cond::Always, "always"),
+        (Cond::Never, "never"),
+        (Cond::CanContinue, "can_continue"),
+        (Cond::CanSave, "can_save"),
+        (Cond::ShowQuit, "show_quit"),
+        (Cond::InGame, "in_game"),
+    ];
+    let mut index = names.iter().position(|(c, _)| *c == base).unwrap_or(0);
+    let mut neg = negated;
+    let options: Vec<(usize, String)> = names
+        .iter()
+        .enumerate()
+        .map(|(i, (_, n))| (i, env.v(n)))
+        .collect();
+    pick(ui, salt, &mut index, &options);
+    ui.checkbox(&mut neg, env.t("uied.not"));
+    let base = names[index].0.clone();
+    *cond = if neg { Cond::Not(Box::new(base)) } else { base };
+}
+
+fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath) {
+    let is_setting = matches!(bind, BindPath::Setting(_));
+    let mut new = is_setting;
+    pick(
+        ui,
+        (salt, "kind"),
+        &mut new,
+        &[(true, env.v("setting")), (false, env.v("var"))],
+    );
+    if new != is_setting {
+        *bind = if new {
+            BindPath::Setting(SettingKey::MasterVolume)
+        } else {
+            BindPath::Var(String::new())
+        };
+    }
+    match bind {
+        BindPath::Setting(key) => {
+            let options: Vec<(SettingKey, String)> = SETTINGS
+                .iter()
+                .map(|(k, n)| (*k, env.v(n)))
+                .collect();
+            let _ = setting_name(*key);
+            pick(ui, (salt, "key"), key, &options);
+        }
+        BindPath::Var(name) => {
+            ui.add(egui::TextEdit::singleline(name).desired_width(120.0));
+        }
+    }
+}
+
+fn text_ref_editor(ui: &mut Ui, env: &Env, salt: &str, text: &mut TextRef) {
+    let tag = match text {
+        TextRef::Key(_) => 0,
+        TextRef::Literal(_) => 1,
+        TextRef::Bind(_) => 2,
+    };
+    let mut new = tag;
+    pick(
+        ui,
+        (salt, "kind"),
+        &mut new,
+        &[(0, env.v("key")), (1, env.v("literal")), (2, env.v("bind"))],
+    );
+    if new != tag {
+        *text = match new {
+            0 => TextRef::Key(String::new()),
+            1 => TextRef::Literal(String::new()),
+            _ => TextRef::Bind(BindPath::Setting(SettingKey::MasterVolume)),
+        };
+    }
+    match text {
+        TextRef::Key(s) | TextRef::Literal(s) => {
+            ui.add(egui::TextEdit::singleline(s).desired_width(f32::INFINITY));
+        }
+        TextRef::Bind(bind) => bind_editor(ui, env, &format!("{salt}b"), bind),
+    }
+}
+
+/// Text field + a menu of known ids.
+fn id_editor(ui: &mut Ui, env: &Env, salt: &str, id: &mut String, with_builtin: bool) {
+    ui.add(egui::TextEdit::singleline(id).desired_width(110.0));
+    ui.menu_button(icons::CARET_DOWN, |ui| {
+        for s in env.screens {
+            if ui.button(s).clicked() {
+                id.clone_from(s);
+                ui.close();
+            }
+        }
+        if with_builtin {
+            ui.separator();
+            for s in BUILTIN_SCREEN_IDS {
+                if !env.screens.iter().any(|x| x == s) && ui.button(s).clicked() {
+                    *id = s.to_owned();
+                    ui.close();
+                }
+            }
+        }
+    });
+    let _ = salt;
+}
+
+// ---------------------------------------------------------------- actions
+
+const ACTION_NAMES: [&str; 17] = [
+    "game_new",
+    "game_continue",
+    "game_quit",
+    "return_to_title",
+    "open",
+    "replace",
+    "close",
+    "close_all",
+    "quick_save",
+    "quick_load",
+    "open_save",
+    "open_load",
+    "reset_preferences",
+    "play_sound",
+    "custom",
+    "scene_goto",
+    "var_set",
+];
+
+fn action_index(a: &UiAction) -> usize {
+    match a {
+        UiAction::GameNew => 0,
+        UiAction::GameContinue => 1,
+        UiAction::GameQuit => 2,
+        UiAction::ReturnToTitle => 3,
+        UiAction::Open(_) => 4,
+        UiAction::Replace(_) => 5,
+        UiAction::Close => 6,
+        UiAction::CloseAll => 7,
+        UiAction::QuickSave => 8,
+        UiAction::QuickLoad => 9,
+        UiAction::OpenSave => 10,
+        UiAction::OpenLoad => 11,
+        UiAction::ResetPreferences => 12,
+        UiAction::PlaySound(_) => 13,
+        UiAction::Custom { .. } => 14,
+        UiAction::SceneGoto(_) => 15,
+        UiAction::VarSet { .. } => 16,
+    }
+}
+
+fn action_from_index(i: usize) -> UiAction {
+    match i {
+        0 => UiAction::GameNew,
+        1 => UiAction::GameContinue,
+        2 => UiAction::GameQuit,
+        3 => UiAction::ReturnToTitle,
+        4 => UiAction::Open(String::new()),
+        5 => UiAction::Replace(String::new()),
+        6 => UiAction::Close,
+        7 => UiAction::CloseAll,
+        8 => UiAction::QuickSave,
+        9 => UiAction::QuickLoad,
+        10 => UiAction::OpenSave,
+        11 => UiAction::OpenLoad,
+        12 => UiAction::ResetPreferences,
+        13 => UiAction::PlaySound(String::new()),
+        14 => UiAction::Custom {
+            name: String::new(),
+            args: Vec::new(),
+        },
+        15 => UiAction::SceneGoto(String::new()),
+        _ => UiAction::VarSet {
+            name: String::new(),
+            value: String::new(),
+        },
+    }
+}
+
+fn action_editor(ui: &mut Ui, env: &Env, salt: &str, action: &mut UiAction) {
+    let index = action_index(action);
+    let mut new = index;
+    let options: Vec<(usize, String)> = ACTION_NAMES
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (i, env.v(n)))
+        .collect();
+    pick(ui, (salt, "kind"), &mut new, &options);
+    if new != index {
+        *action = action_from_index(new);
+    }
+    match action {
+        UiAction::Open(id) | UiAction::Replace(id) => id_editor(ui, env, salt, id, true),
+        UiAction::PlaySound(path) | UiAction::SceneGoto(path) => {
+            ui.add(egui::TextEdit::singleline(path).desired_width(140.0));
+        }
+        UiAction::Custom { name, args } => {
+            ui.add(egui::TextEdit::singleline(name).desired_width(90.0));
+            let mut joined = args.join(", ");
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut joined)
+                        .hint_text(env.t("uied.args_hint"))
+                        .desired_width(110.0),
+                )
+                .changed()
+            {
+                *args = joined
+                    .split(',')
+                    .map(|s| s.trim().to_owned())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            }
+        }
+        UiAction::VarSet { name, value } => {
+            ui.add(egui::TextEdit::singleline(name).desired_width(80.0));
+            ui.add(egui::TextEdit::singleline(value).desired_width(80.0));
+        }
+        _ => {}
+    }
+    if !action.is_supported() {
+        ui.label(RichText::new(icons::WARNING).color(ui.visuals().warn_fg_color))
+            .on_hover_text(env.t("uied.unsupported"));
+    }
+}
+
+/// The ordered list of actions of a button / the screen's cancel.
+pub fn actions_editor(ui: &mut Ui, env: &Env, salt: &str, actions: &mut Vec<UiAction>) {
+    let mut remove = None;
+    let mut swap = None;
+    let count = actions.len();
+    for (i, action) in actions.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            action_editor(ui, env, &format!("{salt}{i}"), action);
+            if ui.small_button(icons::ARROW_UP).clicked() && i > 0 {
+                swap = Some((i, i - 1));
+            }
+            if ui.small_button(icons::ARROW_DOWN).clicked() && i + 1 < count {
+                swap = Some((i, i + 1));
+            }
+            if ui.small_button(icons::X).clicked() {
+                remove = Some(i);
+            }
+        });
+    }
+    if let Some((a, b)) = swap {
+        actions.swap(a, b);
+    }
+    if let Some(i) = remove {
+        actions.remove(i);
+    }
+    if ui
+        .button(format!("{}  {}", icons::PLUS, env.t("uied.add_action")))
+        .clicked()
+    {
+        actions.push(UiAction::Close);
+    }
+}
+
+// ----------------------------------------------------------------- widget
+
+/// The properties of one widget: identity, kind data, layout, style.
+pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
+    let tag = KindTag::of(&w.kind);
+    heading(
+        ui,
+        &format!("{}  {}", tag.icon(), env.t(&format!("uied.kind.{}", tag.name()))),
+    );
+    row(ui, &env.t("uied.id"), |ui| {
+        ui.add(egui::TextEdit::singleline(&mut w.id).desired_width(f32::INFINITY));
+    });
+
+    // ---- kind data
+    match &mut w.kind {
+        WidgetKind::Panel { kind, dir } => {
+            row(ui, &env.t("uied.panel_kind"), |ui| {
+                pick(
+                    ui,
+                    "panel_kind",
+                    kind,
+                    &[
+                        (PanelKind::Normal, env.v("normal")),
+                        (PanelKind::Dim, env.v("dim")),
+                        (PanelKind::Solid, env.v("solid")),
+                    ],
+                );
+            });
+            row(ui, &env.t("uied.dir"), |ui| dir_editor(ui, env, "dir", dir));
+        }
+        WidgetKind::Stack { dir } => {
+            row(ui, &env.t("uied.dir"), |ui| dir_editor(ui, env, "dir", dir));
+        }
+        WidgetKind::Grid { columns } => {
+            row(ui, &env.t("uied.columns"), |ui| {
+                ui.add(DragValue::new(columns).range(1..=12));
+            });
+        }
+        WidgetKind::Button { text, action } => {
+            row(ui, &env.t("uied.text"), |ui| {
+                text_ref_editor(ui, env, "text", text);
+            });
+            ui.add_space(4.0);
+            ui.label(RichText::new(env.t("uied.actions")).small().color(weak(ui)));
+            actions_editor(ui, env, "act", action);
+        }
+        WidgetKind::Label {
+            text,
+            size,
+            center,
+            dim,
+        } => {
+            row(ui, &env.t("uied.text"), |ui| {
+                text_ref_editor(ui, env, "text", text);
+            });
+            row(ui, &env.t("uied.font_size"), |ui| {
+                optional(ui, size, 30.0, |ui, v| num(ui, v, 0.5));
+            });
+            row(ui, "", |ui| {
+                ui.checkbox(center, env.t("uied.center"));
+                ui.checkbox(dim, env.t("uied.dim_text"));
+            });
+        }
+        WidgetKind::Image { asset } => {
+            row(ui, &env.t("uied.image"), |ui| {
+                let mut path = asset.clone().unwrap_or_default();
+                ui.add(egui::TextEdit::singleline(&mut path).desired_width(140.0));
+                ui.menu_button(icons::CARET_DOWN, |ui| {
+                    if ui.button("@menu_background").clicked() {
+                        path = "@menu_background".into();
+                        ui.close();
+                    }
+                    for img in env.images {
+                        if ui.button(img).clicked() {
+                            path.clone_from(img);
+                            ui.close();
+                        }
+                    }
+                });
+                *asset = (!path.is_empty()).then_some(path);
+            });
+        }
+        WidgetKind::Slider {
+            bind,
+            min,
+            max,
+            step,
+        } => {
+            row(ui, &env.t("uied.bind"), |ui| bind_editor(ui, env, "bind", bind));
+            row(ui, &env.t("uied.range"), |ui| {
+                num(ui, min, 0.05);
+                ui.label("→");
+                num(ui, max, 0.05);
+            });
+            row(ui, &env.t("uied.step"), |ui| {
+                optional(ui, step, 0.1, |ui, v| num(ui, v, 0.01));
+            });
+        }
+        WidgetKind::Toggle { text, bind } => {
+            row(ui, &env.t("uied.text"), |ui| {
+                text_ref_editor(ui, env, "text", text);
+            });
+            row(ui, &env.t("uied.bind"), |ui| bind_editor(ui, env, "bind", bind));
+        }
+        WidgetKind::Dropdown { bind, options } => {
+            row(ui, &env.t("uied.bind"), |ui| bind_editor(ui, env, "bind", bind));
+            ui.label(RichText::new(env.t("uied.options")).small().color(weak(ui)));
+            let mut remove = None;
+            for (i, option) in options.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    text_ref_editor(ui, env, &format!("opt{i}"), option);
+                    if ui.small_button(icons::X).clicked() {
+                        remove = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = remove {
+                options.remove(i);
+            }
+            if ui
+                .button(format!("{}  {}", icons::PLUS, env.t("uied.add_option")))
+                .clicked()
+            {
+                options.push(TextRef::Literal(String::new()));
+            }
+        }
+        WidgetKind::ScrollList => {}
+        WidgetKind::SaveSlots { mode, columns, rows } => {
+            row(ui, &env.t("uied.slots_mode"), |ui| {
+                pick(
+                    ui,
+                    "slots_mode",
+                    mode,
+                    &[
+                        (orbit_ui::SlotsMode::Save, env.v("slots_save")),
+                        (orbit_ui::SlotsMode::Load, env.v("slots_load")),
+                    ],
+                );
+            });
+            row(ui, &env.t("uied.columns"), |ui| {
+                ui.add(DragValue::new(columns).range(1..=8));
+            });
+            row(ui, &env.t("uied.rows"), |ui| {
+                ui.add(DragValue::new(rows).range(1..=8));
+            });
+        }
+    }
+
+    // ---- conditions
+    heading(ui, &env.t("uied.conditions"));
+    row(ui, &env.t("uied.visible"), |ui| {
+        cond_editor(ui, env, "visible", &mut w.visible);
+    });
+    row(ui, &env.t("uied.enabled"), |ui| {
+        cond_editor(ui, env, "enabled", &mut w.enabled);
+    });
+
+    // ---- layout
+    heading(ui, &env.t("uied.layout"));
+    layout_editor(ui, env, &mut w.layout, is_root);
+
+    // ---- style
+    heading(ui, &env.t("uied.style"));
+    row(ui, &env.t("uied.style_name"), |ui| {
+        let mut name = w.style.clone().unwrap_or_default();
+        let text = if name.is_empty() {
+            env.t("uied.none")
+        } else {
+            name.clone()
+        };
+        if env.styles.is_empty() {
+            ui.add(egui::TextEdit::singleline(&mut name).desired_width(140.0));
+        } else {
+            ComboBox::from_id_salt("style_name")
+                .selected_text(text)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut name, String::new(), env.t("uied.none"));
+                    for s in env.styles {
+                        ui.selectable_value(&mut name, s.clone(), s);
+                    }
+                    // A name the theme does not have stays selectable.
+                    if !name.is_empty() && !env.styles.contains(&name) {
+                        ui.label(RichText::new(&name).color(ui.visuals().error_fg_color));
+                    }
+                });
+        }
+        w.style = (!name.is_empty()).then_some(name);
+    });
+    ui.collapsing(env.t("uied.overrides"), |ui| {
+        style_editor(ui, env, &mut w.overrides, None);
+    });
+}
+
+fn layout_editor(ui: &mut Ui, env: &Env, l: &mut LayoutDef, is_root: bool) {
+    row(ui, &env.t("uied.width"), |ui| size_editor(ui, env, "w", &mut l.width));
+    row(ui, &env.t("uied.height"), |ui| size_editor(ui, env, "h", &mut l.height));
+    row(ui, &env.t("uied.padding"), |ui| {
+        num(ui, &mut l.pad[0], 1.0);
+        num(ui, &mut l.pad[1], 1.0);
+    });
+    row(ui, &env.t("uied.margin"), |ui| {
+        for m in &mut l.margin {
+            num(ui, m, 1.0);
+        }
+    });
+    row(ui, &env.t("uied.gap"), |ui| num(ui, &mut l.gap, 1.0));
+    row(ui, &env.t("uied.main_align"), |ui| align_editor(ui, env, "main", &mut l.main));
+    row(ui, &env.t("uied.cross_align"), |ui| {
+        align_editor(ui, env, "cross", &mut l.cross);
+    });
+    if is_root {
+        row(ui, &env.t("uied.anchor"), |ui| {
+            optional(ui, &mut l.anchor, Anchor::FULL, |ui, a| {
+                ui.vertical(|ui| {
+                    // Presets: the canvas point and the pivot go together.
+                    ui.horizontal(|ui| {
+                        for (label, p) in [
+                            (icons::ARROW_UP_LEFT, [0.0, 0.0]),
+                            (icons::ARROW_UP, [0.5, 0.0]),
+                            (icons::ARROW_UP_RIGHT, [1.0, 0.0]),
+                            (icons::ARROW_LEFT, [0.0, 0.5]),
+                            (icons::DOT_OUTLINE, [0.5, 0.5]),
+                            (icons::ARROW_RIGHT, [1.0, 0.5]),
+                            (icons::ARROW_DOWN_LEFT, [0.0, 1.0]),
+                            (icons::ARROW_DOWN, [0.5, 1.0]),
+                            (icons::ARROW_DOWN_RIGHT, [1.0, 1.0]),
+                        ] {
+                            if ui.small_button(label).clicked() {
+                                a.canvas = p;
+                                a.pivot = p;
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(env.t("uied.canvas")).small().color(faint(ui)));
+                        num(ui, &mut a.canvas[0], 0.01);
+                        num(ui, &mut a.canvas[1], 0.01);
+                        ui.label(RichText::new(env.t("uied.pivot")).small().color(faint(ui)));
+                        num(ui, &mut a.pivot[0], 0.01);
+                        num(ui, &mut a.pivot[1], 0.01);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(env.t("uied.offset")).small().color(faint(ui)));
+                        num(ui, &mut a.offset[0], 1.0);
+                        num(ui, &mut a.offset[1], 1.0);
+                    });
+                });
+            });
+        });
+    }
+}
+
+// ------------------------------------------------------------------ style
+
+fn state_colors(ui: &mut Ui, env: &Env, colors: &mut StateColors) {
+    for (label, slot) in [
+        ("uied.state.normal", &mut colors.normal),
+        ("uied.state.hover", &mut colors.hover),
+        ("uied.state.pressed", &mut colors.pressed),
+        ("uied.state.disabled", &mut colors.disabled),
+    ] {
+        row(ui, &env.t(label), |ui| {
+            optional(ui, slot, [60, 66, 90, 255], |ui, c| color(ui, c));
+        });
+    }
+}
+
+/// A style (theme entry or widget override). `exclude` is the name of the
+/// style itself, which cannot extend itself.
+pub fn style_editor(ui: &mut Ui, env: &Env, s: &mut Style, exclude: Option<&str>) {
+    row(ui, &env.t("uied.extends"), |ui| {
+        let mut name = s.extends.clone().unwrap_or_default();
+        let text = if name.is_empty() {
+            env.t("uied.none")
+        } else {
+            name.clone()
+        };
+        ComboBox::from_id_salt("extends")
+            .selected_text(text)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut name, String::new(), env.t("uied.none"));
+                for other in env.styles.iter().filter(|o| Some(o.as_str()) != exclude) {
+                    ui.selectable_value(&mut name, other.clone(), other);
+                }
+            });
+        s.extends = (!name.is_empty()).then_some(name);
+    });
+    row(ui, &env.t("uied.font"), |ui| {
+        let mut font = s.font.clone().unwrap_or_default();
+        ui.add(egui::TextEdit::singleline(&mut font).desired_width(120.0));
+        s.font = (!font.is_empty()).then_some(font);
+    });
+    row(ui, &env.t("uied.font_size"), |ui| {
+        optional(ui, &mut s.text_size, 30.0, |ui, v| num(ui, v, 0.5));
+    });
+    row(ui, &env.t("uied.padding"), |ui| {
+        optional(ui, &mut s.padding, [20.0, 12.0], |ui, p| {
+            num(ui, &mut p[0], 1.0);
+            num(ui, &mut p[1], 1.0);
+        });
+    });
+    row(ui, &env.t("uied.fill"), |ui| {
+        let mut c = s.fill.as_ref().map(|Fill::Color(c)| *c);
+        optional(ui, &mut c, [40, 44, 66, 255], |ui, c| color(ui, c));
+        s.fill = c.map(Fill::Color);
+    });
+    row(ui, &env.t("uied.border"), |ui| {
+        optional(
+            ui,
+            &mut s.border,
+            Border {
+                color: [255, 255, 255, 80],
+                width: 2.0,
+            },
+            |ui, b| {
+                color(ui, &mut b.color);
+                num(ui, &mut b.width, 0.1);
+            },
+        );
+    });
+    ui.label(RichText::new(env.t("uied.bg_colors")).small().color(weak(ui)));
+    state_colors(ui, env, &mut s.colors);
+    ui.label(RichText::new(env.t("uied.text_colors")).small().color(weak(ui)));
+    state_colors(ui, env, &mut s.text_colors);
+    row(ui, &env.t("uied.sound_hover"), |ui| {
+        sound_field(ui, s, true);
+    });
+    row(ui, &env.t("uied.sound_confirm"), |ui| {
+        sound_field(ui, s, false);
+    });
+}
+
+fn sound_field(ui: &mut Ui, s: &mut Style, hover: bool) {
+    let sounds = s.sounds.get_or_insert_with(StyleSounds::default);
+    let slot = if hover {
+        &mut sounds.hover
+    } else {
+        &mut sounds.confirm
+    };
+    let mut path = slot.clone().unwrap_or_default();
+    ui.add(egui::TextEdit::singleline(&mut path).desired_width(f32::INFINITY));
+    *slot = (!path.is_empty()).then_some(path);
+    if sounds.hover.is_none() && sounds.confirm.is_none() {
+        s.sounds = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_indices_round_trip_for_every_variant() {
+        for i in 0..ACTION_NAMES.len() {
+            assert_eq!(action_index(&action_from_index(i)), i);
+        }
+        assert_eq!(ACTION_NAMES.len(), 17);
+        for (key, name) in SETTINGS {
+            assert_eq!(setting_name(key), name);
+        }
+    }
+}

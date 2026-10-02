@@ -6,7 +6,7 @@ use orbit_text::{DrawParams, TextAlign, TextEngine, TextRenderer};
 use super::Ui;
 use super::layout::LINE_HEIGHT;
 use super::node::{ButtonKind, Kind, Node, NodeId, PanelKind, TextCache, escape_markup};
-use crate::theme::{Theme, tint};
+use crate::theme::{Theme, resolve_style, tint};
 
 /// Everything drawing needs from the host.
 pub struct DrawCtx<'a> {
@@ -137,6 +137,10 @@ impl Drawer<'_, '_, '_> {
         let pressed = self.pressed == Some(id) && self.hover == Some(id);
         let theme = self.theme;
         let w = &theme.widgets;
+        let style = self.nodes[id.0]
+            .style
+            .as_deref()
+            .and_then(|n| resolve_style(&theme.styles, n));
 
         // Take the node's cache out while drawing text (it is borrowed
         // from the arena otherwise).
@@ -147,16 +151,30 @@ impl Drawer<'_, '_, '_> {
             Kind::Panel(PanelKind::Dim) => self.quad(rect, w.panel.dim, layer, 0.0),
             Kind::Panel(PanelKind::Solid) => self.quad(rect, theme.screens.background, layer, 0.0),
             Kind::Panel(PanelKind::Normal) => {
-                self.quad(rect, w.panel.background, layer, 0.0);
-                self.border(rect, w.panel.border_width, w.panel.border_color, layer, 0.2);
+                let bg = style
+                    .as_ref()
+                    .and_then(|s| s.background(enabled, false, false))
+                    .unwrap_or(w.panel.background);
+                let (bw, bc) = match style.as_ref().and_then(|s| s.border.as_ref()) {
+                    Some(b) => (b.width, b.color),
+                    None => (w.panel.border_width, w.panel.border_color),
+                };
+                self.quad(rect, bg, layer, 0.0);
+                self.border(rect, bw, bc, layer, 0.2);
             }
             Kind::Label(l) => {
-                let size = l.size.unwrap_or(w.text_size);
-                let color = l.color.unwrap_or(if l.dim {
-                    w.dim_text_color
-                } else {
-                    w.text_color
-                });
+                let size = l
+                    .size
+                    .or(style.as_ref().and_then(|s| s.text_size))
+                    .unwrap_or(w.text_size);
+                let color = l
+                    .color
+                    .or(style.as_ref().and_then(|s| s.text_colors.pick(enabled, false, false)))
+                    .unwrap_or(if l.dim {
+                        w.dim_text_color
+                    } else {
+                        w.text_color
+                    });
                 let markup = if l.markup {
                     l.text.clone()
                 } else {
@@ -199,6 +217,10 @@ impl Drawer<'_, '_, '_> {
                 } else {
                     bt.normal
                 };
+                let bg = style
+                    .as_ref()
+                    .and_then(|s| s.background(enabled, pressed, hot))
+                    .unwrap_or(bg);
                 self.quad(rect, bg, layer, 0.0);
                 if b.selected && !hot && enabled {
                     self.border(rect, 2.0, w.accent_color, layer, 0.2);
@@ -213,8 +235,15 @@ impl Drawer<'_, '_, '_> {
                 } else {
                     bt.text_color
                 };
+let color = style
+                    .as_ref()
+                    .and_then(|s| s.text_colors.pick(enabled, pressed, hot))
+                    .unwrap_or(color);
                 let size = match b.kind {
-                    ButtonKind::Normal => w.text_size,
+                    ButtonKind::Normal => style
+                        .as_ref()
+                        .and_then(|s| s.text_size)
+                        .unwrap_or(w.text_size),
                     ButtonKind::Small => w.small_text_size,
                 };
                 let text_rect = [

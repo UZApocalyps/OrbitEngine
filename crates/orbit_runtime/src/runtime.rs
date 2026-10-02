@@ -23,7 +23,9 @@ use orbit_render2d::{
 };
 use orbit_save::{MemoryStorage, SaveConfig, Storage};
 use orbit_text::{TextEngine, TextRenderer, srgb_to_linear};
-use orbit_ui::{AudioBus, Banner, DrawCtx, Texts, Theme, UiSound, draw_progress_bar, tint};
+use orbit_ui::{
+    AudioBus, Banner, DrawCtx, SplashDef, Texts, Theme, UiBundle, UiSound, draw_progress_bar, tint,
+};
 use thiserror::Error;
 
 use crate::director::AudioCommand;
@@ -34,6 +36,8 @@ use crate::loading::{
     start_loading, start_loading_only, successor_scenes,
 };
 use crate::shell::{AutosaveConfig, Effect, Shell, ShellConfig};
+use crate::splash::SplashState;
+use crate::splash_draw::SplashAssets;
 use crate::stage::{CANVAS, StageState, character_placement, cover_size};
 use orbit_ui::UiInput;
 
@@ -41,6 +45,7 @@ mod embedded;
 
 pub use embedded::{
     EmbeddedConfig, LoadOutcome, Notice, PlayFrom, PlaySpeed, PlayStatus, PreviewSnapshot,
+    UiPreviewTarget,
 };
 
 /// Largest frame time fed to the simulation (a stall must not skip content).
@@ -101,6 +106,14 @@ pub struct RuntimeConfig {
     /// time) instead of all of them before the start: what the web player
     /// does with its pak, so that a long game starts quickly.
     pub lazy_assets: bool,
+    /// Native: folder with the project's data-driven UI (`theme.ron`,
+    /// `*.screen.ron`, `ui.ron`, see `UiBundle::load_dir`), read at start-up
+    /// and on every hot reload. Without it (and without `ui_bundle`), the
+    /// UI of the game pack is used, else the stock Rust screens. Splashes
+    /// of the bundle follow the mandatory engine splash.
+    pub ui_dir: Option<String>,
+    /// A UI bundle given directly (it wins over `ui_dir` and the pack).
+    pub ui_bundle: Option<UiBundle>,
 }
 
 /// Where the fonts of the engine are inside a pak (`engine/<path>`).
@@ -135,6 +148,8 @@ impl RuntimeConfig {
             auto_start: false,
             pak: None,
             lazy_assets: false,
+            ui_dir: None,
+            ui_bundle: None,
         }
     }
 }
@@ -229,6 +244,8 @@ struct LoadingState {
     /// Identity and translations of a game pack.
     info: Option<GameInfo>,
     packed_translations: Vec<Translation>,
+    /// UI bundle of a game pack.
+    ui: Option<Box<UiBundle>>,
     pending: Vec<PendingAsset>,
     assets_total: usize,
     /// Start playing as soon as loaded (hot reload after a first start).
@@ -247,6 +264,7 @@ impl LoadingState {
             loaded: None,
             info: None,
             packed_translations: Vec::new(),
+            ui: None,
             pending: Vec::new(),
             assets_total: 0,
             autostart,
@@ -279,16 +297,27 @@ impl Streaming {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Phase {
     /// Exported game: reading the header and the index of the pak.
     Opening(AssetHandle<PakSource>),
     Loading(LoadingState),
     /// Everything is loaded; waiting for the "click to start" gesture.
     Ready(Box<Shell>),
+    /// The splash screens (the engine's, then the project's) play before
+    /// the shell takes over. Only an editor-embedded runtime skips them.
+    Splash(Box<SplashPhase>),
     Running(Box<Shell>),
     Failed(String),
     /// Hosted by an editor and not playing: a blank stage.
     Stopped,
+}
+
+struct SplashPhase {
+    shell: Box<Shell>,
+    state: SplashState,
+    /// Start a new game when the splashes end (`auto_start`).
+    start_game: bool,
 }
 
 /// Where a frame is drawn: the window surface, or an offscreen render target
@@ -480,6 +509,10 @@ pub struct Runtime {
     streaming: Option<Streaming>,
     /// The page is hidden: nothing is drawn.
     hidden: bool,
+    splash_assets: SplashAssets,
+    /// Splashes of the UI bundle in use (the engine splash is not here: it
+    /// is built into [`SplashState::new`]).
+    ui_splashes: Vec<SplashDef>,
 }
 
 impl Runtime {
@@ -602,6 +635,8 @@ impl Runtime {
             embedded: embedded.map(embedded::Embedded::new),
             streaming: None,
             hidden: false,
+            splash_assets: SplashAssets::default(),
+            ui_splashes: Vec::new(),
             config,
         })
     }
@@ -698,6 +733,7 @@ impl Runtime {
                     loading.assets_total = loading.pending.len();
                     loading.info = loaded.info.clone();
                     loading.packed_translations = loaded.translations.clone();
+                    loading.ui = loaded.ui.clone().map(Box::new);
                     loading.loaded = Some(loaded.story.clone());
                 }
             }
@@ -728,6 +764,7 @@ impl Runtime {
             .unwrap_or_default();
         let packed = std::mem::take(&mut loading.packed_translations);
         let info = loading.info.take();
+        let pack_ui = loading.ui.take().map(|b| *b);
         finish_loading(&mut self.ctx.renderer, &mut self.store, pending);
         log::info!("story `{}` ready", story.title);
         if self.config.lazy_assets {
@@ -737,18 +774,20 @@ impl Runtime {
                 .map_or(0, |(scene, _)| scene);
             self.streaming = Some(Streaming::new(first));
         }
-        let shell = self.build_shell_full(story, &translation_texts, packed, info);
+        let shell = self.build_shell_full(story, &translation_texts, packed, info, pack_ui);
         // Hot reload restarts at once; `auto_start` skips the click natively
         // (nothing blocks audio there) but not on the web (autoplay policy).
         let native_auto = self.config.auto_start && !cfg!(target_arch = "wasm32");
-        self.phase = if autostart || native_auto {
+        self.phase = if autostart {
+            // A restart inside a running session (the splashes already played).
             self.started_once = true;
-            if native_auto {
-                self.audio.resume_after_user_gesture();
-            }
             let mut shell = shell;
             shell.start_new_game();
             Phase::Running(shell)
+        } else if native_auto {
+            self.started_once = true;
+            self.audio.resume_after_user_gesture();
+            self.begin_splash(shell, true)
         } else {
             Phase::Ready(shell)
         };
@@ -756,7 +795,65 @@ impl Runtime {
     }
 
     fn build_shell(&mut self, story: Arc<Story>, translations: &[String]) -> Box<Shell> {
-        self.build_shell_full(story, translations, Vec::new(), None)
+        self.build_shell_full(story, translations, Vec::new(), None, None)
+    }
+
+    /// Starts the splash sequence in front of `shell`: always the engine
+    /// splash first, then the project's. The only way to reach the
+    /// running game from a loaded story other than hot reload and the
+    /// editor preview.
+    fn begin_splash(&mut self, shell: Box<Shell>, start_game: bool) -> Phase {
+        let state = SplashState::new(&self.ui_splashes);
+        self.splash_assets
+            .request(&self.assets_loader, state.steps());
+        Phase::Splash(Box::new(SplashPhase {
+            shell,
+            state,
+            start_game,
+        }))
+    }
+
+    /// Advances the splashes; hands over to the running game when done.
+    fn update_splash(&mut self, dt: f32) {
+        let Phase::Splash(sp) = &mut self.phase else {
+            return;
+        };
+        sp.state.update(dt);
+        if !sp.state.finished() {
+            return;
+        }
+        let placeholder = Phase::Failed(String::new());
+        if let Phase::Splash(sp) = std::mem::replace(&mut self.phase, placeholder) {
+            let SplashPhase {
+                mut shell,
+                start_game,
+                ..
+            } = *sp;
+            if start_game {
+                shell.start_new_game();
+            }
+            self.phase = Phase::Running(shell);
+        }
+    }
+
+    /// The UI bundle to use: given by the config, else read from `ui_dir`,
+    /// else the one of the game pack. A bundle with errors is dropped (the
+    /// stock screens stay).
+    fn resolve_ui(&self, pack_ui: Option<UiBundle>) -> Option<UiBundle> {
+        if let Some(bundle) = &self.config.ui_bundle {
+            return crate::loading::check_ui_bundle(bundle.clone());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(dir) = &self.config.ui_dir {
+            return match UiBundle::load_dir(std::path::Path::new(dir)) {
+                Ok(bundle) => crate::loading::check_ui_bundle(bundle),
+                Err(err) => {
+                    log::warn!("cannot read the UI folder: {err}");
+                    None
+                }
+            };
+        }
+        pack_ui
     }
 
     /// The shell of a loaded story: `translations` are RON texts (files next
@@ -768,6 +865,7 @@ impl Runtime {
         translations: &[String],
         packed: Vec<Translation>,
         info: Option<GameInfo>,
+        pack_ui: Option<UiBundle>,
     ) -> Box<Shell> {
         let mut loc = Localizer::from_story(&story);
         for text in translations {
@@ -805,6 +903,15 @@ impl Runtime {
             capture_thumbnails: !embedded,
             embedded,
         };
+        // The editor preview has no pack: it shows the project's `ui_dir`
+        // (set by the host), if any.
+        let ui = self.resolve_ui(pack_ui);
+        self.ui_splashes = ui.as_ref().map_or_else(Vec::new, |b| b.splashes.clone());
+        if let Some(theme) = ui.as_ref().and_then(|b| b.theme.clone()) {
+            self.ctx.theme = theme.clone();
+            self.config.theme = theme;
+            self.ui_sounds = UiSoundBank::new(&self.config.theme, &self.assets_loader);
+        }
         let mut shell = Box::new(Shell::new(
             story.clone(),
             storage,
@@ -812,6 +919,9 @@ impl Runtime {
             self.ctx.theme.clone(),
             cfg,
         ));
+        if let Some(bundle) = &ui {
+            shell.set_ui_bundle(bundle);
+        }
         if !storage_ok {
             shell.warn_storage_unavailable();
         }
@@ -840,6 +950,7 @@ impl Runtime {
     fn shell_mut(&mut self) -> Option<&mut Shell> {
         match &mut self.phase {
             Phase::Running(shell) | Phase::Ready(shell) => Some(shell),
+            Phase::Splash(sp) => Some(&mut sp.shell),
             _ => None,
         }
     }
@@ -866,6 +977,13 @@ impl Runtime {
                 Effect::SetVolume(bus, volume) => self.set_volume(bus, volume),
                 Effect::SetFullscreen(on) => {
                     self.host_requests.push(HostRequest::SetFullscreen(on))
+                }
+                Effect::PlayAsset(path) => match self.store.sound(&path) {
+                    Some(sound) => self.audio.play_sfx(sound),
+                    None => log::warn!("sound `{path}` is not available"),
+                },
+                Effect::Custom { name, args } => {
+                    log::info!("custom UI action `{name}` {args:?} has no handler");
                 }
                 Effect::Quit => self.host_requests.push(HostRequest::Quit),
             }
@@ -904,6 +1022,7 @@ impl Runtime {
             Phase::Running(shell) | Phase::Ready(shell) => {
                 (shell.story().clone(), shell.current_scene())
             }
+            Phase::Splash(sp) => (sp.shell.story().clone(), sp.shell.current_scene()),
             _ => return,
         };
         let first = story
@@ -1022,6 +1141,15 @@ impl Runtime {
             // audio from a user gesture.
             self.audio.resume_after_user_gesture();
         }
+        if let Phase::Splash(sp) = &mut self.phase {
+            if matches!(
+                action,
+                InputAction::Ui(UiInput::Confirm | UiInput::PointerDown(_) | UiInput::Cancel)
+            ) {
+                sp.state.skip();
+            }
+            return;
+        }
         let start = matches!(
             action,
             InputAction::Ui(UiInput::Confirm | UiInput::PointerDown(_))
@@ -1030,10 +1158,15 @@ impl Runtime {
             let placeholder = Phase::Failed(String::new());
             if let Phase::Ready(mut shell) = std::mem::replace(&mut self.phase, placeholder) {
                 self.started_once = true;
-                if self.config.auto_start {
-                    shell.start_new_game();
-                }
-                self.phase = Phase::Running(shell);
+                let start_game = self.config.auto_start;
+                self.phase = if self.embedded.is_some() {
+                    if start_game {
+                        shell.start_new_game();
+                    }
+                    Phase::Running(shell)
+                } else {
+                    self.begin_splash(shell, start_game)
+                };
             }
         } else if self.is_blocked() {
             // The scene is still loading: nothing to click on yet.
@@ -1046,6 +1179,9 @@ impl Runtime {
     // ------------------------------------------------------------- drawing
 
     fn draw(&mut self, out: &mut Output<'_>) -> Result<(), RenderError> {
+        if self.embedded.as_ref().is_some_and(|e| e.ui_preview.is_some()) {
+            return self.draw_ui_preview(out);
+        }
         let language = match &self.phase {
             Phase::Ready(shell) | Phase::Running(shell) => shell.language().to_owned(),
             _ => self.screens_language.clone(),
@@ -1064,6 +1200,16 @@ impl Runtime {
         } = &mut self.ctx;
         let fonts_ready = self.fonts_ready;
         let time = self.time;
+        if let Phase::Splash(sp) = &self.phase {
+            let scene = self.splash_assets.scene(
+                &sp.state,
+                renderer,
+                text_engine,
+                text_renderer,
+                fonts_ready,
+            );
+            return out.scene(renderer, &scene);
+        }
         let texts = match &self.phase {
             Phase::Ready(shell) | Phase::Running(shell) => shell.texts().clone(),
             _ => self.boot_texts.clone(),
@@ -1300,7 +1446,7 @@ impl Runtime {
                             );
                         }
                     }
-                    Phase::Running(_) | Phase::Stopped => {}
+                    Phase::Running(_) | Phase::Splash(_) | Phase::Stopped => {}
                 }
                 out.scene(renderer, &scene)
             }
@@ -1487,6 +1633,7 @@ impl App for Runtime {
         }
         self.poll_loading();
         let blocked = self.is_blocked();
+        self.update_splash(dt_secs);
         if let Phase::Running(shell) = &mut self.phase {
             shell.set_now(orbit_platform::unix_time_ms());
             if !blocked {

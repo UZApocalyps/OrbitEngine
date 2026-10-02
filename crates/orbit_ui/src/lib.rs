@@ -30,6 +30,7 @@
 //! Known limit: no clipping, so scroll lists show whole items only and
 //! scroll item by item.
 
+pub mod asset;
 mod banner;
 mod choice;
 mod dialogue;
@@ -50,12 +51,17 @@ pub use screens::{
 };
 pub use texts::{EN, FR, TextProvider, TextTable, Texts};
 pub use theme::{
-    ButtonTheme, ChoiceTheme, ControlTheme, ListTheme, PanelTheme, ScreenTheme, TextBoxTheme,
-    Theme, UiSounds, UiTexts, WidgetTheme, tint,
+    Border, ButtonTheme, ChoiceTheme, ControlTheme, ListTheme, PanelTheme, ScreenTheme, TextBoxTheme,
+    Fill, StateColors, Style, StyleSounds, Theme, UiSounds, WidgetTheme, resolve_style, tint,
 };
 pub use view::*;
 pub use widgets::{
     Align, Anchor, ButtonData, ButtonKind, CANVAS, Dir, DrawCtx, Kind, LabelData, NO_TAG, Node,
     NodeId, PanelKind, Size, Tag, Ui, WidgetEvent, ellipsize, escape_markup, estimate_lines,
     estimate_text_width,
+};
+pub use asset::{
+    BindPath, Cond, DataContext, DataScreen, Issue, LayoutDef, ScreenAsset, Severity, SlotsMode, NavStep, PreviewNav,
+    SettingKey, SplashContent, SplashDef, TextRef, UI_VERSION, UiAction, UiBundle, WidgetDef,
+    WidgetKind, validate,
 };

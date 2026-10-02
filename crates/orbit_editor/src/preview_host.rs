@@ -15,7 +15,7 @@ use std::time::{Duration, Instant, SystemTime};
 use orbit_core::Story;
 use orbit_editor_api::SceneViewActor;
 use orbit_editor_api::{
-    Level, PreviewCommand, PreviewInput, PreviewSpeed, PreviewStatus, Selection,
+    Level, PreviewCommand, PreviewInput, PreviewSpeed, PreviewStatus, Selection, UiPreviewRequest,
 };
 use orbit_gfx::{Gfx, wgpu};
 use orbit_platform::{InputEvent, KeyCode, MouseButton};
@@ -25,6 +25,7 @@ use orbit_runtime::scene_view;
 use orbit_runtime::stage::character_size;
 use orbit_runtime::{
     EmbeddedConfig, LoadOutcome, PlayFrom, PlaySpeed, PlayStatus, Runtime, RuntimeError,
+    UiPreviewTarget,
 };
 
 use crate::core::EditorCore;
@@ -378,6 +379,10 @@ impl PreviewHost {
                 log::info!("preview: asset `{path}` changed on disk, reloaded");
             }
         }
+        // The project's own screens (`ui/`) are part of what Play shows.
+        let ui_dir = session.location.root.join("ui");
+        self.runtime
+            .set_ui_dir(ui_dir.is_dir().then(|| ui_dir.to_string_lossy().into_owned()));
         let outcome = self.runtime.load_story(story, &root.to_string_lossy());
         let elapsed = started.elapsed();
         let first_edit = self.debounce.take();
@@ -448,6 +453,15 @@ impl PreviewHost {
         if self.debounce.due(now) {
             self.load(core, now);
             force_draw = true;
+        }
+
+        // ---- the UI editor asks for a screen or the splashes
+        self.runtime
+            .set_ui_highlight(core.state.preview.ui_highlight.clone());
+        if let Some(request) = core.state.preview.ui_request.take() {
+            self.apply_ui_request(core, request);
+            force_draw = true;
+            wake.redraw = true;
         }
 
         // ---- commands
@@ -561,7 +575,34 @@ impl PreviewHost {
         wake
     }
 
+    /// Shows (or stops showing) a UI screen / the splashes instead of the game.
+    fn apply_ui_request(&mut self, core: &mut EditorCore, request: UiPreviewRequest) {
+        let language = core.state.i18n.lang().code().to_owned();
+        let (bundle_ron, target) = match &request {
+            UiPreviewRequest::Off => {
+                self.runtime.clear_ui_preview();
+                return;
+            }
+            UiPreviewRequest::Screen { bundle_ron, id } => {
+                (bundle_ron, UiPreviewTarget::Screen(id.as_str()))
+            }
+            UiPreviewRequest::Splashes { bundle_ron } => (bundle_ron, UiPreviewTarget::Splashes),
+        };
+        let shown = orbit_ui::UiBundle::from_ron(bundle_ron)
+            .and_then(|bundle| self.runtime.set_ui_preview(&bundle, target, &language));
+        if let Err(error) = shown {
+            log::warn!("ui preview: {error}");
+            self.runtime.clear_ui_preview();
+        }
+    }
+
     fn apply(&mut self, command: PreviewCommand) {
+        if matches!(
+            command,
+            PreviewCommand::Play | PreviewCommand::Restart | PreviewCommand::PlayFrom(_)
+        ) {
+            self.runtime.clear_ui_preview();
+        }
         match command {
             PreviewCommand::Play => match self.runtime.status() {
                 PlayStatus::Playing => {}
@@ -788,6 +829,11 @@ impl PreviewHost {
         self.last_error.clone_from(&error);
         let preview = &mut core.state.preview;
         preview.available = true;
+        preview.ui_active = self.runtime.has_ui_preview();
+        preview.ui_shown = self.runtime.ui_preview_shown().map(str::to_owned);
+        if let Some(pick) = self.runtime.take_ui_pick() {
+            preview.ui_pick = Some(pick);
+        }
         preview.status = status;
         preview.speed = match self.runtime.speed() {
             PlaySpeed::Normal => PreviewSpeed::Normal,

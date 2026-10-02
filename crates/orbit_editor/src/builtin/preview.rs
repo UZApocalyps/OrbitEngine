@@ -13,7 +13,7 @@ use egui::{
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, PanelDef,
     Plugin, PluginManifest, PreviewCommand, PreviewInput, PreviewSpeed, PreviewStatus, Selection,
-    Translator, icons,
+    Translator, UiPreviewRequest, icons,
 };
 
 use super::ids;
@@ -195,7 +195,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
 }
 
 fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
-    let (status, speed, skipping, muted, follow, available) = {
+    let (status, speed, skipping, muted, follow, available, ui_active) = {
         let p = &ctx.state().preview;
         (
             p.status,
@@ -204,6 +204,7 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             p.muted,
             p.follow_playback,
             p.available,
+            p.ui_active,
         )
     };
     let has_project = ctx.has_project();
@@ -249,6 +250,22 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             .clicked()
         {
             ctx.preview_command(PreviewCommand::Restart);
+        }
+        if ui_active {
+            ui.separator();
+            if ui
+                .add(
+                    egui::Button::new(
+                        RichText::new(format!("{}  {}", icons::X, ctx.t("preview.ui_mode")))
+                            .size(12.5),
+                    )
+                    .min_size(vec2(0.0, 26.0)),
+                )
+                .on_hover_text(ctx.t("preview.tip.close_ui"))
+                .clicked()
+            {
+                ctx.state_mut().preview.ui_request = Some(UiPreviewRequest::Off);
+            }
         }
         ui.separator();
         if ui
@@ -395,7 +412,7 @@ fn draw_picture(ui: &mut Ui, ctx: &mut EditorContext<'_>, area: Rect, picture: R
             &texts.t("preview.no_project"),
             &texts.t("preview.no_project_hint"),
         );
-    } else if preview.status == PreviewStatus::Stopped {
+    } else if preview.status == PreviewStatus::Stopped && !preview.ui_active {
         centered(
             &format!("{}  {}", icons::PLAY, texts.t("preview.press_play")),
             &texts.t("preview.select_node_hint"),
@@ -466,7 +483,8 @@ fn status_line(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
 /// Pointer, wheel and keys to the host, only while the panel has the focus
 /// (a press on the picture is what gives it the focus, and goes through).
 fn route_input(ui: &mut Ui, ctx: &mut EditorContext<'_>, response: &egui::Response, picture: Rect) {
-    let playing = ctx.state().preview.status == PreviewStatus::Playing;
+    let playing = ctx.state().preview.status == PreviewStatus::Playing
+        || ctx.state().preview.ui_active;
     // Take the focus on a press inside the picture.
     let (events, hover, modifiers) =
         ui.input(|i| (i.events.clone(), i.pointer.hover_pos(), i.modifiers));

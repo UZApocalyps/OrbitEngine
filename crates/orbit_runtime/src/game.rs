@@ -412,7 +412,7 @@ mod tests {
     use super::*;
     use orbit_vm::Vm;
 
-    const DEMO: &str = include_str!("../../../examples/stories/demo.ron");
+    const DEMO: &str = include_str!("../../../examples/stories/test_minimal.ron");
 
     pub(crate) fn story() -> Arc<Story> {
         Arc::new(Story::from_ron(DEMO).unwrap())
@@ -474,7 +474,7 @@ mod tests {
         let (mut g, theme) = game();
         play_to_choice(&mut g, &theme);
         let menu = g.menu.as_ref().expect("menu is shown");
-        assert_eq!(menu.len(), 4);
+        assert_eq!(menu.len(), 2);
         assert!(!g.dialogue.has_line());
         // Digit 9 is out of range: still choosing. Digit 2 picks "Haggle".
         g.menu_input(MenuInput::Number(9), &theme);
@@ -754,7 +754,7 @@ mod tests {
         let (mut g, theme) = game();
         g.confirm(&theme);
         let mut loc = Localizer::from_story(&g.story);
-        loc.add_translation_ron(include_str!("../../../examples/stories/i18n/demo.fr.ron"))
+        loc.add_translation_ron(include_str!("../../../examples/stories/i18n/test_minimal.fr.ron"))
             .unwrap();
         assert!(loc.set_language("fr"));
         g.set_localizer(Arc::new(loc), &theme);

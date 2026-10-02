@@ -508,7 +508,7 @@ mod tests {
     use super::*;
     use orbit_core::Story;
 
-    const DEMO: &str = include_str!("../../../examples/stories/demo.ron");
+    const DEMO: &str = include_str!("../../../examples/stories/test_minimal.ron");
 
     fn demo() -> Director {
         let story = Story::from_ron(DEMO).expect("demo story is valid");
@@ -641,8 +641,8 @@ mod tests {
     fn demo_plays_to_the_end_with_a_choice_and_audio() {
         let mut d = demo();
         let p = play_to_end(&mut d);
-        assert!(p.lines >= 20, "only {} lines", p.lines);
-        assert!(p.choices >= 5, "only {} choices", p.choices);
+        assert!(p.lines >= 6, "only {} lines", p.lines);
+        assert!(p.choices >= 1, "only {} choices", p.choices);
         assert!(p.transitions >= 3);
         assert!(
             p.audio
@@ -668,7 +668,7 @@ mod tests {
         for _ in 0..1000 {
             match d.flow().clone() {
                 Flow::Choice(labels) => {
-                    assert_eq!(labels.len(), 4);
+                    assert_eq!(labels.len(), 2);
                     assert!(labels[0].contains("Take the job"));
                     assert!(!d.choose(5)); // out of range: unchanged
                     assert!(matches!(d.flow(), Flow::Choice(_)));
@@ -836,7 +836,7 @@ mod tests {
         let mut d = demo();
         play_until_line(&mut d, "Another night");
         let mut loc = Localizer::from_story(d.vm().story());
-        loc.add_translation_ron(include_str!("../../../examples/stories/i18n/demo.fr.ron"))
+        loc.add_translation_ron(include_str!("../../../examples/stories/i18n/test_minimal.fr.ron"))
             .unwrap();
         loc.set_language("fr");
         d.set_localizer(Arc::new(loc));

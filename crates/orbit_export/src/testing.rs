@@ -62,3 +62,24 @@ pub fn demo_project(dir: &Path) -> ExportProject {
     .expect("write manifest");
     ExportProject::open(dir).expect("demo project opens")
 }
+
+/// Like [`demo_project`], but built from the small dedicated test story
+/// (`examples/stories/test_minimal.ron`), which does not change when the demo does.
+pub fn fixture_project(dir: &Path) -> ExportProject {
+    let stories = repo_root().join("examples/stories");
+    std::fs::copy(stories.join("test_minimal.ron"), dir.join("story.ron")).expect("copy story");
+    std::fs::create_dir_all(dir.join("i18n")).expect("i18n dir");
+    std::fs::copy(
+        stories.join("i18n/test_minimal.fr.ron"),
+        dir.join("i18n/story.fr.ron"),
+    )
+    .expect("copy translation");
+    restore_demo_assets(dir);
+    let manifest = orbit_project::ProjectManifest::new("Test Minimal");
+    std::fs::write(
+        dir.join(orbit_project::MANIFEST_FILE),
+        manifest.to_ron().expect("manifest"),
+    )
+    .expect("write manifest");
+    ExportProject::open(dir).expect("fixture project opens")
+}

@@ -189,7 +189,7 @@ Crates du workspace :
   - la langue système n'est détectée que si l'OS la fournit (`sys-locale`) ; le fuseau horaire natif vient de `time` (UTC s'il est indisponible, notamment sous Unix multithread) ;
   - polices CJK/arabe toujours absentes du bundle web : le texte non latin d'une traduction n'est pas affiché correctement ;
   - pas de manette ni de tactile ; répétitions de touches non filtrées ;
-  - le `UiTexts` du `Theme` (`screens.texts`) n'est plus lu : les textes moteur passent par `Texts` (clés `ui.*`) ; à retirer au prochain changement de format du thème ;
+  - ~~`UiTexts` du `Theme`~~ : retiré (ADR 0011) ;
   - les textes de l'interface n'existent qu'en anglais et en français (autres langues : anglais), surchargeables par jeu via `RuntimeConfig::ui_text_overrides` mais sans fichier de thème pour l'instant ;
   - sons d'UI : branchés (`Theme::sounds`, chemins relatifs à la racine des assets) mais aucun son par défaut ni test à l'oreille ;
   - la miniature est le décor et les personnages (sans textbox) rendus à 320x180 au moment de la demande de save ; la dernière autosave faite à la fermeture de la fenêtre n'a pas de miniature (pas de relecture GPU possible à ce moment) ;
@@ -494,3 +494,9 @@ Architecture : [ADR 0009](adr/0009-architecture-editeur.md) (statut Accepté). P
 
 ## 6. Questions ouvertes
 1. Licence du moteur : open source très probable, choix exact à trancher plus tard. En attendant, n'ajouter que des dépendances sous licences permissives (MIT, Apache-2.0, BSD, Zlib) via `cargo deny`.
+
+---
+
+## 7. UI en jeu pilotée par les données et splash screens
+- **Statut : runtime fait, éditeur à faire.** Écrans de menu décrits en RON (`orbit_ui::asset`), styles de thème, layout `margin` + `Grid`, `Shell` avec écrans de données (repli sur les écrans Rust), `GamePack` v2 avec bundle UI, export du dossier `ui/`, splash OrbitEngine obligatoire puis splashes du projet. Voir [ADR 0011](adr/0011-ui-data-driven-et-splash.md).
+- **Reste (éditeur) :** panneau d'édition des écrans / thème / splashes, aperçu dans la preview, activation du bundle par défaut pour un nouveau projet.

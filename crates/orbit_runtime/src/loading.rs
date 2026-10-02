@@ -9,6 +9,7 @@ use orbit_core::{AssetKind, NodeKind, Story, validate};
 use orbit_i18n::Translation;
 use orbit_pak::{GameInfo, GamePack};
 use orbit_render2d::{Renderer2d, TextureId, TextureOptions};
+use orbit_ui::UiBundle;
 
 /// A parsed and validated story.
 #[derive(Debug)]
@@ -21,6 +22,10 @@ pub struct LoadedStory {
     /// Translations compiled into the game pack (empty for a RON story: its
     /// translation files are loaded separately).
     pub translations: Vec<Translation>,
+    /// The UI bundle compiled into the game pack, when it has one and it
+    /// is valid (a broken one is logged and ignored: the stock screens
+    /// are used).
+    pub ui: Option<UiBundle>,
 }
 
 /// Parses and validates story bytes: a RON file (development) or a game
@@ -28,14 +33,15 @@ pub struct LoadedStory {
 /// error message (never a panic): RON syntax errors, unsupported schema
 /// versions and the full list of validation errors.
 pub fn parse_story(bytes: Vec<u8>) -> Result<LoadedStory, String> {
-    let (story, info, translations) = if GamePack::is_pack(&bytes) {
+    let (story, info, translations, ui) = if GamePack::is_pack(&bytes) {
         let pack = GamePack::from_bytes(&bytes).map_err(|e| e.to_string())?;
-        (pack.story, Some(pack.info), pack.translations)
+        let ui = pack.ui.as_deref().and_then(parse_ui_bundle);
+        (pack.story, Some(pack.info), pack.translations, ui)
     } else {
         let text =
             String::from_utf8(bytes).map_err(|e| format!("the file is not valid UTF-8: {e}"))?;
         let story = Story::from_ron_unchecked(&text).map_err(|e| e.to_string())?;
-        (story, None, Vec::new())
+        (story, None, Vec::new(), None)
     };
     let report = validate(&story);
     if !report.errors.is_empty() {
@@ -54,7 +60,39 @@ pub fn parse_story(bytes: Vec<u8>) -> Result<LoadedStory, String> {
         warnings,
         info,
         translations,
+        ui,
     })
+}
+
+/// Parses and checks the RON text of a UI bundle; a bundle with errors is
+/// refused (the warnings are only logged).
+pub fn parse_ui_bundle(bytes: &[u8]) -> Option<UiBundle> {
+    let bundle = std::str::from_utf8(bytes)
+        .map_err(|e| e.to_string())
+        .and_then(UiBundle::from_ron)
+        .map_err(|e| log::warn!("the UI bundle is unreadable, using the stock screens: {e}"))
+        .ok()?;
+    check_ui_bundle(bundle)
+}
+
+/// Logs the issues of `bundle`; `None` when one is an error.
+pub fn check_ui_bundle(bundle: UiBundle) -> Option<UiBundle> {
+    let mut ok = true;
+    for issue in bundle.validate() {
+        match issue.severity {
+            orbit_ui::Severity::Error => {
+                ok = false;
+                log::warn!("ui `{}` {}: {}", issue.screen, issue.widget, issue.message);
+            }
+            orbit_ui::Severity::Warning => {
+                log::info!("ui `{}` {}: {}", issue.screen, issue.widget, issue.message);
+            }
+        }
+    }
+    if !ok {
+        log::warn!("the UI bundle has errors, using the stock screens");
+    }
+    ok.then_some(bundle)
 }
 
 /// Paths of the assets scene `scene` (an index of `story.scenes`) needs:
@@ -289,12 +327,12 @@ fn describe_failure<T>(path: &str, poll: &AssetPoll<T>) -> String {
 mod tests {
     use super::*;
 
-    const DEMO: &str = include_str!("../../../examples/stories/demo.ron");
+    const DEMO: &str = include_str!("../../../examples/stories/test_minimal.ron");
 
     #[test]
-    fn demo_story_loads_cleanly() {
-        let loaded = parse_story(DEMO.as_bytes().to_vec()).expect("demo parses");
-        assert_eq!(loaded.story.title, "Demo");
+    fn test_fixture_story_loads_cleanly() {
+        let loaded = parse_story(DEMO.as_bytes().to_vec()).expect("fixture parses");
+        assert_eq!(loaded.story.title, "Test Minimal");
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
     }
 
@@ -310,11 +348,13 @@ mod tests {
             },
             story: story.clone(),
             translations: vec![Translation::new("fr", "Francais")],
+            ui: Some(UiBundle::builtin().to_ron().unwrap().into_bytes()),
         };
         let loaded = parse_story(pack.to_bytes().unwrap()).expect("pack parses");
         assert_eq!(*loaded.story, story);
         assert_eq!(loaded.info.unwrap().id, "demo");
         assert_eq!(loaded.translations.len(), 1);
+        assert_eq!(loaded.ui, Some(UiBundle::builtin()));
         // A damaged pack is an error, not a panic.
         let mut bytes = pack.to_bytes().unwrap();
         bytes.truncate(40);
@@ -355,7 +395,7 @@ mod tests {
         // Break a reference: point a Jump/Call-like target at nothing by
         // removing a string the story uses.
         let broken = DEMO.replace(
-            "\"01JBX0T0000000000000000004\": \"Neo-Kyoto, 2087. Rain hammers the megatower blocks while neon bleeds across every wet window.\",",
+            "\"01JBX0T0000000000000000003\": \"Neo-Kyoto, 2087. Rain falls on the megatowers.\",",
             "",
         );
         assert_ne!(broken, DEMO, "test fixture drifted");

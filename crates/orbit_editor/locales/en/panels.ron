@@ -25,6 +25,7 @@
     "explorer.scenes": "Scenes",
     "explorer.delete_tip": "Delete (Del)",
     "explorer.add_say_tip": "Add a line (Ctrl+Enter)",
+    "explorer.add_scene_tip": "New scene",
     "explorer.play_here_tip": "Play from here (F7)",
     "explorer.play_here": "Play from here",
 

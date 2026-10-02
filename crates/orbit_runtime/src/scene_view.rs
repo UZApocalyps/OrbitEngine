@@ -147,7 +147,7 @@ mod tests {
     use super::*;
     use orbit_core::NodeKind;
 
-    const DEMO: &str = include_str!("../../../examples/stories/demo.ron");
+    const DEMO: &str = include_str!("../../../examples/stories/test_minimal.ron");
 
     fn demo() -> Arc<Story> {
         Arc::new(Story::from_ron(DEMO).expect("demo loads"))

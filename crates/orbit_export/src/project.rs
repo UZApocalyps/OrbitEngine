@@ -2,7 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use orbit_project::{DEFAULT_STORY_FILE, ExportProfile, MANIFEST_FILE, ProjectManifest};
+use orbit_core::Story;
+use orbit_project::{
+    DEFAULT_STORY_FILE, ExportProfile, MANIFEST_FILE, ProjectManifest, find_assets_root,
+};
 
 use crate::error::{ExportError, Result};
 
@@ -18,8 +21,8 @@ pub struct ExportProject {
 
 impl ExportProject {
     /// Opens `path`: a project folder (holding `orbit.project.ron` or
-    /// `story.ron`), the manifest itself, or a story `.ron` file (its folder
-    /// is then the project root).
+    /// `story.ron`), the manifest itself, or a story `.ron` file (its folder,
+    /// or the ancestor holding its assets, is then the project root).
     pub fn open(path: &Path) -> Result<Self> {
         let root_and_story = |root: &Path, manifest: Option<ProjectManifest>| {
             let story_file = manifest
@@ -39,15 +42,35 @@ impl ExportProject {
             let root = path.parent().unwrap_or(Path::new("."));
             root_and_story(root, Some(read_manifest(path)?))
         } else if path.is_file() {
-            let root = match path.parent() {
+            let folder = match path.parent() {
                 Some(p) if !p.as_os_str().is_empty() => p,
                 _ => Path::new("."),
             };
-            let story_file = path.file_name().map_or_else(
-                || DEFAULT_STORY_FILE.to_owned(),
-                |n| n.to_string_lossy().into_owned(),
+            // Like the editor: the assets may live in an ancestor folder.
+            let root = std::fs::read_to_string(path)
+                .ok()
+                .and_then(|text| Story::from_ron_unchecked(&text).ok())
+                .map_or_else(
+                    || folder.to_owned(),
+                    |story| find_assets_root(folder, &story),
+                );
+            let relative = path.strip_prefix(&root).or_else(|_| {
+                if root == Path::new(".") {
+                    Ok(path)
+                } else {
+                    Err(())
+                }
+            });
+            let story_file = relative.map_or_else(
+                |()| {
+                    path.file_name().map_or_else(
+                        || DEFAULT_STORY_FILE.to_owned(),
+                        |n| n.to_string_lossy().into_owned(),
+                    )
+                },
+                |rel| rel.to_string_lossy().replace('\\', "/"),
             );
-            (root.to_owned(), story_file, None)
+            (root, story_file, None)
         } else {
             return Err(ExportError::Project(format!(
                 "`{}` is neither a project folder nor a story file",
@@ -153,5 +176,26 @@ mod tests {
         let bare = ExportProject::open(&dir.path().join("story.ron")).unwrap();
         assert_eq!(bare.story_file, "story.ron");
         assert!(ExportProject::open(&dir.path().join("missing")).is_err());
+    }
+
+    #[test]
+    fn bare_story_finds_assets_in_an_ancestor() {
+        let dir = TempDir::new("project_ancestor");
+        std::fs::create_dir_all(dir.path().join("assets")).unwrap();
+        std::fs::create_dir_all(dir.path().join("stories")).unwrap();
+        std::fs::write(dir.path().join("assets/bg.png"), "x").unwrap();
+        let mut story = Story::new("t");
+        story.assets.assets.push(orbit_core::AssetEntry {
+            id: orbit_core::AssetId::new(),
+            kind: orbit_core::AssetKind::Image,
+            path: "assets/bg.png".to_owned(),
+        });
+        let file = dir.path().join("stories/demo.ron");
+        std::fs::write(&file, story.to_ron().unwrap()).unwrap();
+        let p = ExportProject::open(&file).unwrap();
+        assert_eq!(p.root, dir.path());
+        assert_eq!(p.story_file, "stories/demo.ron");
+        assert_eq!(p.story_path(), file);
+        assert_eq!(p.name(), "demo");
     }
 }

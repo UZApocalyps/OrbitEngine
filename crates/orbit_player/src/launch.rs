@@ -256,6 +256,11 @@ pub(crate) fn native_config(launch: &Launch, manifest_dir: &std::path::Path) -> 
     if launch.watch {
         config.watch_path = Some(story_file.to_string_lossy().into_owned());
     }
+    // A project folder brings its own screens (`ui/`).
+    let ui_dir = dir.join("ui");
+    if launch.story.is_some() && ui_dir.is_dir() {
+        config.ui_dir = Some(ui_dir.to_string_lossy().into_owned());
+    }
     config
 }
 

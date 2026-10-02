@@ -28,12 +28,12 @@ use orbit_save::{
     SlotState as SaveSlotState, Storage,
 };
 use orbit_ui::{
-    AUTO_DELAY_RANGE, AudioBus, Banner, CategoryView, DrawCtx, HistoryEntryView, HistoryScreen,
+    AUTO_DELAY_RANGE, AudioBus, Banner, CategoryView, DataContext, DataScreen, DrawCtx, HistoryEntryView, HistoryScreen,
     HistoryView, LanguageView, MainMenu, MainMenuView, MenuInput, PauseMenu, PauseView,
     PreferencesScreen, PrefsView, QuickMenu, QuickMenuView, SaveLoadMode, SaveLoadScreen,
     SaveLoadView, Screen, SkipMode as UiSkipMode, SlotCategory, SlotId as UiSlot,
     SlotState as UiSlotState, SlotView, TEXT_SPEED_RANGE, TextTable, Texts, Theme, ToastStack,
-    UiEvent, UiInput, UiSound, tint,
+    UiBundle, UiEvent, UiInput, UiSound, tint,
 };
 use orbit_vm::Vm;
 
@@ -109,6 +109,8 @@ pub(crate) enum Overlay {
     Load,
     Prefs,
     History,
+    /// A data-driven screen (index into the shell's screens).
+    Custom(usize),
 }
 
 /// What the shell asks the runtime to do.
@@ -118,6 +120,10 @@ pub(crate) enum Effect {
     UiSound(UiSound),
     SetVolume(AudioBus, f32),
     SetFullscreen(bool),
+    /// Play a sound asset by path (a `PlaySound` action of a data screen).
+    PlayAsset(String),
+    /// A `Custom` action of a data screen, for the host or a plugin.
+    Custom { name: String, args: Vec<String> },
     Quit,
 }
 
@@ -238,6 +244,16 @@ pub(crate) struct Shell {
     history: HistoryScreen,
     quick: QuickMenu,
     toasts: ToastStack,
+    /// Data-driven screens (see [`Shell::set_ui_bundle`]).
+    data: Vec<DataScreen>,
+    /// Data screens standing in for the stock ones.
+    sys_main: Option<usize>,
+    sys_pause: Option<usize>,
+    sys_prefs: Option<usize>,
+    sys_save: Option<usize>,
+    sys_load: Option<usize>,
+    /// A data screen has a save slot list: the slots go into its context.
+    slots_wanted: bool,
     end_banner: Option<Banner>,
     menu_background: Option<TextureId>,
 
@@ -348,6 +364,13 @@ impl Shell {
             history: HistoryScreen::new(&theme, &texts, HistoryView::default()),
             quick: QuickMenu::new(&theme, &texts, QuickMenuView::default()),
             toasts: ToastStack::new(&theme),
+            data: Vec::new(),
+            sys_main: None,
+            sys_pause: None,
+            sys_prefs: None,
+            sys_save: None,
+            sys_load: None,
+            slots_wanted: false,
             story,
             theme,
             cfg,
@@ -1016,6 +1039,9 @@ impl Shell {
             categories,
         });
         self.views_dirty = false;
+        if self.slots_wanted {
+            self.sync_data();
+        }
     }
 
     fn refresh_main_menu(&mut self) {
@@ -1026,6 +1052,7 @@ impl Shell {
             can_continue: self.can_continue,
             show_quit: self.cfg.quit_supported,
         });
+        self.sync_data();
     }
 
     fn sync_pause_view(&mut self) {
@@ -1136,6 +1163,9 @@ impl Shell {
         self.prefs_screen.set_texts(&texts);
         self.history.set_texts(&texts);
         self.quick.set_texts(&texts);
+        for screen in &mut self.data {
+            screen.set_texts(&texts);
+        }
         self.end_banner = None;
         if let Some(game) = &mut self.game {
             game.set_localizer(self.loc.clone(), &self.theme);
@@ -1159,7 +1189,130 @@ impl Shell {
 
     // -------------------------------------------------------------- screens
 
+    /// Registers the data-driven screens of a UI bundle: they open by id
+    /// (`Open("id")`) and the `main_menu`, `pause` and `preferences` ones
+    /// replace the stock Rust screens (which stay the fallback for every
+    /// system screen the bundle does not provide). The theme and the
+    /// splashes of the bundle are the runtime's business.
+    pub fn set_ui_bundle(&mut self, bundle: &UiBundle) {
+        self.data.clear();
+        self.stack.clear();
+        let ctx = self.data_context();
+        let texts = self.texts.clone();
+        let theme = bundle.theme.clone().unwrap_or_else(|| self.theme.clone());
+        for asset in &bundle.screens {
+            self.data
+                .push(DataScreen::new(asset.clone(), &theme, &texts, ctx.clone()));
+        }
+        let find = |name: &str| {
+            bundle
+                .system_screen(name)
+                .and_then(|a| self.data.iter().position(|s| s.id() == a.id))
+        };
+        self.sys_main = find("main_menu");
+        self.sys_pause = find("pause");
+        self.sys_prefs = find("preferences");
+        self.sys_save = find("save");
+        self.sys_load = find("load");
+        self.slots_wanted = bundle.screens.iter().any(|a| {
+            let mut has = false;
+            a.root.walk(&mut |w| has |= matches!(w.kind, orbit_ui::WidgetKind::SaveSlots { .. }));
+            has
+        });
+        self.refresh_main_menu();
+    }
+
+    fn data_context(&self) -> DataContext {
+        DataContext {
+            prefs: self.prefs_view(),
+            can_continue: self.can_continue,
+            can_save: self.can_save(),
+            show_quit: self.cfg.quit_supported,
+            in_game: self.game.is_some(),
+            background: self.menu_background,
+            title: self.story.title.clone(),
+            saves: if self.slots_wanted {
+                self.category_views()
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    /// Hands the current game / settings state to the data screens that are
+    /// showing (they rebuild only when it changed).
+    fn sync_data(&mut self) {
+        if self.data.is_empty() {
+            return;
+        }
+        let ctx = self.data_context();
+        let mut showing: Vec<usize> = self
+            .stack
+            .iter()
+            .filter_map(|o| match o {
+                Overlay::Custom(i) => Some(*i),
+                _ => None,
+            })
+            .collect();
+        if self.game.is_none() {
+            showing.extend(self.sys_main);
+        }
+        for i in showing {
+            self.data[i].set_context(ctx.clone());
+        }
+    }
+
+    /// The screen shown on the title: the data main menu when the project
+    /// provides one.
+    fn main_screen(&mut self) -> &mut dyn Screen {
+        match self.sys_main {
+            Some(i) => &mut self.data[i],
+            None => &mut self.main,
+        }
+    }
+
+    /// `true` while the game must not advance: a stock screen is open, or a
+    /// data screen with `pauses_game`.
+    fn game_paused(&self) -> bool {
+        match self.top() {
+            None => false,
+            Some(Overlay::Custom(i)) => self.data[i].pauses_game(),
+            Some(_) => true,
+        }
+    }
+
+    /// `Open("id")`: a data screen of that id, else a stock one.
+    fn open_screen(&mut self, id: &str) {
+        if let Some(i) = self.data.iter().position(|s| s.id() == id) {
+            if Some(i) == self.sys_pause && self.game.is_none() {
+                return;
+            }
+            if Some(i) == self.sys_save && !self.can_save() {
+                return;
+            }
+            self.open(Overlay::Custom(i));
+            return;
+        }
+        match id {
+            "preferences" => self.apply(UiEvent::OpenPreferences),
+            "save" => self.apply(UiEvent::OpenSave),
+            "load" => self.apply(UiEvent::OpenLoad),
+            "history" => self.apply(UiEvent::OpenHistory),
+            "pause" => self.apply(UiEvent::OpenPause),
+            other => log::warn!("no screen called `{other}`"),
+        }
+    }
+
     fn open(&mut self, overlay: Overlay) {
+        // A data screen standing in for a stock one takes its place.
+        let stand_in = match overlay {
+            Overlay::Pause => self.sys_pause,
+            Overlay::Prefs => self.sys_prefs,
+            Overlay::Save => self.sys_save,
+            Overlay::Load => self.sys_load,
+            _ => None,
+        };
+        let overlay = stand_in.map_or(overlay, Overlay::Custom);
         if self.top() == Some(overlay) {
             return;
         }
@@ -1171,12 +1324,21 @@ impl Shell {
             }
             Overlay::Prefs => self.prefs_screen.set_view(self.prefs_view()),
             Overlay::History => self.history.set_view(self.history_view()),
+            Overlay::Custom(_) => {
+                if self.slots_wanted {
+                    self.refresh_slots();
+                }
+                self.sync_data();
+            }
         }
         self.stack.push(overlay);
     }
 
     fn close_top(&mut self) {
-        if self.stack.pop() == Some(Overlay::Prefs) {
+        let popped = self.stack.pop();
+        if (popped == Some(Overlay::Prefs) || matches!(popped, Some(Overlay::Custom(_))))
+            && self.prefs_timer.is_some()
+        {
             self.flush_prefs();
         }
         if self.stack.is_empty() {
@@ -1186,6 +1348,7 @@ impl Shell {
 
     fn screen(&mut self, overlay: Overlay) -> &mut dyn Screen {
         match overlay {
+            Overlay::Custom(i) => &mut self.data[i],
             Overlay::Pause => &mut self.pause,
             Overlay::Save => &mut self.save_screen,
             Overlay::Load => &mut self.load_screen,
@@ -1226,7 +1389,22 @@ impl Shell {
                     self.open(Overlay::Pause);
                 }
             }
-            UiEvent::Resume => self.stack.clear(),
+            UiEvent::Resume | UiEvent::CloseAll => {
+                self.stack.clear();
+                if self.prefs_timer.is_some() {
+                    self.flush_prefs();
+                }
+                if self.game.is_none() {
+                    self.refresh_main_menu();
+                }
+            }
+            UiEvent::OpenScreen(id) => self.open_screen(&id),
+            UiEvent::ReplaceScreen(id) => {
+                self.close_top();
+                self.open_screen(&id);
+            }
+            UiEvent::PlaySound(path) => self.effects.push(Effect::PlayAsset(path)),
+            UiEvent::Custom { name, args } => self.effects.push(Effect::Custom { name, args }),
             UiEvent::Back => self.close_top(),
             UiEvent::ReturnToMainMenu => self.leave_game(),
             UiEvent::Quit => {
@@ -1307,6 +1485,7 @@ impl Shell {
             UiEvent::SetLanguage(code) => self.set_language(&code),
             UiEvent::ResetPreferences => self.reset_preferences(),
         }
+        self.sync_data();
         self.pump_audio();
     }
 
@@ -1399,7 +1578,7 @@ impl Shell {
             return;
         }
         if self.game.is_none() {
-            let events = self.main.handle(input);
+            let events = self.main_screen().handle(input);
             self.apply_all(events);
             return;
         }
@@ -1465,14 +1644,14 @@ impl Shell {
         self.toasts.update(dt);
         let top = self.top();
         match (&self.game, top) {
-            (None, _) => self.main.update(dt),
+            (None, _) => self.main_screen().update(dt),
             (Some(_), _) => self.quick.update(dt),
         }
         if let Some(top) = top {
             self.screen(top).update(dt);
         }
 
-        if top.is_none() && self.game.is_some() {
+        if !self.game_paused() && self.game.is_some() {
             self.play_time += dt;
             let theme = self.theme.clone();
             if let Some(game) = &mut self.game {
@@ -1565,10 +1744,11 @@ impl Shell {
     pub fn draw_ui(&mut self, ctx: &mut DrawCtx, show_dialogue: bool) {
         // Full-screen screens are translucent: what they cover is not drawn,
         // so the textbox or the menu never shows through.
-        let covered = matches!(
-            self.top(),
-            Some(Overlay::Save | Overlay::Load | Overlay::Prefs | Overlay::History)
-        );
+        let covered = match self.top() {
+            Some(Overlay::Save | Overlay::Load | Overlay::Prefs | Overlay::History) => true,
+            Some(Overlay::Custom(i)) => !self.data[i].is_modal() && !self.data[i].pauses_game(),
+            _ => false,
+        };
         match &mut self.game {
             _ if covered => {}
             Some(game) => {
@@ -1598,7 +1778,15 @@ impl Shell {
                 }
                 self.quick.draw(ctx);
             }
-            None => self.main.draw(ctx),
+            None => self.main_screen().draw(ctx),
+        }
+        // A modal data screen is drawn over the screen below it.
+        if let Some(Overlay::Custom(i)) = self.top()
+            && self.data[i].is_modal()
+            && self.stack.len() >= 2
+        {
+            let below = self.stack[self.stack.len() - 2];
+            self.screen(below).draw(ctx);
         }
         if let Some(top) = self.top() {
             self.screen(top).draw(ctx);

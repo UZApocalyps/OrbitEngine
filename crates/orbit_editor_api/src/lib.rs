@@ -30,7 +30,9 @@ pub use errors::{
 pub use graph_state::GraphState;
 pub use i18n::{Lang, Translator, UiText};
 pub use orbit_plugin_api::{API_VERSION, Plugin, PluginError, PluginManifest, ProjectRegistry};
-pub use preview::{PreviewCommand, PreviewInput, PreviewSpeed, PreviewState, PreviewStatus};
+pub use preview::{
+    PreviewCommand, PreviewInput, PreviewSpeed, PreviewState, PreviewStatus, UiPreviewRequest,
+};
 pub use registry::{
     ActionDef, DockSlot, EditorRegistry, InspectorDef, MenuDef, MenuSlot, PanelDef,
     RegisteredAction, RegisteredPanel, shortcut_text,

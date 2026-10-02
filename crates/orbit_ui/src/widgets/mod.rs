@@ -144,6 +144,12 @@ impl Ui {
         self.find(tag).map(|id| self.nodes[id.0].rect)
     }
 
+    /// Computed rectangle of a node.
+    pub fn node_rect(&mut self, id: NodeId) -> [f32; 4] {
+        self.ensure_layout();
+        self.nodes[id.0].rect
+    }
+
     pub fn focused(&self) -> Option<NodeId> {
         self.focus
     }

@@ -1,0 +1,14 @@
+// Default theme of the data-driven UI: the built-in look (every other field
+// keeps its default) plus the named styles the default screens use.
+(
+    styles: {
+        "title": (
+            text_size: Some(72.0),
+            text_colors: (normal: Some((255, 214, 100, 255))),
+        ),
+        "heading": (
+            text_size: Some(48.0),
+            text_colors: (normal: Some((255, 214, 100, 255))),
+        ),
+    },
+)

@@ -208,7 +208,7 @@ mod tests {
     use orbit_core::{Node, Scene, SceneId};
     use orbit_vm::StepResult;
 
-    const DEMO: &str = include_str!("../../../examples/stories/demo.ron");
+    const DEMO: &str = include_str!("../../../examples/stories/test_minimal.ron");
 
     fn demo() -> Arc<Story> {
         Arc::new(Story::from_ron_unchecked(DEMO).expect("demo parses"))
@@ -239,7 +239,7 @@ mod tests {
     fn play_from_a_branch_node_gives_the_state_of_a_full_reading() {
         let story = demo();
         // The line Bob says once the player takes the job: after the first choice.
-        let target = node("01JBX0N0000000000000000026");
+        let target = node("01JBX0N0000000000000000012");
         let planned = plan_from_node(&story, target, SeekLimits::default()).unwrap();
         assert!(matches!(planned.kind, StartKind::Path { choices: 1 }));
         assert!(planned.notice.is_none());
@@ -284,7 +284,7 @@ mod tests {
             name: "orphan".into(),
             nodes: vec![say],
         });
-        // The demo's last node ends the story, so the orphan scene is only
+        // The fixture's last node ends the story, so the orphan scene is only
         // reachable by falling through: cut that off with an End first.
         let last_scene = tweaked.scenes.len() - 2;
         tweaked.scenes[last_scene].nodes.push(Node {
@@ -294,7 +294,7 @@ mod tests {
         let tweaked = Arc::new(tweaked);
         let planned = plan_from_node(&tweaked, orphan, SeekLimits::default()).unwrap();
         assert_eq!(planned.kind, StartKind::Fallback);
-        // (The demo loops through its hub with changing credits: the search is
+        // (The search is
         // bounded, so the notice may be either "no path" or "too long".)
         assert!(
             planned
@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn a_search_that_is_too_long_falls_back_too() {
         let story = demo();
-        let target = node("01JBX0N0000000000000000046");
+        let target = node("01JBX0N0000000000000000012");
         let limits = SeekLimits {
             max_states: 0,
             max_steps: 5,

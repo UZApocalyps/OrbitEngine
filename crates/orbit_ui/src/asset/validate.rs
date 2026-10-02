@@ -1,0 +1,275 @@
+//! Checks of a screen document beyond what parsing guarantees.
+
+use std::collections::HashSet;
+
+use super::action::{BindPath, SettingKey, UiAction};
+use super::widget::{ScreenAsset, TextRef, WidgetDef, WidgetKind};
+use crate::theme::Theme;
+use crate::widgets::Dir;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    /// The screen cannot be used as is.
+    Error,
+    /// Works, but probably not as intended.
+    Warning,
+}
+
+/// One problem found in a document.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Issue {
+    pub severity: Severity,
+    /// Screen id.
+    pub screen: String,
+    /// Widget id (empty: the screen itself or an unnamed widget).
+    pub widget: String,
+    pub message: String,
+}
+
+impl Issue {
+    pub(crate) fn error(screen: &str, widget: &str, message: impl Into<String>) -> Self {
+        Self::new(Severity::Error, screen, widget, message)
+    }
+
+    pub(crate) fn warning(screen: &str, widget: &str, message: impl Into<String>) -> Self {
+        Self::new(Severity::Warning, screen, widget, message)
+    }
+
+    fn new(severity: Severity, screen: &str, widget: &str, message: impl Into<String>) -> Self {
+        Self {
+            severity,
+            screen: screen.to_owned(),
+            widget: widget.to_owned(),
+            message: message.into(),
+        }
+    }
+}
+
+/// Most slots one page of a `SaveSlots` widget can show.
+pub const MAX_SLOTS_PER_PAGE: usize = 24;
+
+/// Deepest nesting accepted (guards the recursive builders).
+pub const MAX_DEPTH: usize = 32;
+
+/// Checks `screen`; `theme` (when given) is used to verify style names.
+pub fn validate(screen: &ScreenAsset, theme: Option<&Theme>) -> Vec<Issue> {
+    let mut out = Vec::new();
+    let sid = screen.id.as_str();
+    if sid.trim().is_empty() {
+        out.push(Issue::error(sid, "", "the screen has no id"));
+    }
+    for action in &screen.on_cancel {
+        check_action(sid, "", action, &mut out);
+    }
+    let mut ids = HashSet::new();
+    let mut slot_lists = 0;
+    walk(&screen.root, 1, &mut |w, depth| {
+        if depth > MAX_DEPTH {
+            out.push(Issue::error(sid, &w.id, "widgets are nested too deeply"));
+            return;
+        }
+        if !w.id.is_empty() && !ids.insert(w.id.clone()) {
+            out.push(Issue::error(sid, &w.id, "duplicate widget id"));
+        }
+        if matches!(w.kind, WidgetKind::SaveSlots { .. }) {
+            slot_lists += 1;
+            if slot_lists == 2 {
+                out.push(Issue::warning(sid, &w.id, "only one save slot list per screen keeps its own page and tab"));
+            }
+        }
+        check_widget(sid, w, theme, &mut out);
+    });
+    out
+}
+
+fn walk<'a>(w: &'a WidgetDef, depth: usize, f: &mut impl FnMut(&'a WidgetDef, usize)) {
+    f(w, depth);
+    if depth > MAX_DEPTH {
+        return;
+    }
+    for c in &w.children {
+        walk(c, depth + 1, f);
+    }
+}
+
+fn check_action(sid: &str, wid: &str, action: &UiAction, out: &mut Vec<Issue>) {
+    if !action.is_supported() {
+        out.push(Issue::warning(sid, wid, format!("{action:?} is not supported yet and does nothing")));
+    }
+    match action {
+        UiAction::Open(id) | UiAction::Replace(id) if id.trim().is_empty() => {
+            out.push(Issue::error(sid, wid, "Open / Replace needs a screen id"));
+        }
+        _ => {}
+    }
+}
+
+fn check_bind(sid: &str, wid: &str, bind: &BindPath, out: &mut Vec<Issue>) -> Option<SettingKey> {
+    let key = bind.setting();
+    if key.is_none() {
+        out.push(Issue::warning(sid, wid, "story variable bindings are not supported yet"));
+    }
+    key
+}
+
+fn check_text(sid: &str, wid: &str, text: &TextRef, out: &mut Vec<Issue>) {
+    match text {
+        TextRef::Key(k) if k.trim().is_empty() => {
+            out.push(Issue::error(sid, wid, "empty text key"));
+        }
+        TextRef::Bind(b) => {
+            check_bind(sid, wid, b, out);
+        }
+        _ => {}
+    }
+}
+
+fn check_widget(sid: &str, w: &WidgetDef, theme: Option<&Theme>, out: &mut Vec<Issue>) {
+    let wid = w.id.as_str();
+    if let (Some(name), Some(theme)) = (&w.style, theme)
+        && !theme.styles.contains_key(name)
+    {
+        out.push(Issue::warning(sid, wid, format!("unknown style `{name}`")));
+    }
+    match &w.kind {
+        WidgetKind::Grid { columns } if *columns == 0 => {
+            out.push(Issue::error(sid, wid, "a grid needs at least one column"));
+        }
+        WidgetKind::Stack { dir: Dir::Grid(_) } | WidgetKind::Panel { dir: Dir::Grid(_), .. } => {
+            out.push(Issue::warning(sid, wid, "use the Grid widget for grids"));
+        }
+        WidgetKind::Button { text, action } => {
+            check_text(sid, wid, text, out);
+            for a in action {
+                check_action(sid, wid, a, out);
+            }
+        }
+        WidgetKind::SaveSlots { columns, rows, .. } => {
+            if *columns == 0 || *rows == 0 {
+                out.push(Issue::error(sid, wid, "the save slots need at least one column and one row"));
+            } else if columns * rows > MAX_SLOTS_PER_PAGE {
+                out.push(Issue::error(sid, wid, format!("at most {MAX_SLOTS_PER_PAGE} slots per page")));
+            }
+        }
+        WidgetKind::Label { text, .. } => check_text(sid, wid, text, out),
+        WidgetKind::Slider { bind, min, max, step } => {
+            if min.partial_cmp(max) != Some(std::cmp::Ordering::Less) {
+                out.push(Issue::error(sid, wid, "slider min must be below max"));
+            }
+            if step.is_some_and(|s| s <= 0.0) {
+                out.push(Issue::error(sid, wid, "slider step must be positive"));
+            }
+            if let Some(key) = check_bind(sid, wid, bind, out)
+                && !matches!(
+                    key,
+                    SettingKey::MasterVolume
+                        | SettingKey::MusicVolume
+                        | SettingKey::SfxVolume
+                        | SettingKey::VoiceVolume
+                        | SettingKey::TextSpeed
+                        | SettingKey::AutoDelay
+                )
+            {
+                out.push(Issue::error(sid, wid, format!("{key:?} cannot be edited with a slider")));
+            }
+        }
+        WidgetKind::Toggle { text, bind } => {
+            check_text(sid, wid, text, out);
+            if let Some(key) = check_bind(sid, wid, bind, out)
+                && key != SettingKey::Fullscreen
+            {
+                out.push(Issue::error(sid, wid, format!("{key:?} cannot be edited with a toggle")));
+            }
+        }
+        WidgetKind::Dropdown { bind, options } => {
+            if let Some(key) = check_bind(sid, wid, bind, out) {
+                match key {
+                    SettingKey::Language => {}
+                    SettingKey::SkipMode if options.len() == 2 => {}
+                    SettingKey::SkipMode => {
+                        out.push(Issue::error(sid, wid, "the skip mode dropdown needs exactly 2 options"));
+                    }
+                    other => out.push(Issue::error(sid, wid, format!("{other:?} cannot be edited with a dropdown"))),
+                }
+            }
+            for o in options {
+                check_text(sid, wid, o, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::asset::from_ron;
+
+    fn issues(root: &str) -> Vec<Issue> {
+        let src = format!("(id: \"s\", root: {root})");
+        validate(&from_ron(&src).unwrap(), None)
+    }
+
+    fn errors(root: &str) -> usize {
+        issues(root).iter().filter(|i| i.severity == Severity::Error).count()
+    }
+
+    #[test]
+    fn a_valid_screen_has_no_issue() {
+        let root = "(kind: Stack(dir: Vertical), children: [\
+            (id: \"a\", kind: Button(text: Key(\"ui.menu.back\"), action: [Close])),\
+            (id: \"v\", kind: Slider(bind: Setting(MasterVolume), min: 0.0, max: 1.0))])";
+        assert!(issues(root).is_empty(), "{:?}", issues(root));
+    }
+
+    #[test]
+    fn duplicate_ids_and_bad_numbers_are_errors() {
+        let dup = "(kind: Stack(), children: [(id: \"a\", kind: Stack()), (id: \"a\", kind: Stack())])";
+        assert_eq!(errors(dup), 1);
+        assert_eq!(errors("(kind: Slider(bind: Setting(MasterVolume), min: 1.0, max: 1.0))"), 1);
+        assert_eq!(errors("(kind: Slider(bind: Setting(MasterVolume), min: 0.0, max: 1.0, step: Some(0.0)))"), 1);
+        assert_eq!(errors("(kind: Grid(columns: 0))"), 1);
+        assert_eq!(errors("(kind: Slider(bind: Setting(Fullscreen), min: 0.0, max: 1.0))"), 1);
+        assert_eq!(errors("(kind: Toggle(text: Literal(\"x\"), bind: Setting(Language)))"), 1);
+        assert_eq!(errors("(kind: Dropdown(bind: Setting(SkipMode), options: []))"), 1);
+        assert_eq!(errors("(kind: Button(text: Key(\"\"), action: [Open(\"\")]))"), 2);
+    }
+
+    #[test]
+    fn save_slots_are_checked() {
+        assert!(issues("(kind: SaveSlots(mode: Load))").is_empty());
+        assert_eq!(errors("(kind: SaveSlots(mode: Save, columns: 0))"), 1);
+        assert_eq!(errors("(kind: SaveSlots(mode: Save, columns: 5, rows: 5))"), 1);
+        let two = "(kind: Stack(), children: [(kind: SaveSlots(mode: Load)), (kind: SaveSlots(mode: Save))])";
+        assert_eq!(issues(two).len(), 1);
+    }
+
+    #[test]
+    fn unsupported_things_are_warnings() {
+        let out = issues(
+            "(kind: Button(text: Literal(\"x\"), action: [SceneGoto(\"a\")]), children: [\
+             (kind: Toggle(text: Literal(\"y\"), bind: Var(\"v\")))])",
+        );
+        assert_eq!(out.len(), 2);
+        assert!(out.iter().all(|i| i.severity == Severity::Warning));
+    }
+
+    #[test]
+    fn unknown_styles_are_warnings_and_deep_trees_errors() {
+        let asset = from_ron("(id: \"s\", root: (kind: Stack(), style: Some(\"nope\")))").unwrap();
+        let theme = Theme::default();
+        let out = validate(&asset, Some(&theme));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].severity, Severity::Warning);
+
+        let mut deep = WidgetDef::new(WidgetKind::Stack { dir: Dir::Vertical });
+        for _ in 0..MAX_DEPTH + 2 {
+            let mut parent = WidgetDef::new(WidgetKind::Stack { dir: Dir::Vertical });
+            parent.children.push(deep);
+            deep = parent;
+        }
+        let mut asset = asset;
+        asset.root = deep;
+        assert!(validate(&asset, None).iter().any(|i| i.severity == Severity::Error));
+    }
+}

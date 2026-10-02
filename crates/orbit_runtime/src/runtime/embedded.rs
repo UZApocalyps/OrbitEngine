@@ -103,7 +103,138 @@ struct Awaiting {
     play: Option<PlayFrom>,
 }
 
+/// What the editor asks the preview to show instead of the game.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiPreviewTarget<'a> {
+    /// The data screen with this id of the bundle.
+    Screen(&'a str),
+    /// The splash sequence (engine splash, then the bundle's), in a loop.
+    Splashes,
+}
+
+/// A UI screen or the splashes standing in for the game (editor UI preview).
+pub(super) enum UiPreview {
+    Screen(Box<ScreenPreview>),
+    Splashes(SplashState, Vec<orbit_ui::SplashDef>),
+}
+
+/// A screen of the project shown as the player would see it: the screen on
+/// top, the screens below it, mock settings and saves, and the feedback of
+/// the actions that would act on the game.
+pub(super) struct ScreenPreview {
+    screen: orbit_ui::DataScreen,
+    nav: orbit_ui::PreviewNav,
+    bundle: orbit_ui::UiBundle,
+    /// Default screens (save, load...) for ids the project does not define.
+    stock: orbit_ui::UiBundle,
+    theme: Theme,
+    texts: orbit_ui::Texts,
+    toasts: orbit_ui::ToastStack,
+    /// Widget the pointer went down on, taken by the editor.
+    pick: Option<(String, Vec<usize>)>,
+    /// Widget the editor has selected (outlined).
+    highlight: Option<Vec<usize>>,
+}
+
+/// Seconds a toast of the preview needs to show and fade.
+const TOAST_SETTLE: f32 = 4.0;
+
+impl ScreenPreview {
+    fn find(
+        bundle: &orbit_ui::UiBundle,
+        stock: &orbit_ui::UiBundle,
+        id: &str,
+    ) -> Option<orbit_ui::ScreenAsset> {
+        bundle.screen(id).or_else(|| stock.screen(id)).cloned()
+    }
+
+    fn new(
+        bundle: &orbit_ui::UiBundle,
+        id: &str,
+        theme: Theme,
+        texts: orbit_ui::Texts,
+    ) -> Result<Self, String> {
+        let stock = orbit_ui::UiBundle::builtin();
+        let asset =
+            Self::find(bundle, &stock, id).ok_or_else(|| format!("no screen called `{id}`"))?;
+        let nav = orbit_ui::PreviewNav::new(id);
+        let screen = orbit_ui::DataScreen::new(asset, &theme, &texts, nav.context("Preview"));
+        Ok(Self {
+            screen,
+            nav,
+            bundle: bundle.clone(),
+            stock,
+            toasts: orbit_ui::ToastStack::new(&theme),
+            theme,
+            texts,
+            pick: None,
+            highlight: None,
+        })
+    }
+
+    /// The editor sent a new version of the bundle: the stack stays, the
+    /// screen on top is built again from it.
+    fn update_bundle(&mut self, bundle: &orbit_ui::UiBundle, theme: Theme, texts: orbit_ui::Texts) {
+        self.bundle = bundle.clone();
+        self.theme = theme;
+        self.texts = texts;
+        self.show();
+    }
+
+    /// Builds the screen on top of the stack. When it no longer exists the
+    /// current one stays.
+    fn show(&mut self) {
+        let id = self.nav.top().to_owned();
+        if let Some(asset) = Self::find(&self.bundle, &self.stock, &id) {
+            self.screen = orbit_ui::DataScreen::new(
+                asset,
+                &self.theme,
+                &self.texts,
+                self.nav.context("Preview"),
+            );
+        }
+    }
+
+    /// Applies one input and feeds the navigation with what the screen
+    /// reported.
+    fn handle(&mut self, input: orbit_ui::UiInput) {
+        use orbit_ui::Screen as _;
+        if let orbit_ui::UiInput::PointerDown(p) = input
+            && let Some(path) = self.screen.widget_at(p)
+        {
+            self.pick = Some((self.nav.top().to_owned(), path));
+        }
+        let events = self.screen.handle(input);
+        let mut changed = false;
+        for event in events {
+            let (bundle, stock) = (&self.bundle, &self.stock);
+            let step = self
+                .nav
+                .apply(event, &|id| bundle.screen(id).is_some() || stock.screen(id).is_some());
+            for text in step.feedback {
+                self.toasts.push(text);
+            }
+            changed |= step.shown_changed;
+        }
+        for action in self.screen.take_unsupported() {
+            self.toasts.push(orbit_ui::PreviewNav::describe_action(&action));
+        }
+        if changed {
+            self.show();
+        } else {
+            self.screen.set_context(self.nav.context("Preview"));
+        }
+    }
+}
+
+/// Seconds a screen preview keeps animating after a change or an input
+/// (focus and hover transitions), then rests.
+const UI_SETTLE: f32 = 0.6;
+
 pub(super) struct Embedded {
+    /// The UI being previewed, if any (it hides the game).
+    pub(super) ui_preview: Option<UiPreview>,
+    ui_settle: f32,
     /// The last accepted story.
     story: Option<Arc<Story>>,
     status: PlayStatus,
@@ -129,6 +260,8 @@ pub(super) struct Embedded {
 impl Embedded {
     pub(super) fn new(_config: EmbeddedConfig) -> Self {
         Self {
+            ui_preview: None,
+            ui_settle: 0.0,
             story: None,
             status: PlayStatus::Stopped,
             speed: PlaySpeed::Normal,
@@ -227,6 +360,12 @@ impl Runtime {
         } else {
             LoadOutcome::Loading
         }
+    }
+
+    /// The project folder holding the data-driven UI (`UiBundle::load_dir`)
+    /// the next shells are built with; `None` keeps the stock screens.
+    pub fn set_ui_dir(&mut self, dir: Option<String>) {
+        self.config.ui_dir = dir;
     }
 
     /// The text of the last story the runtime refused, if any.
@@ -462,6 +601,9 @@ impl Runtime {
     pub fn tick(&mut self, dt: Duration) {
         self.audio.update();
         self.poll_embedded();
+        if self.tick_ui_preview(dt) {
+            return;
+        }
         if self.emb().status != PlayStatus::Playing {
             return;
         }
@@ -490,6 +632,12 @@ impl Runtime {
     /// Routes an input event to the game (only while playing). Pointer
     /// coordinates are in virtual pixels (1920x1080 canvas).
     pub fn inject_input(&mut self, event: &InputEvent) {
+        if self.emb().ui_preview.is_some() {
+            if let Some(action) = self.mapper.map(event, |p| p) {
+                self.ui_preview_input(action);
+            }
+            return;
+        }
         if self.emb().status != PlayStatus::Playing {
             return;
         }
@@ -506,6 +654,11 @@ impl Runtime {
         let Some(emb) = &self.embedded else {
             return true;
         };
+        match &emb.ui_preview {
+            Some(UiPreview::Splashes(..)) => return true,
+            Some(UiPreview::Screen(_)) => return emb.ui_settle > 0.0,
+            None => {}
+        }
         if emb.awaiting.is_some() {
             return true;
         }
@@ -658,5 +811,190 @@ impl Runtime {
     /// Messages for the author since the last call.
     pub fn take_notices(&mut self) -> Vec<Notice> {
         std::mem::take(&mut self.emb_mut().notices)
+    }
+}
+
+// --------------------------------------------------------------- UI preview
+
+impl Runtime {
+    /// Shows a screen of `bundle` (or its splashes) instead of the game, as
+    /// the player would see it (with sample game data: a save to continue
+    /// from, saving allowed...). Replaces any earlier UI preview; the story
+    /// playthrough is left untouched. `language` is the table the
+    /// interface keys are read from.
+    pub fn set_ui_preview(
+        &mut self,
+        bundle: &orbit_ui::UiBundle,
+        target: UiPreviewTarget<'_>,
+        language: &str,
+    ) -> Result<(), String> {
+        let preview = match target {
+            UiPreviewTarget::Screen(id) => {
+                let theme = bundle.theme.clone().unwrap_or_else(|| self.ctx.theme.clone());
+                let texts = orbit_ui::Texts::builtin(language);
+                // The editor re-sends the bundle after every edit, and the
+                // screen the preview navigated to after a click: the stack
+                // is kept while the screen asked for is the one shown.
+                if let Some(UiPreview::Screen(p)) =
+                    self.embedded.as_mut().and_then(|e| e.ui_preview.as_mut())
+                    && p.nav.top() == id
+                {
+                    p.update_bundle(bundle, theme, texts);
+                    let emb = self.emb_mut();
+                    emb.ui_settle = UI_SETTLE;
+                    emb.dirty = true;
+                    return Ok(());
+                }
+                UiPreview::Screen(Box::new(ScreenPreview::new(bundle, id, theme, texts)?))
+            }
+            UiPreviewTarget::Splashes => {
+                let state = SplashState::new(&bundle.splashes);
+                self.splash_assets.request(&self.assets_loader, state.steps());
+                UiPreview::Splashes(state, bundle.splashes.clone())
+            }
+        };
+        let emb = self.emb_mut();
+        emb.ui_preview = Some(preview);
+        emb.ui_settle = UI_SETTLE;
+        emb.dirty = true;
+        Ok(())
+    }
+
+    /// Id of the screen the UI preview shows (it follows the navigation).
+    pub fn ui_preview_shown(&self) -> Option<&str> {
+        match self.embedded.as_ref()?.ui_preview.as_ref()? {
+            UiPreview::Screen(p) => Some(p.nav.top()),
+            UiPreview::Splashes(..) => None,
+        }
+    }
+
+    /// The widget (screen id, path in its tree) the pointer last went down
+    /// on in the UI preview; once.
+    pub fn take_ui_pick(&mut self) -> Option<(String, Vec<usize>)> {
+        match self.embedded.as_mut()?.ui_preview.as_mut()? {
+            UiPreview::Screen(p) => p.pick.take(),
+            UiPreview::Splashes(..) => None,
+        }
+    }
+
+    /// Outlines the widget at `path` of the screen shown (`None`: no outline).
+    pub fn set_ui_highlight(&mut self, path: Option<Vec<usize>>) {
+        let emb = self.emb_mut();
+        if let Some(UiPreview::Screen(p)) = emb.ui_preview.as_mut()
+            && p.highlight != path
+        {
+            p.highlight = path;
+            emb.dirty = true;
+        }
+    }
+
+    /// Back to the game.
+    pub fn clear_ui_preview(&mut self) {
+        let emb = self.emb_mut();
+        if emb.ui_preview.take().is_some() {
+            emb.dirty = true;
+        }
+    }
+
+    pub fn has_ui_preview(&self) -> bool {
+        self.embedded.as_ref().is_some_and(|e| e.ui_preview.is_some())
+    }
+
+    /// Advances a UI preview; `true` when there is one (the game is not
+    /// ticked then).
+    fn tick_ui_preview(&mut self, dt: Duration) -> bool {
+        let secs = dt.as_secs_f32().min(MAX_DT);
+        let Some(emb) = self.embedded.as_mut() else {
+            return false;
+        };
+        let Some(preview) = emb.ui_preview.as_mut() else {
+            return false;
+        };
+        match preview {
+            UiPreview::Screen(p) => {
+                use orbit_ui::Screen as _;
+                if emb.ui_settle > 0.0 {
+                    p.screen.update(secs);
+                    p.toasts.update(secs);
+                    emb.ui_settle -= secs;
+                    emb.dirty = true;
+                }
+            }
+            UiPreview::Splashes(state, defs) => {
+                state.update(secs);
+                if state.finished() {
+                    *state = SplashState::new(defs);
+                }
+                emb.dirty = true;
+            }
+        }
+        true
+    }
+
+    fn ui_preview_input(&mut self, action: InputAction) {
+        let Some(emb) = self.embedded.as_mut() else {
+            return;
+        };
+        match (emb.ui_preview.as_mut(), action) {
+            (Some(UiPreview::Screen(p)), InputAction::Ui(input)) => {
+                // Navigation actions are followed inside the preview, the
+                // others flash a notice (see `ScreenPreview::handle`).
+                p.handle(input);
+                emb.ui_settle = if p.toasts.is_empty() { UI_SETTLE } else { TOAST_SETTLE };
+                emb.dirty = true;
+            }
+            (
+                Some(UiPreview::Splashes(state, _)),
+                InputAction::Ui(UiInput::Confirm | UiInput::PointerDown(_) | UiInput::Cancel),
+            ) => {
+                state.skip();
+                emb.dirty = true;
+            }
+            _ => {}
+        }
+    }
+
+    /// Draws the UI preview into `out`.
+    pub(super) fn draw_ui_preview(&mut self, out: &mut Output<'_>) -> Result<(), RenderError> {
+        let Ctx {
+            renderer,
+            text_engine,
+            text_renderer,
+            white,
+            theme,
+        } = &mut self.ctx;
+        let Some(preview) = self.embedded.as_mut().and_then(|e| e.ui_preview.as_mut()) else {
+            return Ok(());
+        };
+        match preview {
+            UiPreview::Splashes(state, _) => {
+                let scene =
+                    self.splash_assets
+                        .scene(state, renderer, text_engine, text_renderer, true);
+                out.scene(renderer, &scene)
+            }
+            UiPreview::Screen(p) => {
+                use orbit_ui::Screen as _;
+                let mut back = Scene::new();
+                back.clear = Some(tint(theme.screens.background));
+                out.scene(renderer, &back)?;
+                let mut ui_scene = Scene::new();
+                {
+                    let mut ctx = DrawCtx {
+                        engine: text_engine,
+                        text_renderer,
+                        renderer,
+                        scene: &mut ui_scene,
+                        white: *white,
+                    };
+                    p.screen.draw(&mut ctx);
+                    if let Some(path) = p.highlight.clone() {
+                        p.screen.draw_outline(&mut ctx, &path);
+                    }
+                    p.toasts.draw(&mut ctx);
+                }
+                out.scene(renderer, &ui_scene)
+            }
+        }
     }
 }

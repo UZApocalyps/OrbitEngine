@@ -7,6 +7,7 @@ use orbit_core::{Story, validate};
 use orbit_i18n::Translation;
 use orbit_pak::{GameInfo, GamePack};
 use orbit_project::{ExportProfile, asset_users};
+use orbit_ui::{Severity, SplashContent, UiBundle};
 
 use crate::error::{ExportError, Result};
 use crate::project::ExportProject;
@@ -80,6 +81,47 @@ fn load_icon(
         ));
     }
     Ok(Some(bytes))
+}
+
+/// The project's data-driven UI (`ui/` folder: theme, screens, splashes),
+/// checked and serialized as the RON text of a [`UiBundle`]. The images of
+/// the splashes join `assets`. `None` when the project has no `ui/` folder.
+fn load_ui(
+    project: &ExportProject,
+    assets: &mut Vec<AssetFile>,
+    warnings: &mut Vec<String>,
+) -> Result<Option<Vec<u8>>> {
+    let dir = project.root.join("ui");
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+    let bundle = UiBundle::load_dir(&dir).map_err(|e| ExportError::Ui(vec![e]))?;
+    let mut errors = Vec::new();
+    for issue in bundle.validate() {
+        let text = format!("{} {}: {}", issue.screen, issue.widget, issue.message);
+        match issue.severity {
+            Severity::Error => errors.push(text),
+            Severity::Warning => warnings.push(format!("ui {text}")),
+        }
+    }
+    if !errors.is_empty() {
+        return Err(ExportError::Ui(errors));
+    }
+    for splash in &bundle.splashes {
+        if let SplashContent::Image(path) = &splash.content {
+            let source = project.root.join(path);
+            if !source.is_file() {
+                warnings.push(format!("the splash image `{path}` is missing: the splash will be empty"));
+            } else if !assets.iter().any(|a| &a.path == path) {
+                assets.push(AssetFile {
+                    path: path.clone(),
+                    source,
+                });
+            }
+        }
+    }
+    let text = bundle.to_ron().map_err(|e| ExportError::Ui(vec![e]))?;
+    Ok(Some(text.into_bytes()))
 }
 
 /// The translation files next to the story: `i18n/<story stem>.<lang>.ron`.
@@ -278,6 +320,7 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
         }
     }
     let icon = load_icon(project, profile, &mut warnings)?;
+    let ui = load_ui(project, &mut assets, &mut warnings)?;
 
     let info = GameInfo {
         name: profile.game_name.clone(),
@@ -293,6 +336,7 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
             info,
             story,
             translations,
+            ui,
         },
         assets,
         unreferenced,
@@ -305,6 +349,41 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
 mod tests {
     use super::*;
     use crate::testing::{TempDir, demo_project};
+
+    #[test]
+    fn a_ui_folder_is_compiled_into_the_pack_with_its_splash_images() {
+        let dir = TempDir::new("compile_ui");
+        let project = demo_project(dir.path());
+        let profile = project.profile(None).unwrap();
+        assert!(compile(&project, &profile).unwrap().pack.ui.is_none());
+
+        let ui = dir.path().join("ui");
+        std::fs::create_dir_all(&ui).unwrap();
+        std::fs::write(
+            ui.join("pause.screen.ron"),
+            "(id: \"pause\", root: (kind: Stack(dir: Vertical)))",
+        )
+        .unwrap();
+        std::fs::write(
+            ui.join("ui.ron"),
+            "(splashes: [(content: Image(\"splash/studio.png\"), duration: 2.0)])",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("splash")).unwrap();
+        std::fs::write(dir.path().join("splash/studio.png"), b"png").unwrap();
+        let compiled = compile(&project, &profile).unwrap();
+        let bundle = orbit_ui::UiBundle::from_ron(
+            std::str::from_utf8(compiled.pack.ui.as_ref().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(bundle.screens.len(), 1);
+        assert_eq!(bundle.splashes.len(), 1);
+        assert!(compiled.assets.iter().any(|a| a.path == "splash/studio.png"));
+
+        // A broken screen blocks the export.
+        std::fs::write(ui.join("pause.screen.ron"), "(id: \"pause\", root: (kind: Grid(columns: 0)))").unwrap();
+        assert!(matches!(compile(&project, &profile), Err(ExportError::Ui(_))));
+    }
 
     #[test]
     fn the_demo_compiles_with_its_translation() {
@@ -323,7 +402,7 @@ mod tests {
     #[test]
     fn errors_are_blocking_and_unused_assets_are_dropped() {
         let dir = TempDir::new("compile_errors");
-        let project = demo_project(dir.path());
+        let project = crate::testing::fixture_project(dir.path());
         let profile = project.profile(None).unwrap();
 
         // A missing used asset blocks the export.
@@ -340,7 +419,7 @@ mod tests {
         std::fs::write(
             dir.path().join("story.ron"),
             story.replace(
-                "\"01JBX0T0000000000000000004\": \"Neo-Kyoto, 2087. Rain hammers the megatower blocks while neon bleeds across every wet window.\",",
+                "\"01JBX0T0000000000000000003\": \"Neo-Kyoto, 2087. Rain falls on the megatowers.\",",
                 "",
             ),
         )
@@ -355,8 +434,8 @@ mod tests {
         std::fs::write(
             dir.path().join("story.ron"),
             story.replace(
-                "assets: (assets: [",
-                "assets: (assets: [\n        (id: \"01JBX0A0000000000000000099\", kind: Image, path: \"assets/demo/mask_wipe.png\"),",
+                "assets: [\n",
+                "assets: [\n            (id: \"01JBX0A0000000000000000099\", kind: Image, path: \"assets/demo/mask_wipe.png\"),\n",
             ),
         )
         .unwrap();
