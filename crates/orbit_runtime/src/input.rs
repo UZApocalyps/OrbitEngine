@@ -2,6 +2,7 @@
 //! logical actions. Nothing outside this module knows about key codes: the
 //! runtime reacts to [`InputAction`]s only.
 
+use crate::gamepad_bindings::GamepadBindings;
 use orbit_platform::{InputEvent, KeyCode, MouseButton};
 use orbit_ui::UiInput;
 
@@ -36,6 +37,7 @@ pub struct InputMapper {
     shift: bool,
     ctrl: bool,
     alt: bool,
+    bindings: GamepadBindings,
 }
 
 impl Default for InputMapper {
@@ -45,11 +47,21 @@ impl Default for InputMapper {
             shift: false,
             ctrl: false,
             alt: false,
+            bindings: GamepadBindings::default(),
         }
     }
 }
 
 impl InputMapper {
+    /// Replaces the gamepad bindings (from the player's preferences).
+    pub fn set_bindings(&mut self, bindings: GamepadBindings) {
+        self.bindings = bindings;
+    }
+
+    pub fn bindings(&self) -> &GamepadBindings {
+        &self.bindings
+    }
+
     /// Last known pointer position in virtual pixels.
     pub fn pointer(&self) -> [f32; 2] {
         self.pointer
@@ -82,6 +94,9 @@ impl InputMapper {
             }
             InputEvent::Scroll { .. } => None,
             InputEvent::Key { code, pressed } => self.key(*code, *pressed),
+            InputEvent::Gamepad { button, pressed } => {
+                pressed.then(|| self.bindings.action(*button)).flatten()
+            }
         }
     }
 
@@ -235,6 +250,28 @@ mod tests {
         m.map(&key(KeyCode::AltLeft, false), halve);
         assert_eq!(
             m.map(&key(KeyCode::Enter, true), halve),
+            ui(UiInput::Confirm)
+        );
+    }
+
+    #[test]
+    fn gamepad_buttons_map_through_the_bindings() {
+        use orbit_platform::GamepadButton;
+        let pad = |button, pressed| InputEvent::Gamepad { button, pressed };
+        let mut m = InputMapper::default();
+        assert_eq!(
+            m.map(&pad(GamepadButton::South, true), halve),
+            ui(UiInput::Confirm)
+        );
+        assert_eq!(m.map(&pad(GamepadButton::South, false), halve), None);
+        assert_eq!(
+            m.map(&pad(GamepadButton::DPadDown, true), halve),
+            ui(UiInput::Down)
+        );
+        let map = [("advance".to_owned(), "North".to_owned())].into();
+        m.set_bindings(GamepadBindings::from_prefs(&map));
+        assert_eq!(
+            m.map(&pad(GamepadButton::North, true), halve),
             ui(UiInput::Confirm)
         );
     }

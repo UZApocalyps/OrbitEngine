@@ -30,6 +30,7 @@ use thiserror::Error;
 
 use crate::director::AudioCommand;
 use crate::format::slug;
+use crate::gamepad_bindings::GamepadBindings;
 use crate::input::{InputAction, InputMapper};
 use crate::loading::{
     AssetStore, LoadedStory, PendingAsset, finish_loading, parse_story, scene_asset_paths,
@@ -1790,6 +1791,12 @@ impl App for Runtime {
     }
 
     fn input(&mut self, event: &InputEvent) {
+        if let Phase::Running(shell) = &self.phase {
+            let bindings = GamepadBindings::from_prefs(&shell.prefs().gamepad);
+            if &bindings != self.mapper.bindings() {
+                self.mapper.set_bindings(bindings);
+            }
+        }
         let renderer = &self.ctx.renderer;
         if let Some(action) = self.mapper.map(event, |p| renderer.screen_to_world(p)) {
             self.on_action(action);

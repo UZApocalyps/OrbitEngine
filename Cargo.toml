@@ -32,6 +32,7 @@ ulid = { version = "3", default-features = false }
 thiserror = "2"
 
 # platform / graphics (versions pinned on purpose, see docs/adr)
+gilrs = "0.11.2"
 winit = "=0.30.13"
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl"] }
 web-time = "1"

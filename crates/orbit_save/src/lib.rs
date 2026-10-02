@@ -40,7 +40,7 @@ pub use file_storage::{FileStorage, default_data_dir};
 pub use hash::story_hash;
 pub use manager::{LoadedSave, SaveConfig, SaveManager, SlotId, SlotInfo, SlotState};
 pub use persistent::{
-    BusVolumes, PERSISTENT_KEY, PREFS_KEY, PersistentData, Preferences, SkipMode,
+    BusVolumes, GAMEPAD_ACTIONS, PERSISTENT_KEY, PREFS_KEY, PersistentData, Preferences, SkipMode,
 };
 pub use storage::{MemoryStorage, Storage, StorageError, validate_key};
 #[cfg(target_arch = "wasm32")]

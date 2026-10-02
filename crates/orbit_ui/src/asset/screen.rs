@@ -1169,6 +1169,26 @@ mod tests {
     }
 
     #[test]
+    fn slots_are_reachable_and_loadable_without_pointer() {
+        let mut s = slots_screen("Load", true);
+        // Gamepad d-pad / keyboard only: Next walks tabs then cards.
+        let mut steps = 0;
+        while s.ui().focused_tag() != Some(4) {
+            s.handle(UiInput::Next);
+            steps += 1;
+            assert!(steps < 20, "the first card is reachable with Next");
+        }
+        // Spatial navigation never traps focus.
+        s.handle(UiInput::Right);
+        assert_ne!(s.ui().focused_tag(), Some(4));
+        assert_ne!(s.ui().focused_tag(), Some(2), "stays in the row of cards");
+        s.handle(UiInput::Left);
+        assert_eq!(s.ui().focused_tag(), Some(4));
+        let events = no_sound(s.handle(UiInput::Confirm));
+        assert_eq!(events, vec![UiEvent::LoadSlot(manual(0))]);
+    }
+
+    #[test]
     fn without_saves_the_slots_widget_is_empty_and_safe() {
         let mut s = slots_screen("Load", false);
         assert!(s.ui().find(1).is_none());

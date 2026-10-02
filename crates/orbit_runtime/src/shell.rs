@@ -444,7 +444,6 @@ impl Shell {
         self.loc.language()
     }
 
-    #[cfg(test)]
     pub fn prefs(&self) -> &Preferences {
         &self.prefs
     }

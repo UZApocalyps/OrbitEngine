@@ -343,19 +343,47 @@ impl Ui {
                 Dir4::Left => (cur[0] - c[0], (c[1] - cur[1]).abs()),
             }
         };
+        // A candidate "in line" shares a row (horizontal moves) or a column
+        // (vertical moves) with the current widget: those win over nearer
+        // widgets that merely lie in the right direction (a tab above a grid).
+        let from_rect = self.nodes[from.0].rect;
+        let in_line = |r: [f32; 4]| -> bool {
+            if horizontal {
+                r[1] < from_rect[1] + from_rect[3] && from_rect[1] < r[1] + r[3]
+            } else {
+                r[0] < from_rect[0] + from_rect[2] && from_rect[0] < r[0] + r[2]
+            }
+        };
         let mut best: Option<(f32, NodeId)> = None;
+        let mut best_in_line: Option<(f32, NodeId)> = None;
+        let mut any_in_line = false;
         for &id in &list {
             if id == from {
                 continue;
             }
-            let (along, across) = axes(center(self.nodes[id.0].rect));
+            let rect = self.nodes[id.0].rect;
+            let line = in_line(rect);
+            any_in_line |= line;
+            let (along, across) = axes(center(rect));
             if along > 1.0 {
                 let score = along + 2.0 * across;
                 if best.is_none_or(|(s, _)| score < s) {
                     best = Some((score, id));
                 }
+                if line && best_in_line.is_none_or(|(s, _)| score < s) {
+                    best_in_line = Some((score, id));
+                }
             }
         }
+        // Horizontal moves stay in their row, wrapping inside it.
+        best = best_in_line.or(if horizontal && any_in_line { None } else { best });
+        let list: Vec<NodeId> = if best.is_none() && horizontal && any_in_line {
+            list.into_iter()
+                .filter(|&id| in_line(self.nodes[id.0].rect))
+                .collect()
+        } else {
+            list
+        };
         if best.is_none() {
             // Wrap: the candidate farthest "behind" us, nearest across.
             let extreme = list

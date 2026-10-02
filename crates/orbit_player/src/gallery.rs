@@ -745,6 +745,25 @@ impl App for Gallery {
             },
             InputEvent::Scroll { dy, .. } => ready.handle_input(UiInput::Scroll(*dy)),
             InputEvent::Key { code, pressed } => ready.key(*code, *pressed),
+            InputEvent::Gamepad {
+                button,
+                pressed: true,
+            } => {
+                use orbit_platform::GamepadButton as B;
+                let input = match button {
+                    B::South => Some(UiInput::Confirm),
+                    B::East | B::Start => Some(UiInput::Cancel),
+                    B::DPadUp => Some(UiInput::Up),
+                    B::DPadDown => Some(UiInput::Down),
+                    B::DPadLeft => Some(UiInput::Left),
+                    B::DPadRight => Some(UiInput::Right),
+                    _ => None,
+                };
+                if let Some(input) = input {
+                    ready.handle_input(input);
+                }
+            }
+            InputEvent::Gamepad { .. } => {}
         }
     }
 }

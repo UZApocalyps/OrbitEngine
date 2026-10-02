@@ -119,7 +119,22 @@ pub struct Preferences {
     /// BCP 47 tag of the chosen language; `None` = the system / source
     /// language.
     pub language: Option<String>,
+    /// Gamepad remapping: action name (see [`GAMEPAD_ACTIONS`]) to button
+    /// name. Missing or unknown entries use the default binding, so files
+    /// written before this field existed load unchanged.
+    pub gamepad: BTreeMap<String, String>,
 }
+
+/// The remappable gamepad actions with their default button.
+pub const GAMEPAD_ACTIONS: [(&str, &str); 7] = [
+    ("advance", "South"),
+    ("back", "East"),
+    ("menu", "Start"),
+    ("skip", "RightBumper"),
+    ("auto", "North"),
+    ("rollback", "LeftBumper"),
+    ("history", "West"),
+];
 
 impl Default for Preferences {
     fn default() -> Self {
@@ -130,6 +145,7 @@ impl Default for Preferences {
             skip_mode: SkipMode::default(),
             fullscreen: false,
             language: None,
+            gamepad: BTreeMap::new(),
         }
     }
 }
