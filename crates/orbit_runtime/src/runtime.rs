@@ -4,17 +4,19 @@
 //! [`crate::shell`]; this module is the GPU and device side: drawing, audio,
 //! thumbnails, files, host requests.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use orbit_assets::{
-    AssetError, AssetHandle, AssetLoader, AssetPoll, FileWatcher, PcmAudio, decode_image,
+    AssetError, AssetHandle, AssetLoader, AssetPoll, FileWatcher, PakLocation, PakSource, PcmAudio,
+    decode_image,
 };
 use orbit_audio::{AudioEngine, Bus, MusicOptions, Sound};
 use orbit_core::{Story, TransitionKind};
-use orbit_i18n::Localizer;
-use orbit_platform::{App, HostRequest, InputEvent, PhysicalSize};
+use orbit_i18n::{Localizer, Translation};
+use orbit_pak::{GAME_PACK_ENTRY, GameInfo};
+use orbit_platform::{App, HostRequest, InputEvent, PhysicalSize, Visibility};
 use orbit_render2d::{
     Frame, Layer, Readback, ReadbackStatus, RenderError, Renderer2d, Scene, Sprite2d, TextureId,
     TextureOptions, Transition,
@@ -28,7 +30,8 @@ use crate::director::AudioCommand;
 use crate::format::slug;
 use crate::input::{InputAction, InputMapper};
 use crate::loading::{
-    AssetStore, LoadedStory, PendingAsset, finish_loading, parse_story, start_loading,
+    AssetStore, LoadedStory, PendingAsset, finish_loading, parse_story, scene_asset_paths,
+    start_loading, start_loading_only, successor_scenes,
 };
 use crate::shell::{AutosaveConfig, Effect, Shell, ShellConfig};
 use crate::stage::{CANVAS, StageState, character_placement, cover_size};
@@ -36,7 +39,9 @@ use orbit_ui::UiInput;
 
 mod embedded;
 
-pub use embedded::{EmbeddedConfig, LoadOutcome, Notice, PlayFrom, PlaySpeed, PlayStatus};
+pub use embedded::{
+    EmbeddedConfig, LoadOutcome, Notice, PlayFrom, PlaySpeed, PlayStatus, PreviewSnapshot,
+};
 
 /// Largest frame time fed to the simulation (a stall must not skip content).
 const MAX_DT: f32 = 0.1;
@@ -88,7 +93,18 @@ pub struct RuntimeConfig {
     /// Skip the main menu and start a new game as soon as everything is
     /// loaded (the "click to start" gesture is still required on the web).
     pub auto_start: bool,
+    /// Play an exported game: the pak (file natively, URL on the web) holds
+    /// the compiled story, its translations, the assets and the fonts, and
+    /// the roots and the story path above are ignored.
+    pub pak: Option<PakLocation>,
+    /// Load the assets scene by scene while playing (the next scenes ahead of
+    /// time) instead of all of them before the start: what the web player
+    /// does with its pak, so that a long game starts quickly.
+    pub lazy_assets: bool,
 }
+
+/// Where the fonts of the engine are inside a pak (`engine/<path>`).
+pub const ENGINE_PAK_PREFIX: &str = orbit_pak::ENGINE_PREFIX;
 
 impl RuntimeConfig {
     pub fn new(
@@ -117,6 +133,8 @@ impl RuntimeConfig {
             autosave: AutosaveConfig::default(),
             ui_text_overrides: HashMap::new(),
             auto_start: false,
+            pak: None,
+            lazy_assets: false,
         }
     }
 }
@@ -204,8 +222,13 @@ pub fn parse_translation_index(text: &str, stem: &str) -> Vec<String> {
 
 struct LoadingState {
     story: AssetHandle<LoadedStory>,
-    translations: TranslationLoad,
+    /// Translation files next to a RON story (`None` for a game pack, which
+    /// carries its translations).
+    translations: Option<TranslationLoad>,
     loaded: Option<Arc<Story>>,
+    /// Identity and translations of a game pack.
+    info: Option<GameInfo>,
+    packed_translations: Vec<Translation>,
     pending: Vec<PendingAsset>,
     assets_total: usize,
     /// Start playing as soon as loaded (hot reload after a first start).
@@ -215,13 +238,15 @@ struct LoadingState {
 impl LoadingState {
     fn new(
         story: AssetHandle<LoadedStory>,
-        translations: TranslationLoad,
+        translations: Option<TranslationLoad>,
         autostart: bool,
     ) -> Self {
         Self {
             story,
             translations,
             loaded: None,
+            info: None,
+            packed_translations: Vec::new(),
             pending: Vec::new(),
             assets_total: 0,
             autostart,
@@ -229,7 +254,34 @@ impl LoadingState {
     }
 }
 
+/// Scene by scene loading of the assets (see [`RuntimeConfig::lazy_assets`]):
+/// the assets of the scene on screen are required, those of the scenes it can
+/// lead to are fetched ahead.
+struct Streaming {
+    /// Assets being fetched, whichever scene asked for them.
+    in_flight: Vec<PendingAsset>,
+    /// Scenes whose assets were requested.
+    requested: HashSet<usize>,
+    /// Scene the last round of requests was made for.
+    last_scene: Option<usize>,
+    /// The scene on screen waits for an asset: the game is held.
+    blocked: bool,
+}
+
+impl Streaming {
+    fn new(first_scene: usize) -> Self {
+        Self {
+            in_flight: Vec::new(),
+            requested: HashSet::from([first_scene]),
+            last_scene: None,
+            blocked: false,
+        }
+    }
+}
+
 enum Phase {
+    /// Exported game: reading the header and the index of the pak.
+    Opening(AssetHandle<PakSource>),
     Loading(LoadingState),
     /// Everything is loaded; waiting for the "click to start" gesture.
     Ready(Box<Shell>),
@@ -424,6 +476,10 @@ pub struct Runtime {
     host_requests: Vec<HostRequest>,
     /// Set when hosted by an editor (see [`Runtime::new_embedded`]).
     embedded: Option<embedded::Embedded>,
+    /// Lazy asset loading in progress (web player, see [`Streaming`]).
+    streaming: Option<Streaming>,
+    /// The page is hidden: nothing is drawn.
+    hidden: bool,
 }
 
 impl Runtime {
@@ -454,12 +510,22 @@ impl Runtime {
             THUMBNAIL_SIZE[0],
             THUMBNAIL_SIZE[1],
         )?;
+        let pak_open = config
+            .pak
+            .clone()
+            .filter(|_| embedded.is_none())
+            .map(PakSource::open);
         let engine_loader = AssetLoader::new(config.engine_root.clone());
-        let font_handles = config
-            .fonts
-            .iter()
-            .map(|path| engine_loader.load_bytes(path))
-            .collect();
+        // With a pak the fonts are read from it once it is open.
+        let font_handles = if pak_open.is_some() {
+            Vec::new()
+        } else {
+            config
+                .fonts
+                .iter()
+                .map(|path| engine_loader.load_bytes(path))
+                .collect()
+        };
         let mut text_engine = TextEngine::new();
         text_engine.set_default_family(config.font_family.clone());
         if let Some(embedded) = &embedded {
@@ -476,22 +542,28 @@ impl Runtime {
         let story_loader = AssetLoader::new(config.story_root.clone());
         let assets_loader = AssetLoader::new(config.assets_root.clone());
         if embedded.is_none() {
-            log::info!(
-                "runtime: story `{}` (root `{}`), assets root `{}`",
-                config.story_path,
-                story_loader.root(),
-                assets_loader.root()
-            );
+            if config.pak.is_some() {
+                log::info!("runtime: playing the game of a pak");
+            } else {
+                log::info!(
+                    "runtime: story `{}` (root `{}`), assets root `{}`",
+                    config.story_path,
+                    story_loader.root(),
+                    assets_loader.root()
+                );
+            }
         }
         let phase = if embedded.is_some() {
             Phase::Stopped
+        } else if let Some(open) = pak_open {
+            Phase::Opening(open)
         } else {
             let story = load_story(&story_loader, &config.story_path);
             let translations = TranslationLoad::start(
                 &story_loader,
                 &translations_path(&config.story_path, &config.translations_dir),
             );
-            Phase::Loading(LoadingState::new(story, translations, false))
+            Phase::Loading(LoadingState::new(story, Some(translations), false))
         };
         let white = renderer.white_texture();
         let boot_language = orbit_platform::system_language().unwrap_or_else(|| "en".into());
@@ -528,8 +600,44 @@ impl Runtime {
             ui_sounds,
             host_requests: Vec::new(),
             embedded: embedded.map(embedded::Embedded::new),
+            streaming: None,
+            hidden: false,
             config,
         })
+    }
+
+    /// An exported game: once its pak is open, the story, the translations,
+    /// the assets and the fonts are all read from it.
+    fn poll_opening(&mut self) {
+        let Phase::Opening(handle) = &self.phase else {
+            return;
+        };
+        match handle.poll() {
+            AssetPoll::Loading => {}
+            AssetPoll::Failed(err) => {
+                let message = describe_error(&err);
+                log::error!("cannot open the game: {message}");
+                self.fonts_ready = true;
+                self.phase = Phase::Failed(message);
+            }
+            AssetPoll::Ready(pak) => {
+                let pak: PakSource = (*pak).clone();
+                let engine = AssetLoader::from_pak(pak.clone(), ENGINE_PAK_PREFIX);
+                self.font_handles = self
+                    .config
+                    .fonts
+                    .iter()
+                    .map(|path| engine.load_bytes(path))
+                    .collect();
+                self.story_loader = AssetLoader::from_pak(pak, "");
+                self.assets_loader = self.story_loader.clone();
+                self.story_path = GAME_PACK_ENTRY.to_owned();
+                self.ui_sounds = UiSoundBank::new(&self.config.theme, &self.assets_loader);
+                log::info!("game pack opened");
+                let story = load_story(&self.story_loader, &self.story_path);
+                self.phase = Phase::Loading(LoadingState::new(story, None, false));
+            }
+        }
     }
 
     // ------------------------------------------------------------ updating
@@ -575,9 +683,21 @@ impl Runtime {
                     return;
                 }
                 AssetPoll::Ready(loaded) => {
-                    loading.pending =
-                        start_loading(&self.assets_loader, &loaded.story, &self.store);
+                    loading.pending = if self.config.lazy_assets {
+                        let boot = boot_paths(&loaded.story);
+                        log::info!("lazy loading: {} asset(s) before the start", boot.len());
+                        start_loading_only(
+                            &self.assets_loader,
+                            &loaded.story,
+                            &self.store,
+                            Some(&boot),
+                        )
+                    } else {
+                        start_loading(&self.assets_loader, &loaded.story, &self.store)
+                    };
                     loading.assets_total = loading.pending.len();
+                    loading.info = loaded.info.clone();
+                    loading.packed_translations = loaded.translations.clone();
                     loading.loaded = Some(loaded.story.clone());
                 }
             }
@@ -586,10 +706,10 @@ impl Runtime {
             .file_stem()
             .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
         let translations_dir = translations_path(&self.story_path, &self.config.translations_dir);
-        let translations_done =
-            loading
-                .translations
-                .poll(&self.story_loader, &translations_dir, &stem);
+        let translations_done = match loading.translations.as_mut() {
+            Some(translations) => translations.poll(&self.story_loader, &translations_dir, &stem),
+            None => true,
+        };
         if !self.fonts_ready
             || !translations_done
             || !loading.pending.iter().all(PendingAsset::is_done)
@@ -601,10 +721,23 @@ impl Runtime {
         };
         let autostart = loading.autostart;
         let pending = std::mem::take(&mut loading.pending);
-        let translation_texts = loading.translations.texts();
+        let translation_texts = loading
+            .translations
+            .as_ref()
+            .map(TranslationLoad::texts)
+            .unwrap_or_default();
+        let packed = std::mem::take(&mut loading.packed_translations);
+        let info = loading.info.take();
         finish_loading(&mut self.ctx.renderer, &mut self.store, pending);
         log::info!("story `{}` ready", story.title);
-        let shell = self.build_shell(story, &translation_texts);
+        if self.config.lazy_assets {
+            let first = story
+                .entry()
+                .and_then(|node| story.locate(node))
+                .map_or(0, |(scene, _)| scene);
+            self.streaming = Some(Streaming::new(first));
+        }
+        let shell = self.build_shell_full(story, &translation_texts, packed, info);
         // Hot reload restarts at once; `auto_start` skips the click natively
         // (nothing blocks audio there) but not on the web (autoplay policy).
         let native_auto = self.config.auto_start && !cfg!(target_arch = "wasm32");
@@ -623,9 +756,27 @@ impl Runtime {
     }
 
     fn build_shell(&mut self, story: Arc<Story>, translations: &[String]) -> Box<Shell> {
+        self.build_shell_full(story, translations, Vec::new(), None)
+    }
+
+    /// The shell of a loaded story: `translations` are RON texts (files next
+    /// to a RON story), `packed` the translations of a game pack, `info` its
+    /// identity (the id names the saves, the language is the default one).
+    fn build_shell_full(
+        &mut self,
+        story: Arc<Story>,
+        translations: &[String],
+        packed: Vec<Translation>,
+        info: Option<GameInfo>,
+    ) -> Box<Shell> {
         let mut loc = Localizer::from_story(&story);
         for text in translations {
             if let Err(err) = loc.add_translation_ron(text) {
+                log::warn!("translation ignored: {err}");
+            }
+        }
+        for translation in packed {
+            if let Err(err) = loc.add_translation(translation) {
                 log::warn!("translation ignored: {err}");
             }
         }
@@ -633,6 +784,7 @@ impl Runtime {
             .config
             .game_id
             .clone()
+            .or_else(|| info.as_ref().map(|i| i.id.clone()))
             .unwrap_or_else(|| slug(&story.title));
         let embedded = self.embedded.is_some();
         // The preview never touches the real saves of the game.
@@ -647,8 +799,9 @@ impl Runtime {
             ui_overrides: self.config.ui_text_overrides.clone(),
             system_language: orbit_platform::system_language(),
             utc_offset_minutes: orbit_platform::local_utc_offset_minutes(),
+            default_language: info.as_ref().and_then(|i| i.default_language.clone()),
             fullscreen_supported: orbit_platform::FULLSCREEN_SUPPORTED && !embedded,
-            quit_supported: orbit_platform::FULLSCREEN_SUPPORTED && !embedded,
+            quit_supported: orbit_platform::QUIT_SUPPORTED && !embedded,
             capture_thumbnails: !embedded,
             embedded,
         };
@@ -672,10 +825,16 @@ impl Runtime {
         log::info!("story file changed: reloading");
         self.audio.stop_music(RESTART_MUSIC_FADE);
         let handle = load_story(&self.story_loader, &self.story_path);
-        let translations =
-            TranslationLoad::start(&self.story_loader, &self.config.translations_dir);
+        let translations = TranslationLoad::start(
+            &self.story_loader,
+            &translations_path(&self.story_path, &self.config.translations_dir),
+        );
         self.screens.error_body = None;
-        self.phase = Phase::Loading(LoadingState::new(handle, translations, self.started_once));
+        self.phase = Phase::Loading(LoadingState::new(
+            handle,
+            Some(translations),
+            self.started_once,
+        ));
     }
 
     fn shell_mut(&mut self) -> Option<&mut Shell> {
@@ -725,6 +884,68 @@ impl Runtime {
             }
             _ => self.audio.set_bus_volume(bus_of(bus), volume),
         }
+    }
+
+    /// Lazy loading (web): finishes the assets that arrived, asks for the
+    /// assets of the scene on screen and of the scenes it leads to, and
+    /// holds the game while the scene on screen is still missing something.
+    fn poll_streaming(&mut self) {
+        let Some(stream) = self.streaming.as_mut() else {
+            return;
+        };
+        if stream.in_flight.iter().any(PendingAsset::is_done) {
+            let (done, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut stream.in_flight)
+                .into_iter()
+                .partition(PendingAsset::is_done);
+            stream.in_flight = waiting;
+            finish_loading(&mut self.ctx.renderer, &mut self.store, done);
+        }
+        let (story, current) = match &self.phase {
+            Phase::Running(shell) | Phase::Ready(shell) => {
+                (shell.story().clone(), shell.current_scene())
+            }
+            _ => return,
+        };
+        let first = story
+            .entry()
+            .and_then(|node| story.locate(node))
+            .map_or(0, |(scene, _)| scene);
+        let scene = current.unwrap_or(first);
+        if stream.last_scene != Some(scene) {
+            stream.last_scene = Some(scene);
+            let mut wanted = vec![scene];
+            wanted.extend(successor_scenes(&story, scene));
+            for next in wanted {
+                if !stream.requested.insert(next) {
+                    continue;
+                }
+                let paths: Vec<String> = scene_asset_paths(&story, next)
+                    .into_iter()
+                    .filter(|p| !stream.in_flight.iter().any(|f| f.path() == p))
+                    .collect();
+                let started =
+                    start_loading_only(&self.assets_loader, &story, &self.store, Some(&paths));
+                if !started.is_empty() {
+                    log::info!(
+                        "lazy loading: scene {next}, {} asset(s) requested",
+                        started.len()
+                    );
+                }
+                stream.in_flight.extend(started);
+            }
+        }
+        stream.blocked = current.is_some() && !stream.in_flight.is_empty() && {
+            let needed = scene_asset_paths(&story, scene);
+            stream
+                .in_flight
+                .iter()
+                .any(|p| needed.iter().any(|n| n == p.path()))
+        };
+    }
+
+    /// Whether the game is held until the scene on screen has its assets.
+    fn is_blocked(&self) -> bool {
+        self.streaming.as_ref().is_some_and(|s| s.blocked)
     }
 
     /// Renders the stages of the pending saves into the thumbnail target and
@@ -814,6 +1035,8 @@ impl Runtime {
                 }
                 self.phase = Phase::Running(shell);
             }
+        } else if self.is_blocked() {
+            // The scene is still loading: nothing to click on yet.
         } else if let Phase::Running(shell) = &mut self.phase {
             shell.input(action);
         }
@@ -902,6 +1125,41 @@ impl Runtime {
                     shell.draw_ui(&mut ctx, !transitioning);
                     out.scene(renderer, &ui_scene)?;
                 }
+                if self.streaming.as_ref().is_some_and(|s| s.blocked) {
+                    // The scene waits for its assets: dim, text and a bar.
+                    let s = &theme.screens;
+                    let mut wait = Scene::new();
+                    wait.push(
+                        Sprite2d::new(*white, [0.0, 0.0], CANVAS)
+                            .anchor([0.0, 0.0])
+                            .layer(Layer::UI)
+                            .z(-10.0)
+                            .tint(tint([0, 0, 0, 170])),
+                    );
+                    draw_progress_bar(
+                        &mut wait,
+                        *white,
+                        [CANVAS[0] * 0.5, CANVAS[1] * 0.58],
+                        s.bar_size,
+                        s.bar_background,
+                        s.bar_fill,
+                        (time * 0.8).fract(),
+                    );
+                    if fonts_ready {
+                        let banner = self.screens.loading.get_or_insert_with(|| {
+                            Banner::centered(&texts.get("ui.loading"), s.body_size, s.text_color)
+                        });
+                        banner.draw(
+                            text_engine,
+                            text_renderer,
+                            renderer,
+                            &mut wait,
+                            CANVAS[1] * 0.47,
+                            0.9,
+                        );
+                    }
+                    out.scene(renderer, &wait)?;
+                }
                 Ok(())
             }
             phase => {
@@ -909,13 +1167,19 @@ impl Runtime {
                 let mut scene = Scene::new();
                 scene.clear = Some(tint(s.background));
                 match phase {
-                    Phase::Loading(l) => {
+                    Phase::Opening(_) | Phase::Loading(_) => {
                         let fonts_total = self.font_handles.len();
-                        let total = fonts_total + 1 + l.assets_total;
-                        let done = if self.fonts_ready { fonts_total } else { 0 }
-                            + usize::from(l.loaded.is_some())
-                            + l.assets_total
-                                .saturating_sub(l.pending.iter().filter(|p| !p.is_done()).count());
+                        let (total, done) = match phase {
+                            Phase::Loading(l) => (
+                                fonts_total + 1 + l.assets_total,
+                                if self.fonts_ready { fonts_total } else { 0 }
+                                    + usize::from(l.loaded.is_some())
+                                    + l.assets_total.saturating_sub(
+                                        l.pending.iter().filter(|p| !p.is_done()).count(),
+                                    ),
+                            ),
+                            _ => (1, 0),
+                        };
                         draw_progress_bar(
                             &mut scene,
                             *white,
@@ -1046,6 +1310,11 @@ impl Runtime {
 
 /// The picture shown behind the main menu: the first background of the story.
 fn menu_background(story: &Story, store: &AssetStore) -> Option<TextureId> {
+    menu_background_path(story).and_then(|path| store.texture(path))
+}
+
+/// Manifest path of the picture behind the main menu.
+fn menu_background_path(story: &Story) -> Option<&str> {
     story
         .scenes
         .iter()
@@ -1055,7 +1324,23 @@ fn menu_background(story: &Story, store: &AssetStore) -> Option<TextureId> {
             _ => None,
         })
         .and_then(|asset| story.assets.get(asset))
-        .and_then(|entry| store.texture(&entry.path))
+        .map(|entry| entry.path.as_str())
+}
+
+/// What the lazy mode loads before the start: the assets of the first scene
+/// and the picture behind the main menu.
+fn boot_paths(story: &Story) -> Vec<String> {
+    let first = story
+        .entry()
+        .and_then(|node| story.locate(node))
+        .map_or(0, |(scene, _)| scene);
+    let mut paths = scene_asset_paths(story, first);
+    if let Some(menu) = menu_background_path(story)
+        && !paths.iter().any(|p| p == menu)
+    {
+        paths.push(menu.to_owned());
+    }
+    paths
 }
 
 fn load_story(loader: &AssetLoader, path: &str) -> AssetHandle<LoadedStory> {
@@ -1193,6 +1478,7 @@ impl App for Runtime {
         let dt_secs = dt.as_secs_f32().min(MAX_DT);
         self.time += dt_secs;
         self.audio.update();
+        self.poll_opening();
         self.poll_fonts();
         if let Some(watcher) = &mut self.watcher
             && watcher.poll(dt)
@@ -1200,15 +1486,22 @@ impl App for Runtime {
             self.reload();
         }
         self.poll_loading();
+        let blocked = self.is_blocked();
         if let Phase::Running(shell) = &mut self.phase {
             shell.set_now(orbit_platform::unix_time_ms());
-            shell.update(dt_secs);
+            if !blocked {
+                shell.update(dt_secs);
+            }
         }
+        self.poll_streaming();
         self.service_thumbnails();
         self.after_shell();
     }
 
     fn render(&mut self) {
+        if self.hidden {
+            return;
+        }
         let mut frame = match self.ctx.renderer.begin_frame() {
             Ok(Some(frame)) => frame,
             Ok(None) => return,
@@ -1245,6 +1538,21 @@ impl App for Runtime {
 
     fn host_requests(&mut self) -> Vec<HostRequest> {
         std::mem::take(&mut self.host_requests)
+    }
+
+    fn visibility_changed(&mut self, state: Visibility) {
+        // Silence and pause the music unless the player is looking at it.
+        self.audio.set_paused(state != Visibility::Active);
+        let hidden = state == Visibility::Hidden;
+        if hidden
+            && !self.hidden
+            && let Phase::Running(shell) = &mut self.phase
+        {
+            // A hidden tab can be discarded at any moment: save now.
+            shell.set_now(orbit_platform::unix_time_ms());
+            shell.on_exit();
+        }
+        self.hidden = hidden;
     }
 }
 

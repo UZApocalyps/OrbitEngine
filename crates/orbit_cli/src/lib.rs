@@ -2,10 +2,13 @@
 //!
 //! * `orbit validate <project|file> [--check-files] [--root <dir>]`
 //! * `orbit run-text <file> [--step] [--save-dir <dir>]`
-//! * `orbit mcp --project <dir|file.ron>` (MCP server over stdio, see `orbit_mcp`)
+//! * `orbit mcp --project <dir|file.ron>` (MCP server over stdio, see `orbit_mcp`; `--force` takes a project the editor holds)
+//! * `orbit build` and `orbit export <target>` (see `orbit_export`)
 //!
 //! The logic lives in [`run`], which takes its streams as parameters so it can
 //! be tested without spawning a process.
+
+mod export_cmd;
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -36,14 +39,21 @@ USAGE:
           b [n]   roll back n steps (default 1)     f [n]  roll forward
           s <slot>  save      l <slot>  load        h      show the history
         <slot> is a number (manual slot), q (quicksave) or a (last autosave).
-    orbit mcp --project <dir|file.ron>
+    orbit mcp --project <dir|file.ron> [--force]
         Serve the project to an AI client over the Model Context Protocol
         (stdio, no GPU). Every edit goes through the project command API, is
         saved atomically and is one undo entry; file access is limited to
         the project folder. The log is kept in <project>/.orbit/mcp.log.
         Protocol on stdout: nothing else is printed there.
-    orbit help
+        Refused while the editor (or another `orbit mcp`) holds the project
+        (.orbit/lock): use the editor's live MCP instead, or --force.
+{export_usage}    orbit help
 ";
+
+/// The help text (the export commands are documented next to their code).
+fn usage() -> String {
+    USAGE.replace("{export_usage}", export_cmd::USAGE)
+}
 
 /// Runs the CLI and returns the process exit code.
 pub fn run(
@@ -56,8 +66,10 @@ pub fn run(
         Some("validate") => validate_cmd(&args[1..], out, err),
         Some("run-text") => run_text_cmd(&args[1..], input, out, err),
         Some("mcp") => mcp_cmd(&args[1..], err),
+        Some("build") => export_cmd::build_cmd(&args[1..], out, err),
+        Some("export") => export_cmd::export_cmd(&args[1..], out, err),
         Some("help" | "--help" | "-h") | None => {
-            let _ = write!(out, "{USAGE}");
+            let _ = write!(out, "{}", usage());
             Ok(0)
         }
         Some(other) => Err(format!("unknown command `{other}` (try `orbit help`)")),
@@ -126,19 +138,21 @@ fn print_report(report: &ValidationReport, err: &mut dyn Write) {
 /// belongs to the protocol).
 fn mcp_cmd(args: &[String], err: &mut dyn Write) -> Result<u8, String> {
     let mut project: Option<PathBuf> = None;
+    let mut force = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--project" => {
                 project = Some(PathBuf::from(it.next().ok_or("--project needs a path")?));
             }
+            "--force" => force = true,
             flag if flag.starts_with("--") => return Err(format!("unknown option `{flag}`")),
-            _ => return Err("usage: orbit mcp --project <dir|file.ron>".into()),
+            _ => return Err("usage: orbit mcp --project <dir|file.ron> [--force]".into()),
         }
     }
-    let project = project.ok_or("usage: orbit mcp --project <dir|file.ron>")?;
+    let project = project.ok_or("usage: orbit mcp --project <dir|file.ron> [--force]")?;
     let _ = writeln!(err, "orbit mcp: serving {} on stdio", project.display());
-    orbit_mcp::serve_stdio(&project)?;
+    orbit_mcp::serve_stdio_with(&project, force)?;
     Ok(0)
 }
 
@@ -181,12 +195,15 @@ fn validate_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Re
 
     let mut report = orbit_core::validate(&story);
     if check_files {
+        // Same resolution as the editor and the MCP server: a story file
+        // opened alone may keep its assets in a parent folder.
         let root = root.unwrap_or_else(|| {
-            if target.is_dir() {
-                target.to_owned()
+            let base = if target.is_dir() {
+                target
             } else {
-                PathBuf::from(".")
-            }
+                story_path.parent().unwrap_or(Path::new(""))
+            };
+            orbit_project::find_assets_root(base, &story)
         });
         report
             .errors

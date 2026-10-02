@@ -7,6 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = ["showcase"]
+# The renderer demo (`--demo`) and the UI gallery (`--ui-gallery`): development
+# tools, left out of the player templates used to export games.
+showcase = []
+
 [dependencies]
 orbit_platform.workspace = true
 orbit_gfx.workspace = true
@@ -26,6 +32,7 @@ env_logger.workspace = true
 console_log.workspace = true
 console_error_panic_hook.workspace = true
 web-sys = { workspace = true, features = ["Window", "Location"] }
+js-sys.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = { version = "0.1", default-features = false }

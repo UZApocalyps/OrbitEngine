@@ -20,6 +20,8 @@ use orbit_core::{CoreError, Story};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::export::ExportProfile;
+
 /// File name of the manifest at the project root.
 pub const MANIFEST_FILE: &str = "orbit.project.ron";
 /// Default story file of a new project (also what the player and
@@ -46,6 +48,10 @@ pub struct ProjectManifest {
     pub story: String,
     #[serde(default)]
     pub plugins: Vec<PluginRequirement>,
+    /// Export profiles (see [`ExportProfile`]); none means one implicit
+    /// profile derived from the project name.
+    #[serde(default)]
+    pub export_profiles: Vec<ExportProfile>,
 }
 
 impl ProjectManifest {
@@ -55,6 +61,25 @@ impl ProjectManifest {
             name: name.into(),
             story: DEFAULT_STORY_FILE.to_owned(),
             plugins: Vec::new(),
+            export_profiles: Vec::new(),
+        }
+    }
+
+    /// The profile called `name`, or, when `None`, the first one; a project
+    /// without profiles gets an implicit `release` profile named after it.
+    pub fn profile(&self, name: Option<&str>) -> Option<ExportProfile> {
+        match name {
+            Some(name) => self
+                .export_profiles
+                .iter()
+                .find(|p| p.name == name)
+                .cloned(),
+            None => Some(
+                self.export_profiles
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| ExportProfile::new("release", &self.name)),
+            ),
         }
     }
 
@@ -183,6 +208,24 @@ mod tests {
         });
         save_manifest(&storage, &manifest).unwrap();
         assert_eq!(load_manifest(&storage).unwrap(), manifest);
+    }
+
+    #[test]
+    fn export_profiles_round_trip_and_default() {
+        let mut manifest = ProjectManifest::new("Mon jeu");
+        assert_eq!(manifest.profile(None).unwrap().game_id, "mon-jeu");
+        assert!(manifest.profile(Some("demo")).is_none());
+        let mut demo = ExportProfile::new("demo", "Mon jeu (demo)");
+        demo.version = "0.1.0".into();
+        manifest.export_profiles.push(demo.clone());
+        let back = ProjectManifest::from_ron(&manifest.to_ron().unwrap()).unwrap();
+        assert_eq!(back, manifest);
+        assert_eq!(back.profile(Some("demo")), Some(demo.clone()));
+        assert_eq!(back.profile(None), Some(demo));
+        // A manifest written before profiles existed still loads.
+        let old =
+            ProjectManifest::from_ron("(format: 1, name: \"x\", story: \"story.ron\")").unwrap();
+        assert!(old.export_profiles.is_empty());
     }
 
     #[test]

@@ -18,6 +18,7 @@ orbit_assets.workspace = true
 orbit_ui.workspace = true
 orbit_save.workspace = true
 orbit_i18n.workspace = true
+orbit_pak.workspace = true
 image.workspace = true
 log.workspace = true
 thiserror.workspace = true

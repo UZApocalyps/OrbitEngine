@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use orbit_assets::{AssetHandle, AssetPoll, ImageData, PcmAudio};
 use orbit_audio::Sound;
-use orbit_core::{AssetKind, Story, validate};
+use orbit_core::{AssetKind, NodeKind, Story, validate};
+use orbit_i18n::Translation;
+use orbit_pak::{GameInfo, GamePack};
 use orbit_render2d::{Renderer2d, TextureId, TextureOptions};
 
 /// A parsed and validated story.
@@ -14,14 +16,27 @@ pub struct LoadedStory {
     pub story: Arc<Story>,
     /// Non-fatal validation warnings (already logged).
     pub warnings: Vec<String>,
+    /// Identity of the game, when the story comes from a game pack.
+    pub info: Option<GameInfo>,
+    /// Translations compiled into the game pack (empty for a RON story: its
+    /// translation files are loaded separately).
+    pub translations: Vec<Translation>,
 }
 
-/// Parses and validates story bytes. Every problem becomes a readable error
-/// message (never a panic): RON syntax errors, unsupported schema versions
-/// and the full list of validation errors.
+/// Parses and validates story bytes: a RON file (development) or a game
+/// pack (exported game, see `orbit_pak`). Every problem becomes a readable
+/// error message (never a panic): RON syntax errors, unsupported schema
+/// versions and the full list of validation errors.
 pub fn parse_story(bytes: Vec<u8>) -> Result<LoadedStory, String> {
-    let text = String::from_utf8(bytes).map_err(|e| format!("the file is not valid UTF-8: {e}"))?;
-    let story = Story::from_ron_unchecked(&text).map_err(|e| e.to_string())?;
+    let (story, info, translations) = if GamePack::is_pack(&bytes) {
+        let pack = GamePack::from_bytes(&bytes).map_err(|e| e.to_string())?;
+        (pack.story, Some(pack.info), pack.translations)
+    } else {
+        let text =
+            String::from_utf8(bytes).map_err(|e| format!("the file is not valid UTF-8: {e}"))?;
+        let story = Story::from_ron_unchecked(&text).map_err(|e| e.to_string())?;
+        (story, None, Vec::new())
+    };
     let report = validate(&story);
     if !report.errors.is_empty() {
         let mut message = format!("{} validation error(s):", report.errors.len());
@@ -37,7 +52,71 @@ pub fn parse_story(bytes: Vec<u8>) -> Result<LoadedStory, String> {
     Ok(LoadedStory {
         story: Arc::new(story),
         warnings,
+        info,
+        translations,
     })
+}
+
+/// Paths of the assets scene `scene` (an index of `story.scenes`) needs:
+/// backgrounds, music, sounds and the sprites of the characters it shows.
+pub fn scene_asset_paths(story: &Story, scene: usize) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    let mut add = |id: orbit_core::AssetId| {
+        if let Some(entry) = story.assets.get(id)
+            && !paths.contains(&entry.path)
+        {
+            paths.push(entry.path.clone());
+        }
+    };
+    let Some(scene) = story.scenes.get(scene) else {
+        return paths;
+    };
+    for node in &scene.nodes {
+        match &node.kind {
+            NodeKind::Background { asset, .. }
+            | NodeKind::PlayMusic { asset, .. }
+            | NodeKind::PlaySound { asset } => add(*asset),
+            NodeKind::Show {
+                character,
+                expression,
+                ..
+            } => {
+                if let Some(expr) = story
+                    .character(*character)
+                    .and_then(|c| c.expression(expression))
+                {
+                    add(expr.image);
+                }
+            }
+            _ => {}
+        }
+    }
+    paths
+}
+
+/// Scenes (indices) a scene can lead to: the targets of its jumps.
+pub fn successor_scenes(story: &Story, scene: usize) -> Vec<usize> {
+    let Some(from) = story.scenes.get(scene) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for node in &from.nodes {
+        let by_scene = node
+            .kind
+            .target_scene()
+            .and_then(|id| story.scenes.iter().position(|s| s.id == id));
+        let by_label = node
+            .kind
+            .targets()
+            .into_iter()
+            .filter_map(|label| story.locate(label).map(|(s, _)| s));
+        for target in by_scene.into_iter().chain(by_label) {
+            if target != scene && !out.contains(&target) {
+                out.push(target);
+            }
+        }
+    }
+    out
 }
 
 /// GPU textures and decoded sounds, by manifest path.
@@ -92,6 +171,11 @@ pub struct PendingAsset {
 }
 
 impl PendingAsset {
+    /// Manifest path of the asset.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
     pub fn is_done(&self) -> bool {
         match &self.handle {
             Handle::Image(h) => !matches!(h.poll(), AssetPoll::Loading),
@@ -107,10 +191,24 @@ pub fn start_loading(
     story: &Story,
     store: &AssetStore,
 ) -> Vec<PendingAsset> {
+    start_loading_only(loader, story, store, None)
+}
+
+/// [`start_loading`] restricted to `only` (manifest paths) when given: the
+/// lazy mode loads a scene's assets when it needs them.
+pub fn start_loading_only(
+    loader: &orbit_assets::AssetLoader,
+    story: &Story,
+    store: &AssetStore,
+    only: Option<&[String]>,
+) -> Vec<PendingAsset> {
     let mut seen = HashSet::new();
     let mut pending = Vec::new();
     for entry in &story.assets.assets {
-        if store.contains(&entry.path) || !seen.insert(entry.path.clone()) {
+        if only.is_some_and(|only| !only.contains(&entry.path))
+            || store.contains(&entry.path)
+            || !seen.insert(entry.path.clone())
+        {
             continue;
         }
         let handle = match entry.kind {
@@ -198,6 +296,45 @@ mod tests {
         let loaded = parse_story(DEMO.as_bytes().to_vec()).expect("demo parses");
         assert_eq!(loaded.story.title, "Demo");
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+    }
+
+    #[test]
+    fn a_game_pack_loads_like_the_ron_it_comes_from() {
+        let story = Story::from_ron_unchecked(DEMO).unwrap();
+        let pack = GamePack {
+            info: GameInfo {
+                name: "Demo".into(),
+                id: "demo".into(),
+                version: "1.0.0".into(),
+                default_language: None,
+            },
+            story: story.clone(),
+            translations: vec![Translation::new("fr", "Francais")],
+        };
+        let loaded = parse_story(pack.to_bytes().unwrap()).expect("pack parses");
+        assert_eq!(*loaded.story, story);
+        assert_eq!(loaded.info.unwrap().id, "demo");
+        assert_eq!(loaded.translations.len(), 1);
+        // A damaged pack is an error, not a panic.
+        let mut bytes = pack.to_bytes().unwrap();
+        bytes.truncate(40);
+        assert!(parse_story(bytes).is_err());
+    }
+
+    #[test]
+    fn scene_assets_and_successors_of_the_demo() {
+        let story = Story::from_ron_unchecked(DEMO).unwrap();
+        let all: Vec<String> = story.assets.assets.iter().map(|a| a.path.clone()).collect();
+        let mut seen = Vec::new();
+        for scene in 0..story.scenes.len() {
+            seen.extend(scene_asset_paths(&story, scene));
+        }
+        // Everything the demo declares is used by some scene.
+        for path in &all {
+            assert!(seen.contains(path), "{path} is not used by any scene");
+        }
+        assert!(scene_asset_paths(&story, 99).is_empty());
+        assert!(successor_scenes(&story, 99).is_empty());
     }
 
     #[test]

@@ -288,6 +288,8 @@ pub struct EditorState {
     pub preview: PreviewState,
     /// The scene view: the stage at the selected node.
     pub scene_view: crate::SceneViewState,
+    /// The AI assistant (live MCP server): status, journal, settings.
+    pub ai: crate::ai::AiState,
     /// Positions of the graph blocks (`.layout` sidecar).
     pub graph: crate::GraphState,
 }

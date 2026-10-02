@@ -10,7 +10,7 @@ Idées validées mais hors des jalons en cours. À replanifier dans la roadmap l
 - **Éditeur de thème de l'UI en jeu** (repoussé hors de M3e) : inspecteur auto-généré sur le `Theme` RON d'`orbit_ui` avec preview en direct ; à faire avec cette refonte, pas avant.
 
 ## Optimisations
-- Taille du bundle web (wasm ~10 Mo : wasm-opt, features, compression) — prévu M4.
+- Taille du bundle web : fait au M4 (10,2 → 4,4 Mo, budget en CI). Pistes restantes : décodage JPEG / polices chargés à la demande, `cosmic-text` sans `swash` inutile, binaryen récent, `twiggy` pour chercher les gros morceaux.
 - Profilage CPU/GPU du runtime et de l'éditeur.
 
 ## Dialogues en bulles positionnables

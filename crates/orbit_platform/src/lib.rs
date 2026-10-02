@@ -135,7 +135,9 @@ pub enum InputEvent {
 /// needs a handle on the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostRequest {
-    /// Borderless fullscreen on or off. Ignored on the web (the page decides).
+    /// Borderless fullscreen on or off. On the web it uses the browser
+    /// Fullscreen API, which only accepts it while handling a user gesture
+    /// (a click or a key press): a refused request is ignored.
     SetFullscreen(bool),
     /// Close the application (native only; a browser tab cannot quit).
     Quit,
@@ -152,8 +154,12 @@ pub struct EventResponse {
     pub repaint: bool,
 }
 
-/// Whether [`HostRequest::SetFullscreen`] does anything on this platform.
-pub const FULLSCREEN_SUPPORTED: bool = cfg!(not(target_arch = "wasm32"));
+/// Whether [`HostRequest::SetFullscreen`] does anything on this platform
+/// (every platform: the browser has a Fullscreen API).
+pub const FULLSCREEN_SUPPORTED: bool = true;
+
+/// Whether [`HostRequest::Quit`] does anything (a browser tab cannot quit).
+pub const QUIT_SUPPORTED: bool = cfg!(not(target_arch = "wasm32"));
 
 /// Milliseconds since the Unix epoch (works on the web too).
 pub fn unix_time_ms() -> u64 {
@@ -219,6 +225,24 @@ pub trait App {
     /// Called once when the app is installed: a handle other threads use to
     /// wake the loop up (background work finished). The default drops it.
     fn attach_waker(&mut self, _waker: Waker) {}
+    /// The page changed [`Visibility`] (web only): a hidden browser tab, a
+    /// page that lost the focus, a page being unloaded. The app pauses its
+    /// audio when it is not [`Visibility::Active`], stops drawing while
+    /// [`Visibility::Hidden`] and saves its progress when it becomes hidden
+    /// (a hidden tab can be killed at any moment).
+    fn visibility_changed(&mut self, _state: Visibility) {}
+}
+
+/// Whether the player can see and use the page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    /// Shown and focused.
+    Active,
+    /// Shown but without the focus (another window or frame is in use):
+    /// silence, but the picture stays alive.
+    Unfocused,
+    /// Hidden tab, minimized window, or the page is being unloaded.
+    Hidden,
 }
 
 /// Wakes the event loop from any thread: the next loop iteration asks the
@@ -246,6 +270,47 @@ pub enum PlatformError {
     EventLoop(#[from] winit::error::EventLoopError),
 }
 
+/// Web: reports `visibilitychange`, `pagehide`, `blur` and `focus` to the loop.
+#[cfg(target_arch = "wasm32")]
+mod web_visibility {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+
+    use super::{EventLoopProxy, UserEvent, Visibility};
+
+    fn current() -> Visibility {
+        match web_sys::window().and_then(|w| w.document()) {
+            Some(d) if d.hidden() => Visibility::Hidden,
+            Some(d) if !d.has_focus().unwrap_or(true) => Visibility::Unfocused,
+            _ => Visibility::Active,
+        }
+    }
+
+    pub(super) fn install(proxy: EventLoopProxy<UserEvent>) {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let listen = |target: &web_sys::EventTarget, name: &str, forced: Option<Visibility>| {
+            let proxy = proxy.clone();
+            let callback = Closure::<dyn FnMut()>::new(move || {
+                let state = forced.unwrap_or_else(current);
+                let _ = proxy.send_event(UserEvent::Visibility(state));
+            });
+            let _ =
+                target.add_event_listener_with_callback(name, callback.as_ref().unchecked_ref());
+            // Lives as long as the page.
+            callback.forget();
+        };
+        if let Some(document) = window.document() {
+            listen(&document, "visibilitychange", None);
+        }
+        listen(&window, "blur", None);
+        listen(&window, "focus", None);
+        // The page is going away (navigation, tab closed): save now.
+        listen(&window, "pagehide", Some(Visibility::Hidden));
+    }
+}
+
 type AppFuture = Pin<Box<dyn Future<Output = Box<dyn App>>>>;
 type AppFactory = Box<dyn FnOnce(Arc<Window>) -> AppFuture>;
 
@@ -257,6 +322,9 @@ enum UserEvent {
     AppReady(Box<dyn App>),
     /// A background thread asked for a frame (see [`Waker`]).
     Wake,
+    /// The page was hidden or shown, gained or lost the focus (web).
+    #[cfg(target_arch = "wasm32")]
+    Visibility(Visibility),
 }
 
 /// Creates the window and runs the application until it is closed.
@@ -353,11 +421,18 @@ impl Runner {
         for request in app.host_requests() {
             match request {
                 HostRequest::SetFullscreen(on) => {
-                    #[cfg(not(target_arch = "wasm32"))]
+                    // Leaving a fullscreen that is not there makes the
+                    // browser reject a promise: nothing to do then.
+                    #[cfg(target_arch = "wasm32")]
+                    if !on
+                        && web_sys::window()
+                            .and_then(|w| w.document())
+                            .is_none_or(|d| d.fullscreen_element().is_none())
+                    {
+                        continue;
+                    }
                     window
                         .set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
-                    #[cfg(target_arch = "wasm32")]
-                    let _ = (on, window);
                 }
                 HostRequest::Quit => event_loop.exit(),
                 HostRequest::RequestRedraw => self.redraw_wanted = true,
@@ -441,6 +516,8 @@ impl ApplicationHandler<UserEvent> for Runner {
             return;
         };
         let future = factory(window);
+        #[cfg(target_arch = "wasm32")]
+        web_visibility::install(self.proxy.clone());
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -464,6 +541,14 @@ impl ApplicationHandler<UserEvent> for Runner {
             #[cfg(target_arch = "wasm32")]
             UserEvent::AppReady(app) => self.install_app(app),
             UserEvent::Wake => {
+                self.redraw_wanted = true;
+                self.schedule(event_loop);
+            }
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::Visibility(state) => {
+                if let Some(app) = self.app.as_mut() {
+                    app.visibility_changed(state);
+                }
                 self.redraw_wanted = true;
                 self.schedule(event_loop);
             }

@@ -127,7 +127,7 @@ pub struct Expression {
     pub image: AssetId,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Character {
     pub id: CharacterId,
@@ -137,9 +137,9 @@ pub struct Character {
     #[serde(default)]
     pub expressions: Vec<Expression>,
     /// Where the character stands when shown without an explicit choice
-    /// (editor convenience: pre-fills new `Show` nodes). Absent in the file
-    /// when unset, so existing stories are unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// (editor convenience: pre-fills new `Show` nodes). Absent in the RON
+    /// file when unset, so existing stories are unchanged.
+    #[serde(default)]
     pub default_position: Option<Position>,
     /// Scale applied when a `Show` does not override it (schema v6). `1.0`
     /// is the native size; not written to the file when it is `1.0`.
@@ -153,6 +153,28 @@ fn default_scale() -> f32 {
 
 fn is_default_scale(scale: &f32) -> bool {
     *scale == 1.0
+}
+
+/// Written by hand (instead of `skip_serializing_if`) so that the field is
+/// only left out of *human readable* formats: a binary, non self-describing
+/// format such as the postcard game pack must always write it, or the reader
+/// would misalign.
+impl Serialize for Character {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let write_default = self.default_position.is_some() || !serializer.is_human_readable();
+        let mut st = serializer.serialize_struct("Character", 4 + usize::from(write_default))?;
+        st.serialize_field("id", &self.id)?;
+        st.serialize_field("name_id", &self.name_id)?;
+        st.serialize_field("color", &self.color)?;
+        st.serialize_field("expressions", &self.expressions)?;
+        if write_default {
+            st.serialize_field("default_position", &self.default_position)?;
+        } else {
+            st.skip_field("default_position")?;
+        }
+        st.end()
+    }
 }
 
 impl Character {

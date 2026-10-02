@@ -1,9 +1,16 @@
 //! Platform I/O: worker threads natively, `fetch` on the web.
 
-use std::sync::Arc;
-
-use crate::AssetError;
 use crate::handle::Slot;
+use crate::{AssetError, Source};
+
+/// The pak entry for a requested path.
+fn pak_path(prefix: &str, path: &str) -> String {
+    if prefix.is_empty() {
+        path.to_owned()
+    } else {
+        format!("{prefix}/{path}")
+    }
+}
 
 fn decode_error(path: &str, message: String) -> AssetError {
     AssetError::Decode {
@@ -13,7 +20,7 @@ fn decode_error(path: &str, message: String) -> AssetError {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn spawn_load<T, F>(root: Arc<str>, path: String, decode: F, slot: Slot<T>)
+pub(crate) fn spawn_load<T, F>(source: Source, path: String, decode: F, slot: Slot<T>)
 where
     T: Send + Sync + 'static,
     F: FnOnce(&str, Vec<u8>) -> Result<T, String> + Send + 'static,
@@ -23,12 +30,18 @@ where
         .name("orbit-asset-loader".to_owned())
         .spawn(move || {
             let path = job_path;
-            let full = std::path::Path::new(&*root).join(&path);
-            match std::fs::read(&full) {
-                Err(err) => slot.fail(AssetError::Io {
-                    path,
-                    message: err.to_string(),
-                }),
+            let read = match &source {
+                Source::Root(root) => {
+                    let full = std::path::Path::new(&**root).join(&path);
+                    std::fs::read(&full).map_err(|err| AssetError::Io {
+                        path: path.clone(),
+                        message: err.to_string(),
+                    })
+                }
+                Source::Pak { pak, prefix } => pak.read_blocking(&pak_path(prefix, &path)),
+            };
+            match read {
+                Err(err) => slot.fail(err),
                 Ok(bytes) => match decode(&path, bytes) {
                     Ok(value) => slot.ready(value),
                     Err(msg) => slot.fail(decode_error(&path, msg)),
@@ -41,15 +54,24 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn spawn_load<T, F>(root: Arc<str>, path: String, decode: F, slot: Slot<T>)
+pub(crate) fn spawn_load<T, F>(source: Source, path: String, decode: F, slot: Slot<T>)
 where
     T: Send + Sync + 'static,
     F: FnOnce(&str, Vec<u8>) -> Result<T, String> + Send + 'static,
 {
     wasm_bindgen_futures::spawn_local(async move {
-        let url = format!("{}/{}", root.trim_end_matches('/'), path);
-        match fetch_bytes(&url).await {
-            Err(message) => slot.fail(AssetError::Io { path, message }),
+        let read = match &source {
+            Source::Root(root) => {
+                let url = format!("{}/{}", root.trim_end_matches('/'), path);
+                fetch_bytes(&url).await.map_err(|message| AssetError::Io {
+                    path: path.clone(),
+                    message,
+                })
+            }
+            Source::Pak { pak, prefix } => pak.read_async(&pak_path(prefix, &path)).await,
+        };
+        match read {
+            Err(err) => slot.fail(err),
             Ok(bytes) => match decode(&path, bytes) {
                 Ok(value) => slot.ready(value),
                 Err(msg) => slot.fail(decode_error(&path, msg)),

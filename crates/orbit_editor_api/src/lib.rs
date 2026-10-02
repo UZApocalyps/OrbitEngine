@@ -9,6 +9,7 @@
 //! project, **emits commands only** (never a mutable story) and manipulates
 //! the editor state (selection, toasts, requests to the host).
 
+pub mod ai;
 mod context;
 pub mod fields;
 mod graph_state;

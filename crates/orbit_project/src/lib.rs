@@ -8,17 +8,22 @@
 //!
 //! This crate has no graphics or platform dependency and compiles to wasm.
 
+mod assets_root;
 mod command;
+pub mod export;
 mod ext;
 pub mod graph;
 pub mod graph_layout;
 pub mod graph_ops;
+pub mod lock;
 pub mod ops;
 mod project;
 pub mod sandbox;
 mod storage;
 
+pub use assets_root::find_assets_root;
 pub use command::{Command, CommandError};
+pub use export::{ExportProfile, ExportTarget, PakCompression, slugify};
 pub use ext::{AssetUser, asset_users};
 pub use project::{ChangeEvent, ChangeKind, Project, ProjectError, SubscriptionId, Transaction};
 pub use storage::{

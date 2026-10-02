@@ -39,6 +39,9 @@ Options :
                            écrit une histoire de test d'environ <n> blocs de graphe (scènes liées) puis quitte
   --autoscroll <px>        fait défiler l'éditeur de scène de <px> pixels par frame ; avec --exit-after,
                            journalise le temps de frame (moyenne, p95, max) à la sortie
+  --mcp-port <port>        démarre le serveur MCP live (HTTP, 127.0.0.1) sur ce port au lieu d'attendre
+                           le bouton du panneau « Assistant IA » (debug, scripts)
+  --mcp-token <jeton>      jeton d'accès à utiliser avec --mcp-port (sinon celui des préférences)
   -h, --help               affiche cette aide
 ";
 
@@ -70,6 +73,8 @@ pub struct Args {
     pub generate_story: Option<(usize, PathBuf)>,
     pub generate_graph: Option<(usize, PathBuf)>,
     pub autoscroll: Option<f32>,
+    pub mcp_port: Option<u16>,
+    pub mcp_token: Option<String>,
     pub help: bool,
 }
 
@@ -107,6 +112,11 @@ impl Args {
                     let path = PathBuf::from(value("--generate-graph")?);
                     out.generate_graph = Some((n, path));
                 }
+                "--mcp-port" => {
+                    let v = value("--mcp-port")?;
+                    out.mcp_port = Some(v.parse().map_err(|_| format!("port invalide : {v}"))?);
+                }
+                "--mcp-token" => out.mcp_token = Some(value("--mcp-token")?),
                 "--autoscroll" => {
                     let v = value("--autoscroll")?;
                     out.autoscroll = Some(v.parse().map_err(|_| format!("nombre invalide : {v}"))?);

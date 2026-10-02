@@ -3,11 +3,13 @@
 //! the editor itself has no privileged UI code.
 
 mod actions;
+mod assistant;
 mod console;
 mod definitions;
 pub mod drafts;
 pub mod edit;
 mod explorer;
+mod export;
 pub mod graph;
 mod importers;
 mod inspector;
@@ -28,6 +30,7 @@ use orbit_editor_api::{
     ActionDef, EditorPlugin, EditorRegistry, EditorRequest, Plugin, PluginManifest,
 };
 
+pub use export::{ExportJob, JobStatus, LogLine as ExportLogLine};
 pub use importers::{import_audio, import_image};
 pub use library::import_paths;
 pub use nodeinfo::{kind_icon, kind_key, kind_label, summary};
@@ -53,6 +56,8 @@ pub mod ids {
     pub const PROBLEMS: &str = "orbit.problems";
     pub const SEARCH: &str = "orbit.search";
     pub const SCENEVIEW: &str = "orbit.sceneview";
+    pub const EXPORT: &str = "orbit.export";
+    pub const ASSISTANT: &str = "orbit.assistant";
 }
 
 /// Full ids of the built-in panels.
@@ -71,6 +76,8 @@ pub mod panels {
     pub const PROBLEMS: &str = "orbit.problems.problems";
     pub const SEARCH: &str = "orbit.search.search";
     pub const SCENEVIEW: &str = "orbit.sceneview.sceneview";
+    pub const EXPORT: &str = "orbit.export.export";
+    pub const ASSISTANT: &str = "orbit.assistant.assistant";
 }
 
 /// State the built-in plugins share with the editor core.
@@ -106,6 +113,8 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(console::ConsolePlugin),
         Box::new(problems::ProblemsPlugin),
         Box::new(search::SearchPlugin::new(shared.search.clone())),
+        Box::new(export::ExportPlugin),
+        Box::new(assistant::AssistantPlugin),
         Box::new(SamplePlugin::default()),
     ]
 }

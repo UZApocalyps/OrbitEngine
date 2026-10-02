@@ -128,6 +128,8 @@ pub struct EditorCore {
     story_changed_on_disk: bool,
     /// Bumped when files of the asset folders changed (the preview reloads).
     pub asset_epoch: u64,
+    /// The live MCP server and its command queue (M4).
+    pub mcp: crate::live::LiveService,
 }
 
 impl EditorCore {
@@ -180,7 +182,7 @@ impl EditorCore {
         }
         let saved_layout = ron::to_string(&dock).unwrap_or_default();
         let live = Live::new(state.waker.clone());
-        Self {
+        let mut core = Self {
             registry,
             state,
             session: None,
@@ -201,7 +203,10 @@ impl EditorCore {
             assets_root: PathBuf::new(),
             story_changed_on_disk: false,
             asset_epoch: 0,
-        }
+            mcp: crate::live::LiveService::default(),
+        };
+        crate::live::load_settings(&mut core);
+        core
     }
 
     /// Lets background threads wake the window loop (see `orbit_platform::Waker`).
@@ -340,6 +345,7 @@ impl EditorCore {
             .project
             .dispatch(&ProjectEvent::Opened { title: &title });
         self.report_opened();
+        crate::live::on_project_opened(self);
         if let Some(meta) = pending {
             self.dialog = Some(Dialog::Recovery { meta });
         }
@@ -425,6 +431,7 @@ impl EditorCore {
             session.close();
         }
         self.state.selection = None;
+        crate::live::on_project_closed(self);
         self.sync_info();
     }
 
@@ -495,6 +502,7 @@ impl EditorCore {
     /// Clean shutdown: saves the config, ends the session (a modified
     /// project keeps its recovery snapshot).
     pub fn shutdown(&mut self) {
+        crate::live::shutdown(self);
         self.flush_layout();
         self.persist();
         if let Some(session) = self.session.take() {
@@ -541,6 +549,13 @@ impl EditorCore {
     }
 
     // ------------------------------------------------------- requests, frame
+
+    /// Answers what the live MCP server and the assistant panel asked for
+    /// (see `crate::live`). The window app calls it once per frame before the
+    /// UI, with the GPU preview as `backend`; tests use `NoPreview`.
+    pub fn pump_live(&mut self, backend: &mut dyn crate::live::PreviewBackend) {
+        crate::live::pump(self, backend);
+    }
 
     /// Executes what plugins and shortcuts asked for.
     pub fn pump(&mut self, ctx: &Context) {

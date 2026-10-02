@@ -1,6 +1,7 @@
 //! How the player was asked to start: command line (native) or URL query
 //! (web), reduced to a [`RuntimeConfig`].
 
+use orbit_assets::PakLocation;
 use orbit_runtime::RuntimeConfig;
 
 /// Story played when none is given (relative to the workspace / the page).
@@ -24,6 +25,11 @@ pub struct Launch {
     /// Native: directory for saves, preferences and persistent data instead
     /// of the per-user default.
     pub data_dir: Option<String>,
+    /// An exported game: the pak to play (`--pak <file>` natively; the
+    /// `ORBIT_PAK` global of the page or `?pak=<url>` on the web). Natively,
+    /// a pak glued to the executable or a `game.pak` beside it is found
+    /// automatically when nothing else is asked for.
+    pub pak: Option<PakLocation>,
 }
 
 impl Default for Launch {
@@ -36,13 +42,14 @@ impl Default for Launch {
             watch: true,
             new_game: false,
             data_dir: None,
+            pak: None,
         }
     }
 }
 
 /// Parses the native command line (without the program name):
 /// `[story] [--story <file>] [--root <dir>] [--no-watch] [--new-game]
-/// [--data-dir <dir>] [--demo] [--ui-gallery]`.
+/// [--data-dir <dir>] [--pak <file>] [--demo] [--ui-gallery]`.
 pub fn parse_args(args: &[String]) -> Result<Launch, String> {
     let mut launch = Launch::default();
     let mut iter = args.iter();
@@ -54,6 +61,11 @@ pub fn parse_args(args: &[String]) -> Result<Launch, String> {
             "--new-game" => launch.new_game = true,
             "--data-dir" => {
                 launch.data_dir = Some(iter.next().ok_or("--data-dir needs a directory")?.clone());
+            }
+            "--pak" => {
+                launch.pak = Some(PakLocation::file(
+                    iter.next().ok_or("--pak needs a file")?.clone(),
+                ));
             }
             "--story" => {
                 launch.story = Some(iter.next().ok_or("--story needs a file")?.clone());
@@ -134,14 +146,28 @@ impl Launch {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let args: Vec<String> = std::env::args().skip(1).collect();
-            parse_args(&args)
+            let mut launch = parse_args(&args)?;
+            // A game exported with the engine carries its pak: nothing to
+            // pass on the command line.
+            let dev_request =
+                launch.demo || launch.ui_gallery || launch.story.is_some() || launch.pak.is_some();
+            if !dev_request {
+                launch.pak = PakLocation::beside_executable();
+            }
+            Ok(launch)
         }
     }
 
-    /// Web: `?demo`, `?ui-gallery`, `?new-game` and `?story=<path>`.
+    /// Web: `?demo`, `?ui-gallery`, `?new-game`, `?story=<path>` and
+    /// `?pak=<url>`; the page of an exported game sets the `ORBIT_PAK` global
+    /// instead.
     pub fn from_query(search: &str) -> Self {
         let query = parse_query(search);
         Self {
+            pak: query_param(search, "pak")
+                .filter(|p| !p.is_empty())
+                .or_else(page_pak)
+                .map(PakLocation::url),
             demo: query.iter().any(|(k, _)| k == "demo"),
             ui_gallery: query.iter().any(|(k, _)| k == "ui-gallery"),
             story: query_param(search, "story").filter(|s| !s.is_empty()),
@@ -157,14 +183,36 @@ impl Launch {
         #[cfg(target_arch = "wasm32")]
         let mut config = {
             let story = self.story.clone().unwrap_or_else(|| DEFAULT_STORY.into());
-            RuntimeConfig::new(".", story, ".", ".")
+            let mut config = RuntimeConfig::new(".", story, ".", ".");
+            // The assets of an exported web game arrive scene by scene.
+            config.lazy_assets = self.pak.is_some();
+            config
         };
         #[cfg(not(target_arch = "wasm32"))]
         let mut config = native_config(self, std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
         config.auto_start = self.new_game;
         config.data_dir = self.data_dir.clone();
+        if let Some(pak) = &self.pak {
+            config.pak = Some(pak.clone());
+            config.watch_path = None;
+        }
         config
     }
+}
+
+/// Web: the pak announced by the page (`window.ORBIT_PAK = "game.pak"`).
+#[cfg(target_arch = "wasm32")]
+fn page_pak() -> Option<String> {
+    let window = web_sys::window()?;
+    js_sys::Reflect::get(&window, &"ORBIT_PAK".into())
+        .ok()?
+        .as_string()
+        .filter(|p| !p.is_empty())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn page_pak() -> Option<String> {
+    None
 }
 
 /// Native configuration. `manifest_dir` is this crate's directory: the
@@ -251,6 +299,14 @@ mod tests {
         assert!(Launch::from_query("?new-game").new_game);
         assert!(parse_args(&args(&["--data-dir"])).is_err());
         assert!(parse_args(&args(&["--ui-gallery"])).unwrap().ui_gallery);
+        let with_pak = parse_args(&args(&["--pak", "g.pak"])).unwrap();
+        assert_eq!(with_pak.pak, Some(PakLocation::file("g.pak")));
+        assert!(parse_args(&args(&["--pak"])).is_err());
+        assert_eq!(
+            Launch::from_query("?pak=game.pak").pak,
+            Some(PakLocation::url("game.pak"))
+        );
+        assert!(Launch::from_query("?story=a.ron").pak.is_none());
         assert!(Launch::from_query("?ui-gallery").ui_gallery);
         assert!(!Launch::from_query("?demo").ui_gallery);
         assert_eq!(l.root.as_deref(), Some("proj"));

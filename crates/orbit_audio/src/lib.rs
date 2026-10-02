@@ -183,6 +183,8 @@ pub struct AudioEngine {
     volumes: [f32; 4],
     music: Option<StaticSoundHandle>,
     pending_music: Option<(Sound, MusicOptions)>,
+    /// The game is in the background: music paused, everything silent.
+    paused: bool,
 }
 
 impl Default for AudioEngine {
@@ -210,6 +212,7 @@ impl AudioEngine {
             volumes: [1.0; 4],
             music: None,
             pending_music: None,
+            paused: false,
         }
     }
 
@@ -262,7 +265,12 @@ impl AudioEngine {
     }
 
     fn apply_volume(&mut self, bus: Bus, fade: Duration) {
-        let db = gain_to_db(self.volumes[bus.index()]);
+        let gain = if self.paused && bus == Bus::Master {
+            0.0
+        } else {
+            self.volumes[bus.index()]
+        };
+        let db = gain_to_db(gain);
         let t = tween(fade);
         match (bus, self.manager.as_mut(), self.tracks.as_mut()) {
             (Bus::Master, Some(m), _) => m.main_track().set_volume(db, t),
@@ -283,6 +291,29 @@ impl AudioEngine {
         };
         self.volumes[bus.index()] = v;
         self.apply_volume(bus, Duration::from_millis(30));
+    }
+
+    /// Pauses (`true`) or resumes the audio: the music is paused where it is
+    /// and the master bus is silenced, so nothing is heard while the game is
+    /// in the background (hidden browser tab). Works in any state.
+    pub fn set_paused(&mut self, paused: bool) {
+        if self.paused == paused {
+            return;
+        }
+        self.paused = paused;
+        if let Some(music) = self.music.as_mut() {
+            let fade = tween(Duration::from_millis(30));
+            if paused {
+                music.pause(fade);
+            } else {
+                music.resume(fade);
+            }
+        }
+        self.apply_volume(Bus::Master, Duration::from_millis(30));
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused
     }
 
     pub fn bus_volume(&self, bus: Bus) -> f32 {
