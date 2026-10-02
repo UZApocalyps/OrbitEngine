@@ -21,6 +21,7 @@ orbit_mcp = { path = "crates/orbit_mcp" }
 orbit_editor_api = { path = "crates/orbit_editor_api" }
 orbit_pak = { path = "crates/orbit_pak" }
 orbit_export = { path = "crates/orbit_export" }
+orbit_dsl = { path = "crates/orbit_dsl" }
 
 # --- story/vm ---
 orbit_vm = { path = "crates/orbit_vm" }
