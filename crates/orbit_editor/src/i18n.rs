@@ -73,6 +73,12 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
         include_str!("../locales/fr/definitions.ron"),
     ),
     (
+        "curves",
+        &["curve"],
+        include_str!("../locales/en/curves.ron"),
+        include_str!("../locales/fr/curves.ron"),
+    ),
+    (
         "preview",
         &["preview"],
         include_str!("../locales/en/preview.ron"),

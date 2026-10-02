@@ -80,6 +80,7 @@ pub struct StageTransition {
 
 #[derive(Clone, Debug)]
 struct PendingTransition {
+    ease: Option<orbit_core::Curve>,
     from: StageState,
     kind: TransitionKind,
 }
@@ -192,10 +193,22 @@ impl Director {
         Some(StageTransition {
             from: pending.from.clone(),
             kind: pending.kind,
-            progress: if *duration > 0.0 {
-                (elapsed / duration).clamp(0.0, 1.0)
-            } else {
-                1.0
+            progress: {
+                let raw = if *duration > 0.0 {
+                    (elapsed / duration).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                // The easing only reshapes the way; both ends stay exact
+                // (`eval(0) = 0`, `eval(1) = 1`), so skipping still lands on
+                // the final image.
+                match &pending.ease {
+                    Some(curve) => {
+                        let story = self.vm.story();
+                        curve.eval_with(raw, |n| story.curves.get(n))
+                    }
+                    None => raw,
+                }
             },
         })
     }
@@ -433,6 +446,7 @@ impl Director {
                 self.pending = Some(PendingTransition {
                     from: before,
                     kind: t.kind,
+                    ease: t.ease,
                 });
             }
         }
@@ -563,6 +577,47 @@ mod tests {
         assert_eq!(tr.from, StageState::default()); // black before
         assert!(d.stage().background.is_some()); // room after
         assert!(matches!(tr.kind, TransitionKind::Fade(_)));
+    }
+
+    /// The demo with `ease` on its first transition (the opening background).
+    fn demo_eased(ease: orbit_core::Curve, named: &[(&str, orbit_core::Curve)]) -> Director {
+        let mut story = Story::from_ron(DEMO).expect("demo story is valid");
+        for (n, c) in named {
+            story.curves.insert((*n).to_owned(), c.clone());
+        }
+        let node = story
+            .scenes
+            .iter_mut()
+            .flat_map(|s| &mut s.nodes)
+            .find_map(|n| match &mut n.kind {
+                orbit_core::NodeKind::Background {
+                    transition: Some(t),
+                    ..
+                } => Some(t),
+                _ => None,
+            })
+            .expect("the demo opens with a transition");
+        node.ease = Some(ease);
+        Director::new(Vm::from_start(story).unwrap())
+    }
+
+    #[test]
+    fn a_transition_progress_follows_its_easing_curve() {
+        use orbit_core::{Curve, Ease};
+        let mut d = demo_eased(Curve::Preset(Ease::InQuad), &[]);
+        d.update(0.5); // 1.0s transition: raw progress 0.5
+        let tr = d.transition().unwrap();
+        assert!((tr.progress - 0.25).abs() < 1e-5, "InQuad(0.5) = 0.25");
+        // A named curve resolves through the story; an unknown one is linear.
+        let mut d = demo_eased(Curve::Named("late".into()), &[("late", Curve::Preset(Ease::InQuad))]);
+        d.update(0.5);
+        assert!((d.transition().unwrap().progress - 0.25).abs() < 1e-5);
+        let mut d = demo_eased(Curve::Named("missing".into()), &[]);
+        d.update(0.5);
+        assert!((d.transition().unwrap().progress - 0.5).abs() < 1e-5);
+        // Both ends are exact whatever the curve: skipping lands on the end.
+        let d = demo_eased(Curve::Preset(Ease::OutBack), &[]);
+        assert_eq!(d.transition().unwrap().progress, 0.0);
     }
 
     #[test]

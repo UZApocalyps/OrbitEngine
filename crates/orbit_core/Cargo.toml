@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
+orbit_anim.workspace = true
 ron.workspace = true
 ulid.workspace = true
 thiserror.workspace = true
@@ -19,7 +20,7 @@ schemars = { version = "1.2", optional = true }
 [features]
 # JSON Schema of the IR (used by the MCP server, and by the tests that keep it
 # coherent with the editor's schema-driven inspector).
-schema = ["dep:schemars"]
+schema = ["dep:schemars", "orbit_anim/schema"]
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }

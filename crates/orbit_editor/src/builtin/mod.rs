@@ -6,6 +6,7 @@ mod actions;
 mod anim_edit;
 mod assistant;
 mod console;
+mod curves;
 mod definitions;
 pub mod drafts;
 pub mod edit;
@@ -52,6 +53,7 @@ pub mod ids {
     pub const SCENE: &str = "orbit.scene";
     pub const CHARACTERS: &str = "orbit.characters";
     pub const VARIABLES: &str = "orbit.variables";
+    pub const CURVES: &str = "orbit.curves";
     pub const GRAPH: &str = "orbit.graph";
     pub const IMPORTERS: &str = "orbit.importers";
     pub const LIBRARY: &str = "orbit.library";
@@ -111,6 +113,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(inspector::InspectorPlugin),
         Box::new(definitions::CharactersPlugin),
         Box::new(definitions::VariablesPlugin),
+        Box::new(curves::CurvesPlugin),
         Box::new(library::LibraryPlugin::new(shared.moves.clone())),
         Box::new(preview::PreviewPlugin),
         Box::new(sceneview::SceneViewPlugin),

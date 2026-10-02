@@ -262,10 +262,12 @@ fn transition(t: &Option<Transition>) -> String {
         Some(Transition {
             kind: TransitionKind::Dissolve,
             duration,
+            ..
         }) => format!(" with dissolve({})", fmt_f32(*duration)),
         Some(Transition {
             kind: TransitionKind::Fade(c),
             duration,
+            ..
         }) => format!(
             " with fade({}, \"#{:02x}{:02x}{:02x}\")",
             fmt_f32(*duration),

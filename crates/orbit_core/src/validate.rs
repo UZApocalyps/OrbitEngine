@@ -7,7 +7,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::defs::{AssetKind, FREE_POSITION_RANGE, Position, scale_is_valid};
-use crate::error::{ValidationError, ValidationWarning};
+use orbit_anim::Curve;
+
+use crate::error::{CurveOwner, ValidationError, ValidationWarning};
 use crate::expr::Expr;
 use crate::ids::{AssetId, NodeId};
 use crate::story::{Node, NodeKind, Story};
@@ -87,6 +89,13 @@ fn valid_asset_path(path: &str) -> bool {
 impl Cx<'_> {
     fn definitions(&mut self) {
         let story = self.story;
+        for (name, curve) in &story.curves {
+            if matches!(curve, Curve::Named(_)) {
+                self.errors.push(ValidationError::NamedCurveChain(name.clone()));
+            } else {
+                self.check_curve(CurveOwner::Named(name.clone()), curve);
+            }
+        }
 
         let mut asset_ids = HashSet::new();
         for a in &story.assets.assets {
@@ -241,6 +250,26 @@ impl Cx<'_> {
         }
     }
 
+    /// A curve must have finite control points; a `Named` one must exist.
+    fn check_curve(&mut self, owner: CurveOwner, curve: &Curve) {
+        match curve {
+            Curve::Preset(_) => {}
+            Curve::Bezier { p1, p2 } => {
+                if !p1.iter().chain(p2).all(|v| v.is_finite()) {
+                    self.errors.push(ValidationError::InvalidCurve { owner });
+                }
+            }
+            Curve::Named(name) => {
+                if !self.story.curves.contains_key(name) {
+                    self.warnings.push(ValidationWarning::UnknownCurve {
+                        owner,
+                        name: name.clone(),
+                    });
+                }
+            }
+        }
+    }
+
     fn check_duration(&mut self, node: NodeId, seconds: f32) {
         if !valid_duration(seconds) {
             self.errors
@@ -311,6 +340,9 @@ impl Cx<'_> {
                     self.check_asset(Some(id), *asset, AssetKind::Image);
                     if let Some(t) = transition {
                         self.check_duration(id, t.duration);
+                        if let Some(c) = &t.ease {
+                            self.check_curve(CurveOwner::Node(id), c);
+                        }
                     }
                 }
                 NodeKind::Show {
@@ -363,6 +395,9 @@ impl Cx<'_> {
                     }
                     if let Some(t) = transition {
                         self.check_duration(id, t.duration);
+                        if let Some(c) = &t.ease {
+                            self.check_curve(CurveOwner::Node(id), c);
+                        }
                     }
                 }
                 NodeKind::Hide {
@@ -377,6 +412,9 @@ impl Cx<'_> {
                     }
                     if let Some(t) = transition {
                         self.check_duration(id, t.duration);
+                        if let Some(c) = &t.ease {
+                            self.check_curve(CurveOwner::Node(id), c);
+                        }
                     }
                 }
                 NodeKind::PlayMusic { asset, fade_in, .. } => {

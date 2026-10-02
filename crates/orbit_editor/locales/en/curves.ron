@@ -1,0 +1,18 @@
+{
+    // ---- the easing-curve editor widget and the project curves panel
+    "curve.panel.title": "Curves",
+    "curve.panel.hint": "Named easing curves, reusable by every transition of the project.",
+    "curve.panel.empty": "No named curve yet. Create one, then pick it in a transition.",
+    "curve.panel.new": "New",
+    "curve.panel.default_name": "curve",
+    "curve.panel.used": "Used by {count} transition(s)",
+    "curve.panel.unused": "Not used yet",
+    "curve.panel.delete": "Delete this curve",
+    "curve.panel.name": "Name",
+    "curve.easing": "Easing",
+    "curve.custom": "Custom curve (Bezier)",
+    "curve.css.ease": "ease",
+    "curve.css.ease_in": "ease-in",
+    "curve.css.ease_out": "ease-out",
+    "curve.css.ease_in_out": "ease-in-out",
+}

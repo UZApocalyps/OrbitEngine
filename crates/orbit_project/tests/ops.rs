@@ -623,3 +623,57 @@ fn default_scale_is_validated_undoable_and_round_trips() {
     ops::set_default_scale(&mut p, ana, 1.0).unwrap();
     assert!(!p.story().to_ron().unwrap().contains("default_scale"));
 }
+
+#[test]
+fn named_curves_are_created_renamed_with_their_usages_and_deleted() {
+    use orbit_core::{Curve, Ease, Transition};
+    let (mut p, scene) = project();
+    let img = ops::add_asset(&mut p, AssetKind::Image, "a/bg.png").unwrap();
+    undoable(&mut p, |p| {
+        ops::set_curve(p, "snappy", Curve::css_ease_out()).unwrap();
+    });
+    ops::set_curve(&mut p, "snappy", Curve::css_ease_out()).unwrap();
+    // A name chain and an empty name are refused.
+    assert!(matches!(
+        p.execute(Command::SetCurve {
+            name: "alias".into(),
+            curve: Some(Curve::Named("snappy".into())),
+        }),
+        Err(ProjectError::Command(orbit_project::CommandError::CurveChain(_)))
+    ));
+    assert!(ops::set_curve(&mut p, " ", Curve::LINEAR).is_err());
+
+    let node = NodeDraft {
+        node: Node {
+            id: NodeId::new(),
+            kind: NodeKind::Background {
+                asset: img,
+                transition: Some(Transition::dissolve(1.0).with_ease(Curve::Named("snappy".into()))),
+            },
+        },
+        strings: vec![],
+    };
+    let node_id = node.node.id;
+    ops::insert_drafts(&mut p, scene, 0, vec![node], "bg").unwrap();
+    assert_eq!(ops::curve_users(p.story(), "snappy"), vec![node_id]);
+    assert!(ops::delete_curve(&mut p, "snappy").is_err(), "in use");
+
+    undoable(&mut p, |p| ops::rename_curve(p, "snappy", "quick").unwrap());
+    ops::rename_curve(&mut p, "snappy", "quick").unwrap();
+    assert!(!p.story().curves.contains_key("snappy"));
+    assert_eq!(ops::curve_users(p.story(), "quick"), vec![node_id]);
+    assert!(
+        !validate(p.story())
+            .warnings
+            .iter()
+            .any(|w| matches!(w, orbit_core::ValidationWarning::UnknownCurve { .. })),
+        "no dangling reference"
+    );
+    assert!(ops::rename_curve(&mut p, "quick", "quick").is_ok());
+    assert!(ops::rename_curve(&mut p, "nope", "x").is_err());
+
+    undoable(&mut p, |p| ops::set_transition_ease(p, node_id, Some(Curve::Preset(Ease::OutBack))).unwrap());
+    ops::set_transition_ease(&mut p, node_id, None).unwrap();
+    assert!(ops::curve_users(p.story(), "quick").is_empty());
+    undoable(&mut p, |p| ops::delete_curve(p, "quick").unwrap());
+}

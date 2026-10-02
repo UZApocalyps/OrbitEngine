@@ -906,6 +906,153 @@ pub fn delete_variable(project: &mut Project, name: &str) -> Result<(), ProjectE
     })
 }
 
+/// The transition of a node, when its kind has one.
+fn transition_mut(kind: &mut NodeKind) -> Option<&mut orbit_core::Transition> {
+    match kind {
+        NodeKind::Background { transition, .. }
+        | NodeKind::Show { transition, .. }
+        | NodeKind::Hide { transition, .. } => transition.as_mut(),
+        _ => None,
+    }
+}
+
+/// Nodes whose transition uses the named curve `name`.
+pub fn curve_users(story: &Story, name: &str) -> Vec<NodeId> {
+    story
+        .scenes
+        .iter()
+        .flat_map(|s| &s.nodes)
+        .filter(|n| {
+            let mut kind = n.kind.clone();
+            transition_mut(&mut kind)
+                .and_then(|t| t.ease.as_ref())
+                .is_some_and(|c| matches!(c, orbit_core::Curve::Named(c) if c == name))
+        })
+        .map(|n| n.id)
+        .collect()
+}
+
+/// Creates or replaces the named curve `name` (one undo step per call; the
+/// editor merges the live edits of a handle drag on its own).
+pub fn set_curve(
+    project: &mut Project,
+    name: &str,
+    curve: orbit_core::Curve,
+) -> Result<(), ProjectError> {
+    project.execute(Command::SetCurve {
+        name: name.to_owned(),
+        curve: Some(curve),
+    })
+}
+
+/// Renames a curve and every transition that uses it, in one undo step.
+/// Refused when `new` is empty or already taken.
+pub fn rename_curve(project: &mut Project, old: &str, new: &str) -> Result<(), ProjectError> {
+    let new = new.trim();
+    if old == new {
+        return Ok(());
+    }
+    let story = project.story();
+    let Some(curve) = story.curves.get(old).cloned() else {
+        return Err(reject_with(
+            "curve_unknown",
+            &[("name", old.to_string())],
+            format!("Courbe « {old} » inconnue."),
+        ));
+    };
+    if new.is_empty() || story.curves.contains_key(new) {
+        return Err(reject_with(
+            "curve_name_taken",
+            &[("name", new.to_string())],
+            format!("Le nom de courbe « {new} » est vide ou déjà pris."),
+        ));
+    }
+    let updates: Vec<(NodeId, NodeKind)> = story
+        .scenes
+        .iter()
+        .flat_map(|s| &s.nodes)
+        .filter_map(|n| {
+            let mut kind = n.kind.clone();
+            let t = transition_mut(&mut kind)?;
+            match &t.ease {
+                Some(orbit_core::Curve::Named(c)) if c == old => {
+                    t.ease = Some(orbit_core::Curve::Named(new.to_owned()));
+                    Some((n.id, kind))
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    project.transaction_labeled("Renommer la courbe", |tx| {
+        tx.execute(Command::SetCurve {
+            name: old.to_owned(),
+            curve: None,
+        })?;
+        tx.execute(Command::SetCurve {
+            name: new.to_owned(),
+            curve: Some(curve),
+        })?;
+        for (id, kind) in updates {
+            tx.execute(Command::SetNodeKind {
+                id,
+                kind,
+                expected_version: None,
+            })?;
+        }
+        Ok(())
+    })
+}
+
+/// Removes a named curve. Refused while a transition uses it.
+pub fn delete_curve(project: &mut Project, name: &str) -> Result<(), ProjectError> {
+    if !curve_users(project.story(), name).is_empty() {
+        return Err(reject_with(
+            "curve_in_use",
+            &[("name", name.to_string())],
+            format!("La courbe « {name} » est encore utilisée par des transitions."),
+        ));
+    }
+    project.execute(Command::SetCurve {
+        name: name.to_owned(),
+        curve: None,
+    })
+}
+
+/// Sets the easing of the transition of node `id` (`None` = linear). Refused
+/// when the node has no transition.
+pub fn set_transition_ease(
+    project: &mut Project,
+    id: NodeId,
+    ease: Option<orbit_core::Curve>,
+) -> Result<(), ProjectError> {
+    let node = project
+        .story()
+        .scenes
+        .iter()
+        .flat_map(|s| &s.nodes)
+        .find(|n| n.id == id)
+        .cloned();
+    let Some(node) = node else {
+        return Err(ProjectError::Command(crate::CommandError::UnknownNode(id)));
+    };
+    let mut kind = node.kind;
+    match transition_mut(&mut kind) {
+        Some(t) => t.ease = ease,
+        None => {
+            return Err(reject_with(
+                "node_no_transition",
+                &[],
+                "Ce nœud n'a pas de transition.",
+            ));
+        }
+    }
+    project.execute(Command::SetNodeKind {
+        id,
+        kind,
+        expected_version: None,
+    })
+}
+
 /// Names of the labels reachable as jump targets: `(id, name)` in reading order.
 pub fn labels(story: &Story) -> Vec<(NodeId, String)> {
     story

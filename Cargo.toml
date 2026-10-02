@@ -13,6 +13,7 @@ publish = false
 [workspace.dependencies]
 # internal
 orbit_core = { path = "crates/orbit_core" }
+orbit_anim = { path = "crates/orbit_anim" }
 orbit_project = { path = "crates/orbit_project" }
 orbit_platform = { path = "crates/orbit_platform" }
 orbit_gfx = { path = "crates/orbit_gfx" }

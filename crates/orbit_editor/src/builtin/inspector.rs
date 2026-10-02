@@ -1063,12 +1063,12 @@ fn background(
         asset_row(ui, ctx, id, AssetKind::Image, asset, |a| {
             NodeKind::Background {
                 asset: a,
-                transition,
+                transition: transition.clone(),
             }
         });
     });
     tfield(ui, "inspector.transition", |ui| {
-        if let Some(t) = transition_editor(ui, ("bg_transition", id), transition) {
+        if let Some(t) = transition_editor(ui, ("bg_transition", id), transition.clone(), &curves_of(ctx)) {
             commit(
                 ctx,
                 id,
@@ -1098,7 +1098,7 @@ fn show(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, kind: &NodeKind) {
     else {
         return;
     };
-    let (character, transition) = (*character, *transition);
+    let (character, transition) = (*character, transition.clone());
     let Some(story) = ctx.story() else { return };
     let default_scale = story.character(character).map_or(1.0, |c| c.default_scale);
     // Edits are applied to a copy of the node: whatever the widget changes,
@@ -1212,7 +1212,7 @@ fn show(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, kind: &NodeKind) {
     });
     let mut new_tr = None;
     tfield(ui, "inspector.transition", |ui| {
-        new_tr = transition_editor(ui, ("show_tr", id), transition);
+        new_tr = transition_editor(ui, ("show_tr", id), transition.clone(), &curves_of(ctx));
     });
     ui.add_space(6.0);
     let open_view = ui
@@ -1314,7 +1314,7 @@ fn hide(
     });
     let mut new_tr = None;
     tfield(ui, "inspector.transition", |ui| {
-        new_tr = transition_editor(ui, ("hide_tr", id), transition);
+        new_tr = transition_editor(ui, ("hide_tr", id), transition.clone(), &curves_of(ctx));
     });
     if let Some(Some(c)) = new_char {
         commit(
@@ -1447,4 +1447,9 @@ fn generic_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
             "data",
         );
     }
+}
+
+/// The story's named curves (a snapshot, so the widgets can borrow freely).
+fn curves_of(ctx: &EditorContext<'_>) -> std::collections::BTreeMap<String, orbit_core::Curve> {
+    ctx.story().map(|s| s.curves.clone()).unwrap_or_default()
 }

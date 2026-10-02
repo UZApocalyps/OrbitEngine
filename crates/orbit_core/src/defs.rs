@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use orbit_anim::Curve;
+
 use crate::ids::{AssetId, CharacterId, StringId};
 use crate::value::Value;
 
@@ -41,12 +43,15 @@ pub enum TransitionKind {
 }
 
 /// A timed transition. A duration of `0` behaves like a cut.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Transition {
     pub kind: TransitionKind,
     /// Seconds.
     pub duration: f32,
+    /// Easing of the progress (schema v9). `None` is linear, as before.
+    #[serde(default)]
+    pub ease: Option<Curve>,
 }
 
 impl Transition {
@@ -54,6 +59,7 @@ impl Transition {
         Self {
             kind: TransitionKind::Fade(color),
             duration,
+            ease: None,
         }
     }
 
@@ -61,7 +67,14 @@ impl Transition {
         Self {
             kind: TransitionKind::Dissolve,
             duration,
+            ease: None,
         }
+    }
+
+    /// The same transition with an easing curve.
+    pub fn with_ease(mut self, ease: Curve) -> Self {
+        self.ease = Some(ease);
+        self
     }
 }
 

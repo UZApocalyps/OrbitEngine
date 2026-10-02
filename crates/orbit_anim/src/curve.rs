@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Named easing presets. `eval(0) == 0` and `eval(1) == 1` for all of them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Ease {
     Linear,
     InQuad,
@@ -85,6 +86,56 @@ fn in_out(t: f32, f: impl Fn(f32) -> f32) -> f32 {
 }
 
 impl Ease {
+    /// Every preset, in display order (for pickers).
+    pub const ALL: [Ease; 32] = {
+        use Ease::*;
+        [
+            Linear, InQuad, OutQuad, InOutQuad, InCubic, OutCubic, InOutCubic, InQuart, OutQuart,
+            InOutQuart, InQuint, OutQuint, InOutQuint, InSine, OutSine, InOutSine, InExpo,
+            OutExpo, InOutExpo, InCirc, OutCirc, InOutCirc, InBack, OutBack, InOutBack,
+            InElastic, OutElastic, InOutElastic, InBounce, OutBounce, InOutBounce, Step,
+        ]
+    };
+
+    /// The variant name (`"InOutQuad"`), as written in the story file.
+    pub fn name(self) -> &'static str {
+        use Ease::*;
+        match self {
+            Linear => "Linear",
+            InQuad => "InQuad",
+            OutQuad => "OutQuad",
+            InOutQuad => "InOutQuad",
+            InCubic => "InCubic",
+            OutCubic => "OutCubic",
+            InOutCubic => "InOutCubic",
+            InQuart => "InQuart",
+            OutQuart => "OutQuart",
+            InOutQuart => "InOutQuart",
+            InQuint => "InQuint",
+            OutQuint => "OutQuint",
+            InOutQuint => "InOutQuint",
+            InSine => "InSine",
+            OutSine => "OutSine",
+            InOutSine => "InOutSine",
+            InExpo => "InExpo",
+            OutExpo => "OutExpo",
+            InOutExpo => "InOutExpo",
+            InCirc => "InCirc",
+            OutCirc => "OutCirc",
+            InOutCirc => "InOutCirc",
+            InBack => "InBack",
+            OutBack => "OutBack",
+            InOutBack => "InOutBack",
+            InElastic => "InElastic",
+            OutElastic => "OutElastic",
+            InOutElastic => "InOutElastic",
+            InBounce => "InBounce",
+            OutBounce => "OutBounce",
+            InOutBounce => "InOutBounce",
+            Step => "Step",
+        }
+    }
+
     /// `t` clamped to 0..=1; exact 0 and 1 at the ends.
     pub fn eval(self, t: f32) -> f32 {
         let t = if t.is_nan() { 0.0 } else { t };
@@ -140,6 +191,7 @@ impl Ease {
 
 /// An easing curve mapping progress 0..=1 to 0..=1 (may overshoot in between).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Curve {
     Preset(Ease),
     /// CSS `cubic-bezier(x1, y1, x2, y2)`: P0 = (0,0), P3 = (1,1); x are

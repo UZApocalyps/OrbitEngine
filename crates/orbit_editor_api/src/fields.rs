@@ -10,7 +10,7 @@ use std::hash::Hash;
 use crate::UiText;
 use egui::{Color32, ComboBox, DragValue, RichText, TextEdit, Ui};
 use orbit_core::{
-    AssetId, AssetKind, BinOp, CharacterId, Color, CustomData, Expr, NodeId, NodeKind, Position,
+    AssetId, AssetKind, BinOp, CharacterId, Color, Curve, CustomData, Expr, NodeId, NodeKind, Position,
     SceneId, Story, Transition, TransitionKind, UnOp, Value, ValueType,
 };
 
@@ -498,6 +498,7 @@ pub fn transition_editor(
     ui: &mut Ui,
     salt: impl Salt,
     current: Option<Transition>,
+    curves: &std::collections::BTreeMap<String, Curve>,
 ) -> Option<Option<Transition>> {
     #[derive(Clone, Copy, PartialEq)]
     enum Mode {
@@ -530,16 +531,19 @@ pub fn transition_editor(
                 ui.selectable_value(&mut new_mode, m, label);
             }
         });
-    let duration = current.map_or(0.5, |t| t.duration);
+    let duration = current.as_ref().map_or(0.5, |t| t.duration);
     if new_mode != mode {
-        return Some(match new_mode {
-            Mode::Cut => None,
-            Mode::Dissolve => Some(Transition::dissolve(duration)),
-            Mode::Fade => Some(Transition::fade(Color::BLACK, duration)),
-        });
+        let ease = current.as_ref().and_then(|t| t.ease.clone());
+        let mut fresh = match new_mode {
+            Mode::Cut => return Some(None),
+            Mode::Dissolve => Transition::dissolve(duration),
+            Mode::Fade => Transition::fade(Color::BLACK, duration),
+        };
+        fresh.ease = ease;
+        return Some(Some(fresh));
     }
     let t = current?;
-    let mut out = t;
+    let mut out = t.clone();
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(ui.t("field.duration"))
@@ -557,6 +561,23 @@ pub fn transition_editor(
             }
         }
     });
+    if t.duration > 0.0 {
+        let ease = t.ease.clone().unwrap_or_default();
+        let header = format!("{}: {}", ui.t("curve.easing"), crate::curve_editor::curve_label(&ease));
+        egui::CollapsingHeader::new(header)
+            .id_salt((salt, "ease"))
+            .show(ui, |ui| {
+                let options = crate::curve_editor::CurveEditorOptions {
+                    graph_size: 110.0,
+                    ..Default::default()
+                };
+                if let Some(c) =
+                    crate::curve_editor::curve_editor(ui, (salt, "curve"), &ease, curves, options)
+                {
+                    out.ease = (c != Curve::LINEAR).then_some(c);
+                }
+            });
+    }
     (out != t).then_some(Some(out))
 }
 

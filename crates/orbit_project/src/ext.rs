@@ -150,6 +150,27 @@ pub(crate) fn apply(cmd: &Command, story: &mut Story) -> Result<Applied, Command
                 touched: Vec::new(),
             })
         }
+        Command::SetCurve { name, curve } => {
+            if name.trim().is_empty() {
+                return Err(CommandError::EmptyCurveName);
+            }
+            let old = match curve {
+                Some(c) => {
+                    if matches!(c, orbit_core::Curve::Named(_)) {
+                        return Err(CommandError::CurveChain(name.clone()));
+                    }
+                    story.curves.insert(name.clone(), c.clone())
+                }
+                None => story.curves.remove(name),
+            };
+            Ok(Applied {
+                inverse: Command::SetCurve {
+                    name: name.clone(),
+                    curve: old,
+                },
+                touched: Vec::new(),
+            })
+        }
         Command::MoveNode {
             id,
             scene,

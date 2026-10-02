@@ -510,7 +510,7 @@ fn presentation_events_and_scene_state() {
     let fade = Transition::fade(Color::BLACK, 1.0);
     b.push(NodeKind::Background {
         asset: bg,
-        transition: Some(fade),
+        transition: Some(fade.clone()),
     });
     b.push(NodeKind::PlayMusic {
         asset: music,
@@ -547,7 +547,7 @@ fn presentation_events_and_scene_state() {
     // Hiding someone who is not on stage is a silent no-op.
     b.push(NodeKind::Hide {
         character: ana,
-        transition: Some(fade),
+        transition: Some(fade.clone()),
     });
     b.push(NodeKind::StopMusic { fade_out: 1.0 });
     let mut vm = vm_for(b.build());

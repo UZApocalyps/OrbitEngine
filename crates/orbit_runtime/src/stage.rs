@@ -90,7 +90,7 @@ pub struct StageState {
 }
 
 /// What applying a presentation event did to the stage.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum StageEffect {
     /// Not a visual event (audio...): the stage is untouched.
     None,
@@ -104,7 +104,7 @@ impl StageState {
         match event {
             PresentationEvent::Background { asset, transition } => {
                 self.background = Some(*asset);
-                StageEffect::Visual(*transition)
+                StageEffect::Visual(transition.clone())
             }
             PresentationEvent::Show {
                 character,
@@ -136,14 +136,14 @@ impl StageState {
                     Some(existing) => *existing = entry,
                     None => self.characters.push(entry),
                 }
-                StageEffect::Visual(*transition)
+                StageEffect::Visual(transition.clone())
             }
             PresentationEvent::Hide {
                 character,
                 transition,
             } => {
                 self.characters.retain(|c| c.character != *character);
-                StageEffect::Visual(*transition)
+                StageEffect::Visual(transition.clone())
             }
             PresentationEvent::PlayMusic { .. }
             | PresentationEvent::StopMusic { .. }
@@ -388,10 +388,10 @@ mod tests {
         let t = Some(Transition::dissolve(0.5));
         let effect = stage.apply(&PresentationEvent::Background {
             asset: asset(1),
-            transition: t,
+            transition: t.clone(),
         });
         assert_eq!(stage.background, Some(asset(1)));
-        assert_eq!(effect, StageEffect::Visual(t));
+        assert_eq!(effect, StageEffect::Visual(t.clone()));
     }
 
     #[test]

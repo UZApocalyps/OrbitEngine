@@ -124,6 +124,10 @@
     "reject.variable_exists": "Variable “{name}” already exists.",
     "reject.variable_not_found": "Variable “{name}” not found.",
     "reject.variable_in_use": "Variable “{name}” is still used by nodes.",
+    "reject.curve_unknown": "Curve “{name}” not found.",
+    "reject.curve_name_taken": "The curve name “{name}” is empty or already taken.",
+    "reject.curve_in_use": "Curve “{name}” is still used by transitions.",
+    "reject.node_no_transition": "This node has no transition.",
     "reject.scale_out_of_range_got": "The scale must be between {min} and {max} (got {value}).",
     "reject.scale_out_of_range": "The scale must be between {min} and {max}.",
     "reject.free_position_out_of_range": "The free position ({x}, {y}) is out of range ({min}..{max}).",
@@ -163,5 +167,7 @@
     "error.unknown_asset": "Unknown asset {id}",
     "error.asset_in_use": "Asset {id} is still used by node {node}",
     "error.asset_in_use_by_character": "Asset {id} is still used by an expression of character {character}",
+    "error.empty_curve_name": "A curve needs a name.",
+    "error.curve_chain": "Curve “{name}” cannot refer to another named curve.",
     "error.version_conflict": "Version conflict on node {node}: expected {expected}, found {actual}",
 }

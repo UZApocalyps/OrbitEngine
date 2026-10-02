@@ -168,6 +168,7 @@
     "problem.duplicate_expression": "{character} définit deux fois l'expression « {name} »",
     "problem.invalid_animation": "{character}, expression « {expression} » : animation invalide ({issue})",
     "problem.rigged_unsupported": "Expression « {expression} » : l'animation rigged n'est pas encore prise en charge, l'image fixe est utilisée",
+    "problem.unknown_curve": "Courbe « {name} » inconnue : elle est jouée en linéaire",
     "problem.duplicate_variable": "Variable « {name} » déclarée deux fois",
     "problem.duplicate_position": "Nom de position en double ou réservé : « {name} »",
     "problem.invalid_position_coords": "La position « {name} » sort de l'écran (0 à 1 attendu)",

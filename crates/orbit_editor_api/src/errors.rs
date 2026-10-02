@@ -109,6 +109,8 @@ pub fn describe_command_error(texts: &Translator, error: &CommandError) -> Strin
             "error.asset_in_use_by_character",
             &[("id", id), ("character", character)],
         ),
+        E::EmptyCurveName => texts.get("error.empty_curve_name"),
+        E::CurveChain(name) => texts.format("error.curve_chain", &[("name", name)]),
         E::VersionConflict {
             node,
             expected,

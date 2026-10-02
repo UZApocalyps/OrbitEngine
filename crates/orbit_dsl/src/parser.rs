@@ -1023,7 +1023,7 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                     by_name::<AssetId>(d, line, asset, &names.assets, "asset").map(|asset| {
                         NodeKind::Background {
                             asset,
-                            transition: *transition,
+                            transition: transition.clone(),
                         }
                     })
                 }
@@ -1041,7 +1041,7 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                         character,
                         expression: expression.clone(),
                         position: position.clone(),
-                        transition: *transition,
+                        transition: transition.clone(),
                         scale: *scale,
                         scale_y: *scale_y,
                         flip_x: *flip_x,
@@ -1053,7 +1053,7 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                 } => by_name::<CharacterId>(d, line, character, &names.characters, "character")
                     .map(|character| NodeKind::Hide {
                         character,
-                        transition: *transition,
+                        transition: transition.clone(),
                     }),
                 Raw::Music {
                     asset,

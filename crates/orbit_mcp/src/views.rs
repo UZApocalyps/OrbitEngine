@@ -23,16 +23,48 @@ fn quote(text: &str) -> String {
 fn describe_transition(t: &Option<Transition>) -> String {
     match t {
         None => String::new(),
-        Some(t) => match t.kind {
-            TransitionKind::Dissolve => format!(" with dissolve({}s)", t.duration),
-            TransitionKind::Fade(c) => {
-                format!(
-                    " with fade(#{:02x}{:02x}{:02x}, {}s)",
-                    c.r, c.g, c.b, t.duration
-                )
+        Some(t) => {
+            let ease = match &t.ease {
+                None => String::new(),
+                Some(orbit_core::Curve::Preset(e)) => format!(" eased {}", e.name()),
+                Some(orbit_core::Curve::Bezier { p1, p2 }) => format!(
+                    " eased cubic-bezier({}, {}, {}, {})",
+                    p1[0], p1[1], p2[0], p2[1]
+                ),
+                Some(orbit_core::Curve::Named(n)) => format!(" eased `{n}`"),
+            };
+            match t.kind {
+                TransitionKind::Dissolve => format!(" with dissolve({}s){ease}", t.duration),
+                TransitionKind::Fade(c) => {
+                    format!(
+                        " with fade(#{:02x}{:02x}{:02x}, {}s){ease}",
+                        c.r, c.g, c.b, t.duration
+                    )
+                }
             }
-        },
+        }
     }
+}
+
+/// The story's named easing curves, with how many transitions use each.
+pub fn curves_json(story: &Story) -> Json {
+    Json::Array(
+        story
+            .curves
+            .iter()
+            .map(|(name, curve)| {
+                let used_by = orbit_project::ops::curve_users(story, name).len();
+                let definition = match curve {
+                    orbit_core::Curve::Preset(e) => json!({"ease": e.name()}),
+                    orbit_core::Curve::Bezier { p1, p2 } => {
+                        json!({"bezier": [p1[0], p1[1], p2[0], p2[1]]})
+                    }
+                    orbit_core::Curve::Named(n) => json!({"named": n}),
+                };
+                json!({"name": name, "curve": definition, "used_by": used_by})
+            })
+            .collect(),
+    )
 }
 
 fn describe_position(p: &Position) -> String {

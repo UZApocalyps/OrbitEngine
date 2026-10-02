@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value as Json, json};
 
 use crate::convert::{
-    build_transition, check_identifier, check_scale, find_asset, find_character, find_label,
+    build_transition, parse_curve, check_identifier, check_scale, find_asset, find_character, find_label,
     find_scene, find_speaker, free_position, insertion_index, json_to_custom, json_to_value,
     parse_color, parse_id, parse_position,
 };
@@ -287,6 +287,10 @@ pub struct TransitionArg {
     duration: Option<f32>,
     /// Fade color: `#rrggbb` or a name (default black). Ignored for dissolve.
     color: Option<String>,
+    /// Easing: a preset name (`OutQuad`, `InOutCubic`, `OutBack`...) or the name of a story curve (see list_curves). Default: linear.
+    ease: Option<String>,
+    /// Easing as a CSS cubic-bezier `[x1, y1, x2, y2]` (x within 0..1). Alternative to `ease`.
+    bezier: Option<[f32; 4]>,
 }
 
 #[derive(Deserialize, JsonSchema, Clone, Copy)]
@@ -297,12 +301,14 @@ pub enum TransitionKindArg {
 }
 
 impl TransitionArg {
-    fn build(&self) -> Result<Transition, ToolError> {
+    fn build(&self, story: &orbit_core::Story) -> Result<Transition, ToolError> {
         let kind = match self.kind {
             TransitionKindArg::Fade => "fade",
             TransitionKindArg::Dissolve => "dissolve",
         };
-        build_transition(kind, self.duration, self.color.as_deref())
+        let mut t = build_transition(kind, self.duration, self.color.as_deref())?;
+        t.ease = parse_curve(self.ease.as_deref(), self.bezier, story)?;
+        Ok(t)
     }
 }
 
@@ -559,6 +565,25 @@ struct DeclareVariableArgs {
     initial: Json,
     /// `game` (saved with the playthrough, default) or `persistent` (survives across playthroughs).
     scope: Option<ScopeArg>,
+}
+
+/// A named easing curve of the story.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SetCurveArgs {
+    /// Curve name (reused by name in transitions).
+    name: String,
+    /// A preset: `Linear`, `InQuad`, `OutQuad`, `InOutQuad`, `InCubic`..., `InBack`, `OutBack`, `OutBounce`, `OutElastic`, `Step`...
+    ease: Option<String>,
+    /// A CSS cubic-bezier `[x1, y1, x2, y2]` (x within 0..1, y may overshoot). Alternative to `ease`.
+    bezier: Option<[f32; 4]>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DeleteCurveArgs {
+    /// Name of an unused curve.
+    name: String,
 }
 
 #[derive(Deserialize, JsonSchema, Clone, Copy)]
@@ -900,7 +925,7 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
             )))
         }
     };
-    let transition = |t: &Option<TransitionArg>| t.as_ref().map(TransitionArg::build).transpose();
+    let transition = |t: &Option<TransitionArg>| t.as_ref().map(|t| t.build(story)).transpose();
     Ok(match spec {
         CommandSpec::Background {
             asset,
@@ -1601,6 +1626,34 @@ fn list_variables(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
     Ok(pretty(&variables_json(cx.project.story())))
 }
 
+fn list_curves(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
+    Ok(pretty(&crate::views::curves_json(cx.project.story())))
+}
+
+fn set_curve(cx: &mut ToolCx<'_>, a: SetCurveArgs) -> Result<String, ToolError> {
+    let name = non_empty(&a.name, "curve name")?;
+    let curve = parse_curve(a.ease.as_deref(), a.bezier, cx.project.story())?
+        .ok_or_else(|| ToolError::invalid("give `ease` (a preset name) or `bezier`"))?;
+    if matches!(curve, orbit_core::Curve::Named(_)) {
+        return Err(ToolError::invalid(
+            "a named curve is a preset or a bezier, it cannot refer to another named curve",
+        ));
+    }
+    exec(
+        cx,
+        Command::SetCurve {
+            name: name.clone(),
+            curve: Some(curve),
+        },
+    )?;
+    Ok(pretty(&crate::views::curves_json(cx.project.story())))
+}
+
+fn delete_curve(cx: &mut ToolCx<'_>, a: DeleteCurveArgs) -> Result<String, ToolError> {
+    orbit_project::ops::delete_curve(cx.project, &a.name)?;
+    Ok(pretty(&crate::views::curves_json(cx.project.story())))
+}
+
 /// Every built-in tool.
 pub fn builtin_tools() -> Vec<ToolDef> {
     vec![
@@ -1715,6 +1768,27 @@ pub fn builtin_tools() -> Vec<ToolDef> {
             "Declare (or redeclare) a variable with its initial value, which fixes its type (boolean, number or string).",
             Kind::Edit,
             declare_variable,
+        ),
+        def::<NoArgs>(
+            "list_curves",
+            "List easing curves",
+            "List the named easing curves of the story (usable as `ease` in transitions), with their definition and how many transitions use them.",
+            Kind::Read,
+            list_curves,
+        ),
+        def::<SetCurveArgs>(
+            "set_curve",
+            "Create or replace an easing curve",
+            "Create or replace a named easing curve, from a preset name or a CSS cubic-bezier. Transitions refer to it by name with their `ease` field.",
+            Kind::Edit,
+            set_curve,
+        ),
+        def::<DeleteCurveArgs>(
+            "delete_curve",
+            "Delete an easing curve",
+            "Delete a named curve. Refused while a transition still uses it.",
+            Kind::Edit,
+            delete_curve,
         ),
         def::<ListAssetsArgs>(
             "list_assets",

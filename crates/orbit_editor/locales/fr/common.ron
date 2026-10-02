@@ -124,6 +124,10 @@
     "reject.variable_exists": "La variable « {name} » existe déjà.",
     "reject.variable_not_found": "Variable « {name} » introuvable.",
     "reject.variable_in_use": "La variable « {name} » est encore utilisée par des nœuds.",
+    "reject.curve_unknown": "Courbe « {name} » introuvable.",
+    "reject.curve_name_taken": "Le nom de courbe « {name} » est vide ou déjà pris.",
+    "reject.curve_in_use": "La courbe « {name} » est encore utilisée par des transitions.",
+    "reject.node_no_transition": "Ce nœud n'a pas de transition.",
     "reject.scale_out_of_range_got": "L'échelle doit être comprise entre {min} et {max} (reçu {value}).",
     "reject.scale_out_of_range": "L'échelle doit être comprise entre {min} et {max}.",
     "reject.free_position_out_of_range": "La position libre ({x}, {y}) est hors limites ({min}..{max}).",
@@ -163,5 +167,7 @@
     "error.unknown_asset": "Ressource inconnue {id}",
     "error.asset_in_use": "La ressource {id} est encore utilisée par le nœud {node}",
     "error.asset_in_use_by_character": "La ressource {id} est encore utilisée par une expression du personnage {character}",
+    "error.empty_curve_name": "Une courbe doit avoir un nom.",
+    "error.curve_chain": "La courbe « {name} » ne peut pas référencer une autre courbe nommée.",
     "error.version_conflict": "Conflit de version sur le nœud {node} : {expected} attendue, {actual} trouvée",
 }
