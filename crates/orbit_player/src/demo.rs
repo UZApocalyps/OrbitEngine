@@ -37,7 +37,7 @@ const FONTS: &[&str] = &[
 
 /// Root folder of the assets: `ORBIT_ASSETS` if set, else the workspace
 /// `assets/` folder (native); the `assets/` URL prefix (web).
-fn asset_root() -> String {
+pub(crate) fn asset_root() -> String {
     #[cfg(target_arch = "wasm32")]
     {
         "assets".to_owned()

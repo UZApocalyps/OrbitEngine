@@ -1,0 +1,434 @@
+use super::*;
+use crate::input::UiInput;
+use crate::theme::Theme;
+
+fn ui() -> Ui {
+    Ui::new(Theme::default())
+}
+
+fn centre(r: [f32; 4]) -> [f32; 2] {
+    [r[0] + r[2] / 2.0, r[1] + r[3] / 2.0]
+}
+
+fn sounds_stripped(v: Vec<WidgetEvent>) -> Vec<WidgetEvent> {
+    v.into_iter()
+        .filter(|e| !matches!(e, WidgetEvent::Sound(_)))
+        .collect()
+}
+
+// ------------------------------------------------------------- layout
+
+#[test]
+fn vertical_box_stacks_children_with_padding_and_spacing() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::vbox().pad(10.0, 20.0).gap(5.0).fixed(300.0, 400.0));
+    ui.add(root, Node::vbox().fixed(100.0, 50.0).tag(1));
+    ui.add(root, Node::vbox().fixed(80.0, 60.0).tag(2));
+    ui.layout();
+    assert_eq!(ui.rect_of(1).unwrap(), [10.0, 20.0, 100.0, 50.0]);
+    assert_eq!(ui.rect_of(2).unwrap(), [10.0, 75.0, 80.0, 60.0]);
+}
+
+#[test]
+fn horizontal_fill_shares_the_remaining_room_by_weight() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::hbox().gap(10.0).fixed(500.0, 100.0));
+    ui.add(root, Node::vbox().fixed(100.0, 10.0).tag(1));
+    ui.add(root, Node::vbox().size(Size::Fill(1.0), Size::Fit).tag(2));
+    ui.add(root, Node::vbox().size(Size::Fill(3.0), Size::Fit).tag(3));
+    ui.layout();
+    // 500 - 100 - 2 gaps (20) = 380 shared 1:3.
+    assert_eq!(ui.rect_of(1).unwrap()[2], 100.0);
+    assert!((ui.rect_of(2).unwrap()[2] - 95.0).abs() < 1e-3);
+    assert!((ui.rect_of(3).unwrap()[2] - 285.0).abs() < 1e-3);
+    assert!((ui.rect_of(3).unwrap()[0] - (100.0 + 10.0 + 95.0 + 10.0)).abs() < 1e-3);
+}
+
+#[test]
+fn cross_axis_alignment_and_stretch() {
+    let mut ui = ui();
+    let root = ui.add_root(
+        Node::vbox()
+            .fixed(400.0, 300.0)
+            .align(Align::Start, Align::Center),
+    );
+    ui.add(root, Node::vbox().fixed(100.0, 40.0).tag(1));
+    ui.layout();
+    assert_eq!(ui.rect_of(1).unwrap()[0], 150.0);
+    ui.node_mut(root).cross = Align::End;
+    ui.layout();
+    assert_eq!(ui.rect_of(1).unwrap()[0], 300.0);
+    ui.node_mut(root).cross = Align::Stretch;
+    let child = ui.add(root, Node::vbox().h(Size::Fixed(10.0)).tag(2));
+    let _ = child;
+    ui.layout();
+    assert_eq!(ui.rect_of(2).unwrap()[2], 400.0, "Fit child stretched");
+    assert_eq!(
+        ui.rect_of(1).unwrap()[2],
+        100.0,
+        "Fixed child keeps its width"
+    );
+}
+
+#[test]
+fn main_axis_centering_without_fill_children() {
+    let mut ui = ui();
+    let root = ui.add_root(
+        Node::vbox()
+            .fixed(200.0, 300.0)
+            .align(Align::Center, Align::Start),
+    );
+    ui.add(root, Node::vbox().fixed(50.0, 100.0).tag(1));
+    ui.layout();
+    assert_eq!(ui.rect_of(1).unwrap()[1], 100.0);
+}
+
+#[test]
+fn anchors_place_roots_on_the_virtual_canvas() {
+    let mut ui = ui();
+    ui.add_root(
+        Node::vbox()
+            .fixed(200.0, 100.0)
+            .anchor(Anchor::center())
+            .tag(1),
+    );
+    ui.add_root(
+        Node::vbox()
+            .fixed(200.0, 100.0)
+            .anchor(Anchor::bottom_center(-20.0))
+            .tag(2),
+    );
+    ui.add_root(
+        Node::vbox()
+            .fixed(200.0, 100.0)
+            .anchor(Anchor::top_left(30.0, 40.0))
+            .tag(3),
+    );
+    ui.add_root(Node::vbox().fill().tag(4));
+    ui.layout();
+    assert_eq!(ui.rect_of(1).unwrap(), [860.0, 490.0, 200.0, 100.0]);
+    assert_eq!(ui.rect_of(2).unwrap(), [860.0, 960.0, 200.0, 100.0]);
+    assert_eq!(ui.rect_of(3).unwrap(), [30.0, 40.0, 200.0, 100.0]);
+    assert_eq!(ui.rect_of(4).unwrap(), [0.0, 0.0, 1920.0, 1080.0]);
+}
+
+#[test]
+fn fit_container_wraps_its_children() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::hbox().pad(7.0, 3.0).gap(4.0).tag(1));
+    ui.add(root, Node::vbox().fixed(40.0, 10.0));
+    ui.add(root, Node::vbox().fixed(60.0, 30.0));
+    ui.layout();
+    let r = ui.rect_of(1).unwrap();
+    assert_eq!((r[2], r[3]), (40.0 + 60.0 + 4.0 + 14.0, 30.0 + 6.0));
+}
+
+#[test]
+fn scroll_list_shows_only_whole_items_that_fit() {
+    let mut ui = ui();
+    let list = ui.add_root(Node::scroll_list(1).fixed(400.0, 250.0).gap(10.0));
+    for i in 0..10 {
+        ui.add(
+            list,
+            Node::vbox()
+                .w(Size::Fill(1.0))
+                .h(Size::Fixed(100.0))
+                .tag(100 + i),
+        );
+    }
+    ui.layout();
+    // 100 + 10 + 100 = 210 fits, a third would need 320.
+    assert!(ui.node(ui.find(101).unwrap()).is_visible());
+    assert!(!ui.node(ui.find(102).unwrap()).is_visible());
+    assert!(matches!(
+        ui.node(list).kind,
+        Kind::ScrollList { shown: 2, .. }
+    ));
+    let before = ui.rect_of(101).unwrap();
+    ui.handle(UiInput::PointerMove([10.0, 10.0]));
+    ui.handle(UiInput::Scroll(-1.0));
+    assert_eq!(ui.scroll_first(1), Some(1));
+    assert!(!ui.node(ui.find(100).unwrap()).is_visible());
+    assert_eq!(ui.rect_of(101).unwrap()[1], before[1] - 110.0);
+}
+
+// ------------------------------------------------------- hit testing
+
+#[test]
+fn hit_test_returns_the_topmost_enabled_interactive_node() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::vbox().fixed(400.0, 300.0).gap(20.0));
+    ui.add(root, Node::button(1, "A").fixed(200.0, 60.0));
+    ui.add(root, Node::button(2, "B").fixed(200.0, 60.0).enabled(false));
+    ui.layout();
+    let a = ui.rect_of(1).unwrap();
+    assert_eq!(ui.hit_test(centre(a)), ui.find(1));
+    assert_eq!(ui.hit_test([a[0] + a[2] + 1.0, a[1] + 5.0]), None);
+    // The gap between two buttons belongs to none.
+    assert_eq!(ui.hit_test([a[0] + 5.0, a[1] + a[3] + 5.0]), None);
+    // Disabled buttons are not hit.
+    let b = ui.rect_of(2).unwrap();
+    assert_eq!(ui.hit_test(centre(b)), None);
+}
+
+// ------------------------------------------------------------- focus
+
+fn column(n: usize) -> Ui {
+    let mut ui = ui();
+    let root = ui.add_root(
+        Node::vbox()
+            .gap(10.0)
+            .anchor(Anchor::top_left(100.0, 100.0)),
+    );
+    for i in 0..n {
+        ui.add(
+            root,
+            Node::button(1 + i as Tag, format!("B{i}")).w(Size::Fixed(300.0)),
+        );
+    }
+    ui.layout();
+    ui
+}
+
+#[test]
+fn arrows_move_focus_and_wrap_around() {
+    let mut ui = column(3);
+    assert_eq!(ui.focused_tag(), None);
+    ui.handle(UiInput::Down); // first input just focuses the first widget
+    assert_eq!(ui.focused_tag(), Some(1));
+    ui.handle(UiInput::Down);
+    ui.handle(UiInput::Down);
+    assert_eq!(ui.focused_tag(), Some(3));
+    ui.handle(UiInput::Down);
+    assert_eq!(ui.focused_tag(), Some(1), "wraps to the top");
+    ui.handle(UiInput::Up);
+    assert_eq!(ui.focused_tag(), Some(3), "wraps to the bottom");
+}
+
+#[test]
+fn tab_cycles_in_tree_order_and_shift_tab_goes_back() {
+    let mut ui = column(3);
+    ui.handle(UiInput::Next);
+    assert_eq!(ui.focused_tag(), Some(1));
+    ui.handle(UiInput::Next);
+    ui.handle(UiInput::Next);
+    ui.handle(UiInput::Next);
+    assert_eq!(ui.focused_tag(), Some(1));
+    ui.handle(UiInput::Prev);
+    assert_eq!(ui.focused_tag(), Some(3));
+}
+
+#[test]
+fn spatial_navigation_in_a_grid() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::vbox().gap(10.0));
+    for r in 0..2 {
+        let row = ui.add(root, Node::hbox().gap(10.0));
+        for c in 0..3 {
+            ui.add(row, Node::button(1 + r * 3 + c, "x").fixed(100.0, 50.0));
+        }
+    }
+    ui.layout();
+    ui.set_focus_tag(2);
+    ui.handle(UiInput::Right);
+    assert_eq!(ui.focused_tag(), Some(3));
+    ui.handle(UiInput::Down);
+    assert_eq!(ui.focused_tag(), Some(6));
+    ui.handle(UiInput::Right);
+    assert_eq!(ui.focused_tag(), Some(4), "wraps to the start of the row");
+    ui.handle(UiInput::Up);
+    assert_eq!(ui.focused_tag(), Some(1));
+    ui.handle(UiInput::Up);
+    assert_eq!(
+        ui.focused_tag(),
+        Some(4),
+        "wraps vertically in the same column"
+    );
+}
+
+#[test]
+fn disabled_widgets_are_skipped() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::vbox().gap(10.0));
+    ui.add(root, Node::button(1, "a"));
+    ui.add(root, Node::button(2, "b").enabled(false));
+    ui.add(root, Node::button(3, "c"));
+    ui.layout();
+    assert_eq!(ui.focus_order(), vec![1, 3]);
+    ui.handle(UiInput::Down);
+    ui.handle(UiInput::Down);
+    assert_eq!(ui.focused_tag(), Some(3));
+}
+
+#[test]
+fn a_modal_captures_focus_and_input() {
+    let mut ui = column(2);
+    ui.set_focus_tag(2);
+    ui.open_modal(|ui| {
+        let root = ui.add_root(Node::vbox().anchor(Anchor::center()).gap(10.0));
+        ui.add(root, Node::button(50, "yes"));
+        ui.add(root, Node::button(51, "no"));
+        root
+    });
+    assert!(ui.has_modal());
+    assert_eq!(ui.focus_order(), vec![50, 51]);
+    assert_eq!(ui.focused_tag(), Some(50));
+    // Keyboard never leaves the modal.
+    for _ in 0..5 {
+        ui.handle(UiInput::Down);
+        assert!([50, 51].contains(&ui.focused_tag().unwrap()));
+    }
+    // A click on a widget behind the modal does nothing.
+    let behind = ui.rect_of(1).unwrap();
+    ui.handle(UiInput::PointerDown(centre(behind)));
+    let ev = ui.handle(UiInput::PointerUp(centre(behind)));
+    assert!(sounds_stripped(ev).is_empty());
+    // Closing restores the previous focus and the base widgets.
+    ui.close_modal();
+    assert!(!ui.has_modal());
+    assert_eq!(ui.focused_tag(), Some(2));
+    assert_eq!(ui.focus_order(), vec![1, 2]);
+    assert!(ui.find(50).is_none());
+}
+
+#[test]
+fn mouse_hover_moves_focus_and_a_click_activates_on_release() {
+    let mut ui = column(2);
+    let b = ui.rect_of(2).unwrap();
+    let p = centre(b);
+    let ev = ui.handle(UiInput::PointerMove(p));
+    assert!(ev.contains(&WidgetEvent::Sound(crate::UiSound::Hover)));
+    assert_eq!(ui.focused_tag(), Some(2));
+    assert!(sounds_stripped(ui.handle(UiInput::PointerDown(p))).is_empty());
+    assert_eq!(
+        sounds_stripped(ui.handle(UiInput::PointerUp(p))),
+        vec![WidgetEvent::Activated(2)]
+    );
+    // Press, drag off, release: no activation.
+    ui.handle(UiInput::PointerDown(p));
+    let off = [b[0] - 50.0, b[1]];
+    ui.handle(UiInput::PointerMove(off));
+    assert!(sounds_stripped(ui.handle(UiInput::PointerUp(off))).is_empty());
+}
+
+#[test]
+fn enter_activates_the_focused_button_and_escape_cancels() {
+    let mut ui = column(2);
+    ui.handle(UiInput::Down);
+    assert_eq!(
+        sounds_stripped(ui.handle(UiInput::Confirm)),
+        vec![WidgetEvent::Activated(1)]
+    );
+    assert_eq!(
+        sounds_stripped(ui.handle(UiInput::Cancel)),
+        vec![WidgetEvent::Cancelled]
+    );
+}
+
+// ----------------------------------------------------- slider & co
+
+#[test]
+fn slider_keyboard_steps_and_clamps() {
+    let mut ui = ui();
+    ui.add_root(Node::slider(1, 0.5).fixed(400.0, 56.0));
+    ui.layout();
+    ui.handle(UiInput::Right);
+    assert_eq!(ui.focused_tag(), Some(1));
+    let ev = sounds_stripped(ui.handle(UiInput::Right));
+    assert_eq!(ev, vec![WidgetEvent::SliderChanged(1, 0.55)]);
+    for _ in 0..30 {
+        ui.handle(UiInput::Right);
+    }
+    assert_eq!(ui.slider_value(1), Some(1.0));
+    assert!(
+        sounds_stripped(ui.handle(UiInput::Right)).is_empty(),
+        "no event at the bound"
+    );
+    for _ in 0..40 {
+        ui.handle(UiInput::Left);
+    }
+    assert_eq!(ui.slider_value(1), Some(0.0));
+}
+
+#[test]
+fn slider_custom_step_is_used() {
+    let mut ui = ui();
+    ui.add_root(Node::slider(1, 0.0).fixed(400.0, 56.0).step(0.25));
+    ui.layout();
+    ui.handle(UiInput::Right);
+    ui.handle(UiInput::Right);
+    assert_eq!(ui.slider_value(1), Some(0.25));
+}
+
+#[test]
+fn slider_mouse_maps_the_track_to_the_value_and_drags() {
+    let mut ui = ui();
+    ui.add_root(
+        Node::slider(1, 0.0)
+            .fixed(418.0, 56.0)
+            .anchor(Anchor::top_left(100.0, 100.0)),
+    );
+    ui.layout();
+    let r = ui.rect_of(1).unwrap();
+    let y = r[1] + 28.0;
+    let knob = ui.theme().widgets.controls.knob_size[0];
+    let usable = r[2] - knob;
+    let ev =
+        sounds_stripped(ui.handle(UiInput::PointerDown([r[0] + knob / 2.0 + usable * 0.25, y])));
+    match ev.as_slice() {
+        [WidgetEvent::SliderChanged(1, v)] => assert!((v - 0.25).abs() < 1e-4),
+        other => panic!("{other:?}"),
+    }
+    // Dragging outside the widget keeps tracking, clamped to 0..1.
+    ui.handle(UiInput::PointerMove([r[0] - 500.0, y + 300.0]));
+    assert_eq!(ui.slider_value(1), Some(0.0));
+    ui.handle(UiInput::PointerMove([r[0] + 5000.0, y]));
+    assert_eq!(ui.slider_value(1), Some(1.0));
+    ui.handle(UiInput::PointerUp([0.0, 0.0]));
+    ui.handle(UiInput::PointerMove([r[0], y]));
+    assert_eq!(ui.slider_value(1), Some(1.0), "released: no more tracking");
+}
+
+#[test]
+fn toggle_and_selector_react_to_keys_and_clicks() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::vbox().gap(10.0));
+    ui.add(root, Node::toggle(1, "Full", false).w(Size::Fixed(300.0)));
+    ui.add(
+        root,
+        Node::selector(2, vec!["a".into(), "b".into(), "c".into()], 0).w(Size::Fixed(300.0)),
+    );
+    ui.layout();
+    ui.handle(UiInput::Down);
+    assert_eq!(
+        sounds_stripped(ui.handle(UiInput::Confirm)),
+        vec![WidgetEvent::Toggled(1, true)]
+    );
+    ui.handle(UiInput::Down);
+    assert_eq!(
+        sounds_stripped(ui.handle(UiInput::Left)),
+        vec![WidgetEvent::Selected(2, 2)],
+        "wraps"
+    );
+    assert_eq!(
+        sounds_stripped(ui.handle(UiInput::Right)),
+        vec![WidgetEvent::Selected(2, 0)]
+    );
+    // Clicking the right part goes forward, the left third back.
+    let r = ui.rect_of(2).unwrap();
+    let ev = sounds_stripped(ui.handle(UiInput::PointerDown([r[0] + r[2] - 5.0, r[1] + 5.0])));
+    assert_eq!(ev, vec![WidgetEvent::Selected(2, 1)]);
+    ui.handle(UiInput::PointerUp([0.0, 0.0]));
+    let ev = sounds_stripped(ui.handle(UiInput::PointerDown([r[0] + 5.0, r[1] + 5.0])));
+    assert_eq!(ev, vec![WidgetEvent::Selected(2, 0)]);
+}
+
+#[test]
+fn text_helpers() {
+    assert_eq!(estimate_lines("", 30.0, 100.0), 1);
+    assert_eq!(estimate_lines("a\nb\nc", 30.0, 1000.0), 3);
+    assert!(estimate_lines(&"x".repeat(200), 30.0, 600.0) > 5);
+    assert_eq!(ellipsize("short", 10), "short");
+    assert_eq!(ellipsize("abcdefghij", 5), "abcd\u{2026}");
+    assert_eq!(escape_markup("a{b}"), "a{{b}}");
+}

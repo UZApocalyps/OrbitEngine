@@ -15,6 +15,7 @@ orbit_text.workspace = true
 orbit_audio.workspace = true
 orbit_assets.workspace = true
 orbit_runtime.workspace = true
+orbit_ui.workspace = true
 log.workspace = true
 thiserror.workspace = true
 

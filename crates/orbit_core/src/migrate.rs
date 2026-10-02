@@ -6,6 +6,8 @@
 //!
 //! * v1 -> v2 (M1): texts move to the string table, speakers become
 //!   characters, conditions and `SetVar` values become expressions.
+//! * v2 -> v3 (M2): variable declarations gain a `scope` (`Game` default,
+//!   `Persistent`). Existing variables become `Game` variables.
 
 use std::borrow::Cow;
 
@@ -29,7 +31,7 @@ pub fn read_version(source: &str) -> Result<u32, CoreError> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -155,6 +157,7 @@ fn v1_to_v2(source: &str) -> Result<String, CoreError> {
 
     let old: v1::Story = ron::from_str(source)?;
     let mut story = Story::new(old.title);
+    story.schema_version = 2;
     let mut speakers: HashMap<String, CharacterId> = HashMap::new();
 
     for scene in old.scenes {
@@ -238,6 +241,16 @@ fn v1_to_v2(source: &str) -> Result<String, CoreError> {
     story.to_ron()
 }
 
+/// v2 -> v3. `VarDecl::scope` has a serde default (`Game`), so the v2
+/// document is already a valid v3 one apart from its version number.
+fn v2_to_v3(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 3;
+    story.to_ron()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,6 +327,51 @@ mod tests {
         assert_eq!(nodes[0].id.to_string(), "01JBX0N0000000000000000001");
         let again = Story::from_ron(&story.to_ron().unwrap()).unwrap();
         assert_eq!(story, again);
+    }
+
+    const V2_STORY: &str = r#"(
+    schema_version: 2,
+    title: "Mid",
+    variables: [(name: "n", initial: Int(1))],
+    scenes: [(
+        id: "01JBX0S0000000000000000001",
+        name: "main",
+        nodes: [
+            (id: "01JBX0N0000000000000000001", kind: Label(name: "a")),
+            (id: "01JBX0N0000000000000000002", kind: SetVar(var: "n", value: Lit(Int(2)))),
+        ],
+    )],
+)"#;
+
+    #[test]
+    fn v2_story_migrates_to_v3_with_game_scope() {
+        use crate::defs::VarScope;
+        use crate::story::Story;
+
+        assert_eq!(read_version(V2_STORY).unwrap(), 2);
+        let story = Story::from_ron(V2_STORY).expect("migrated story must validate");
+        assert_eq!(story.schema_version, 3);
+        assert_eq!(story.variables.len(), 1);
+        assert_eq!(story.variables[0].scope, VarScope::Game);
+        assert_eq!(story.scenes[0].nodes.len(), 2);
+        // A v1 document goes through both steps.
+        let from_v1 = Story::from_ron(V1_STORY).unwrap();
+        assert_eq!(from_v1.schema_version, 3);
+    }
+
+    #[test]
+    fn v3_persistent_scope_roundtrips() {
+        use crate::defs::{VarDecl, VarScope};
+        use crate::story::Story;
+        use crate::value::Value;
+
+        let mut story = Story::new("p");
+        story
+            .variables
+            .push(VarDecl::persistent("plays", Value::Int(0)));
+        let back = Story::from_ron_unchecked(&story.to_ron().unwrap()).unwrap();
+        assert_eq!(back.variables[0].scope, VarScope::Persistent);
+        assert_eq!(back.persistent_variables().count(), 1);
     }
 
     #[test]

@@ -1,0 +1,406 @@
+//! The preferences screen.
+
+use super::{Screen, forward, title};
+use crate::input::UiInput;
+use crate::texts::Texts;
+use crate::theme::Theme;
+use crate::view::{AUTO_DELAY_RANGE, AudioBus, PrefsView, SkipMode, TEXT_SPEED_RANGE, UiEvent};
+use crate::widgets::{Align, Dir, DrawCtx, Node, PanelKind, Size, Tag, Ui, WidgetEvent};
+use orbit_text::TextAlign;
+
+const T_MASTER: Tag = 1;
+const T_MUSIC: Tag = 2;
+const T_SFX: Tag = 3;
+const T_VOICE: Tag = 4;
+const T_TEXT_SPEED: Tag = 5;
+const T_AUTO_DELAY: Tag = 6;
+const T_SKIP: Tag = 7;
+const T_FULLSCREEN: Tag = 8;
+const T_LANGUAGE: Tag = 9;
+const T_DEFAULTS: Tag = 10;
+const T_BACK: Tag = 11;
+/// Value readouts are tagged `T_VALUE + slider tag`.
+const T_VALUE: Tag = 50;
+
+fn to_unit(v: f32, range: [f32; 2]) -> f32 {
+    ((v - range[0]) / (range[1] - range[0])).clamp(0.0, 1.0)
+}
+
+fn from_unit(u: f32, range: [f32; 2]) -> f32 {
+    range[0] + u.clamp(0.0, 1.0) * (range[1] - range[0])
+}
+
+/// Sliders (volumes, text speed, auto delay), selectors (skip mode,
+/// language), fullscreen toggle, reset and back. Changes are emitted live
+/// (`SetVolume`, `SetTextSpeed`...).
+pub struct PreferencesScreen {
+    ui: Ui,
+    view: PrefsView,
+    texts: Texts,
+}
+
+impl PreferencesScreen {
+    pub fn new(theme: &Theme, texts: &Texts, view: PrefsView) -> Self {
+        let mut s = Self {
+            ui: Ui::new(theme.clone()),
+            view,
+            texts: texts.clone(),
+        };
+        s.rebuild();
+        s
+    }
+
+    pub fn set_view(&mut self, view: PrefsView) {
+        self.view = view;
+        self.rebuild();
+    }
+
+    pub fn ui(&mut self) -> &mut Ui {
+        &mut self.ui
+    }
+
+    fn value_text(&self, tag: Tag, unit: f32) -> String {
+        match tag {
+            T_TEXT_SPEED => self.texts.format(
+                "ui.prefs.chars_per_second",
+                &[("v", &format!("{:.0}", from_unit(unit, TEXT_SPEED_RANGE)))],
+            ),
+            T_AUTO_DELAY => self.texts.format(
+                "ui.prefs.seconds",
+                &[("v", &format!("{:.1}", from_unit(unit, AUTO_DELAY_RANGE)))],
+            ),
+            _ => format!("{:.0}%", unit * 100.0),
+        }
+    }
+
+    fn rebuild(&mut self) {
+        let focus = self.ui.focused_tag();
+        let theme = self.ui.theme().clone();
+        let w = &theme.widgets;
+        let v = self.view.clone();
+        let mut ui = Ui::new(theme.clone());
+        let root = ui.add_root(Node::stack().fill().align(Align::Center, Align::Center));
+        ui.add(root, Node::panel(PanelKind::Dim, Dir::Stack).fill());
+        let panel = ui.add(
+            root,
+            Node::panel(PanelKind::Normal, Dir::Vertical)
+                .fixed(1500.0, 960.0)
+                .pad(50.0, 30.0)
+                .gap(12.0)
+                .align(Align::Start, Align::Stretch),
+        );
+        ui.add(panel, title(&theme, &self.texts.get("ui.prefs.title")));
+
+        let sliders = [
+            (T_MASTER, "ui.prefs.volume_master", v.master),
+            (T_MUSIC, "ui.prefs.volume_music", v.music),
+            (T_SFX, "ui.prefs.volume_sfx", v.sfx),
+            (T_VOICE, "ui.prefs.volume_voice", v.voice),
+            (
+                T_TEXT_SPEED,
+                "ui.prefs.text_speed",
+                to_unit(v.text_speed, TEXT_SPEED_RANGE),
+            ),
+            (
+                T_AUTO_DELAY,
+                "ui.prefs.auto_delay",
+                to_unit(v.auto_delay, AUTO_DELAY_RANGE),
+            ),
+        ];
+        for (tag, key, unit) in sliders {
+            let row = row(&mut ui, panel);
+            ui.add(row, Node::label(self.texts.get(key)).w(Size::Fixed(460.0)));
+            ui.add(row, Node::slider(tag, unit).w(Size::Fixed(620.0)));
+            ui.add(
+                row,
+                Node::label(self.value_text(tag, unit))
+                    .tag(T_VALUE + tag)
+                    .w(Size::Fixed(180.0))
+                    .text_align(TextAlign::Right)
+                    .dimmed(),
+            );
+        }
+
+        let skip_options = vec![
+            self.texts.get("ui.prefs.skip_read"),
+            self.texts.get("ui.prefs.skip_all"),
+        ];
+        let skip_index = match v.skip_mode {
+            SkipMode::ReadOnly => 0,
+            SkipMode::All => 1,
+        };
+        let r = row(&mut ui, panel);
+        ui.add(
+            r,
+            Node::label(self.texts.get("ui.prefs.skip_mode")).w(Size::Fixed(460.0)),
+        );
+        ui.add(
+            r,
+            Node::selector(T_SKIP, skip_options, skip_index).w(Size::Fixed(620.0)),
+        );
+
+        if let Some(on) = v.fullscreen {
+            let r = row(&mut ui, panel);
+            ui.add(
+                r,
+                Node::label(self.texts.get("ui.prefs.fullscreen")).w(Size::Fixed(460.0)),
+            );
+            ui.add(r, Node::toggle(T_FULLSCREEN, "", on).w(Size::Fixed(620.0)));
+        }
+        if v.languages.len() > 1 {
+            let r = row(&mut ui, panel);
+            ui.add(
+                r,
+                Node::label(self.texts.get("ui.prefs.language")).w(Size::Fixed(460.0)),
+            );
+            let names = v.languages.iter().map(|l| l.name.clone()).collect();
+            let index = v
+                .languages
+                .iter()
+                .position(|l| l.code == v.language)
+                .unwrap_or(0);
+            ui.add(
+                r,
+                Node::selector(T_LANGUAGE, names, index).w(Size::Fixed(620.0)),
+            );
+        }
+
+        ui.add(panel, Node::spacer());
+        let footer = ui.add(panel, Node::hbox().gap(24.0));
+        ui.add(
+            footer,
+            Node::button(T_DEFAULTS, self.texts.get("ui.prefs.defaults")).w(Size::Fixed(420.0)),
+        );
+        ui.add(footer, Node::spacer());
+        ui.add(
+            footer,
+            Node::button(T_BACK, self.texts.get("ui.menu.back")).w(Size::Fixed(300.0)),
+        );
+        let _ = w;
+        ui.layout();
+        ui.focus_first();
+        if let Some(tag) = focus {
+            ui.set_focus_tag(tag);
+        }
+        self.ui = ui;
+    }
+}
+
+fn row(ui: &mut Ui, panel: crate::widgets::NodeId) -> crate::widgets::NodeId {
+    ui.add(
+        panel,
+        Node::hbox().gap(24.0).align(Align::Start, Align::Center),
+    )
+}
+
+impl Screen for PreferencesScreen {
+    fn handle(&mut self, input: UiInput) -> Vec<UiEvent> {
+        let mut out = Vec::new();
+        let mut changed: Vec<(Tag, f32)> = Vec::new();
+        forward(self.ui.handle(input), &mut out, |ev, out| match ev {
+            WidgetEvent::Cancelled => out.push(UiEvent::Back),
+            WidgetEvent::Activated(T_BACK) => out.push(UiEvent::Back),
+            WidgetEvent::Activated(T_DEFAULTS) => out.push(UiEvent::ResetPreferences),
+            WidgetEvent::SliderChanged(tag, unit) => {
+                changed.push((tag, unit));
+                out.push(match tag {
+                    T_MASTER => UiEvent::SetVolume(AudioBus::Master, unit),
+                    T_MUSIC => UiEvent::SetVolume(AudioBus::Music, unit),
+                    T_SFX => UiEvent::SetVolume(AudioBus::Sfx, unit),
+                    T_VOICE => UiEvent::SetVolume(AudioBus::Voice, unit),
+                    T_TEXT_SPEED => UiEvent::SetTextSpeed(from_unit(unit, TEXT_SPEED_RANGE)),
+                    T_AUTO_DELAY => UiEvent::SetAutoDelay(from_unit(unit, AUTO_DELAY_RANGE)),
+                    _ => return,
+                });
+            }
+            WidgetEvent::Selected(T_SKIP, i) => out.push(UiEvent::SetSkipMode(if i == 0 {
+                SkipMode::ReadOnly
+            } else {
+                SkipMode::All
+            })),
+            WidgetEvent::Selected(T_LANGUAGE, i) => {
+                if let Some(l) = self.view.languages.get(i) {
+                    out.push(UiEvent::SetLanguage(l.code.clone()));
+                }
+            }
+            WidgetEvent::Toggled(T_FULLSCREEN, on) => out.push(UiEvent::SetFullscreen(on)),
+            _ => {}
+        });
+        for (tag, unit) in changed {
+            let text = self.value_text(tag, unit);
+            self.ui.set_text(T_VALUE + tag, text);
+        }
+        out
+    }
+
+    fn update(&mut self, dt: f32) {
+        self.ui.update(dt);
+    }
+
+    fn draw(&mut self, ctx: &mut DrawCtx) {
+        self.ui.draw(ctx);
+    }
+
+    fn set_theme(&mut self, theme: &Theme) {
+        self.ui.set_theme(theme.clone());
+        self.rebuild();
+    }
+
+    fn set_texts(&mut self, texts: &Texts) {
+        self.texts = texts.clone();
+        self.rebuild();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::view::LanguageView;
+
+    fn view() -> PrefsView {
+        PrefsView {
+            languages: vec![
+                LanguageView {
+                    code: "en".into(),
+                    name: "English".into(),
+                },
+                LanguageView {
+                    code: "fr".into(),
+                    name: "Fran\u{e7}ais".into(),
+                },
+            ],
+            language: "en".into(),
+            ..Default::default()
+        }
+    }
+
+    fn screen(v: PrefsView) -> PreferencesScreen {
+        PreferencesScreen::new(&Theme::default(), &Texts::builtin("en"), v)
+    }
+
+    fn real(v: Vec<UiEvent>) -> Vec<UiEvent> {
+        v.into_iter()
+            .filter(|e| !matches!(e, UiEvent::Sound(_)))
+            .collect()
+    }
+
+    #[test]
+    fn fits_the_canvas_and_orders_widgets_top_to_bottom() {
+        let mut s = screen(view());
+        let order = s.ui.focus_order();
+        assert_eq!(
+            order,
+            vec![
+                T_MASTER,
+                T_MUSIC,
+                T_SFX,
+                T_VOICE,
+                T_TEXT_SPEED,
+                T_AUTO_DELAY,
+                T_SKIP,
+                T_FULLSCREEN,
+                T_LANGUAGE,
+                T_DEFAULTS,
+                T_BACK
+            ]
+        );
+        for tag in &order {
+            let r = s.ui.rect_of(*tag).unwrap();
+            assert!(
+                r[1] >= 0.0 && r[1] + r[3] <= 1080.0 && r[0] + r[2] <= 1920.0,
+                "{tag}: {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fullscreen_and_language_can_be_hidden() {
+        let mut v = view();
+        v.fullscreen = None;
+        v.languages.clear();
+        let mut s = screen(v);
+        let order = s.ui.focus_order();
+        assert!(!order.contains(&T_FULLSCREEN) && !order.contains(&T_LANGUAGE));
+    }
+
+    #[test]
+    fn keyboard_adjusts_a_volume_and_emits_the_event() {
+        let mut s = screen(view());
+        let ev = real(s.handle(UiInput::Left));
+        assert_eq!(ev.len(), 1);
+        match &ev[0] {
+            UiEvent::SetVolume(AudioBus::Master, v) => assert!((v - 0.95).abs() < 1e-5),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(
+            s.ui.node(s.ui.find(T_VALUE + T_MASTER).unwrap()).rect()[2],
+            180.0
+        );
+    }
+
+    #[test]
+    fn text_speed_is_reported_in_chars_per_second() {
+        let mut s = screen(view());
+        for _ in 0..4 {
+            s.handle(UiInput::Down);
+        }
+        assert_eq!(s.ui.focused_tag(), Some(T_TEXT_SPEED));
+        s.ui.set_slider(T_TEXT_SPEED, 0.0);
+        let ev = real(s.handle(UiInput::Right));
+        match &ev[0] {
+            UiEvent::SetTextSpeed(v) => {
+                assert!(
+                    (v - (TEXT_SPEED_RANGE[0]
+                        + 0.05 * (TEXT_SPEED_RANGE[1] - TEXT_SPEED_RANGE[0])))
+                        .abs()
+                        < 1e-3
+                )
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn selectors_toggle_and_buttons_emit_events() {
+        let mut s = screen(view());
+        s.ui.set_focus_tag(T_SKIP);
+        assert_eq!(
+            real(s.handle(UiInput::Right)),
+            vec![UiEvent::SetSkipMode(SkipMode::All)]
+        );
+        s.ui.set_focus_tag(T_FULLSCREEN);
+        assert_eq!(
+            real(s.handle(UiInput::Confirm)),
+            vec![UiEvent::SetFullscreen(true)]
+        );
+        s.ui.set_focus_tag(T_LANGUAGE);
+        assert_eq!(
+            real(s.handle(UiInput::Right)),
+            vec![UiEvent::SetLanguage("fr".into())]
+        );
+        s.ui.set_focus_tag(T_DEFAULTS);
+        assert_eq!(
+            real(s.handle(UiInput::Confirm)),
+            vec![UiEvent::ResetPreferences]
+        );
+        s.ui.set_focus_tag(T_BACK);
+        assert_eq!(real(s.handle(UiInput::Confirm)), vec![UiEvent::Back]);
+        assert_eq!(real(s.handle(UiInput::Cancel)), vec![UiEvent::Back]);
+    }
+
+    #[test]
+    fn dragging_a_slider_with_the_mouse_sets_its_value() {
+        let mut s = screen(view());
+        let r = s.ui.rect_of(T_MUSIC).unwrap();
+        let y = r[1] + r[3] / 2.0;
+        s.handle(UiInput::PointerMove([r[0] + 5.0, y]));
+        let ev = real(s.handle(UiInput::PointerDown([r[0] + r[2] / 2.0, y])));
+        assert!(
+            matches!(ev.as_slice(), [UiEvent::SetVolume(AudioBus::Music, v)] if (v - 0.5).abs() < 0.02)
+        );
+        let ev = real(s.handle(UiInput::PointerMove([r[0] + r[2] + 400.0, y])));
+        assert!(matches!(ev.as_slice(), [UiEvent::SetVolume(AudioBus::Music, v)] if *v == 1.0));
+        s.handle(UiInput::PointerUp([0.0, 0.0]));
+        assert!(real(s.handle(UiInput::PointerMove([r[0], y]))).is_empty());
+    }
+}

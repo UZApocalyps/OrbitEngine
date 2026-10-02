@@ -1,7 +1,7 @@
 //! The `orbit` command line.
 //!
 //! * `orbit validate <project|file> [--check-files] [--root <dir>]`
-//! * `orbit run-text <file> [--step]`
+//! * `orbit run-text <file> [--step] [--save-dir <dir>]`
 //! * `orbit mcp` (placeholder until M3)
 //!
 //! The logic lives in [`run`], which takes its streams as parameters so it can
@@ -9,9 +9,14 @@
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use orbit_core::{CoreError, Story, TransitionKind, ValidationReport, migrate};
-use orbit_vm::{PresentationEvent, StepResult, Vm};
+use orbit_save::{
+    CaptureInfo, Compat, DEFAULT_SAVED_HISTORY, FileStorage, MemoryStorage, PersistentData,
+    SaveConfig, SaveData, SaveManager, SlotId, Storage,
+};
+use orbit_vm::{Interaction, Presentation, PresentationEvent, StepResult, Vm};
 
 const USAGE: &str = "\
 orbit - OrbitEngine command line
@@ -23,9 +28,14 @@ USAGE:
         --check-files   also check that every manifest asset exists on disk
         --root <dir>    directory the manifest paths are relative to
                         (default: the project directory, else the current one)
-    orbit run-text <file> [--step]
+    orbit run-text <file> [--step] [--save-dir <dir>]
         Play a story in the terminal. Choices are read from stdin.
         --step          wait for Enter after each line
+        --save-dir <d>  keep saves and persistent data in <d> (default: in memory)
+        At a choice prompt, or after a line with --step, you can also type:
+          b [n]   roll back n steps (default 1)     f [n]  roll forward
+          s <slot>  save      l <slot>  load        h      show the history
+        <slot> is a number (manual slot), q (quicksave) or a (last autosave).
     orbit mcp
         Placeholder (not implemented, planned for M3).
     orbit help
@@ -181,9 +191,16 @@ fn run_text_cmd(
 ) -> Result<u8, String> {
     let mut target: Option<&str> = None;
     let mut step = false;
-    for a in args {
+    let mut save_dir: Option<PathBuf> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
         match a.as_str() {
             "--step" => step = true,
+            "--save-dir" => {
+                save_dir = Some(PathBuf::from(
+                    it.next().ok_or("--save-dir needs a directory")?,
+                ));
+            }
             flag if flag.starts_with("--") => return Err(format!("unknown option `{flag}`")),
             path if target.is_none() => target = Some(path),
             _ => return Err("run-text takes a single file".into()),
@@ -200,95 +217,276 @@ fn run_text_cmd(
         let _ = writeln!(err, "error: story is invalid, not playing it");
         return Ok(1);
     }
-    play(story, step, input, out, err).map_err(|e| format!("I/O error: {e}"))
+    let storage: Box<dyn Storage> = match save_dir {
+        Some(dir) => Box::new(FileStorage::new(dir)),
+        None => Box::new(MemoryStorage::new()),
+    };
+    play(story, step, storage, input, out, err).map_err(|e| format!("I/O error: {e}"))
+}
+
+/// What the player typed at a prompt.
+#[derive(Debug, PartialEq)]
+enum Command {
+    Back(usize),
+    Forward(usize),
+    Save(SlotId),
+    Load(SlotId),
+    History,
+    Other,
+}
+
+/// `b [n]`, `f [n]`, `s <slot>`, `l <slot>`, `h`. A slot is a number
+/// (manual), `q` (quicksave) or `a` (newest autosave).
+fn parse_command(line: &str) -> Command {
+    let mut words = line.split_whitespace();
+    let (Some(cmd), arg) = (words.next(), words.next()) else {
+        return Command::Other;
+    };
+    if words.next().is_some() {
+        return Command::Other;
+    }
+    let count = || match arg {
+        None => Some(1),
+        Some(n) => n.parse::<usize>().ok().filter(|n| *n > 0),
+    };
+    let slot = || match arg? {
+        "q" => Some(SlotId::Quick),
+        "a" => Some(SlotId::Auto(0)),
+        n => n.parse().ok().map(SlotId::Manual),
+    };
+    match cmd {
+        "b" => count().map_or(Command::Other, Command::Back),
+        "f" => count().map_or(Command::Other, Command::Forward),
+        "s" => slot().map_or(Command::Other, Command::Save),
+        "l" => slot().map_or(Command::Other, Command::Load),
+        "h" if arg.is_none() => Command::History,
+        _ => Command::Other,
+    }
 }
 
 fn play(
     story: Story,
     step: bool,
+    storage: Box<dyn Storage>,
     input: &mut dyn BufRead,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> std::io::Result<u8> {
-    let mut vm = match Vm::from_start(story) {
+    let story = Arc::new(story);
+    let mut vm = match Vm::from_start(Arc::clone(&story)) {
         Ok(vm) => vm,
         Err(e) => {
             writeln!(err, "error: {e}")?;
             return Ok(1);
         }
     };
+    let saves = SaveManager::new(storage, Arc::clone(&story), SaveConfig::default());
+    match saves.load_persistent() {
+        Ok(data) => data.apply_to(&mut vm),
+        Err(e) => writeln!(err, "warning: persistent data ignored: {e}")?,
+    }
+    let started_ms = now_ms();
     let mut line = String::new();
-    loop {
-        let result = vm.step();
-        for event in vm.take_events() {
-            writeln!(out, "  {}", describe_event(vm.story(), &event))?;
-        }
-        match result {
-            StepResult::Say {
+    // Set by rollback / load: show this again instead of stepping.
+    let mut redisplay: Option<Interaction> = None;
+
+    'outer: loop {
+        let replayed = redisplay.is_some();
+        let interaction = match redisplay.take() {
+            Some(i) => i,
+            None => {
+                let result = vm.step();
+                for event in vm.take_events() {
+                    writeln!(out, "  {}", describe_event(vm.story(), &event))?;
+                }
+                match result {
+                    StepResult::Say {
+                        node,
+                        speaker,
+                        string_id,
+                        ..
+                    } => Interaction::Say {
+                        node,
+                        speaker,
+                        string_id,
+                    },
+                    StepResult::Choice { node, options } => Interaction::Choice { node, options },
+                    StepResult::WaitTime(seconds) => {
+                        writeln!(out, "  [wait {seconds}s]")?;
+                        continue;
+                    }
+                    StepResult::WaitTransition { duration } => {
+                        writeln!(out, "  [transition {duration}s]")?;
+                        continue;
+                    }
+                    StepResult::End => {
+                        writeln!(out, "[end]")?;
+                        let data = PersistentData::from_vm(&vm);
+                        if let Err(e) = saves.save_persistent(&data) {
+                            writeln!(err, "warning: cannot save persistent data: {e}")?;
+                        }
+                        return Ok(0);
+                    }
+                    StepResult::Error(e) => {
+                        writeln!(err, "error: {e}")?;
+                        return Ok(1);
+                    }
+                }
+            }
+        };
+
+        let is_choice = matches!(interaction, Interaction::Choice { .. });
+        match &interaction {
+            Interaction::Say {
                 speaker, string_id, ..
             } => {
-                let text = vm.text(string_id).unwrap_or("<missing text>");
+                let text = vm.text(*string_id).unwrap_or("<missing text>");
                 match speaker.and_then(|c| vm.character_name(c)) {
                     Some(name) => writeln!(out, "{name}: {text}")?,
                     None => writeln!(out, "{text}")?,
                 }
-                if step {
-                    line.clear();
-                    if input.read_line(&mut line)? == 0 {
-                        writeln!(err, "error: input ended")?;
-                        return Ok(1);
-                    }
+                // A line shown again by a rollback or load always waits.
+                if !step && !replayed {
+                    continue;
                 }
             }
-            StepResult::Choice { options, .. } => {
+            Interaction::Choice { options, .. } => {
                 for (i, option) in options.iter().enumerate() {
                     let text = vm.text(option.string_id).unwrap_or("<missing text>");
                     writeln!(out, "  {}) {text}", i + 1)?;
                 }
-                loop {
-                    write!(out, "> ")?;
-                    out.flush()?;
-                    line.clear();
-                    if input.read_line(&mut line)? == 0 {
-                        writeln!(out)?;
-                        writeln!(err, "error: input ended while waiting for a choice")?;
-                        return Ok(1);
-                    }
-                    let picked = line
-                        .trim()
-                        .parse::<usize>()
-                        .ok()
-                        .filter(|n| (1..=options.len()).contains(n));
-                    match picked {
-                        Some(n) => {
-                            if let Err(e) = vm.choose(n - 1) {
-                                writeln!(err, "error: {e}")?;
-                                return Ok(1);
-                            }
-                            let chosen = vm.text(options[n - 1].string_id).unwrap_or("?");
-                            writeln!(out, "  -> {chosen}")?;
-                            break;
-                        }
-                        None => {
-                            writeln!(out, "please enter a number between 1 and {}", options.len())?
-                        }
-                    }
+            }
+        }
+
+        loop {
+            if is_choice {
+                write!(out, "> ")?;
+                out.flush()?;
+            }
+            line.clear();
+            if input.read_line(&mut line)? == 0 {
+                if is_choice {
+                    writeln!(out)?;
+                    writeln!(err, "error: input ended while waiting for a choice")?;
+                } else {
+                    writeln!(err, "error: input ended")?;
                 }
-            }
-            StepResult::WaitTime(seconds) => writeln!(out, "  [wait {seconds}s]")?,
-            StepResult::WaitTransition { duration } => {
-                writeln!(out, "  [transition {duration}s]")?;
-            }
-            StepResult::End => {
-                writeln!(out, "[end]")?;
-                return Ok(0);
-            }
-            StepResult::Error(e) => {
-                writeln!(err, "error: {e}")?;
                 return Ok(1);
+            }
+            let text = line.trim();
+
+            match parse_command(text) {
+                Command::Back(n) => {
+                    match vm.rollback(n) {
+                        Some(p) => {
+                            show_presentation(&vm, &p, "rollback", out)?;
+                            redisplay = p.interaction;
+                            continue 'outer;
+                        }
+                        None => writeln!(out, "  [nothing to roll back]")?,
+                    }
+                    continue;
+                }
+                Command::Forward(n) => {
+                    match vm.roll_forward(n) {
+                        Some(p) => {
+                            show_presentation(&vm, &p, "roll forward", out)?;
+                            redisplay = p.interaction;
+                            continue 'outer;
+                        }
+                        None => writeln!(out, "  [nothing to roll forward]")?,
+                    }
+                    continue;
+                }
+                Command::Save(slot) => {
+                    let mut info =
+                        CaptureInfo::new(now_ms(), now_ms().saturating_sub(started_ms) / 1000);
+                    info.max_history = Some(DEFAULT_SAVED_HISTORY);
+                    let data = SaveData::capture(&vm, info);
+                    match saves.save(slot, &data) {
+                        Ok(()) => writeln!(out, "  [saved to {slot}]")?,
+                        Err(e) => writeln!(out, "  [save failed: {e}]")?,
+                    }
+                    continue;
+                }
+                Command::Load(slot) => {
+                    match saves.load(slot) {
+                        Ok(loaded) => match loaded.data.apply_to(&mut vm) {
+                            Ok(_) => {
+                                if let Compat::CompatibleWithWarnings(w) = &loaded.compat {
+                                    writeln!(out, "  [warning: {}]", w.join("; "))?;
+                                }
+                                let p = vm.presentation();
+                                show_presentation(&vm, &p, &format!("loaded {slot}"), out)?;
+                                redisplay = p.interaction;
+                                continue 'outer;
+                            }
+                            Err(e) => writeln!(out, "  [load failed: {e}]")?,
+                        },
+                        Err(e) => writeln!(out, "  [load failed: {e}]")?,
+                    }
+                    continue;
+                }
+                Command::History => {
+                    for item in vm.backlog() {
+                        let who = item
+                            .speaker
+                            .and_then(|c| vm.character_name(c))
+                            .unwrap_or("-");
+                        let text = vm.text(item.string_id).unwrap_or("?");
+                        writeln!(out, "  | {who}: {text}")?;
+                    }
+                    continue;
+                }
+                Command::Other => {}
+            }
+
+            if is_choice {
+                let Interaction::Choice { options, .. } = &interaction else {
+                    unreachable!("is_choice")
+                };
+                let picked = text
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| (1..=options.len()).contains(n));
+                match picked {
+                    Some(n) => {
+                        if let Err(e) = vm.choose(n - 1) {
+                            writeln!(err, "error: {e}")?;
+                            return Ok(1);
+                        }
+                        let chosen = vm.text(options[n - 1].string_id).unwrap_or("?");
+                        writeln!(out, "  -> {chosen}")?;
+                        continue 'outer;
+                    }
+                    None => writeln!(out, "please enter a number between 1 and {}", options.len())?,
+                }
+            } else {
+                // Any other input on a line (including Enter) advances.
+                continue 'outer;
             }
         }
     }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Prints the scene rebuilt after a rollback or a load.
+fn show_presentation(
+    vm: &Vm,
+    p: &Presentation,
+    what: &str,
+    out: &mut dyn Write,
+) -> std::io::Result<()> {
+    writeln!(out, "  [{what}]")?;
+    for event in &p.events {
+        writeln!(out, "  {}", describe_event(vm.story(), event))?;
+    }
+    Ok(())
 }
 
 fn describe_transition(t: &Option<orbit_core::Transition>) -> String {

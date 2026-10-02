@@ -59,6 +59,14 @@ lewton = "0.10"
 hound = "3"
 js-sys = "0.3"
 
+# --- m2 logic ---
+orbit_save = { path = "crates/orbit_save" }
+orbit_i18n = { path = "crates/orbit_i18n" }
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+base64 = "0.22"
+sys-locale = "0.3"
+time = { version = "0.3", default-features = false, features = ["std", "local-offset"] }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 

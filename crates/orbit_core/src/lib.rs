@@ -15,7 +15,7 @@ pub mod value;
 
 pub use defs::{
     AssetEntry, AssetKind, AssetManifest, Character, Color, Expression, Position, PositionDef,
-    StringTable, Transition, TransitionKind, VarDecl,
+    StringTable, Transition, TransitionKind, VarDecl, VarScope,
 };
 pub use error::{CoreError, ValidationError, ValidationWarning};
 pub use expr::{BinOp, EvalError, Expr, ParseError, TypeError, UnOp};

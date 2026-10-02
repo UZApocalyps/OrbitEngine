@@ -5,9 +5,12 @@
 //!   (default `examples/stories/demo.ron`); on the web `?story=<path>` (default
 //!   `examples/stories/demo.ron`, relative to the page);
 //! * demo: `--demo` natively, `?demo` on the web: the hard-coded visual demo
-//!   of the M1 renderer, see [`demo`].
+//!   of the M1 renderer, see [`demo`];
+//! * UI gallery: `--ui-gallery` natively, `?ui-gallery` on the web: every M2
+//!   menu screen with fake data, see [`gallery`].
 
 mod demo;
+mod gallery;
 mod launch;
 
 use orbit_gfx::Gfx;
@@ -45,6 +48,9 @@ pub fn run() -> Result<(), PlayerError> {
     let launch = Launch::from_environment().map_err(PlayerError::Args)?;
     if launch.demo {
         return demo::run();
+    }
+    if launch.ui_gallery {
+        return gallery::run();
     }
     let config = launch.runtime_config();
     orbit_platform::run(

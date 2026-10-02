@@ -1,13 +1,14 @@
 //! The virtual machine.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
-use orbit_core::{NodeId, NodeKind, Story, StringId, Transition, Value};
+use orbit_core::{NodeId, NodeKind, Story, StringId, Transition, Value, VarScope};
 
 use crate::error::VmError;
 use crate::event::{ChoiceView, PresentationEvent, StepResult};
-use crate::state::{CharacterOnStage, MusicState, Pending, Rng, VmState};
+use crate::history::History;
+use crate::state::{CharacterOnStage, Interaction, MusicState, Pending, Rng, VmState};
 
 /// Maximum number of nodes executed by one `step()` call without reaching a
 /// blocking node. Guards against `Jump` loops with no `Say`/`Wait`.
@@ -41,17 +42,26 @@ const DEFAULT_SEED: u64 = 0x0B17_0B17_0B17_0B17;
 /// }
 /// ```
 ///
-/// For rollback, take `snapshot()` *before* the `step()` that returns the
-/// line to come back to: restoring and stepping again regenerates that line
-/// (and re-emits the events leading to it).
+/// `snapshot()` / `restore()` copy the raw state. Player-facing rollback and
+/// the dialogue backlog are built in (see `rollback`, `roll_forward`,
+/// `backlog`): a checkpoint is taken at every `Say` / `Choice`, and a
+/// rollback returns a [`crate::Presentation`] the host rebuilds the screen
+/// from, without re-running nodes.
+///
+/// Variables declared `VarScope::Persistent` live in a separate store
+/// (`persistent_vars` / `set_persistent_vars`) that the host loads and saves
+/// on its own: they are not part of [`VmState`] and are never rolled back.
 pub struct Vm {
-    story: Arc<Story>,
+    pub(crate) story: Arc<Story>,
     /// node id -> (scene index, node index)
-    index: HashMap<NodeId, (usize, usize)>,
-    state: VmState,
+    pub(crate) index: HashMap<NodeId, (usize, usize)>,
+    pub(crate) state: VmState,
     read: BTreeSet<NodeId>,
-    events: Vec<PresentationEvent>,
-    fault: Option<VmError>,
+    pub(crate) events: Vec<PresentationEvent>,
+    pub(crate) fault: Option<VmError>,
+    persistent: BTreeMap<String, Value>,
+    persistent_names: HashSet<String>,
+    pub(crate) history: History,
 }
 
 impl Vm {
@@ -74,8 +84,14 @@ impl Vm {
         let vars = story
             .variables
             .iter()
+            .filter(|v| v.scope == VarScope::Game)
             .map(|v| (v.name.clone(), v.initial.clone()))
             .collect();
+        let persistent: BTreeMap<String, Value> = story
+            .persistent_variables()
+            .map(|v| (v.name.clone(), v.initial.clone()))
+            .collect();
+        let persistent_names = persistent.keys().cloned().collect();
         Ok(Self {
             story,
             index,
@@ -86,10 +102,14 @@ impl Vm {
                 vars,
                 scene: Default::default(),
                 rng: Rng::new(seed),
+                shown: None,
             },
             read: BTreeSet::new(),
             events: Vec::new(),
             fault: None,
+            persistent,
+            persistent_names,
+            history: History::default(),
         })
     }
 
@@ -110,8 +130,14 @@ impl Vm {
         if let Pending::Choice { node, visible } = &self.state.pending {
             return self.choice_result(*node, visible);
         }
+        self.history.ahead = true;
         match self.run() {
-            Ok(result) => result,
+            Ok(result) => {
+                if matches!(result, StepResult::Say { .. } | StepResult::Choice { .. }) {
+                    self.history.record(&self.state);
+                }
+                result
+            }
             Err(err) => {
                 self.fault = Some(err.clone());
                 StepResult::Error(err)
@@ -139,6 +165,7 @@ impl Vm {
         if !self.index.contains_key(&target) {
             return Err(VmError::UnknownNode(target));
         }
+        self.history.on_choose(node, index);
         self.state.pending = Pending::None;
         self.state.pc = Some(target);
         Ok(())
@@ -164,7 +191,7 @@ impl Vm {
     }
 
     fn eval(&self, node: NodeId, expr: &orbit_core::Expr) -> Result<Value, VmError> {
-        expr.eval(&|name| self.state.vars.get(name).cloned())
+        expr.eval(&|name| self.variable(name).cloned())
             .map_err(|source| VmError::Eval { node, source })
     }
 
@@ -216,6 +243,11 @@ impl Vm {
                 NodeKind::Label { .. } => self.state.pc = next,
                 NodeKind::Say { speaker, text_id } => {
                     self.state.pc = next;
+                    self.state.shown = Some(Interaction::Say {
+                        node: pc,
+                        speaker: *speaker,
+                        string_id: *text_id,
+                    });
                     let already_read = !self.read.insert(pc);
                     return Ok(StepResult::Say {
                         node: pc,
@@ -239,13 +271,23 @@ impl Vm {
                         return Err(VmError::NoVisibleChoice(pc));
                     }
                     let result = self.choice_result(pc, &visible);
+                    if let StepResult::Choice { options, .. } = &result {
+                        self.state.shown = Some(Interaction::Choice {
+                            node: pc,
+                            options: options.clone(),
+                        });
+                    }
                     self.state.pending = Pending::Choice { node: pc, visible };
                     return Ok(result);
                 }
                 NodeKind::Jump { target } => self.jump(*target)?,
                 NodeKind::SetVar { var, value } => {
                     let v = self.eval(pc, value)?;
-                    self.state.vars.insert(var.clone(), v);
+                    if self.persistent_names.contains(var) {
+                        self.persistent.insert(var.clone(), v);
+                    } else {
+                        self.state.vars.insert(var.clone(), v);
+                    }
                     self.state.pc = next;
                 }
                 NodeKind::If {
@@ -419,12 +461,36 @@ impl Vm {
         &self.state.scene
     }
 
+    /// Value of a variable of either scope.
     pub fn variable(&self, name: &str) -> Option<&Value> {
-        self.state.vars.get(name)
+        self.state
+            .vars
+            .get(name)
+            .or_else(|| self.persistent.get(name))
     }
 
+    /// Playthrough (`Game`) variables only, as stored in the state.
     pub fn variables(&self) -> &BTreeMap<String, Value> {
         &self.state.vars
+    }
+
+    /// The persistent variables (`VarScope::Persistent`), including their
+    /// initial values for those never assigned. The host saves this map.
+    pub fn persistent_vars(&self) -> &BTreeMap<String, Value> {
+        &self.persistent
+    }
+
+    /// Loads persistent variables from the host's store. Only declared
+    /// persistent variables whose value has the declared type are taken;
+    /// anything else (removed or retyped variable) keeps its initial value.
+    pub fn set_persistent_vars(&mut self, values: &BTreeMap<String, Value>) {
+        for decl in self.story.persistent_variables() {
+            let value = values
+                .get(&decl.name)
+                .filter(|v| v.value_type() == decl.initial.value_type())
+                .unwrap_or(&decl.initial);
+            self.persistent.insert(decl.name.clone(), value.clone());
+        }
     }
 
     /// Next node to execute (`None` once finished).
@@ -460,14 +526,15 @@ impl Vm {
         self.state.clone()
     }
 
-    /// Replaces the state with `state` (taken from a VM running the same
-    /// story). Fails, leaving the VM untouched, if it references nodes that do
-    /// not exist in this story. Clears a previous fatal error and drops
-    /// pending presentation events.
-    pub fn restore(&mut self, state: VmState) -> Result<(), VmError> {
+    /// Checks that `state` only references nodes (and options) that exist in
+    /// this story.
+    pub fn validate_state(&self, state: &VmState) -> Result<(), VmError> {
         let known = |id: &NodeId| self.index.contains_key(id);
         let mut referenced: Vec<NodeId> = state.pc.into_iter().collect();
         referenced.extend(state.call_stack.iter().flatten().copied());
+        if let Some(shown) = &state.shown {
+            referenced.push(shown.node());
+        }
         if let Pending::Choice { node, visible } = &state.pending {
             referenced.push(*node);
             let ok = matches!(
@@ -480,6 +547,67 @@ impl Vm {
         }
         if let Some(missing) = referenced.iter().find(|id| !known(id)) {
             return Err(VmError::UnknownNode(*missing));
+        }
+        Ok(())
+    }
+
+    /// Makes a state taken from a possibly older version of the story
+    /// consistent with it: declared playthrough variables that are missing or
+    /// of another type get their initial value, persistent ones are removed,
+    /// and stage elements whose asset or character vanished are dropped.
+    /// A state from the same story is left unchanged.
+    pub(crate) fn reconcile(&self, state: &mut VmState) {
+        for decl in &self.story.variables {
+            match decl.scope {
+                VarScope::Game => {
+                    let ok = state
+                        .vars
+                        .get(&decl.name)
+                        .is_some_and(|v| v.value_type() == decl.initial.value_type());
+                    if !ok {
+                        state.vars.insert(decl.name.clone(), decl.initial.clone());
+                    }
+                }
+                VarScope::Persistent => {
+                    state.vars.remove(&decl.name);
+                }
+            }
+        }
+        let story = &self.story;
+        let scene = &mut state.scene;
+        if scene
+            .background
+            .is_some_and(|a| story.assets.get(a).is_none())
+        {
+            scene.background = None;
+        }
+        if scene
+            .music
+            .as_ref()
+            .is_some_and(|m| story.assets.get(m.asset).is_none())
+        {
+            scene.music = None;
+        }
+        scene.characters.retain(|c| {
+            story
+                .character(c.character)
+                .is_some_and(|def| def.expression(&c.expression).is_some())
+                && story.resolve_position(&c.position).is_some()
+        });
+    }
+
+    /// Replaces the state with `state` (taken from a VM running the same
+    /// story, or an older version of it: see `reconcile`). Fails, leaving the
+    /// VM untouched, if it references nodes that do not exist in this story.
+    /// Clears a previous fatal error, drops pending presentation events and
+    /// **starts a fresh rollback history** (use `restore_with_history` to keep
+    /// one).
+    pub fn restore(&mut self, mut state: VmState) -> Result<(), VmError> {
+        self.validate_state(&state)?;
+        self.reconcile(&mut state);
+        self.history.clear();
+        if state.shown.is_some() {
+            self.history.record(&state);
         }
         self.state = state;
         self.fault = None;

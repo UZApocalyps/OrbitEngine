@@ -193,3 +193,69 @@ fn mcp_is_a_placeholder_and_help_works() {
     assert!(r.out.contains("orbit validate"));
     assert_eq!(orbit(&[], "").code, 0);
 }
+
+#[test]
+fn run_text_rollback_replays_the_previous_line() {
+    let demo = demo_path();
+    let demo = demo.to_str().unwrap();
+    // At the choice: roll back one step (re-shows the last line, waits),
+    // Enter goes forward to the choice again, then pick option 1.
+    let r = orbit(&["run-text", demo], "b\n\n1\n");
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert!(r.out.contains("[rollback]"), "{}", r.out);
+    assert_eq!(r.out.matches("heavy box in the street").count(), 2);
+    assert_eq!(r.out.matches("1) Help Bob carry the box.").count(), 2);
+    assert!(r.out.trim_end().ends_with("[end]"), "{}", r.out);
+    // Nothing before the first line to go back to is reported, not fatal.
+    let r = orbit(&["run-text", demo], "b\nb 99\nb\nf 99\n1\n");
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert!(r.out.contains("[rollback]"), "{}", r.out);
+}
+
+#[test]
+fn run_text_saves_loads_and_keeps_persistent_data() {
+    let demo = demo_path();
+    let demo = demo.to_str().unwrap();
+    let dir = temp_dir("saves");
+    let dir_arg = dir.to_str().unwrap();
+
+    // First game: save at the choice, then finish (helping Bob).
+    let r = orbit(&["run-text", demo, "--save-dir", dir_arg], "s 1\ns q\n1\n");
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert!(r.out.contains("[saved to manual #1]"), "{}", r.out);
+    assert!(r.out.contains("[saved to quicksave]"), "{}", r.out);
+    assert!(!r.out.contains("Welcome back"), "{}", r.out);
+    assert!(dir.join("saves/manual_001.sav").is_file());
+    assert!(dir.join("persistent.ron").is_file());
+
+    // Second game: the persistent counter shows a welcome line, a bad slot is
+    // reported, and loading the save returns to the choice (then refuse).
+    let r = orbit(&["run-text", demo, "--save-dir", dir_arg], "l 7\nl 1\n2\n");
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert!(r.out.contains("Welcome back"), "{}", r.out);
+    assert!(
+        r.out.contains("[load failed: slot manual #7 is empty]"),
+        "{}",
+        r.out
+    );
+    assert!(r.out.contains("[loaded manual #1]"), "{}", r.out);
+    assert!(r.out.contains("I am still annoyed"), "{}", r.out);
+    assert!(!r.out.contains("Thanks again"), "{}", r.out);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn run_text_without_save_dir_keeps_everything_in_memory() {
+    let demo = demo_path();
+    let demo = demo.to_str().unwrap();
+    let r = orbit(&["run-text", demo], "s 1\nl 1\nh\n1\n");
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert!(r.out.contains("[loaded manual #1]"), "{}", r.out);
+    assert!(
+        r.out.contains("  | "),
+        "history lines are printed: {}",
+        r.out
+    );
+    let r = orbit(&["run-text", demo, "--save-dir"], "");
+    assert_eq!(r.code, 2);
+}

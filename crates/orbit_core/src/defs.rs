@@ -192,9 +192,46 @@ impl StringTable {
     }
 }
 
-/// Declares a game variable and its initial value (and thus its type).
+/// Where a variable lives.
+///
+/// * `Game`: part of the playthrough. Saved with the game, restored by load
+///   and rollback.
+/// * `Persistent`: survives across playthroughs (e.g. "endings seen", number
+///   of completed games). Stored by the host in a separate file; it is **not**
+///   part of the VM state, so loading a save or rolling back never changes it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum VarScope {
+    #[default]
+    Game,
+    Persistent,
+}
+
+/// Declares a variable and its initial value (and thus its type).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VarDecl {
     pub name: String,
     pub initial: Value,
+    /// Defaults to [`VarScope::Game`] (schema v3).
+    #[serde(default)]
+    pub scope: VarScope,
+}
+
+impl VarDecl {
+    /// A playthrough variable.
+    pub fn game(name: impl Into<String>, initial: Value) -> Self {
+        Self {
+            name: name.into(),
+            initial,
+            scope: VarScope::Game,
+        }
+    }
+
+    /// A variable that persists across playthroughs.
+    pub fn persistent(name: impl Into<String>, initial: Value) -> Self {
+        Self {
+            name: name.into(),
+            initial,
+            scope: VarScope::Persistent,
+        }
+    }
 }

@@ -10,6 +10,8 @@
 
 mod error;
 mod event;
+mod history;
+mod rollback;
 mod state;
 mod vm;
 
@@ -18,5 +20,10 @@ mod tests;
 
 pub use error::VmError;
 pub use event::{ChoiceView, PresentationEvent, StepResult};
-pub use state::{CharacterOnStage, MusicState, Pending, Rng, SceneState, VmState};
+pub use history::{
+    BacklogEntry, BacklogItem, Checkpoint, DEFAULT_BACKLOG_CAPACITY, DEFAULT_HISTORY_CAPACITY,
+    Presentation, RollbackHistory,
+};
+pub use rollback::scene_events;
+pub use state::{CharacterOnStage, Interaction, MusicState, Pending, Rng, SceneState, VmState};
 pub use vm::{MAX_CALL_DEPTH, MAX_NODES_PER_STEP, Vm};

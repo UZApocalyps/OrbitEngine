@@ -99,3 +99,28 @@ fn demo_emits_music_sound_fade_and_dissolve() {
         } if matches!(t.kind, orbit_core::TransitionKind::Dissolve)
     )));
 }
+
+#[test]
+fn persistent_counter_survives_into_the_next_playthrough() {
+    use orbit_core::Value;
+
+    let (_, first) = play(0);
+    // The counter lives in the persistent store, not in the saved state.
+    assert_eq!(first.variable("plays"), Some(&Value::Int(1)));
+    assert!(!first.snapshot().vars.contains_key("plays"));
+
+    // The host carries it to a new game: the story greets a returning player.
+    let story = Story::from_ron(DEMO).unwrap();
+    let mut second = Vm::from_start(story).unwrap();
+    second.set_persistent_vars(first.persistent_vars());
+    let mut lines = Vec::new();
+    for _ in 0..4 {
+        if let StepResult::Say { string_id, .. } = second.step() {
+            lines.push(second.text(string_id).unwrap().to_owned());
+        }
+    }
+    assert!(
+        lines.iter().any(|l| l.starts_with("Welcome back")),
+        "{lines:?}"
+    );
+}

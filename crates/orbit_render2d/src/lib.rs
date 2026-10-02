@@ -24,6 +24,7 @@
 
 mod batcher;
 mod camera;
+mod readback;
 mod sprite;
 mod texture;
 mod transition;
@@ -31,6 +32,7 @@ mod transition;
 pub use camera::{Camera2d, Viewport, letterbox};
 pub use orbit_gfx;
 pub use orbit_gfx::SurfaceFrame;
+pub use readback::{Readback, ReadbackStatus};
 pub use sprite::{Layer, Scene, Sprite2d};
 pub use texture::{TARGET_FORMAT, TextureId, TextureOptions};
 pub use transition::Transition;
@@ -306,6 +308,64 @@ impl Renderer2d {
         let max = self.gfx.max_texture_dimension() as f32;
         let k = (max / vw.max(vh)).min(1.0);
         self.create_render_target(label, (vw * k).round() as u32, (vh * k).round() as u32)
+    }
+
+    /// Starts copying a render target to the CPU without blocking: submits the
+    /// copy and requests the mapping. Poll the result with
+    /// [`Renderer2d::poll_readback`] on the following frames (works on
+    /// WebGL2, where nothing may block).
+    pub fn start_readback(&self, target: TextureId) -> Result<Readback, RenderError> {
+        let entry = self
+            .textures
+            .get(target)
+            .ok_or(RenderError::UnknownTexture(target))?;
+        if !entry.is_target {
+            return Err(RenderError::NotATarget(target));
+        }
+        let (readback, state) = Readback::new(self.gfx.device(), entry.width, entry.height);
+        let mut encoder =
+            self.gfx
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("orbit2d readback encoder"),
+                });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &entry.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback.buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(readback.padded_row),
+                    rows_per_image: Some(entry.height),
+                },
+            },
+            wgpu::Extent3d {
+                width: entry.width,
+                height: entry.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.gfx.queue().submit(Some(encoder.finish()));
+        readback
+            .buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                Readback::complete(&state, result.is_ok());
+            });
+        Ok(readback)
+    }
+
+    /// Checks a read-back without blocking. Natively this also lets wgpu make
+    /// progress (`Device::poll` in non-blocking mode); on the web the browser
+    /// delivers the result by itself.
+    pub fn poll_readback(&self, readback: &mut Readback) -> ReadbackStatus {
+        let _ = self.gfx.device().poll(wgpu::PollType::Poll);
+        readback.take()
     }
 
     /// Size of a texture in pixels.

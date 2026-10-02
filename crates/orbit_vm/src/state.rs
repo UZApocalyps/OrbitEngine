@@ -2,8 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use orbit_core::{AssetId, CharacterId, NodeId, Position, Value};
+use orbit_core::{AssetId, CharacterId, NodeId, Position, StringId, Value};
 use serde::{Deserialize, Serialize};
+
+use crate::event::ChoiceView;
 
 /// A character currently on stage.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -68,12 +70,38 @@ pub enum Pending {
     },
 }
 
+/// The blocking thing the player is looking at: what a host must re-display
+/// after a rollback or a load, without running any node.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Interaction {
+    Say {
+        node: NodeId,
+        speaker: Option<CharacterId>,
+        string_id: StringId,
+    },
+    Choice {
+        node: NodeId,
+        /// Visible options only, in the order `Vm::choose` indexes them.
+        options: Vec<ChoiceView>,
+    },
+}
+
+impl Interaction {
+    pub fn node(&self) -> NodeId {
+        match self {
+            Interaction::Say { node, .. } | Interaction::Choice { node, .. } => *node,
+        }
+    }
+}
+
 /// Everything that defines the VM's progress. Cloning it is a snapshot;
 /// `Vm::restore` brings it back.
 ///
 /// Not included on purpose: the story itself (immutable, shared), pending
-/// presentation events (a host concern) and the "already read" set (persists
-/// across rollback, see `Vm::read_nodes`).
+/// presentation events (a host concern), the "already read" set (persists
+/// across rollback, see `Vm::read_nodes`) and **persistent variables**
+/// (`VarScope::Persistent`, owned by the host, see `Vm::persistent_vars`).
+/// `vars` only holds playthrough (`Game`) variables.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VmState {
     /// Next node to execute; `None` once the story has ended.
@@ -84,4 +112,24 @@ pub struct VmState {
     pub vars: BTreeMap<String, Value>,
     pub scene: SceneState,
     pub rng: Rng,
+    /// The last line / choice presented to the player (what is on screen).
+    #[serde(default)]
+    pub shown: Option<Interaction>,
+}
+
+impl VmState {
+    /// Every node id this state points to (program counter, call stack,
+    /// pending choice, shown interaction): they must exist in the story for
+    /// the state to be restorable.
+    pub fn referenced_nodes(&self) -> Vec<NodeId> {
+        let mut out: Vec<NodeId> = self.pc.into_iter().collect();
+        out.extend(self.call_stack.iter().flatten().copied());
+        if let Pending::Choice { node, .. } = &self.pending {
+            out.push(*node);
+        }
+        if let Some(shown) = &self.shown {
+            out.push(shown.node());
+        }
+        out
+    }
 }

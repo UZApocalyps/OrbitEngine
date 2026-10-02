@@ -267,10 +267,9 @@ fn choice_is_idempotent_until_answered_and_validates_the_index() {
 #[test]
 fn conditional_options_are_filtered_and_indexed_among_visible() {
     let mut b = B::new();
-    b.story.variables.push(VarDecl {
-        name: "key".into(),
-        initial: Value::Bool(false),
-    });
+    b.story
+        .variables
+        .push(VarDecl::game("key", Value::Bool(false)));
     let (a, c) = (NodeId::new(), NodeId::new());
     let o1 = b.option("Locked", a, Some(Expr::var("key")));
     let o2 = b.option("Open", c, None);
@@ -314,10 +313,9 @@ fn choice_with_no_visible_option_is_an_error() {
 fn variables_and_conditions() {
     let mut b = B::new();
     let (hi, lo, end) = (NodeId::new(), NodeId::new(), NodeId::new());
-    b.story.variables.push(VarDecl {
-        name: "score".into(),
-        initial: Value::Int(1),
-    });
+    b.story
+        .variables
+        .push(VarDecl::game("score", Value::Int(1)));
     b.push(NodeKind::SetVar {
         var: "score".into(),
         value: Expr::binary(BinOp::Add, Expr::var("score"), Expr::lit(2i64)),
@@ -664,10 +662,7 @@ fn complex_story() -> Story {
     let img = b.asset(AssetKind::Image, "a.png");
     let ana = b.character("Ana", &[("neutral", img)]);
     let (left, right, join, routine) = (NodeId::new(), NodeId::new(), NodeId::new(), NodeId::new());
-    b.story.variables.push(VarDecl {
-        name: "n".into(),
-        initial: Value::Int(0),
-    });
+    b.story.variables.push(VarDecl::game("n", Value::Int(0)));
     b.push(NodeKind::Background {
         asset: bg,
         transition: Some(Transition::dissolve(1.0)),
@@ -818,4 +813,575 @@ fn choice_views_expose_string_ids() {
         panic!("expected Choice");
     };
     assert_eq!(options, vec![ChoiceView { string_id: sid }]);
+}
+
+// ------------------------------------------------------------------ rollback
+
+use crate::{Interaction, RollbackHistory};
+
+/// bg + character + `L1` + music + `L2` + choice (A/B) + branch line + join.
+struct RbStory {
+    story: Story,
+    bg: AssetId,
+    ana: CharacterId,
+    l1: NodeId,
+    l2: NodeId,
+    choice: NodeId,
+    a_line: NodeId,
+    b_line: NodeId,
+    join1: NodeId,
+    join2: NodeId,
+}
+
+fn rb_story() -> RbStory {
+    let mut b = B::new();
+    let bg = b.asset(AssetKind::Image, "bg.png");
+    let img = b.asset(AssetKind::Image, "ana.png");
+    let music = b.asset(AssetKind::Music, "m.ogg");
+    let ana = b.character("Ana", &[("smile", img)]);
+    b.story.variables.push(VarDecl::game("v", Value::Int(0)));
+    b.story
+        .variables
+        .push(VarDecl::persistent("plays", Value::Int(0)));
+    b.push(NodeKind::Background {
+        asset: bg,
+        transition: Some(Transition::dissolve(0.5)),
+    });
+    b.push(NodeKind::Show {
+        character: ana,
+        expression: "smile".into(),
+        position: Position::Left,
+        transition: None,
+    });
+    let l1 = b.say(Some(ana), "L1");
+    b.push(NodeKind::PlayMusic {
+        asset: music,
+        fade_in: 1.0,
+        looping: true,
+    });
+    let l2 = b.say(None, "L2");
+    let (la, lb, join) = (NodeId::new(), NodeId::new(), NodeId::new());
+    let oa = b.option("A", la, None);
+    let ob = b.option("B", lb, None);
+    let choice = b.push(NodeKind::Choice {
+        options: vec![oa, ob],
+    });
+    b.label(la, "a");
+    b.push(NodeKind::SetVar {
+        var: "v".into(),
+        value: Expr::Lit(Value::Int(1)),
+    });
+    let a_line = b.say(None, "A line");
+    b.push(NodeKind::Jump { target: join });
+    b.label(lb, "b");
+    b.push(NodeKind::SetVar {
+        var: "v".into(),
+        value: Expr::Lit(Value::Int(2)),
+    });
+    let b_line = b.say(None, "B line");
+    b.label(join, "join");
+    b.push(NodeKind::SetVar {
+        var: "plays".into(),
+        value: Expr::binary(BinOp::Add, Expr::var("plays"), Expr::Lit(Value::Int(1))),
+    });
+    let join1 = b.say(None, "Join1");
+    let join2 = b.say(None, "Join2");
+    b.push(NodeKind::End);
+    RbStory {
+        story: b.build(),
+        bg,
+        ana,
+        l1,
+        l2,
+        choice,
+        a_line,
+        b_line,
+        join1,
+        join2,
+    }
+}
+
+/// Steps until the next Say/Choice and returns its node.
+fn next_interaction(vm: &mut Vm) -> NodeId {
+    for _ in 0..100 {
+        match vm.step() {
+            StepResult::Say { node, .. } | StepResult::Choice { node, .. } => return node,
+            StepResult::WaitTime(_) | StepResult::WaitTransition { .. } => {}
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    panic!("no interaction");
+}
+
+fn shown_node(p: &crate::Presentation) -> NodeId {
+    p.interaction.as_ref().expect("an interaction").node()
+}
+
+#[test]
+fn rollback_restores_scene_without_replaying_and_replay_is_identical() {
+    let s = rb_story();
+    let mut vm = vm_for(s.story.clone());
+    let mut nodes = Vec::new();
+    let mut scenes = Vec::new();
+    for _ in 0..3 {
+        nodes.push(next_interaction(&mut vm));
+        scenes.push(vm.scene().clone());
+    }
+    vm.choose(0).unwrap();
+    for _ in 0..2 {
+        nodes.push(next_interaction(&mut vm));
+        scenes.push(vm.scene().clone());
+    }
+    assert_eq!(
+        nodes,
+        [s.l1, s.l2, s.choice, s.a_line, s.join1],
+        "unexpected timeline"
+    );
+    assert_eq!(vm.variable("plays"), Some(&Value::Int(1)));
+
+    // Back to L1: bg + Ana, but the music (started after L1) is gone, and no
+    // event is pending: the host rebuilds from the scene.
+    let p = vm.rollback(4).expect("rollback");
+    assert_eq!(shown_node(&p), s.l1);
+    assert_eq!(p.scene, scenes[0]);
+    assert!(p.scene.music.is_none());
+    assert_eq!(p.scene.background, Some(s.bg));
+    assert!(p.scene.character(s.ana).is_some());
+    assert!(vm.take_events().is_empty());
+    assert!(p.events.iter().all(|e| !matches!(
+        e,
+        PresentationEvent::Background {
+            transition: Some(_),
+            ..
+        }
+    )));
+    assert!(matches!(p.events[0], PresentationEvent::Background { .. }));
+    assert!(!vm.can_rollback());
+    assert!(vm.can_roll_forward());
+    assert!(p.already_read);
+    // Game variables are rolled back, persistent ones are not.
+    assert_eq!(vm.variable("v"), Some(&Value::Int(0)));
+    assert_eq!(vm.variable("plays"), Some(&Value::Int(1)));
+
+    // Stepping forward replays exactly the same interactions and scenes.
+    for i in 1..nodes.len() {
+        let n = next_interaction(&mut vm);
+        assert_eq!(n, nodes[i]);
+        assert_eq!(vm.scene(), &scenes[i]);
+        if matches!(vm.snapshot().pending, Pending::Choice { .. }) {
+            vm.choose(0).unwrap(); // same choice as before
+        }
+    }
+    assert!(!vm.can_roll_forward());
+    // Rolling forward is the other way to get there.
+    vm.rollback(3).unwrap();
+    let p = vm.roll_forward(2).unwrap();
+    assert_eq!(shown_node(&p), s.a_line);
+    assert_eq!(vm.variable("v"), Some(&Value::Int(1)));
+}
+
+#[test]
+fn different_choice_truncates_the_future_and_backlog() {
+    let s = rb_story();
+    let mut vm = vm_for(s.story);
+    next_interaction(&mut vm); // L1
+    next_interaction(&mut vm); // L2
+    next_interaction(&mut vm); // choice
+    vm.choose(0).unwrap();
+    assert_eq!(next_interaction(&mut vm), s.a_line);
+    assert_eq!(next_interaction(&mut vm), s.join1);
+
+    // Back to the choice and re-pick the same option: the future is kept.
+    let p = vm.rollback(2).unwrap();
+    assert_eq!(shown_node(&p), s.choice);
+    assert!(matches!(p.interaction, Some(Interaction::Choice { .. })));
+    vm.choose(0).unwrap();
+    assert!(vm.can_roll_forward());
+    assert_eq!(next_interaction(&mut vm), s.a_line);
+
+    // Back again, pick the other option: the A branch is gone.
+    vm.rollback(1).unwrap();
+    vm.choose(1).unwrap();
+    assert!(!vm.can_roll_forward());
+    assert_eq!(next_interaction(&mut vm), s.b_line);
+    assert_eq!(vm.variable("v"), Some(&Value::Int(2)));
+    let lines: Vec<NodeId> = vm.backlog().iter().map(|b| b.node).collect();
+    assert_eq!(lines, [s.l1, s.l2, s.b_line]);
+    // L1, L2, choice, B line.
+    assert_eq!(vm.history_len(), 4);
+}
+
+#[test]
+fn rollback_at_the_end_reshows_the_last_line() {
+    let s = rb_story();
+    let mut vm = vm_for(s.story);
+    for _ in 0..3 {
+        next_interaction(&mut vm);
+    }
+    vm.choose(1).unwrap();
+    for _ in 0..3 {
+        next_interaction(&mut vm);
+    }
+    assert!(matches!(vm.step(), StepResult::End));
+    let p = vm.rollback(1).unwrap();
+    assert_eq!(shown_node(&p), s.join2, "the last line is on screen at End");
+    let p = vm.rollback(1).unwrap();
+    assert_eq!(shown_node(&p), s.join1);
+    // Stepping again goes through Join2 and reaches the end again.
+    assert_eq!(next_interaction(&mut vm), s.join2);
+    assert!(matches!(vm.step(), StepResult::End));
+    assert!(vm.is_finished());
+}
+
+#[test]
+fn read_set_survives_rollback() {
+    let s = rb_story();
+    let mut vm = vm_for(s.story);
+    next_interaction(&mut vm);
+    next_interaction(&mut vm);
+    vm.rollback(1).unwrap();
+    assert!(vm.is_read(s.l2));
+    let StepResult::Say { already_read, .. } = vm.step() else {
+        panic!("expected a line");
+    };
+    assert!(already_read);
+}
+
+#[test]
+fn barrier_stops_rollback() {
+    let s = rb_story();
+    let mut vm = vm_for(s.story);
+    next_interaction(&mut vm); // L1
+    vm.checkpoint_barrier();
+    next_interaction(&mut vm); // L2 (barrier)
+    next_interaction(&mut vm); // choice
+    vm.choose(0).unwrap();
+    next_interaction(&mut vm); // A line
+    assert!(vm.can_rollback());
+    let p = vm.rollback(99).unwrap();
+    assert_eq!(shown_node(&p), s.l2, "cannot go before the barrier");
+    assert!(!vm.can_rollback());
+    assert!(vm.rollback(1).is_none());
+    // The backlog marks lines before the barrier as not rollbackable.
+    let backlog = vm.backlog();
+    assert_eq!(backlog[0].node, s.l1);
+    assert_eq!(backlog[0].checkpoint, None);
+    assert!(backlog[1].checkpoint.is_some());
+}
+
+#[test]
+fn history_is_a_bounded_ring_and_zero_disables_rollback() {
+    let s = rb_story();
+    let mut vm = vm_for(s.story.clone());
+    vm.set_history_capacity(3);
+    for _ in 0..3 {
+        next_interaction(&mut vm);
+    }
+    vm.choose(0).unwrap();
+    for _ in 0..2 {
+        next_interaction(&mut vm);
+    }
+    assert_eq!(vm.history_len(), 3);
+    let p = vm.rollback(99).unwrap();
+    assert_eq!(shown_node(&p), s.choice.min(s.choice));
+    // The backlog is longer than the ring: old lines are not rollbackable.
+    let backlog = vm.backlog();
+    assert_eq!(backlog.len(), 2, "L1 and L2 (lines up to the choice)");
+    assert!(backlog.iter().all(|b| b.checkpoint.is_none()));
+
+    let mut vm = vm_for(s.story);
+    vm.set_history_capacity(0);
+    next_interaction(&mut vm);
+    next_interaction(&mut vm);
+    assert!(!vm.can_rollback());
+    assert!(vm.rollback(1).is_none());
+    assert_eq!(vm.backlog().len(), 2, "backlog works without checkpoints");
+}
+
+#[test]
+fn rollback_to_checkpoint_from_the_backlog() {
+    let s = rb_story();
+    let mut vm = vm_for(s.story);
+    for _ in 0..3 {
+        next_interaction(&mut vm);
+    }
+    vm.choose(1).unwrap();
+    next_interaction(&mut vm);
+    let backlog = vm.backlog();
+    assert_eq!(backlog.len(), 3);
+    let seq = backlog[1].checkpoint.expect("rollbackable");
+    let p = vm.rollback_to(seq).unwrap();
+    assert_eq!(shown_node(&p), s.l2);
+    assert_eq!(p.checkpoint, Some(seq));
+    // Rolled-forward lines come back to the backlog; the rest is hidden.
+    assert_eq!(vm.backlog().len(), 2);
+    assert!(vm.rollback_to(9999).is_none());
+}
+
+#[test]
+fn persistent_variables_are_separate_from_the_state() {
+    let s = rb_story();
+    let mut vm = vm_for(s.story);
+    assert_eq!(vm.persistent_vars().get("plays"), Some(&Value::Int(0)));
+    assert!(!vm.snapshot().vars.contains_key("plays"));
+    assert!(vm.snapshot().vars.contains_key("v"));
+
+    // The host store wins; wrongly typed or unknown entries are ignored.
+    let mut store = std::collections::BTreeMap::new();
+    store.insert("plays".to_owned(), Value::Int(7));
+    store.insert("ghost".to_owned(), Value::Int(1));
+    vm.set_persistent_vars(&store);
+    assert_eq!(vm.variable("plays"), Some(&Value::Int(7)));
+    assert!(!vm.persistent_vars().contains_key("ghost"));
+    store.insert("plays".to_owned(), Value::Bool(true));
+    vm.set_persistent_vars(&store);
+    assert_eq!(vm.variable("plays"), Some(&Value::Int(0)));
+
+    // SetVar writes the persistent store; snapshot/restore leave it alone.
+    store.insert("plays".to_owned(), Value::Int(7));
+    vm.set_persistent_vars(&store);
+    let snap = vm.snapshot();
+    for _ in 0..3 {
+        next_interaction(&mut vm);
+    }
+    vm.choose(0).unwrap();
+    next_interaction(&mut vm);
+    next_interaction(&mut vm); // Join1 (plays incremented before it)
+    assert_eq!(vm.variable("plays"), Some(&Value::Int(8)));
+    vm.restore(snap).unwrap();
+    assert_eq!(vm.variable("plays"), Some(&Value::Int(8)));
+    assert!(!vm.snapshot().vars.contains_key("plays"));
+}
+
+#[test]
+fn history_roundtrips_through_serialization_and_restores() {
+    let s = rb_story();
+    let mut vm = vm_for(s.story.clone());
+    for _ in 0..3 {
+        next_interaction(&mut vm);
+    }
+    vm.choose(0).unwrap();
+    next_interaction(&mut vm);
+    next_interaction(&mut vm);
+
+    let state = vm.snapshot();
+    let history = vm.history_snapshot(100, 100);
+    let text = ron::to_string(&(&state, &history)).unwrap();
+    let (state2, history2): (VmState, RollbackHistory) = ron::from_str(&text).unwrap();
+    assert_eq!(state, state2);
+    assert_eq!(history, history2);
+
+    let mut loaded = vm_for(s.story.clone());
+    loaded.restore_with_history(state2, history2).unwrap();
+    assert_eq!(loaded.presentation(), vm.presentation());
+    assert_eq!(loaded.backlog(), vm.backlog());
+    // The loaded VM can roll back exactly like the original.
+    let a = vm.rollback(1).unwrap();
+    let b = loaded.rollback(1).unwrap();
+    assert_eq!(a, b);
+    assert_eq!(shown_node(&b), s.a_line);
+
+    // A bounded snapshot keeps only the most recent entries.
+    let small = vm.history_snapshot(2, 1);
+    assert_eq!(small.checkpoints.len(), 2);
+    assert_eq!(small.backlog.len(), 1);
+
+    // Without history, a plain restore still knows what to show.
+    let mut plain = vm_for(s.story);
+    plain.restore(state).unwrap();
+    assert_eq!(shown_node(&plain.presentation()), s.join1);
+    assert!(!plain.can_rollback());
+}
+
+#[test]
+fn restore_reconciles_a_state_from_an_older_story() {
+    let s = rb_story();
+    let mut old = vm_for(s.story.clone());
+    next_interaction(&mut old);
+    let old_state = old.snapshot();
+
+    let mut newer = s.story.clone();
+    newer.variables.push(VarDecl::game("fresh", Value::Int(5)));
+    newer.assets.assets.retain(|a| a.id != s.bg); // background removed
+    let mut vm = vm_for(newer);
+    vm.restore(old_state).unwrap();
+    assert_eq!(vm.variable("fresh"), Some(&Value::Int(5)));
+    assert_eq!(vm.scene().background, None);
+    assert!(vm.scene().character(s.ana).is_some());
+    // And a state pointing to a vanished node is refused.
+    let mut broken = old.snapshot();
+    broken.pc = Some(NodeId::new());
+    assert!(matches!(vm.restore(broken), Err(VmError::UnknownNode(_))));
+    let _ = (s.l2, s.b_line, s.join2);
+}
+
+// ------------------------------------------------ randomized action sequences
+
+/// Loop-heavy story used by the fuzz test.
+fn fuzz_story() -> Story {
+    let mut b = B::new();
+    b.story.variables.push(VarDecl::game("n", Value::Int(0)));
+    b.story
+        .variables
+        .push(VarDecl::persistent("p", Value::Int(0)));
+    let (top, mid, fin) = (NodeId::new(), NodeId::new(), NodeId::new());
+    b.label(top, "top");
+    b.push(NodeKind::SetVar {
+        var: "n".into(),
+        value: Expr::binary(BinOp::Add, Expr::var("n"), Expr::Lit(Value::Int(1))),
+    });
+    b.push(NodeKind::SetVar {
+        var: "p".into(),
+        value: Expr::binary(BinOp::Add, Expr::var("p"), Expr::Lit(Value::Int(1))),
+    });
+    b.say(None, "top");
+    let again = b.option(
+        "again",
+        top,
+        Some(Expr::binary(
+            BinOp::Lt,
+            Expr::var("n"),
+            Expr::Lit(Value::Int(5)),
+        )),
+    );
+    let next = b.option("next", mid, None);
+    b.push(NodeKind::Choice {
+        options: vec![again, next],
+    });
+    b.label(mid, "mid");
+    b.say(None, "mid 1");
+    b.say(None, "mid 2");
+    let end = b.option("end", fin, None);
+    let back = b.option("back", top, None);
+    b.push(NodeKind::Choice {
+        options: vec![end, back],
+    });
+    b.label(fin, "fin");
+    b.say(None, "fin");
+    b.push(NodeKind::End);
+    b.build()
+}
+
+/// Reference model of the rollback timeline.
+#[derive(Default)]
+struct Model {
+    /// (node, chosen option) per interaction.
+    timeline: Vec<(NodeId, Option<usize>)>,
+    pos: usize,
+}
+
+impl Model {
+    fn interaction(&mut self, node: NodeId) {
+        if self.timeline.is_empty() {
+            self.timeline.push((node, None));
+            self.pos = 0;
+        } else if self.timeline.get(self.pos + 1).map(|t| t.0) == Some(node) {
+            self.pos += 1;
+        } else {
+            self.timeline.truncate(self.pos + 1);
+            self.timeline.push((node, None));
+            self.pos = self.timeline.len() - 1;
+        }
+    }
+
+    fn chose(&mut self, index: usize) {
+        if self.timeline[self.pos].1 != Some(index) {
+            self.timeline.truncate(self.pos + 1);
+            self.timeline[self.pos].1 = Some(index);
+        }
+    }
+}
+
+#[test]
+fn random_action_sequences_keep_invariants() {
+    let story = std::sync::Arc::new(fuzz_story());
+    for seed in 0..300u64 {
+        let mut rng = crate::Rng::new(seed);
+        let mut vm = Vm::from_start(story.clone()).unwrap();
+        let mut model = Model::default();
+        let mut ahead = false;
+        let mut saves: Vec<(VmState, RollbackHistory)> = Vec::new();
+        for _ in 0..150 {
+            let op = rng.next_u64() % 8;
+            let repeated = matches!(vm.snapshot().pending, Pending::Choice { .. });
+            match op {
+                0..=3 => match vm.step() {
+                    // Asking again while a choice is pending changes nothing.
+                    StepResult::Choice { .. } if repeated => {}
+                    StepResult::Say { node, .. } | StepResult::Choice { node, .. } => {
+                        model.interaction(node);
+                        ahead = false;
+                    }
+                    StepResult::End => ahead = true,
+                    other => panic!("seed {seed}: {other:?}"),
+                },
+                4 => {
+                    if let Pending::Choice { visible, .. } = vm.snapshot().pending {
+                        let i = (rng.next_u64() as usize) % visible.len();
+                        vm.choose(i).unwrap();
+                        model.chose(i);
+                        ahead = true;
+                    } else {
+                        assert!(vm.choose(0).is_err());
+                    }
+                }
+                5 => {
+                    let k = 1 + (rng.next_u64() % 4) as usize;
+                    let eff = if ahead { k - 1 } else { k };
+                    let want = model.pos.saturating_sub(eff);
+                    let moved = want != model.pos || (ahead && !model.timeline.is_empty());
+                    match vm.rollback(k) {
+                        Some(p) => {
+                            assert!(moved, "seed {seed}: unexpected rollback");
+                            model.pos = want;
+                            assert_eq!(shown_node(&p), model.timeline[want].0);
+                            ahead = false;
+                        }
+                        None => assert!(!moved, "seed {seed}: rollback refused"),
+                    }
+                }
+                6 => {
+                    let k = 1 + (rng.next_u64() % 3) as usize;
+                    let want = (model.pos + k).min(model.timeline.len().saturating_sub(1));
+                    match vm.roll_forward(k) {
+                        Some(p) => {
+                            assert_ne!(want, model.pos);
+                            model.pos = want;
+                            assert_eq!(shown_node(&p), model.timeline[want].0);
+                            ahead = false;
+                        }
+                        None => assert!(want == model.pos || model.timeline.is_empty()),
+                    }
+                }
+                _ => {
+                    if saves.is_empty() || rng.next_u64().is_multiple_of(2) {
+                        saves.push((vm.snapshot(), vm.history_snapshot(50, 50)));
+                    } else {
+                        let (state, history) = &saves[(rng.next_u64() as usize) % saves.len()];
+                        vm.restore_with_history(state.clone(), history.clone())
+                            .unwrap();
+                        // The model restarts from the loaded timeline.
+                        model = Model::default();
+                        for c in &history.checkpoints {
+                            model
+                                .timeline
+                                .push((c.state.shown.as_ref().unwrap().node(), c.chosen));
+                        }
+                        model.pos = model.timeline.len().saturating_sub(1);
+                        ahead = history
+                            .checkpoints
+                            .last()
+                            .is_some_and(|c| c.state != *state);
+                    }
+                }
+            }
+            assert!(vm.history_len() <= vm.history_capacity());
+            assert!(vm.backlog().len() <= 500);
+            // A rollback is possible exactly when the model says so.
+            let possible = model.pos > 0 || (ahead && !model.timeline.is_empty());
+            assert_eq!(vm.can_rollback(), possible, "seed {seed}");
+            // Persistent variables are never part of the state.
+            assert!(!vm.snapshot().vars.contains_key("p"));
+        }
+    }
 }

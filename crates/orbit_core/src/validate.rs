@@ -713,10 +713,7 @@ mod tests {
             y: 0.0,
         });
         for _ in 0..2 {
-            s.variables.push(VarDecl {
-                name: "v".into(),
-                initial: Value::Int(0),
-            });
+            s.variables.push(VarDecl::game("v", Value::Int(0)));
         }
         let _ = ana;
         let errs = validate(&s).errors;
@@ -747,10 +744,7 @@ mod tests {
     #[test]
     fn expressions_are_typed_and_variables_checked() {
         let mut s = Story::new("t");
-        s.variables.push(VarDecl {
-            name: "n".into(),
-            initial: Value::Int(0),
-        });
+        s.variables.push(VarDecl::game("n", Value::Int(0)));
         let l = label();
         let lid = l.id;
         let bad_cond = node(NodeKind::If {

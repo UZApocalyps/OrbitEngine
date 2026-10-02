@@ -1,0 +1,1551 @@
+//! The shell: the state machine above a playthrough.
+//!
+//! Main menu, game, and the stack of screens over them (pause, save, load,
+//! preferences, history), plus everything that persists: saves and autosave,
+//! preferences, persistent variables, language. It owns the in-game UI
+//! screens and speaks to the outside world only through plain data:
+//! [`InputAction`]s in, [`Effect`]s out. No GPU is touched here (drawing only
+//! appends sprites to a scene), so the whole flow is unit tested.
+//!
+//! Screens (`stack` over the base):
+//!
+//! ```text
+//! no game:  MainMenu            [+ Load | Preferences]
+//! game:     gameplay + quick menu  [+ Pause -> Save | Load | Preferences | History]
+//! ```
+//!
+//! Escape / right click goes back one screen; on the bare game view it opens
+//! the pause menu.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use orbit_core::Story;
+use orbit_i18n::Localizer;
+use orbit_render2d::{Layer, Sprite2d, TextureId};
+use orbit_save::{
+    CaptureInfo, PersistentData, Preferences, SaveData, SaveError, SaveManager, SlotId as SaveSlot,
+    SlotState as SaveSlotState, Storage,
+};
+use orbit_ui::{
+    AUTO_DELAY_RANGE, AudioBus, Banner, CategoryView, DrawCtx, HistoryEntryView, HistoryScreen,
+    HistoryView, LanguageView, MainMenu, MainMenuView, MenuInput, PauseMenu, PauseView,
+    PreferencesScreen, PrefsView, QuickMenu, QuickMenuView, SaveLoadMode, SaveLoadScreen,
+    SaveLoadView, Screen, SkipMode as UiSkipMode, SlotCategory, SlotId as UiSlot,
+    SlotState as UiSlotState, SlotView, TEXT_SPEED_RANGE, TextTable, Texts, Theme, ToastStack,
+    UiEvent, UiInput, UiSound, tint,
+};
+use orbit_vm::Vm;
+
+use crate::director::{AudioCommand, Director, Flow};
+use crate::format::{format_timestamp, language_name, plain_text};
+use crate::game::{FlowKind, Game, InputOutcome, PlaySettings};
+use crate::input::{Hotkey, InputAction};
+use crate::stage::{CANVAS, StageState};
+
+/// Autosave rules.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutosaveConfig {
+    pub enabled: bool,
+    /// Autosave when the story enters a new scene.
+    pub on_scene_start: bool,
+    /// Also autosave every this many lines or choices (`None` = never).
+    pub every_lines: Option<u32>,
+    /// Minimum seconds between two autosaves that are not scene starts (so
+    /// that skipping does not write a save every second).
+    pub min_interval: f32,
+}
+
+impl Default for AutosaveConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            on_scene_start: true,
+            every_lines: Some(20),
+            min_interval: 5.0,
+        }
+    }
+}
+
+/// Fade of the music when leaving the game or replacing it by a loaded one.
+const LEAVE_MUSIC_FADE: f32 = 0.4;
+/// Preferences are written this long after the last change (a slider drag
+/// changes them every frame).
+const PREFS_SAVE_DELAY: f32 = 0.6;
+/// A save waits at most this long for its thumbnail.
+const CAPTURE_TIMEOUT: f32 = 4.0;
+
+/// Static settings of a shell.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ShellConfig {
+    pub save: orbit_save::SaveConfig,
+    pub autosave: AutosaveConfig,
+    /// Per language (primary subtag), UI text keys replacing the built-in
+    /// table.
+    pub ui_overrides: HashMap<String, Vec<(String, String)>>,
+    /// BCP 47 tag of the system language, if known.
+    pub system_language: Option<String>,
+    /// Minutes east of UTC.
+    pub utc_offset_minutes: i32,
+    pub fullscreen_supported: bool,
+    pub quit_supported: bool,
+    /// Take a thumbnail with each save (needs a GPU: the runtime answers the
+    /// capture requests).
+    pub capture_thumbnails: bool,
+}
+
+/// A screen over the base view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Overlay {
+    Pause,
+    Save,
+    Load,
+    Prefs,
+    History,
+}
+
+/// What the shell asks the runtime to do.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Effect {
+    Audio(AudioCommand),
+    UiSound(UiSound),
+    SetVolume(AudioBus, f32),
+    SetFullscreen(bool),
+    Quit,
+}
+
+/// A thumbnail the runtime must render (the stage as it was when the player
+/// saved) and answer with [`Shell::complete_capture`].
+#[derive(Clone, Debug)]
+pub(crate) struct CaptureRequest {
+    pub id: u64,
+    pub stage: StageState,
+}
+
+/// A PNG found in a slot, to turn into a texture.
+#[derive(Clone, Debug)]
+pub(crate) struct ThumbnailRequest {
+    pub key: ThumbKey,
+    pub png: Arc<Vec<u8>>,
+}
+
+/// Identifies a thumbnail: the slot and the save's creation time.
+pub(crate) type ThumbKey = (UiSlot, u64);
+
+enum JobStage {
+    NeedsCapture,
+    Capturing,
+    Done(Option<Vec<u8>>),
+}
+
+/// A save whose state is frozen but whose thumbnail is still on its way.
+struct SaveJob {
+    id: u64,
+    slot: SaveSlot,
+    data: Option<SaveData>,
+    stage: StageState,
+    notify: bool,
+    age: f32,
+    state: JobStage,
+}
+
+enum Thumb {
+    Requested,
+    Ready(TextureId),
+    Failed,
+}
+
+/// One slot of the lists, as read from the storage.
+struct SlotEntry {
+    id: UiSlot,
+    state: EntryState,
+}
+
+enum EntryState {
+    Empty,
+    Occupied {
+        loadable: bool,
+        created_at_ms: u64,
+        label: String,
+        preview: String,
+        png: Option<Arc<Vec<u8>>>,
+    },
+    Corrupt,
+}
+
+fn to_save_slot(id: UiSlot) -> SaveSlot {
+    match id.category {
+        SlotCategory::Manual => SaveSlot::Manual(id.index + 1),
+        SlotCategory::Auto => SaveSlot::Auto(id.index),
+        SlotCategory::Quick => SaveSlot::Quick,
+    }
+}
+
+fn to_ui_slot(slot: SaveSlot) -> UiSlot {
+    match slot {
+        SaveSlot::Manual(n) => UiSlot {
+            category: SlotCategory::Manual,
+            index: n.saturating_sub(1),
+        },
+        SaveSlot::Auto(n) => UiSlot {
+            category: SlotCategory::Auto,
+            index: n,
+        },
+        SaveSlot::Quick => UiSlot {
+            category: SlotCategory::Quick,
+            index: 0,
+        },
+    }
+}
+
+fn to_ui_skip(mode: orbit_save::SkipMode) -> UiSkipMode {
+    match mode {
+        orbit_save::SkipMode::ReadOnly => UiSkipMode::ReadOnly,
+        orbit_save::SkipMode::All => UiSkipMode::All,
+    }
+}
+
+fn from_ui_skip(mode: UiSkipMode) -> orbit_save::SkipMode {
+    match mode {
+        UiSkipMode::ReadOnly => orbit_save::SkipMode::ReadOnly,
+        UiSkipMode::All => orbit_save::SkipMode::All,
+    }
+}
+
+pub(crate) struct Shell {
+    story: Arc<Story>,
+    theme: Theme,
+    cfg: ShellConfig,
+    saves: SaveManager,
+    loc: Arc<Localizer>,
+    texts: Texts,
+    prefs: Preferences,
+    prefs_timer: Option<f32>,
+    persistent: PersistentData,
+
+    main: MainMenu,
+    pause: PauseMenu,
+    save_screen: SaveLoadScreen,
+    load_screen: SaveLoadScreen,
+    prefs_screen: PreferencesScreen,
+    history: HistoryScreen,
+    quick: QuickMenu,
+    toasts: ToastStack,
+    end_banner: Option<Banner>,
+    menu_background: Option<TextureId>,
+
+    stack: Vec<Overlay>,
+    game: Option<Game>,
+    failure: Option<String>,
+    play_time: f32,
+    now_ms: u64,
+    can_continue: bool,
+    quick_exists: bool,
+    end_handled: bool,
+
+    last_progress: u64,
+    last_scene: Option<usize>,
+    lines_since_autosave: u32,
+    autosave_cooldown: f32,
+
+    jobs: Vec<SaveJob>,
+    next_job: u64,
+    slots: Vec<SlotEntry>,
+    thumbs: HashMap<ThumbKey, Thumb>,
+    stale_textures: Vec<TextureId>,
+    views_dirty: bool,
+
+    effects: Vec<Effect>,
+}
+
+fn make_texts(language: &str, overrides: &HashMap<String, Vec<(String, String)>>) -> Texts {
+    let mut table = TextTable::builtin(language);
+    let primary = language
+        .split(['-', '_'])
+        .next()
+        .unwrap_or(language)
+        .to_ascii_lowercase();
+    if let Some(pairs) = overrides.get(&primary) {
+        for (key, text) in pairs {
+            table.insert(key.clone(), text.clone());
+        }
+    }
+    Texts::new(Arc::new(table))
+}
+
+impl Shell {
+    /// Builds the shell for `story`: loads preferences and persistent data
+    /// from `storage` (damaged files fall back to defaults), picks the
+    /// language and creates the screens, the main menu on top.
+    pub fn new(
+        story: Arc<Story>,
+        storage: Box<dyn Storage>,
+        mut loc: Localizer,
+        theme: Theme,
+        cfg: ShellConfig,
+    ) -> Self {
+        let saves = SaveManager::new(storage, story.clone(), cfg.save);
+        let prefs = saves.load_prefs().unwrap_or_else(|err| {
+            log::warn!("preferences unreadable, using defaults: {err}");
+            Preferences::default()
+        });
+        let persistent = saves.load_persistent().unwrap_or_else(|err| {
+            log::warn!("persistent data unreadable, starting empty: {err}");
+            PersistentData::default()
+        });
+        Self::pick_language(&mut loc, &prefs, cfg.system_language.as_deref());
+        let texts = make_texts(loc.language(), &cfg.ui_overrides);
+        let loc = Arc::new(loc);
+
+        let mut shell = Self {
+            main: MainMenu::new(
+                &theme,
+                &texts,
+                MainMenuView {
+                    title: story.title.clone(),
+                    subtitle: None,
+                    background: None,
+                    can_continue: false,
+                    show_quit: cfg.quit_supported,
+                },
+            ),
+            pause: PauseMenu::new(
+                &theme,
+                &texts,
+                PauseView {
+                    can_save: false,
+                    show_quit: cfg.quit_supported,
+                },
+            ),
+            save_screen: SaveLoadScreen::new(
+                &theme,
+                &texts,
+                SaveLoadView {
+                    mode: SaveLoadMode::Save,
+                    categories: Vec::new(),
+                },
+            ),
+            load_screen: SaveLoadScreen::new(
+                &theme,
+                &texts,
+                SaveLoadView {
+                    mode: SaveLoadMode::Load,
+                    categories: Vec::new(),
+                },
+            ),
+            prefs_screen: PreferencesScreen::new(&theme, &texts, PrefsView::default()),
+            history: HistoryScreen::new(&theme, &texts, HistoryView::default()),
+            quick: QuickMenu::new(&theme, &texts, QuickMenuView::default()),
+            toasts: ToastStack::new(&theme),
+            story,
+            theme,
+            cfg,
+            saves,
+            loc,
+            texts,
+            prefs,
+            prefs_timer: None,
+            persistent,
+            end_banner: None,
+            menu_background: None,
+            stack: Vec::new(),
+            game: None,
+            failure: None,
+            play_time: 0.0,
+            now_ms: 0,
+            can_continue: false,
+            quick_exists: false,
+            end_handled: false,
+            last_progress: 0,
+            last_scene: None,
+            lines_since_autosave: 0,
+            autosave_cooldown: 0.0,
+            jobs: Vec::new(),
+            next_job: 0,
+            slots: Vec::new(),
+            thumbs: HashMap::new(),
+            stale_textures: Vec::new(),
+            views_dirty: false,
+            effects: Vec::new(),
+        };
+        shell.apply_prefs_effects();
+        shell.refresh_slots();
+        shell.refresh_main_menu();
+        shell
+    }
+
+    /// Initial language: the saved preference, else the system language,
+    /// else the story's source language.
+    fn pick_language(loc: &mut Localizer, prefs: &Preferences, system: Option<&str>) {
+        let chosen = prefs
+            .language
+            .as_deref()
+            .and_then(|l| loc.resolve_language(l))
+            .or_else(|| system.and_then(|l| loc.resolve_language(l)));
+        if let Some(tag) = chosen {
+            loc.set_language(&tag);
+        }
+    }
+
+    // ------------------------------------------------------------ accessors
+
+    pub fn texts(&self) -> &Texts {
+        &self.texts
+    }
+
+    pub fn story(&self) -> &Arc<Story> {
+        &self.story
+    }
+
+    pub fn language(&self) -> &str {
+        self.loc.language()
+    }
+
+    #[cfg(test)]
+    pub fn prefs(&self) -> &Preferences {
+        &self.prefs
+    }
+
+    #[cfg(test)]
+    pub fn saves(&self) -> &SaveManager {
+        &self.saves
+    }
+
+    #[cfg(test)]
+    pub fn has_game(&self) -> bool {
+        self.game.is_some()
+    }
+
+    pub fn game(&self) -> Option<&Game> {
+        self.game.as_ref()
+    }
+
+    pub fn top(&self) -> Option<Overlay> {
+        self.stack.last().copied()
+    }
+
+    pub fn failure(&self) -> Option<&str> {
+        self.failure.as_deref()
+    }
+
+    #[cfg(test)]
+    pub fn can_continue(&self) -> bool {
+        self.can_continue
+    }
+
+    /// Wall clock, set by the runtime before each update (the shell never
+    /// reads a clock).
+    pub fn set_now(&mut self, unix_ms: u64) {
+        self.now_ms = unix_ms;
+    }
+
+    pub fn take_effects(&mut self) -> Vec<Effect> {
+        std::mem::take(&mut self.effects)
+    }
+
+    /// Image behind the main menu.
+    pub fn set_menu_background(&mut self, texture: Option<TextureId>) {
+        self.menu_background = texture;
+        self.refresh_main_menu();
+    }
+
+    fn toast_key(&mut self, key: &str) {
+        let text = self.texts.get(key);
+        self.toasts.push(text);
+    }
+
+    /// The storage fell back to memory: saves will not survive the session.
+    pub fn warn_storage_unavailable(&mut self) {
+        self.toast_key("ui.toast.storage_unavailable");
+    }
+
+    // ------------------------------------------------------------ game flow
+
+    fn play_settings(&self) -> PlaySettings {
+        PlaySettings {
+            text_speed: self.prefs.text_speed,
+            auto_delay: self.prefs.auto_delay,
+            skip_all: self.prefs.skip_mode == orbit_save::SkipMode::All,
+        }
+    }
+
+    /// A VM at the start of the story with the persistent data applied.
+    fn fresh_vm(&self) -> Result<Vm, String> {
+        let mut vm = Vm::from_start(self.story.clone()).map_err(|e| e.to_string())?;
+        self.persistent.apply_to(&mut vm);
+        Ok(vm)
+    }
+
+    fn install_game(&mut self, director: Director) {
+        let settings = self.play_settings();
+        self.game = Some(Game::new(
+            self.story.clone(),
+            director,
+            &self.theme,
+            settings,
+        ));
+        self.stack.clear();
+        self.end_handled = false;
+        self.autosave_cooldown = 0.0;
+        self.lines_since_autosave = 0;
+        self.pump_audio();
+        self.sync_pause_view();
+    }
+
+    /// Starts the story from its beginning.
+    pub fn start_new_game(&mut self) {
+        self.leave_music();
+        let vm = match self.fresh_vm() {
+            Ok(vm) => vm,
+            Err(message) => {
+                self.failure = Some(message);
+                return;
+            }
+        };
+        let director = Director::with_localizer(vm, self.loc.clone());
+        self.install_game(director);
+        self.play_time = 0.0;
+        // The first line starts the first scene: autosave there.
+        self.last_progress = 0;
+        self.last_scene = None;
+    }
+
+    fn leave_music(&mut self) {
+        if self.game.is_some() {
+            self.effects.push(Effect::Audio(AudioCommand::StopMusic {
+                fade_out: LEAVE_MUSIC_FADE,
+            }));
+        }
+    }
+
+    /// Loads a slot into a fresh playthrough. Failures become toasts and
+    /// leave the current state alone.
+    fn load_slot(&mut self, slot: SaveSlot) -> bool {
+        let loaded = match self.saves.load(slot) {
+            Ok(loaded) => loaded,
+            Err(err) => {
+                self.report_load_error(&err);
+                return false;
+            }
+        };
+        let mut vm = match self.fresh_vm() {
+            Ok(vm) => vm,
+            Err(message) => {
+                log::error!("cannot start a playthrough to load {slot}: {message}");
+                self.toast_key("ui.toast.load_failed");
+                return false;
+            }
+        };
+        // Persistent data first: the save only holds playthrough variables.
+        if let Err(err) = loaded.data.apply_to(&mut vm) {
+            log::warn!("{slot} cannot be applied: {err}");
+            self.toast_key("ui.toast.incompatible");
+            return false;
+        }
+        self.leave_music();
+        let director = Director::resumed(vm, self.loc.clone());
+        self.install_game(director);
+        self.play_time = loaded.data.meta.play_time_secs as f32;
+        // Loading must not autosave the line it lands on.
+        self.last_progress = self.game.as_ref().map_or(0, |g| g.director.progress());
+        self.last_scene = self.current_scene();
+        self.toast_key("ui.toast.loaded");
+        true
+    }
+
+    fn report_load_error(&mut self, err: &SaveError) {
+        log::warn!("load failed: {err}");
+        match err {
+            SaveError::Corrupt(_) => self.toast_key("ui.toast.corrupt"),
+            SaveError::Incompatible(_) => self.toast_key("ui.toast.incompatible"),
+            SaveError::NotFound(_) => self.toast_key("ui.toast.nothing_to_load"),
+            _ => self.toast_key("ui.toast.load_failed"),
+        }
+    }
+
+    /// "Continue": the most recent loadable save.
+    fn continue_game(&mut self) {
+        match self.saves.latest() {
+            Ok(Some((slot, _))) => {
+                self.load_slot(slot);
+            }
+            Ok(None) => self.toast_key("ui.toast.nothing_to_load"),
+            Err(err) => self.report_load_error(&err),
+        }
+    }
+
+    /// Back to the main menu (game over, or the player's choice).
+    fn leave_game(&mut self) {
+        self.flush_persistent();
+        self.leave_music();
+        self.game = None;
+        self.stack.clear();
+        self.refresh_slots();
+        self.refresh_main_menu();
+    }
+
+    /// Saves what must survive the process: persistent data, preferences, and
+    /// a last autosave of a running game. Call when the window closes.
+    pub fn on_exit(&mut self) {
+        if self.game.is_some()
+            && self.can_save()
+            && let Some(data) = self.capture(SaveSlot::Auto(0), false).and_then(|j| j.data)
+        {
+            self.write_job(data, SaveSlot::Auto(0), false, None);
+        }
+        self.flush_persistent();
+        self.flush_prefs();
+    }
+
+    fn current_scene(&self) -> Option<usize> {
+        let node = self.game.as_ref()?.director.shown()?.node();
+        self.story.locate(node).map(|(scene, _)| scene)
+    }
+
+    /// Persistent variables and read lines of the running game, to disk.
+    fn flush_persistent(&mut self) {
+        if let Some(game) = &self.game {
+            self.persistent = PersistentData::from_vm(game.director.vm());
+        }
+        if let Err(err) = self.saves.save_persistent(&self.persistent) {
+            log::warn!("cannot save persistent data: {err}");
+        }
+    }
+
+    fn flush_prefs(&mut self) {
+        self.prefs_timer = None;
+        if let Err(err) = self.saves.save_prefs(&self.prefs) {
+            log::warn!("cannot save preferences: {err}");
+        }
+    }
+
+    fn mark_prefs_dirty(&mut self) {
+        self.prefs_timer = Some(PREFS_SAVE_DELAY);
+    }
+
+    // ----------------------------------------------------------------- saves
+
+    fn can_save(&self) -> bool {
+        self.game
+            .as_ref()
+            .is_some_and(|g| g.director.shown().is_some())
+    }
+
+    /// Freezes the current progress into a save job.
+    fn capture(&self, slot: SaveSlot, notify: bool) -> Option<SaveJob> {
+        let game = self.game.as_ref()?;
+        let vm = game.director.vm();
+        let preview = vm
+            .backlog()
+            .last()
+            .map(|item| plain_text(self.loc.text(item.string_id)));
+        let info = CaptureInfo {
+            preview,
+            ..CaptureInfo::new(self.now_ms, self.play_time as u64)
+        };
+        Some(SaveJob {
+            id: 0,
+            slot,
+            data: Some(SaveData::capture(vm, info)),
+            stage: game.director.stage().clone(),
+            notify,
+            age: 0.0,
+            state: JobStage::Done(None),
+        })
+    }
+
+    /// Saves to `slot`: the state is frozen now, written once the thumbnail
+    /// (if any) is ready.
+    fn request_save(&mut self, slot: SaveSlot, notify: bool) {
+        if !self.can_save() {
+            return;
+        }
+        let Some(mut job) = self.capture(slot, notify) else {
+            return;
+        };
+        job.id = self.next_job;
+        self.next_job += 1;
+        job.state = if self.cfg.capture_thumbnails {
+            JobStage::NeedsCapture
+        } else {
+            JobStage::Done(None)
+        };
+        self.jobs.push(job);
+        self.finish_jobs();
+    }
+
+    /// Thumbnails the runtime has to render now.
+    pub fn take_capture_requests(&mut self) -> Vec<CaptureRequest> {
+        self.jobs
+            .iter_mut()
+            .filter(|j| matches!(j.state, JobStage::NeedsCapture))
+            .map(|job| {
+                job.state = JobStage::Capturing;
+                CaptureRequest {
+                    id: job.id,
+                    stage: job.stage.clone(),
+                }
+            })
+            .collect()
+    }
+
+    /// The runtime's answer to a [`CaptureRequest`] (`None` = no thumbnail).
+    pub fn complete_capture(&mut self, id: u64, png: Option<Vec<u8>>) {
+        if let Some(job) = self.jobs.iter_mut().find(|j| j.id == id) {
+            job.state = JobStage::Done(png);
+        }
+        self.finish_jobs();
+    }
+
+    /// Writes the jobs that are done (or that waited too long).
+    fn finish_jobs(&mut self) {
+        let mut jobs = std::mem::take(&mut self.jobs);
+        jobs.retain_mut(|job| {
+            let thumb = match &mut job.state {
+                JobStage::Done(png) => png.take(),
+                _ if job.age >= CAPTURE_TIMEOUT => {
+                    log::warn!("thumbnail timed out: saving without it");
+                    None
+                }
+                _ => return true,
+            };
+            if let Some(data) = job.data.take() {
+                self.write_job(data, job.slot, job.notify, thumb);
+            }
+            false
+        });
+        // `write_job` never adds jobs, but keep anything queued meanwhile.
+        jobs.append(&mut self.jobs);
+        self.jobs = jobs;
+    }
+
+    fn write_job(
+        &mut self,
+        mut data: SaveData,
+        slot: SaveSlot,
+        notify: bool,
+        thumbnail: Option<Vec<u8>>,
+    ) {
+        data.meta.thumbnail = thumbnail;
+        let result = match slot {
+            SaveSlot::Auto(_) => self.saves.autosave(&data),
+            SaveSlot::Quick => self.saves.quicksave(&data),
+            SaveSlot::Manual(_) => self.saves.save(slot, &data),
+        };
+        match result {
+            Ok(()) => {
+                if notify {
+                    self.toast_key(if slot == SaveSlot::Quick {
+                        "ui.toast.quick_saved"
+                    } else {
+                        "ui.toast.saved"
+                    });
+                }
+                self.flush_persistent();
+                self.refresh_slots();
+                self.refresh_main_menu();
+            }
+            Err(err) => {
+                log::error!("saving {slot} failed: {err}");
+                self.toast_key("ui.toast.save_failed");
+            }
+        }
+    }
+
+    // ----------------------------------------------------------- slot lists
+
+    /// Re-reads the slots from the storage.
+    fn refresh_slots(&mut self) {
+        let list = self.saves.list().unwrap_or_else(|err| {
+            log::warn!("cannot list the saves: {err}");
+            Vec::new()
+        });
+        self.can_continue = false;
+        self.quick_exists = false;
+        let mut newest = 0;
+        let mut slots = Vec::with_capacity(list.len());
+        for info in list {
+            let id = to_ui_slot(info.slot);
+            let state = match info.state {
+                SaveSlotState::Empty => EntryState::Empty,
+                SaveSlotState::Corrupt(_) => EntryState::Corrupt,
+                SaveSlotState::Occupied { meta, compat } => {
+                    let loadable = compat.is_loadable();
+                    if loadable {
+                        if info.slot == SaveSlot::Quick {
+                            self.quick_exists = true;
+                        }
+                        if !self.can_continue || meta.created_at_ms > newest {
+                            newest = meta.created_at_ms;
+                        }
+                        self.can_continue = true;
+                    }
+                    EntryState::Occupied {
+                        loadable,
+                        created_at_ms: meta.created_at_ms,
+                        label: meta.label.clone(),
+                        preview: plain_text(&meta.preview),
+                        png: meta.thumbnail.map(Arc::new),
+                    }
+                }
+            };
+            slots.push(SlotEntry { id, state });
+        }
+        self.slots = slots;
+        // Forget the thumbnails of saves that no longer exist.
+        let alive: Vec<ThumbKey> = self
+            .slots
+            .iter()
+            .filter_map(|s| match &s.state {
+                EntryState::Occupied {
+                    created_at_ms,
+                    png: Some(_),
+                    ..
+                } => Some((s.id, *created_at_ms)),
+                _ => None,
+            })
+            .collect();
+        let stale: Vec<ThumbKey> = self
+            .thumbs
+            .keys()
+            .filter(|k| !alive.contains(k))
+            .copied()
+            .collect();
+        for key in stale {
+            if let Some(Thumb::Ready(texture)) = self.thumbs.remove(&key) {
+                self.stale_textures.push(texture);
+            }
+        }
+        self.views_dirty = true;
+    }
+
+    /// PNGs that still have to become textures.
+    pub fn take_thumbnail_requests(&mut self) -> Vec<ThumbnailRequest> {
+        let mut out = Vec::new();
+        for slot in &self.slots {
+            let EntryState::Occupied {
+                created_at_ms,
+                png: Some(png),
+                ..
+            } = &slot.state
+            else {
+                continue;
+            };
+            let key = (slot.id, *created_at_ms);
+            if let std::collections::hash_map::Entry::Vacant(v) = self.thumbs.entry(key) {
+                v.insert(Thumb::Requested);
+                out.push(ThumbnailRequest {
+                    key,
+                    png: png.clone(),
+                });
+            }
+        }
+        out
+    }
+
+    /// The runtime's answer to a [`ThumbnailRequest`].
+    pub fn set_thumbnail(&mut self, key: ThumbKey, texture: Option<TextureId>) {
+        if !self.thumbs.contains_key(&key) {
+            // The slot changed meanwhile: the texture is already useless.
+            self.stale_textures.extend(texture);
+            return;
+        }
+        self.thumbs
+            .insert(key, texture.map_or(Thumb::Failed, Thumb::Ready));
+        self.views_dirty = true;
+    }
+
+    /// Textures of vanished saves, to release.
+    pub fn take_stale_textures(&mut self) -> Vec<TextureId> {
+        std::mem::take(&mut self.stale_textures)
+    }
+
+    fn slot_view(&self, entry: &SlotEntry) -> SlotView {
+        match &entry.state {
+            EntryState::Empty => SlotView::empty(entry.id),
+            EntryState::Corrupt => SlotView {
+                id: entry.id,
+                state: UiSlotState::Used,
+                thumbnail: None,
+                timestamp: "\u{2014}".into(),
+                preview: self.texts.get("ui.toast.corrupt"),
+            },
+            EntryState::Occupied {
+                loadable,
+                created_at_ms,
+                label,
+                preview,
+                ..
+            } => {
+                let mut timestamp = format_timestamp(*created_at_ms, self.cfg.utc_offset_minutes);
+                if !label.is_empty() {
+                    timestamp.push_str("  \u{b7}  ");
+                    timestamp.push_str(label);
+                }
+                let thumbnail = match self.thumbs.get(&(entry.id, *created_at_ms)) {
+                    Some(Thumb::Ready(texture)) => Some(*texture),
+                    _ => None,
+                };
+                SlotView {
+                    id: entry.id,
+                    state: if *loadable {
+                        UiSlotState::Used
+                    } else {
+                        UiSlotState::Incompatible
+                    },
+                    thumbnail,
+                    timestamp,
+                    preview: preview.clone(),
+                }
+            }
+        }
+    }
+
+    fn category_views(&self) -> Vec<CategoryView> {
+        [
+            SlotCategory::Manual,
+            SlotCategory::Auto,
+            SlotCategory::Quick,
+        ]
+        .into_iter()
+        .map(|category| CategoryView {
+            category,
+            slots: self
+                .slots
+                .iter()
+                .filter(|s| s.id.category == category)
+                .map(|s| self.slot_view(s))
+                .collect(),
+        })
+        .collect()
+    }
+
+    fn rebuild_save_views(&mut self) {
+        let categories = self.category_views();
+        self.save_screen.set_view(SaveLoadView {
+            mode: SaveLoadMode::Save,
+            categories: categories.clone(),
+        });
+        self.load_screen.set_view(SaveLoadView {
+            mode: SaveLoadMode::Load,
+            categories,
+        });
+        self.views_dirty = false;
+    }
+
+    fn refresh_main_menu(&mut self) {
+        self.main.set_view(MainMenuView {
+            title: self.story.title.clone(),
+            subtitle: None,
+            background: self.menu_background,
+            can_continue: self.can_continue,
+            show_quit: self.cfg.quit_supported,
+        });
+    }
+
+    fn sync_pause_view(&mut self) {
+        self.pause.set_view(PauseView {
+            can_save: self.can_save(),
+            show_quit: self.cfg.quit_supported,
+        });
+    }
+
+    // ------------------------------------------------------------- history
+
+    fn history_view(&self) -> HistoryView {
+        let Some(game) = &self.game else {
+            return HistoryView::default();
+        };
+        let director = &game.director;
+        let entries = director
+            .vm()
+            .backlog()
+            .into_iter()
+            .map(|item| HistoryEntryView {
+                id: item.checkpoint.unwrap_or(0) as usize,
+                speaker: item.speaker.and_then(|id| director.speaker(id)),
+                text: plain_text(self.loc.text(item.string_id)),
+                can_rollback: item.checkpoint.is_some(),
+            })
+            .collect();
+        HistoryView { entries }
+    }
+
+    // ---------------------------------------------------------- preferences
+
+    fn prefs_view(&self) -> PrefsView {
+        let v = &self.prefs.volumes;
+        PrefsView {
+            master: v.master,
+            music: v.music,
+            sfx: v.sfx,
+            voice: v.voice,
+            text_speed: self
+                .prefs
+                .text_speed
+                .clamp(TEXT_SPEED_RANGE[0], TEXT_SPEED_RANGE[1]),
+            auto_delay: self
+                .prefs
+                .auto_delay
+                .clamp(AUTO_DELAY_RANGE[0], AUTO_DELAY_RANGE[1]),
+            skip_mode: to_ui_skip(self.prefs.skip_mode),
+            fullscreen: self
+                .cfg
+                .fullscreen_supported
+                .then_some(self.prefs.fullscreen),
+            languages: self
+                .loc
+                .languages()
+                .into_iter()
+                .map(|l| LanguageView {
+                    name: language_name(&l.code, &l.name),
+                    code: l.code,
+                })
+                .collect(),
+            language: self.loc.language().to_owned(),
+        }
+    }
+
+    /// Pushes every preference to the places that apply it.
+    fn apply_prefs_effects(&mut self) {
+        let v = self.prefs.volumes;
+        self.effects.extend([
+            Effect::SetVolume(AudioBus::Master, v.master),
+            Effect::SetVolume(AudioBus::Music, v.music),
+            Effect::SetVolume(AudioBus::Sfx, v.sfx),
+            Effect::SetVolume(AudioBus::Voice, v.voice),
+        ]);
+        if self.cfg.fullscreen_supported {
+            self.effects
+                .push(Effect::SetFullscreen(self.prefs.fullscreen));
+        }
+        self.apply_play_settings();
+    }
+
+    fn apply_play_settings(&mut self) {
+        let settings = self.play_settings();
+        if let Some(game) = &mut self.game {
+            game.set_settings(settings, &self.theme);
+        }
+    }
+
+    fn set_language(&mut self, code: &str) {
+        let mut loc = (*self.loc).clone();
+        if !loc.set_language(code) {
+            return;
+        }
+        self.prefs.language = Some(loc.language().to_owned());
+        self.mark_prefs_dirty();
+        self.install_language(Arc::new(loc));
+    }
+
+    /// Re-translates every text after the language changed.
+    fn install_language(&mut self, loc: Arc<Localizer>) {
+        self.loc = loc;
+        self.texts = make_texts(self.loc.language(), &self.cfg.ui_overrides);
+        let texts = self.texts.clone();
+        self.main.set_texts(&texts);
+        self.pause.set_texts(&texts);
+        self.save_screen.set_texts(&texts);
+        self.load_screen.set_texts(&texts);
+        self.prefs_screen.set_texts(&texts);
+        self.history.set_texts(&texts);
+        self.quick.set_texts(&texts);
+        self.end_banner = None;
+        if let Some(game) = &mut self.game {
+            game.set_localizer(self.loc.clone(), &self.theme);
+        }
+        self.prefs_screen.set_view(self.prefs_view());
+        self.history.set_view(self.history_view());
+        self.views_dirty = true;
+    }
+
+    fn reset_preferences(&mut self) {
+        self.prefs = Preferences::default();
+        let mut loc = (*self.loc).clone();
+        let source = loc.source_language().to_owned();
+        loc.set_language(&source);
+        Self::pick_language(&mut loc, &self.prefs, self.cfg.system_language.as_deref());
+        self.install_language(Arc::new(loc));
+        self.apply_prefs_effects();
+        self.prefs_screen.set_view(self.prefs_view());
+        self.mark_prefs_dirty();
+    }
+
+    // -------------------------------------------------------------- screens
+
+    fn open(&mut self, overlay: Overlay) {
+        if self.top() == Some(overlay) {
+            return;
+        }
+        match overlay {
+            Overlay::Pause => self.sync_pause_view(),
+            Overlay::Save | Overlay::Load => {
+                self.refresh_slots();
+                self.rebuild_save_views();
+            }
+            Overlay::Prefs => self.prefs_screen.set_view(self.prefs_view()),
+            Overlay::History => self.history.set_view(self.history_view()),
+        }
+        self.stack.push(overlay);
+    }
+
+    fn close_top(&mut self) {
+        if self.stack.pop() == Some(Overlay::Prefs) {
+            self.flush_prefs();
+        }
+        if self.stack.is_empty() {
+            self.refresh_main_menu();
+        }
+    }
+
+    fn screen(&mut self, overlay: Overlay) -> &mut dyn Screen {
+        match overlay {
+            Overlay::Pause => &mut self.pause,
+            Overlay::Save => &mut self.save_screen,
+            Overlay::Load => &mut self.load_screen,
+            Overlay::Prefs => &mut self.prefs_screen,
+            Overlay::History => &mut self.history,
+        }
+    }
+
+    // ---------------------------------------------------------------- events
+
+    /// Applies the events a screen reported.
+    pub fn apply_all(&mut self, events: Vec<UiEvent>) {
+        for event in events {
+            self.apply(event);
+        }
+    }
+
+    pub fn apply(&mut self, event: UiEvent) {
+        match event {
+            UiEvent::Sound(sound) => self.effects.push(Effect::UiSound(sound)),
+            UiEvent::Toast(text) => self.toasts.push(text),
+            UiEvent::StartGame => self.start_new_game(),
+            UiEvent::Continue => self.continue_game(),
+            UiEvent::OpenLoad => self.open(Overlay::Load),
+            UiEvent::OpenSave => {
+                if self.can_save() {
+                    self.open(Overlay::Save);
+                }
+            }
+            UiEvent::OpenPreferences => self.open(Overlay::Prefs),
+            UiEvent::OpenHistory => {
+                if self.game.is_some() {
+                    self.open(Overlay::History);
+                }
+            }
+            UiEvent::OpenPause => {
+                if self.game.is_some() {
+                    self.open(Overlay::Pause);
+                }
+            }
+            UiEvent::Resume => self.stack.clear(),
+            UiEvent::Back => self.close_top(),
+            UiEvent::ReturnToMainMenu => self.leave_game(),
+            UiEvent::Quit => {
+                self.on_exit();
+                self.effects.push(Effect::Quit);
+            }
+            UiEvent::Rollback => self.rollback(),
+            UiEvent::RollbackTo(id) => {
+                let theme = self.theme.clone();
+                if let Some(game) = &mut self.game
+                    && game.rollback_to(id as u64, &theme)
+                {
+                    self.stack.clear();
+                }
+            }
+            UiEvent::ToggleSkip => {
+                if let Some(game) = &mut self.game {
+                    game.toggle_skip();
+                }
+            }
+            UiEvent::ToggleAuto => {
+                if let Some(game) = &mut self.game {
+                    game.toggle_auto();
+                }
+            }
+            UiEvent::QuickSave => self.request_save(SaveSlot::Quick, true),
+            UiEvent::QuickLoad => self.quick_load(),
+            UiEvent::LoadSlot(id) => {
+                self.load_slot(to_save_slot(id));
+                self.refresh_slots();
+            }
+            UiEvent::SaveSlot(id) => self.request_save(to_save_slot(id), true),
+            UiEvent::DeleteSlot(id) => {
+                match self.saves.delete(to_save_slot(id)) {
+                    Ok(()) => self.toast_key("ui.toast.deleted"),
+                    Err(err) => {
+                        log::warn!("cannot delete {id:?}: {err}");
+                        self.toast_key("ui.toast.save_failed");
+                    }
+                }
+                self.refresh_slots();
+                self.refresh_main_menu();
+                self.rebuild_save_views();
+            }
+            UiEvent::SetVolume(bus, value) => {
+                let v = &mut self.prefs.volumes;
+                match bus {
+                    AudioBus::Master => v.master = value,
+                    AudioBus::Music => v.music = value,
+                    AudioBus::Sfx => v.sfx = value,
+                    AudioBus::Voice => v.voice = value,
+                }
+                self.effects.push(Effect::SetVolume(bus, value));
+                self.mark_prefs_dirty();
+            }
+            UiEvent::SetTextSpeed(v) => {
+                self.prefs.text_speed = v;
+                self.apply_play_settings();
+                self.mark_prefs_dirty();
+            }
+            UiEvent::SetAutoDelay(v) => {
+                self.prefs.auto_delay = v;
+                self.apply_play_settings();
+                self.mark_prefs_dirty();
+            }
+            UiEvent::SetSkipMode(mode) => {
+                self.prefs.skip_mode = from_ui_skip(mode);
+                self.apply_play_settings();
+                self.mark_prefs_dirty();
+            }
+            UiEvent::SetFullscreen(on) => {
+                self.prefs.fullscreen = on;
+                if self.cfg.fullscreen_supported {
+                    self.effects.push(Effect::SetFullscreen(on));
+                }
+                self.mark_prefs_dirty();
+            }
+            UiEvent::SetLanguage(code) => self.set_language(&code),
+            UiEvent::ResetPreferences => self.reset_preferences(),
+        }
+        self.pump_audio();
+    }
+
+    fn quick_load(&mut self) {
+        if self.quick_exists {
+            self.load_slot(SaveSlot::Quick);
+        } else {
+            self.toast_key("ui.toast.nothing_to_load");
+        }
+    }
+
+    fn rollback(&mut self) {
+        let theme = self.theme.clone();
+        if let Some(game) = &mut self.game {
+            game.rollback(&theme);
+        }
+        self.pump_audio();
+    }
+
+    fn roll_forward(&mut self) {
+        let theme = self.theme.clone();
+        if let Some(game) = &mut self.game {
+            game.roll_forward(&theme);
+        }
+        self.pump_audio();
+    }
+
+    fn pump_audio(&mut self) {
+        if let Some(game) = &mut self.game {
+            for command in game.director.take_audio() {
+                self.effects.push(Effect::Audio(command));
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------- input
+
+    pub fn input(&mut self, action: InputAction) {
+        match action {
+            InputAction::SkipHeld(held) => {
+                if let Some(game) = &mut self.game {
+                    game.set_skip_held(held);
+                }
+            }
+            InputAction::Hotkey(key) => self.hotkey(key),
+            InputAction::Number(n) => {
+                if self.top().is_none() {
+                    let theme = self.theme.clone();
+                    if let Some(game) = &mut self.game {
+                        game.menu_input(MenuInput::Number(n), &theme);
+                    }
+                }
+            }
+            InputAction::Ui(input) => self.ui_input(input),
+        }
+        self.after_input();
+    }
+
+    fn after_input(&mut self) {
+        self.pump_audio();
+        self.check_game_state();
+    }
+
+    fn hotkey(&mut self, key: Hotkey) {
+        if key == Hotkey::ToggleFullscreen {
+            if self.cfg.fullscreen_supported {
+                let on = !self.prefs.fullscreen;
+                self.apply(UiEvent::SetFullscreen(on));
+                self.prefs_screen.set_view(self.prefs_view());
+            }
+            return;
+        }
+        if self.game.is_none() || self.top().is_some() {
+            return;
+        }
+        match key {
+            Hotkey::QuickSave => self.apply(UiEvent::QuickSave),
+            Hotkey::QuickLoad => self.apply(UiEvent::QuickLoad),
+            Hotkey::History => self.apply(UiEvent::OpenHistory),
+            Hotkey::ToggleSkip => self.apply(UiEvent::ToggleSkip),
+            Hotkey::ToggleAuto => self.apply(UiEvent::ToggleAuto),
+            Hotkey::ToggleFullscreen => {}
+        }
+    }
+
+    fn ui_input(&mut self, input: UiInput) {
+        if let Some(top) = self.top() {
+            let events = self.screen(top).handle(input);
+            self.apply_all(events);
+            return;
+        }
+        if self.game.is_none() {
+            let events = self.main.handle(input);
+            self.apply_all(events);
+            return;
+        }
+        self.game_input(input);
+    }
+
+    /// Input on the bare game view (no screen on top).
+    fn game_input(&mut self, input: UiInput) {
+        let theme = self.theme.clone();
+        let mut outcome = InputOutcome::Nothing;
+        match input {
+            UiInput::PointerMove(p) => {
+                let events = self.quick.handle(input);
+                self.apply_all(events);
+                if let Some(game) = &mut self.game {
+                    game.hover(p);
+                }
+            }
+            UiInput::PointerDown(p) => {
+                // Clicks on the quick menu never advance the dialogue.
+                if self.quick.wants_pointer(p) {
+                    let events = self.quick.handle(input);
+                    self.apply_all(events);
+                } else if let Some(game) = &mut self.game {
+                    outcome = game.click(p, &theme);
+                }
+            }
+            UiInput::PointerUp(_) => {
+                let events = self.quick.handle(input);
+                self.apply_all(events);
+            }
+            UiInput::Confirm => {
+                if let Some(game) = &mut self.game {
+                    outcome = game.confirm(&theme);
+                }
+            }
+            UiInput::Cancel => self.apply(UiEvent::OpenPause),
+            UiInput::Up => {
+                if let Some(game) = &mut self.game {
+                    game.menu_input(MenuInput::Up, &theme);
+                }
+            }
+            UiInput::Down => {
+                if let Some(game) = &mut self.game {
+                    game.menu_input(MenuInput::Down, &theme);
+                }
+            }
+            UiInput::Left | UiInput::PageUp => self.rollback(),
+            UiInput::Right | UiInput::PageDown => self.roll_forward(),
+            UiInput::Scroll(dy) if dy > 0.0 => self.rollback(),
+            UiInput::Scroll(dy) if dy < 0.0 => self.roll_forward(),
+            UiInput::Scroll(_) | UiInput::Next | UiInput::Prev => {}
+        }
+        if outcome == InputOutcome::Finished {
+            self.leave_game();
+        }
+    }
+
+    // ---------------------------------------------------------------- update
+
+    /// Advances the game, the screens and the pending work by `dt` seconds.
+    pub fn update(&mut self, dt: f32) {
+        self.toasts.update(dt);
+        let top = self.top();
+        match (&self.game, top) {
+            (None, _) => self.main.update(dt),
+            (Some(_), _) => self.quick.update(dt),
+        }
+        if let Some(top) = top {
+            self.screen(top).update(dt);
+        }
+
+        if top.is_none() && self.game.is_some() {
+            self.play_time += dt;
+            let theme = self.theme.clone();
+            if let Some(game) = &mut self.game {
+                game.update(dt, &theme);
+            }
+            self.pump_audio();
+            self.check_game_state();
+            self.check_autosave(dt);
+        }
+        self.autosave_cooldown = (self.autosave_cooldown - dt).max(0.0);
+        self.sync_quick_view();
+
+        for job in &mut self.jobs {
+            job.age += dt;
+        }
+        self.finish_jobs();
+
+        if let Some(timer) = &mut self.prefs_timer {
+            *timer -= dt;
+            if *timer <= 0.0 {
+                self.flush_prefs();
+            }
+        }
+        if self.views_dirty {
+            self.rebuild_save_views();
+        }
+    }
+
+    fn sync_quick_view(&mut self) {
+        let Some(game) = &self.game else { return };
+        self.quick.set_view(QuickMenuView {
+            can_rollback: game.director.can_rollback(),
+            can_quick_load: self.quick_exists,
+            skip_active: game.skipping(),
+            auto_active: game.auto_on(),
+        });
+    }
+
+    /// Reacts to the story failing or ending.
+    fn check_game_state(&mut self) {
+        let Some(game) = &self.game else { return };
+        match game.director.flow() {
+            Flow::Failed(message) => {
+                self.failure = Some(format!("The story stopped: {message}"));
+            }
+            Flow::Ended if !self.end_handled => {
+                self.end_handled = true;
+                // The playthrough is over: its persistent progress (counters,
+                // read lines) is written now.
+                self.flush_persistent();
+            }
+            _ => {}
+        }
+    }
+
+    fn check_autosave(&mut self, _dt: f32) {
+        let cfg = self.cfg.autosave;
+        let Some(game) = &self.game else { return };
+        let progress = game.director.progress();
+        if progress == self.last_progress {
+            return;
+        }
+        self.last_progress = progress;
+        if !matches!(game.kind(), FlowKind::Say | FlowKind::Choice) {
+            return;
+        }
+        let scene = self.current_scene();
+        let new_scene = scene != self.last_scene;
+        self.last_scene = scene;
+        self.lines_since_autosave += 1;
+        if !cfg.enabled {
+            return;
+        }
+        let periodic = cfg
+            .every_lines
+            .is_some_and(|n| self.lines_since_autosave >= n.max(1))
+            && self.autosave_cooldown <= 0.0;
+        if (new_scene && cfg.on_scene_start) || periodic {
+            self.lines_since_autosave = 0;
+            self.autosave_cooldown = cfg.min_interval;
+            self.request_save(SaveSlot::Auto(0), false);
+        }
+    }
+
+    // --------------------------------------------------------------- drawing
+
+    /// Appends the UI of the current state to `ctx.scene`: the textbox or the
+    /// choices, the quick menu, the main menu, the screen on top and the
+    /// toasts. The stage itself is drawn by the runtime.
+    pub fn draw_ui(&mut self, ctx: &mut DrawCtx, show_dialogue: bool) {
+        // Full-screen screens are translucent: what they cover is not drawn,
+        // so the textbox or the menu never shows through.
+        let covered = matches!(
+            self.top(),
+            Some(Overlay::Save | Overlay::Load | Overlay::Prefs | Overlay::History)
+        );
+        match &mut self.game {
+            _ if covered => {}
+            Some(game) => {
+                if show_dialogue {
+                    match game.kind() {
+                        FlowKind::Say => game.dialogue.draw(
+                            ctx.engine,
+                            ctx.text_renderer,
+                            ctx.renderer,
+                            ctx.scene,
+                            ctx.white,
+                        ),
+                        FlowKind::Choice => {
+                            if let Some(menu) = &mut game.menu {
+                                menu.draw(
+                                    ctx.engine,
+                                    ctx.text_renderer,
+                                    ctx.renderer,
+                                    ctx.scene,
+                                    ctx.white,
+                                );
+                            }
+                        }
+                        FlowKind::Ended => self.draw_end(ctx),
+                        _ => {}
+                    }
+                }
+                self.quick.draw(ctx);
+            }
+            None => self.main.draw(ctx),
+        }
+        if let Some(top) = self.top() {
+            self.screen(top).draw(ctx);
+        }
+        self.toasts.draw(ctx);
+    }
+
+    fn draw_end(&mut self, ctx: &mut DrawCtx) {
+        let screens = &self.theme.screens;
+        ctx.scene.push(
+            Sprite2d::new(ctx.white, [0.0, 0.0], CANVAS)
+                .anchor([0.0, 0.0])
+                .layer(Layer::UI)
+                .z(-1.0)
+                .tint(tint(self.theme.choice.overlay)),
+        );
+        let size = screens.title_size * 0.7;
+        let text = self.texts.get("ui.the_end");
+        let color = screens.text_color;
+        let banner = self
+            .end_banner
+            .get_or_insert_with(|| Banner::centered(&text, size, color));
+        banner.draw(
+            ctx.engine,
+            ctx.text_renderer,
+            ctx.renderer,
+            ctx.scene,
+            CANVAS[1] * 0.5 - size * 0.675,
+            1.0,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests;

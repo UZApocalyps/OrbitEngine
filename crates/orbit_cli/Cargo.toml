@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 orbit_core.workspace = true
 orbit_vm.workspace = true
+orbit_save.workspace = true
 
 [lints]
 workspace = true

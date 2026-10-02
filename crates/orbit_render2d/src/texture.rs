@@ -146,7 +146,7 @@ impl TextureStore {
         };
         let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
         if is_target {
-            usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
+            usage |= wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
         }
         let size = wgpu::Extent3d {
             width,

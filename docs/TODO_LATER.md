@@ -2,6 +2,16 @@
 
 Idées validées mais hors des jalons en cours. À replanifier dans la roadmap le moment venu.
 
+## Moderniser le thème de base du jeu
+- Le thème par défaut d'`orbit_ui` (menus, textbox, quick menu, écrans save/load/préférences) est fonctionnel mais daté : refonte visuelle complète.
+- Pistes : coins arrondis / 9-slice, ombres douces, flou ou dégradés, animations d'apparition/survol, typographie et espacements revus, icônes, mise en page responsive (16:9, 4:3, portrait mobile).
+- Corriger au passage : quick menu qui chevauche la textbox, mesure de texte approximative (pas de clipping des ScrollList).
+- Plusieurs thèmes prêts à l'emploi sélectionnables depuis l'éditeur.
+
+## Optimisations
+- Taille du bundle web (wasm ~10 Mo : wasm-opt, features, compression) — prévu M4.
+- Profilage CPU/GPU du runtime et de l'éditeur.
+
 ## Dialogues en bulles positionnables
 - Mode d'affichage alternatif à la textbox classique : chaque réplique est rendue dans une **bulle** (style BD / conversation) plutôt que dans la boîte du bas.
 - Le créateur positionne les bulles depuis l'éditeur, sans code : par personnage (bulle ancrée au personnage, suit sa position) ou par réplique (position libre surchargée).

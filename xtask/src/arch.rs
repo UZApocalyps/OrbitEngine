@@ -1,6 +1,6 @@
 //! `cargo xtask check-arch`: architecture rules from ROADMAP 1.5 / 1.6.
 //!
-//! * `orbit_core`, `orbit_project` and `orbit_vm` must not depend (even transitively, on
+//! * `orbit_core`, `orbit_project`, `orbit_vm`, `orbit_save` and `orbit_i18n` must not depend (even transitively, on
 //!   any target) on wgpu, winit, egui or our own gfx/platform crates.
 //! * They must compile for `wasm32-unknown-unknown`.
 //! * `orbit_player` must never depend on the editor, egui or the MCP server.
@@ -9,7 +9,13 @@ use std::collections::BTreeSet;
 
 use crate::{Result, cargo, run};
 
-const CORE_CRATES: &[&str] = &["orbit_core", "orbit_project", "orbit_vm"];
+const CORE_CRATES: &[&str] = &[
+    "orbit_core",
+    "orbit_project",
+    "orbit_vm",
+    "orbit_save",
+    "orbit_i18n",
+];
 
 /// Package names (or prefixes ending with `*`) forbidden for core crates.
 const CORE_FORBIDDEN: &[&str] = &[

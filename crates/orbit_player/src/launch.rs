@@ -11,34 +11,50 @@ const DEFAULT_STORY: &str = "examples/stories/demo.ron";
 pub struct Launch {
     /// Play the hard-coded visual demo instead of a story.
     pub demo: bool,
+    /// Show the M2 UI gallery (every menu screen with fake data).
+    pub ui_gallery: bool,
     /// Story file, as given (`None` = the default demo story).
     pub story: Option<String>,
     /// Native: root the manifest's asset paths are relative to.
     pub root: Option<String>,
     /// Native: reload the story when its file changes.
     pub watch: bool,
+    /// Skip the main menu: start a new game as soon as everything is loaded.
+    pub new_game: bool,
+    /// Native: directory for saves, preferences and persistent data instead
+    /// of the per-user default.
+    pub data_dir: Option<String>,
 }
 
 impl Default for Launch {
     fn default() -> Self {
         Self {
             demo: false,
+            ui_gallery: false,
             story: None,
             root: None,
             watch: true,
+            new_game: false,
+            data_dir: None,
         }
     }
 }
 
 /// Parses the native command line (without the program name):
-/// `[story] [--story <file>] [--root <dir>] [--no-watch] [--demo]`.
+/// `[story] [--story <file>] [--root <dir>] [--no-watch] [--new-game]
+/// [--data-dir <dir>] [--demo] [--ui-gallery]`.
 pub fn parse_args(args: &[String]) -> Result<Launch, String> {
     let mut launch = Launch::default();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--demo" => launch.demo = true,
+            "--ui-gallery" => launch.ui_gallery = true,
             "--no-watch" => launch.watch = false,
+            "--new-game" => launch.new_game = true,
+            "--data-dir" => {
+                launch.data_dir = Some(iter.next().ok_or("--data-dir needs a directory")?.clone());
+            }
             "--story" => {
                 launch.story = Some(iter.next().ok_or("--story needs a file")?.clone());
             }
@@ -122,28 +138,32 @@ impl Launch {
         }
     }
 
-    /// Web: `?demo` and `?story=<path>`.
+    /// Web: `?demo`, `?ui-gallery`, `?new-game` and `?story=<path>`.
     pub fn from_query(search: &str) -> Self {
         let query = parse_query(search);
         Self {
             demo: query.iter().any(|(k, _)| k == "demo"),
+            ui_gallery: query.iter().any(|(k, _)| k == "ui-gallery"),
             story: query_param(search, "story").filter(|s| !s.is_empty()),
             root: None,
             watch: false,
+            new_game: query.iter().any(|(k, _)| k == "new-game"),
+            data_dir: None,
         }
     }
 
     /// The runtime configuration for this launch.
     pub fn runtime_config(&self) -> RuntimeConfig {
         #[cfg(target_arch = "wasm32")]
-        {
+        let mut config = {
             let story = self.story.clone().unwrap_or_else(|| DEFAULT_STORY.into());
             RuntimeConfig::new(".", story, ".", ".")
-        }
+        };
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            native_config(self, std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
-        }
+        let mut config = native_config(self, std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
+        config.auto_start = self.new_game;
+        config.data_dir = self.data_dir.clone();
+        config
     }
 }
 
@@ -225,6 +245,14 @@ mod tests {
     fn flags_are_parsed() {
         let l = parse_args(&args(&["--demo", "--no-watch", "--root", "proj"])).unwrap();
         assert!(l.demo && !l.watch);
+        let l2 = parse_args(&args(&["--new-game", "--data-dir", "saves"])).unwrap();
+        assert!(l2.new_game);
+        assert_eq!(l2.data_dir.as_deref(), Some("saves"));
+        assert!(Launch::from_query("?new-game").new_game);
+        assert!(parse_args(&args(&["--data-dir"])).is_err());
+        assert!(parse_args(&args(&["--ui-gallery"])).unwrap().ui_gallery);
+        assert!(Launch::from_query("?ui-gallery").ui_gallery);
+        assert!(!Launch::from_query("?demo").ui_gallery);
         assert_eq!(l.root.as_deref(), Some("proj"));
     }
 

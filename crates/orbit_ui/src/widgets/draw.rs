@@ -1,0 +1,426 @@
+//! Drawing: turns the laid-out widgets into sprites and text on a `Scene`.
+
+use orbit_render2d::{Layer, Renderer2d, Scene, Sprite2d, TextureId};
+use orbit_text::{DrawParams, TextAlign, TextEngine, TextRenderer};
+
+use super::Ui;
+use super::layout::LINE_HEIGHT;
+use super::node::{ButtonKind, Kind, Node, NodeId, PanelKind, TextCache, escape_markup};
+use crate::theme::{Theme, tint};
+
+/// Everything drawing needs from the host.
+pub struct DrawCtx<'a> {
+    pub engine: &'a mut TextEngine,
+    pub text_renderer: &'a mut TextRenderer,
+    pub renderer: &'a Renderer2d,
+    pub scene: &'a mut Scene,
+    pub white: TextureId,
+}
+
+struct Drawer<'a, 'b, 'c> {
+    theme: &'a Theme,
+    nodes: &'a mut Vec<Node>,
+    focus: Option<NodeId>,
+    hover: Option<NodeId>,
+    pressed: Option<NodeId>,
+    focus_visible: bool,
+    alpha: f32,
+    ctx: &'c mut DrawCtx<'b>,
+}
+
+impl Ui {
+    /// Appends every visible widget to the scene (layer `self.layer()`, the
+    /// modal one layer above).
+    pub fn draw(&mut self, ctx: &mut DrawCtx) {
+        self.ensure_layout();
+        let modal_root = self.modal.map(|(r, _, _)| r);
+        let base = self.layer;
+        let roots = self.roots.clone();
+        let mut drawer = Drawer {
+            theme: &self.theme,
+            nodes: &mut self.nodes,
+            focus: self.focus,
+            hover: self.hover,
+            pressed: self.pressed,
+            focus_visible: self.focus_visible,
+            alpha: self.alpha,
+            ctx,
+        };
+        for root in roots {
+            let layer = if Some(root) == modal_root {
+                Layer(base.0.saturating_add(1))
+            } else {
+                base
+            };
+            drawer.draw_node(root, layer);
+        }
+    }
+}
+
+impl Drawer<'_, '_, '_> {
+    fn quad(&mut self, rect: [f32; 4], color: [u8; 4], layer: Layer, z: f32) {
+        if rect[2] <= 0.0 || rect[3] <= 0.0 || color[3] == 0 {
+            return;
+        }
+        let mut t = tint(color);
+        t[3] *= self.alpha;
+        self.ctx.scene.push(
+            Sprite2d::new(self.ctx.white, [rect[0], rect[1]], [rect[2], rect[3]])
+                .anchor([0.0, 0.0])
+                .layer(layer)
+                .z(z)
+                .tint(t),
+        );
+    }
+
+    fn border(&mut self, rect: [f32; 4], width: f32, color: [u8; 4], layer: Layer, z: f32) {
+        if width <= 0.0 {
+            return;
+        }
+        let [x, y, w, h] = rect;
+        self.quad([x, y, w, width], color, layer, z);
+        self.quad([x, y + h - width, w, width], color, layer, z);
+        self.quad([x, y + width, width, h - 2.0 * width], color, layer, z);
+        self.quad(
+            [x + w - width, y + width, width, h - 2.0 * width],
+            color,
+            layer,
+            z,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn text(
+        &mut self,
+        cache: &mut TextCache,
+        markup: &str,
+        color: [u8; 4],
+        size: f32,
+        align: TextAlign,
+        rect: [f32; 4],
+        center_v: bool,
+        layer: Layer,
+    ) {
+        if markup.is_empty() || rect[2] <= 0.0 {
+            return;
+        }
+        let block = cache.block(markup, color, rect[2], size, align);
+        let y = if center_v {
+            rect[1] + (rect[3] - size * LINE_HEIGHT) * 0.5
+        } else {
+            rect[1]
+        };
+        let params = DrawParams {
+            origin: [rect[0], y],
+            layer,
+            z: 1.0,
+            alpha: self.alpha,
+            ..Default::default()
+        };
+        block.draw(
+            self.ctx.engine,
+            self.ctx.text_renderer,
+            self.ctx.renderer,
+            self.ctx.scene,
+            &params,
+        );
+    }
+
+    fn draw_node(&mut self, id: NodeId, layer: Layer) {
+        if !self.nodes[id.0].visible {
+            return;
+        }
+        let rect = self.nodes[id.0].rect;
+        let enabled = self.nodes[id.0].enabled;
+        let hot = self.hover == Some(id) || (self.focus == Some(id) && self.focus_visible);
+        let ring = self.focus == Some(id) && self.focus_visible && enabled;
+        let pressed = self.pressed == Some(id) && self.hover == Some(id);
+        let theme = self.theme;
+        let w = &theme.widgets;
+
+        // Take the node's cache out while drawing text (it is borrowed
+        // from the arena otherwise).
+        let mut cache = std::mem::take(&mut self.nodes[id.0].cache);
+        let kind = self.nodes[id.0].kind.clone();
+        match &kind {
+            Kind::Container => {}
+            Kind::Panel(PanelKind::Dim) => self.quad(rect, w.panel.dim, layer, 0.0),
+            Kind::Panel(PanelKind::Solid) => self.quad(rect, theme.screens.background, layer, 0.0),
+            Kind::Panel(PanelKind::Normal) => {
+                self.quad(rect, w.panel.background, layer, 0.0);
+                self.border(rect, w.panel.border_width, w.panel.border_color, layer, 0.2);
+            }
+            Kind::Label(l) => {
+                let size = l.size.unwrap_or(w.text_size);
+                let color = l.color.unwrap_or(if l.dim {
+                    w.dim_text_color
+                } else {
+                    w.text_color
+                });
+                let markup = if l.markup {
+                    l.text.clone()
+                } else {
+                    escape_markup(&l.text)
+                };
+                // The layout width of a label is only an estimate (no font
+                // access): a single-line label gets some room so that wide
+                // glyphs never wrap it ("Demo" must not become "Dem" / "o").
+                let mut text_rect = rect;
+                if l.lines == 1 {
+                    let extra = rect[2] * 0.75 + size * 2.0;
+                    match l.align {
+                        TextAlign::Center => text_rect[0] -= extra * 0.5,
+                        TextAlign::Right => text_rect[0] -= extra,
+                        TextAlign::Left | TextAlign::Justified => {}
+                    }
+                    text_rect[2] += extra;
+                }
+                self.text(
+                    &mut cache,
+                    &markup,
+                    color,
+                    size,
+                    l.align,
+                    text_rect,
+                    l.lines == 1,
+                    layer,
+                );
+            }
+            Kind::Button(b) => {
+                let bt = &w.button;
+                let bg = if !enabled {
+                    bt.disabled
+                } else if pressed {
+                    bt.pressed
+                } else if hot {
+                    bt.hover
+                } else if b.selected {
+                    bt.selected
+                } else {
+                    bt.normal
+                };
+                self.quad(rect, bg, layer, 0.0);
+                if b.selected && !hot && enabled {
+                    self.border(rect, 2.0, w.accent_color, layer, 0.2);
+                }
+                if ring {
+                    self.border(rect, bt.focus_width, bt.focus_color, layer, 0.4);
+                }
+                let color = if !enabled {
+                    bt.disabled_text_color
+                } else if hot {
+                    bt.hover_text_color
+                } else {
+                    bt.text_color
+                };
+                let size = match b.kind {
+                    ButtonKind::Normal => w.text_size,
+                    ButtonKind::Small => w.small_text_size,
+                };
+                let text_rect = [
+                    rect[0] + bt.padding_x * 0.5,
+                    rect[1],
+                    (rect[2] - bt.padding_x).max(1.0),
+                    rect[3],
+                ];
+                self.text(
+                    &mut cache,
+                    &escape_markup(&b.label),
+                    color,
+                    size,
+                    TextAlign::Center,
+                    text_rect,
+                    true,
+                    layer,
+                );
+            }
+            Kind::Slider { value, .. } => {
+                let c = &w.controls;
+                let track = [
+                    rect[0],
+                    rect[1] + (rect[3] - c.track_height) * 0.5,
+                    rect[2],
+                    c.track_height,
+                ];
+                self.quad(track, c.track, layer, 0.0);
+                let usable = (rect[2] - c.knob_size[0]).max(0.0);
+                let knob_x = rect[0] + usable * value;
+                self.quad(
+                    [
+                        track[0],
+                        track[1],
+                        knob_x - rect[0] + c.knob_size[0] * 0.5,
+                        track[3],
+                    ],
+                    if enabled { c.fill } else { w.button.disabled },
+                    layer,
+                    0.1,
+                );
+                let knob = [
+                    knob_x,
+                    rect[1] + (rect[3] - c.knob_size[1]) * 0.5,
+                    c.knob_size[0],
+                    c.knob_size[1],
+                ];
+                self.quad(knob, c.knob, layer, 0.3);
+                if ring {
+                    self.border(rect, w.button.focus_width, w.button.focus_color, layer, 0.4);
+                } else if hot {
+                    self.border(knob, 2.0, w.accent_color, layer, 0.4);
+                }
+            }
+            Kind::Toggle { on, label } => {
+                let c = &w.controls;
+                let bx = [
+                    rect[0],
+                    rect[1] + (rect[3] - c.toggle_size) * 0.5,
+                    c.toggle_size,
+                    c.toggle_size,
+                ];
+                self.quad(bx, c.toggle_off, layer, 0.0);
+                self.border(
+                    bx,
+                    2.0,
+                    if hot {
+                        w.accent_color
+                    } else {
+                        w.panel.border_color
+                    },
+                    layer,
+                    0.2,
+                );
+                if *on {
+                    let inset = c.toggle_size * 0.22;
+                    self.quad(
+                        [
+                            bx[0] + inset,
+                            bx[1] + inset,
+                            bx[2] - 2.0 * inset,
+                            bx[3] - 2.0 * inset,
+                        ],
+                        c.toggle_on,
+                        layer,
+                        0.3,
+                    );
+                }
+                if ring {
+                    self.border(rect, w.button.focus_width, w.button.focus_color, layer, 0.4);
+                }
+                let tr = [
+                    rect[0] + c.toggle_size + 20.0,
+                    rect[1],
+                    (rect[2] - c.toggle_size - 20.0).max(1.0),
+                    rect[3],
+                ];
+                self.text(
+                    &mut cache,
+                    &escape_markup(label),
+                    w.text_color,
+                    w.text_size,
+                    TextAlign::Left,
+                    tr,
+                    true,
+                    layer,
+                );
+            }
+            Kind::Selector { options, index } => {
+                let bt = &w.button;
+                let bg = if hot { bt.hover } else { bt.normal };
+                self.quad(rect, bg, layer, 0.0);
+                if ring {
+                    self.border(rect, bt.focus_width, bt.focus_color, layer, 0.4);
+                }
+                let color = if hot {
+                    bt.hover_text_color
+                } else {
+                    bt.text_color
+                };
+                let arrow = [rect[0], rect[1], 56.0, rect[3]];
+                let arrow_r = [rect[0] + rect[2] - 56.0, rect[1], 56.0, rect[3]];
+                let multi = options.len() > 1;
+                if multi {
+                    self.text(
+                        &mut cache,
+                        "<",
+                        w.accent_color,
+                        w.text_size,
+                        TextAlign::Center,
+                        arrow,
+                        true,
+                        layer,
+                    );
+                    self.text(
+                        &mut cache,
+                        ">",
+                        w.accent_color,
+                        w.text_size,
+                        TextAlign::Center,
+                        arrow_r,
+                        true,
+                        layer,
+                    );
+                }
+                let label = options.get(*index).map(String::as_str).unwrap_or("");
+                let tr = [rect[0] + 56.0, rect[1], (rect[2] - 112.0).max(1.0), rect[3]];
+                self.text(
+                    &mut cache,
+                    &escape_markup(label),
+                    color,
+                    w.text_size,
+                    TextAlign::Center,
+                    tr,
+                    true,
+                    layer,
+                );
+            }
+            Kind::Image { texture, uv } => {
+                if let Some(tex) = texture {
+                    let mut t = [1.0, 1.0, 1.0, self.alpha];
+                    t[3] = self.alpha;
+                    self.ctx.scene.push(
+                        Sprite2d::new(*tex, [rect[0], rect[1]], [rect[2], rect[3]])
+                            .anchor([0.0, 0.0])
+                            .layer(layer)
+                            .z(0.0)
+                            .uv(*uv)
+                            .tint(t),
+                    );
+                } else {
+                    self.quad(rect, w.button.disabled, layer, 0.0);
+                }
+            }
+            Kind::ScrollList { first, shown } => {
+                let total = self.nodes[id.0].children.len();
+                if *shown < total {
+                    let l = &w.list;
+                    let pad = self.nodes[id.0].pad;
+                    let track = [
+                        rect[0] + rect[2] - pad[0] - l.bar_width,
+                        rect[1] + pad[1],
+                        l.bar_width,
+                        (rect[3] - 2.0 * pad[1]).max(0.0),
+                    ];
+                    self.quad(track, l.bar_track, layer, 0.0);
+                    let frac = *shown as f32 / total as f32;
+                    let thumb_h = (track[3] * frac).max(24.0).min(track[3]);
+                    let span = (total - shown).max(1) as f32;
+                    let thumb_y = track[1] + (track[3] - thumb_h) * (*first as f32 / span).min(1.0);
+                    self.quad(
+                        [track[0], thumb_y, l.bar_width, thumb_h],
+                        l.bar_thumb,
+                        layer,
+                        0.1,
+                    );
+                }
+                if ring {
+                    self.border(rect, w.button.focus_width, w.button.focus_color, layer, 0.4);
+                }
+            }
+        }
+        self.nodes[id.0].cache = cache;
+        for i in 0..self.nodes[id.0].children.len() {
+            let child = self.nodes[id.0].children[i];
+            self.draw_node(child, layer);
+        }
+    }
+}

@@ -1,0 +1,947 @@
+//! Tests of the shell: no GPU, an in-memory (or temporary) storage.
+
+use orbit_core::Value;
+use orbit_save::{FileStorage, MemoryStorage};
+
+use super::*;
+use crate::director::Flow;
+
+const DEMO: &str = include_str!("../../../../examples/stories/demo.ron");
+const FR: &str = include_str!("../../../../examples/stories/i18n/demo.fr.ron");
+
+fn story() -> Arc<Story> {
+    Arc::new(Story::from_ron(DEMO).unwrap())
+}
+
+fn localizer() -> Localizer {
+    let mut loc = Localizer::from_story(&story());
+    loc.add_translation_ron(FR).unwrap();
+    loc
+}
+
+fn shell_with(storage: &MemoryStorage, cfg: ShellConfig) -> Shell {
+    Shell::new(
+        story(),
+        Box::new(storage.clone()),
+        localizer(),
+        Theme::default(),
+        cfg,
+    )
+}
+
+fn shell() -> Shell {
+    shell_with(&MemoryStorage::new(), ShellConfig::default())
+}
+
+fn ui(input: UiInput) -> InputAction {
+    InputAction::Ui(input)
+}
+
+fn slot(index: u32) -> UiSlot {
+    UiSlot {
+        category: SlotCategory::Manual,
+        index,
+    }
+}
+
+fn kind(sh: &Shell) -> FlowKind {
+    sh.game().expect("a game is running").kind()
+}
+
+/// One logical "go on": answers choices, lets timers run, reads and advances
+/// lines; then a frame passes.
+fn step(sh: &mut Shell) {
+    match kind(sh) {
+        FlowKind::Choice => sh.input(InputAction::Number(1)),
+        FlowKind::Say => {
+            sh.input(ui(UiInput::Confirm)); // completes the typewriter...
+            if kind(sh) == FlowKind::Say {
+                sh.input(ui(UiInput::Confirm)); // ...then goes on
+            }
+        }
+        FlowKind::Transition => sh.input(ui(UiInput::Confirm)),
+        _ => sh.update(0.5),
+    }
+    sh.update(0.02);
+}
+
+/// Plays until a line (not a transition) is on screen after `lines` lines.
+fn play_lines(sh: &mut Shell, lines: usize) {
+    let mut seen = 0;
+    let mut last = u64::MAX;
+    for _ in 0..2000 {
+        if kind(sh) == FlowKind::Say {
+            let generation = sh.game().unwrap().director.generation();
+            if generation != last {
+                last = generation;
+                seen += 1;
+                if seen > lines {
+                    return;
+                }
+            }
+        }
+        step(sh);
+    }
+    panic!("the story did not reach line {lines}");
+}
+
+fn current_text(sh: &Shell) -> String {
+    match sh.game().unwrap().director.flow() {
+        Flow::Say(line) => line.text.clone(),
+        other => panic!("expected a line, got {other:?}"),
+    }
+}
+
+fn play_to_end(sh: &mut Shell) {
+    for _ in 0..5000 {
+        if kind(sh) == FlowKind::Ended {
+            return;
+        }
+        step(sh);
+        sh.update(0.1);
+    }
+    panic!("the story did not end");
+}
+
+// ------------------------------------------------------- the screen machine
+
+#[test]
+fn boots_on_the_main_menu_without_a_game() {
+    let sh = shell();
+    assert!(!sh.has_game());
+    assert_eq!(sh.top(), None);
+    assert!(!sh.can_continue(), "nothing to continue yet");
+}
+
+#[test]
+fn new_game_then_escape_opens_and_closes_the_pause_menu() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    assert!(sh.has_game());
+    assert_eq!(sh.top(), None);
+    sh.input(ui(UiInput::Cancel));
+    assert_eq!(sh.top(), Some(Overlay::Pause));
+    // The pause menu turns Cancel into Resume.
+    sh.input(ui(UiInput::Cancel));
+    assert_eq!(sh.top(), None);
+}
+
+#[test]
+fn screens_stack_and_back_returns_one_level() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 1);
+    sh.apply(UiEvent::OpenPause);
+    sh.apply(UiEvent::OpenPreferences);
+    assert_eq!(sh.top(), Some(Overlay::Prefs));
+    sh.apply(UiEvent::Back);
+    assert_eq!(sh.top(), Some(Overlay::Pause));
+    sh.apply(UiEvent::OpenHistory);
+    sh.apply(UiEvent::OpenHistory); // not stacked twice
+    sh.apply(UiEvent::Back);
+    assert_eq!(sh.top(), Some(Overlay::Pause));
+    sh.apply(UiEvent::Resume);
+    assert_eq!(sh.top(), None);
+}
+
+#[test]
+fn main_menu_opens_load_and_preferences_and_goes_back() {
+    let mut sh = shell();
+    sh.apply(UiEvent::OpenLoad);
+    assert_eq!(sh.top(), Some(Overlay::Load));
+    sh.input(ui(UiInput::Cancel));
+    assert_eq!(sh.top(), None);
+    sh.apply(UiEvent::OpenPreferences);
+    assert_eq!(sh.top(), Some(Overlay::Prefs));
+    sh.apply(UiEvent::Back);
+    assert_eq!(sh.top(), None);
+    assert!(!sh.has_game());
+}
+
+#[test]
+fn game_only_screens_are_refused_on_the_main_menu() {
+    let mut sh = shell();
+    sh.apply(UiEvent::OpenPause);
+    sh.apply(UiEvent::OpenHistory);
+    sh.apply(UiEvent::OpenSave);
+    assert_eq!(sh.top(), None);
+}
+
+#[test]
+fn return_to_the_main_menu_closes_the_game_and_stops_the_music() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    sh.apply(UiEvent::OpenPause);
+    sh.take_effects();
+    sh.apply(UiEvent::ReturnToMainMenu);
+    assert!(!sh.has_game());
+    assert_eq!(sh.top(), None);
+    assert!(
+        sh.take_effects()
+            .iter()
+            .any(|e| matches!(e, Effect::Audio(AudioCommand::StopMusic { .. })))
+    );
+}
+
+#[test]
+fn quit_requests_the_host_to_close() {
+    let mut sh = shell();
+    sh.apply(UiEvent::Quit);
+    assert!(sh.take_effects().contains(&Effect::Quit));
+}
+
+#[test]
+fn the_end_screen_returns_to_the_main_menu() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    play_to_end(&mut sh);
+    assert_eq!(kind(&sh), FlowKind::Ended);
+    sh.input(ui(UiInput::Confirm));
+    assert!(!sh.has_game());
+}
+
+// ------------------------------------------------------------------ rollback
+
+#[test]
+fn wheel_and_keys_roll_back_and_forward() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 4);
+    let latest = current_text(&sh);
+    sh.input(ui(UiInput::Scroll(1.0)));
+    let before = current_text(&sh);
+    assert_ne!(before, latest);
+    assert!(sh.game().unwrap().dialogue.is_complete(), "shown whole");
+    sh.input(ui(UiInput::Left));
+    let earlier = current_text(&sh);
+    assert_ne!(earlier, before);
+    sh.input(ui(UiInput::PageUp));
+    sh.input(ui(UiInput::Scroll(-1.0)));
+    sh.input(ui(UiInput::Right));
+    sh.input(ui(UiInput::PageDown));
+    // Back to where we started after as many steps forward as back.
+    assert_eq!(current_text(&sh), latest);
+}
+
+#[test]
+fn rollback_to_the_very_first_line_stops_there() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 2);
+    for _ in 0..20 {
+        sh.input(ui(UiInput::Scroll(1.0)));
+    }
+    assert_eq!(kind(&sh), FlowKind::Say);
+    assert!(!sh.game().unwrap().director.can_rollback());
+}
+
+#[test]
+fn rollback_over_a_choice_shows_it_again() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    for _ in 0..2000 {
+        if kind(&sh) == FlowKind::Choice {
+            break;
+        }
+        step(&mut sh);
+    }
+    assert_eq!(kind(&sh), FlowKind::Choice);
+    sh.input(ui(UiInput::Scroll(1.0)));
+    assert_eq!(kind(&sh), FlowKind::Say);
+    sh.input(ui(UiInput::Scroll(-1.0)));
+    assert_eq!(kind(&sh), FlowKind::Choice);
+    assert!(sh.game().unwrap().menu.is_some());
+}
+
+#[test]
+fn history_lists_the_lines_and_rewinds_to_one() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 5);
+    let view = sh.history_view();
+    assert!(view.entries.len() >= 5, "{} entries", view.entries.len());
+    assert!(view.entries.iter().any(|e| e.speaker.is_some()));
+    assert!(view.entries.iter().all(|e| e.can_rollback));
+    let target = &view.entries[1];
+    let wanted = target.text.clone();
+    sh.apply(UiEvent::OpenPause);
+    sh.apply(UiEvent::OpenHistory);
+    sh.apply(UiEvent::RollbackTo(target.id));
+    assert_eq!(sh.top(), None, "history closes after a rewind");
+    assert_eq!(current_text(&sh), wanted);
+}
+
+#[test]
+fn history_is_localized() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 1);
+    sh.apply(UiEvent::SetLanguage("fr".into()));
+    let view = sh.history_view();
+    assert!(
+        view.entries.iter().any(|e| e.text.contains("soir")),
+        "{:?}",
+        view.entries
+    );
+}
+
+// ----------------------------------------------------------------- quick menu
+
+#[test]
+fn clicks_on_the_quick_menu_do_not_advance_the_dialogue() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 1);
+    sh.update(0.0); // builds the quick menu view
+    let generation = sh.game().unwrap().director.generation();
+    let bar = sh.quick.bar_rect();
+    // The right end of the bar is the "Menu" button.
+    let on_bar = [bar[0] + bar[2] - 12.0, bar[1] + bar[3] * 0.5];
+    sh.input(ui(UiInput::PointerMove(on_bar)));
+    sh.input(ui(UiInput::PointerDown(on_bar)));
+    sh.input(ui(UiInput::PointerUp(on_bar)));
+    assert_eq!(sh.top(), Some(Overlay::Pause), "the button was pressed");
+    assert_eq!(sh.game().unwrap().director.generation(), generation);
+    assert!(
+        !sh.game().unwrap().dialogue.is_complete(),
+        "the click did not even complete the line"
+    );
+    // A click elsewhere does.
+    sh.apply(UiEvent::Resume);
+    let elsewhere = [900.0, 300.0];
+    sh.input(ui(UiInput::PointerDown(elsewhere)));
+    assert!(sh.game().unwrap().dialogue.is_complete());
+}
+
+#[test]
+fn quick_menu_events_toggle_skip_and_auto_and_roll_back() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 3);
+    sh.apply(UiEvent::ToggleAuto);
+    assert!(sh.game().unwrap().auto_on());
+    sh.apply(UiEvent::ToggleSkip);
+    assert!(sh.game().unwrap().skip_button_on() && !sh.game().unwrap().auto_on());
+    let latest = current_text(&sh);
+    sh.apply(UiEvent::Rollback);
+    assert_ne!(current_text(&sh), latest);
+}
+
+// --------------------------------------------------------------------- saves
+
+#[test]
+fn save_then_load_restores_the_screen() {
+    let storage = MemoryStorage::new();
+    let mut a = shell_with(&storage, ShellConfig::default());
+    a.set_now(1_790_966_520_000);
+    a.apply(UiEvent::StartGame);
+    play_lines(&mut a, 6);
+    let text = current_text(&a);
+    let stage = a.game().unwrap().director.stage().clone();
+    assert!(!stage.characters.is_empty(), "someone is on stage by now");
+    a.apply(UiEvent::OpenPause);
+    a.apply(UiEvent::OpenSave);
+    a.apply(UiEvent::SaveSlot(slot(2)));
+
+    // "Restart the program" on the same storage.
+    let mut b = shell_with(&storage, ShellConfig::default());
+    assert!(b.can_continue());
+    b.apply(UiEvent::OpenLoad);
+    b.apply(UiEvent::LoadSlot(slot(2)));
+    assert!(b.has_game());
+    assert_eq!(b.top(), None, "loading closes the screens");
+    assert_eq!(current_text(&b), text);
+    assert!(b.game().unwrap().dialogue.is_complete(), "no typewriter");
+    assert_eq!(b.game().unwrap().director.stage(), &stage);
+    assert!(
+        b.game().unwrap().director.can_rollback(),
+        "history was saved"
+    );
+    // The story goes on from there.
+    b.input(ui(UiInput::Confirm));
+    b.input(ui(UiInput::Confirm));
+    assert_ne!(
+        b.game().unwrap().director.flow(),
+        &Flow::Say(crate::director::Line {
+            speaker: None,
+            text,
+            already_read: true
+        })
+    );
+}
+
+#[test]
+fn loading_restores_the_music() {
+    let storage = MemoryStorage::new();
+    let mut a = shell_with(&storage, ShellConfig::default());
+    a.apply(UiEvent::StartGame);
+    play_lines(&mut a, 3);
+    a.apply(UiEvent::QuickSave);
+    let mut b = shell_with(&storage, ShellConfig::default());
+    b.apply(UiEvent::OpenLoad);
+    b.take_effects();
+    b.apply(UiEvent::LoadSlot(UiSlot {
+        category: SlotCategory::Quick,
+        index: 0,
+    }));
+    let effects = b.take_effects();
+    assert!(
+        effects.iter().any(|e| matches!(
+            e,
+            Effect::Audio(AudioCommand::PlayMusic { looping: true, .. })
+        )),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn quicksave_and_quickload_hotkeys() {
+    let mut sh = shell();
+    sh.input(InputAction::Hotkey(Hotkey::QuickLoad)); // not in a game: ignored
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 2);
+    sh.input(InputAction::Hotkey(Hotkey::QuickLoad));
+    assert!(!sh.quick_exists, "no quicksave yet");
+    assert!(!sh.toasts.is_empty(), "a toast says so");
+    let saved = current_text(&sh);
+    sh.input(InputAction::Hotkey(Hotkey::QuickSave));
+    assert!(sh.quick_exists);
+    play_lines(&mut sh, 3);
+    assert_ne!(current_text(&sh), saved);
+    sh.input(InputAction::Hotkey(Hotkey::QuickLoad));
+    assert_eq!(current_text(&sh), saved);
+}
+
+#[test]
+fn delete_slot_empties_it() {
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 1);
+    sh.apply(UiEvent::SaveSlot(slot(0)));
+    assert!(storage.read("saves/manual_001.sav").unwrap().is_some());
+    sh.apply(UiEvent::DeleteSlot(slot(0)));
+    assert!(storage.read("saves/manual_001.sav").unwrap().is_none());
+}
+
+#[test]
+fn slot_views_show_date_preview_and_incompatibility() {
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(
+        &storage,
+        ShellConfig {
+            utc_offset_minutes: 60,
+            ..Default::default()
+        },
+    );
+    sh.set_now(1_790_966_520_000); // 2026-10-02 18:42 UTC
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 2);
+    sh.apply(UiEvent::SaveSlot(slot(4)));
+    let views = sh.category_views();
+    let manual = &views[0];
+    assert_eq!(manual.slots.len(), 20);
+    let used = &manual.slots[4];
+    assert_eq!(used.state, UiSlotState::Used);
+    assert!(
+        used.timestamp.starts_with("2026-10-02 19:42"),
+        "{}",
+        used.timestamp
+    );
+    assert!(!used.preview.is_empty());
+    assert_eq!(manual.slots[0].state, UiSlotState::Empty);
+    // Quick and autosave categories exist too.
+    assert_eq!(views[1].category, SlotCategory::Auto);
+    assert_eq!(views[2].slots.len(), 1);
+}
+
+#[test]
+fn a_corrupt_save_is_a_toast_not_a_crash() {
+    let storage = MemoryStorage::new();
+    storage.put_raw("saves/manual_001.sav", b"definitely not a save".to_vec());
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.apply(UiEvent::OpenLoad);
+    let views = sh.category_views();
+    assert_eq!(
+        views[0].slots[0].state,
+        UiSlotState::Used,
+        "listed, loadable"
+    );
+    let before = sh.toasts.len();
+    sh.apply(UiEvent::LoadSlot(slot(0)));
+    assert!(!sh.has_game());
+    assert_eq!(sh.toasts.len(), before + 1);
+    assert!(!sh.can_continue(), "a damaged save is not 'continue'");
+    // Loading an empty slot is a toast too.
+    sh.apply(UiEvent::LoadSlot(slot(7)));
+    assert!(!sh.has_game());
+    // Continue without any save: a toast.
+    sh.apply(UiEvent::Continue);
+    assert!(!sh.has_game());
+}
+
+#[test]
+fn a_failing_storage_reports_and_keeps_playing() {
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 1);
+    storage.set_fail_writes(true);
+    let before = sh.toasts.len();
+    sh.apply(UiEvent::SaveSlot(slot(0)));
+    assert_eq!(sh.toasts.len(), before + 1);
+    assert!(sh.has_game());
+    sh.update(10.0); // preferences write fails silently too
+}
+
+#[test]
+fn continue_loads_the_latest_save() {
+    let storage = MemoryStorage::new();
+    let mut a = shell_with(&storage, ShellConfig::default());
+    a.set_now(1_000);
+    a.apply(UiEvent::StartGame);
+    play_lines(&mut a, 2);
+    a.apply(UiEvent::SaveSlot(slot(0)));
+    let older = current_text(&a);
+    play_lines(&mut a, 6);
+    a.set_now(2_000);
+    a.apply(UiEvent::SaveSlot(slot(1)));
+    let newer = current_text(&a);
+    assert_ne!(older, newer);
+    let mut b = shell_with(&storage, ShellConfig::default());
+    b.apply(UiEvent::Continue);
+    assert!(b.has_game());
+    assert_eq!(current_text(&b), newer);
+}
+
+// ------------------------------------------------------------------ autosave
+
+#[test]
+fn a_new_game_autosaves_when_the_first_scene_starts() {
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.apply(UiEvent::StartGame);
+    assert!(storage.read("saves/auto_0.sav").unwrap().is_none());
+    play_lines(&mut sh, 1);
+    sh.update(0.1);
+    assert!(storage.read("saves/auto_0.sav").unwrap().is_some());
+    assert!(
+        storage.read("saves/auto_1.sav").unwrap().is_none(),
+        "one so far"
+    );
+    // ... and a fresh shell can continue from it.
+    let mut b = shell_with(&storage, ShellConfig::default());
+    assert!(b.can_continue());
+    b.apply(UiEvent::Continue);
+    assert!(b.has_game());
+}
+
+#[test]
+fn autosave_repeats_every_n_lines_and_rotates() {
+    let storage = MemoryStorage::new();
+    let cfg = ShellConfig {
+        autosave: AutosaveConfig {
+            enabled: true,
+            on_scene_start: false,
+            every_lines: Some(3),
+            min_interval: 0.0,
+        },
+        ..Default::default()
+    };
+    let mut sh = shell_with(&storage, cfg);
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 12);
+    sh.update(0.1);
+    for n in 0..3 {
+        assert!(
+            storage
+                .read(&format!("saves/auto_{n}.sav"))
+                .unwrap()
+                .is_some(),
+            "autosave {n}"
+        );
+    }
+    assert!(
+        storage.read("saves/auto_3.sav").unwrap().is_none(),
+        "only 3 are kept"
+    );
+}
+
+#[test]
+fn autosave_can_be_disabled_and_loading_does_not_autosave() {
+    let storage = MemoryStorage::new();
+    let cfg = ShellConfig {
+        autosave: AutosaveConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut sh = shell_with(&storage, cfg);
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 8);
+    sh.update(0.1);
+    assert!(storage.read("saves/auto_0.sav").unwrap().is_none());
+    sh.apply(UiEvent::SaveSlot(slot(0)));
+
+    // Loading a save must not write an autosave of the line it lands on.
+    let mut b = shell_with(&storage, ShellConfig::default());
+    b.apply(UiEvent::LoadSlot(slot(0)));
+    b.update(0.1);
+    assert!(storage.read("saves/auto_0.sav").unwrap().is_none());
+}
+
+#[test]
+fn closing_the_window_autosaves_the_running_game() {
+    let storage = MemoryStorage::new();
+    let cfg = ShellConfig {
+        autosave: AutosaveConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut sh = shell_with(&storage, cfg);
+    sh.on_exit(); // no game: nothing to save
+    assert!(storage.read("saves/auto_0.sav").unwrap().is_none());
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 3);
+    sh.on_exit();
+    assert!(storage.read("saves/auto_0.sav").unwrap().is_some());
+    assert!(storage.read("persistent.ron").unwrap().is_some());
+}
+
+// ----------------------------------------------------------------- thumbnails
+
+#[test]
+fn a_save_waits_for_its_thumbnail_then_embeds_it() {
+    let storage = MemoryStorage::new();
+    let cfg = ShellConfig {
+        capture_thumbnails: true,
+        ..Default::default()
+    };
+    let mut sh = shell_with(&storage, cfg);
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 2);
+    sh.apply(UiEvent::SaveSlot(slot(0)));
+    assert!(
+        storage.read("saves/manual_001.sav").unwrap().is_none(),
+        "not written before the capture"
+    );
+    let requests = sh.take_capture_requests();
+    // The autosave asked too; the manual save is the last request.
+    let request = requests
+        .last()
+        .expect("the manual save asked for the stage");
+    assert!(request.stage.background.is_some());
+    assert!(sh.take_capture_requests().is_empty(), "asked only once");
+    // The game moved on meanwhile: the save is the frozen moment anyway.
+    step(&mut sh);
+    sh.complete_capture(request.id, Some(vec![1, 2, 3]));
+    let bytes = storage.read("saves/manual_001.sav").unwrap().unwrap();
+    let meta = SaveData::decode_meta(&bytes).unwrap();
+    assert_eq!(meta.thumbnail.as_deref(), Some(&[1u8, 2, 3][..]));
+    // The list offers the PNG to the runtime to turn into a texture.
+    let thumbs = sh.take_thumbnail_requests();
+    assert_eq!(thumbs.len(), 1);
+    assert_eq!(thumbs[0].key.0, slot(0));
+}
+
+#[test]
+fn a_save_without_thumbnail_is_written_after_the_timeout() {
+    let storage = MemoryStorage::new();
+    let cfg = ShellConfig {
+        capture_thumbnails: true,
+        ..Default::default()
+    };
+    let mut sh = shell_with(&storage, cfg);
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 2);
+    sh.apply(UiEvent::SaveSlot(slot(0)));
+    sh.take_capture_requests(); // the runtime never answers
+    sh.update(1.0);
+    assert!(storage.read("saves/manual_001.sav").unwrap().is_none());
+    sh.update(CAPTURE_TIMEOUT);
+    let bytes = storage.read("saves/manual_001.sav").unwrap().unwrap();
+    assert!(SaveData::decode_meta(&bytes).unwrap().thumbnail.is_none());
+}
+
+// ---------------------------------------------------------------- persistent
+
+#[test]
+fn persistent_variables_are_saved_when_the_story_ends() {
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.apply(UiEvent::StartGame);
+    assert_eq!(
+        sh.game().unwrap().director.vm().variable("plays"),
+        Some(&Value::Int(0))
+    );
+    play_to_end(&mut sh);
+    sh.update(0.1);
+    let stored = sh.saves().load_persistent().unwrap();
+    assert_eq!(stored.vars.get("plays"), Some(&Value::Int(1)));
+    assert!(!stored.read_nodes.is_empty(), "read lines are kept too");
+
+    // A new playthrough, even in a new process, starts from there.
+    sh.input(ui(UiInput::Confirm)); // end screen -> main menu
+    sh.apply(UiEvent::StartGame);
+    assert_eq!(
+        sh.game().unwrap().director.vm().variable("plays"),
+        Some(&Value::Int(1))
+    );
+    let mut again = shell_with(&storage, ShellConfig::default());
+    again.apply(UiEvent::StartGame);
+    assert_eq!(
+        again.game().unwrap().director.vm().variable("plays"),
+        Some(&Value::Int(1))
+    );
+    // Lines read before count as read: the first one is skippable.
+    let Flow::Transition { .. } = again.game().unwrap().director.flow() else {
+        panic!("opening transition expected");
+    };
+    play_to_end(&mut again);
+    again.update(0.1);
+    assert_eq!(
+        again.saves().load_persistent().unwrap().vars.get("plays"),
+        Some(&Value::Int(2))
+    );
+}
+
+#[test]
+fn persistent_variables_survive_loading_a_save() {
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 2);
+    sh.apply(UiEvent::SaveSlot(slot(0)));
+    play_to_end(&mut sh); // plays -> 1
+    sh.update(0.1);
+    // Loading the old save keeps plays = 1: persistent data is not rolled back.
+    sh.apply(UiEvent::LoadSlot(slot(0)));
+    assert_eq!(
+        sh.game().unwrap().director.vm().variable("plays"),
+        Some(&Value::Int(1))
+    );
+}
+
+// --------------------------------------------------------------- preferences
+
+#[test]
+fn preferences_are_applied_and_persisted() {
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    // Startup applies the saved (default) volumes.
+    let initial = sh.take_effects();
+    assert!(
+        initial
+            .iter()
+            .filter(|e| matches!(e, Effect::SetVolume(..)))
+            .count()
+            == 4
+    );
+    sh.apply(UiEvent::SetVolume(AudioBus::Music, 0.3));
+    sh.apply(UiEvent::SetTextSpeed(90.0));
+    sh.apply(UiEvent::SetAutoDelay(4.0));
+    sh.apply(UiEvent::SetSkipMode(UiSkipMode::All));
+    assert!(
+        sh.take_effects()
+            .contains(&Effect::SetVolume(AudioBus::Music, 0.3))
+    );
+    // Not written on every change, but shortly after.
+    assert!(storage.read("prefs.ron").unwrap().is_none());
+    sh.update(PREFS_SAVE_DELAY + 0.1);
+    let again = shell_with(&storage, ShellConfig::default());
+    let p = again.prefs();
+    assert_eq!(p.volumes.music, 0.3);
+    assert_eq!(p.text_speed, 90.0);
+    assert_eq!(p.auto_delay, 4.0);
+    assert_eq!(p.skip_mode, orbit_save::SkipMode::All);
+}
+
+#[test]
+fn preferences_reach_the_running_game() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    sh.apply(UiEvent::SetSkipMode(UiSkipMode::All));
+    sh.apply(UiEvent::SetTextSpeed(0.5));
+    sh.apply(UiEvent::SetTextSpeed(120.0));
+    sh.apply(UiEvent::ToggleSkip);
+    for _ in 0..400 {
+        sh.update(0.1);
+        if kind(&sh) == FlowKind::Choice {
+            break;
+        }
+    }
+    assert_eq!(
+        kind(&sh),
+        FlowKind::Choice,
+        "skip-all read through the text"
+    );
+}
+
+#[test]
+fn closing_the_preferences_screen_writes_them() {
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.apply(UiEvent::OpenPreferences);
+    sh.apply(UiEvent::SetAutoDelay(5.0));
+    sh.apply(UiEvent::Back);
+    assert!(storage.read("prefs.ron").unwrap().is_some());
+}
+
+#[test]
+fn reset_preferences_restores_the_defaults() {
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.apply(UiEvent::SetVolume(AudioBus::Master, 0.1));
+    sh.apply(UiEvent::SetLanguage("fr".into()));
+    sh.take_effects();
+    sh.apply(UiEvent::ResetPreferences);
+    assert_eq!(sh.prefs(), &Preferences::default());
+    assert_eq!(sh.language(), "en");
+    assert!(
+        sh.take_effects()
+            .contains(&Effect::SetVolume(AudioBus::Master, 1.0))
+    );
+    assert_eq!(sh.texts().get("ui.menu.new_game"), "New Game");
+}
+
+#[test]
+fn damaged_preferences_fall_back_to_defaults() {
+    let storage = MemoryStorage::new();
+    storage.put_raw("prefs.ron", b"(((".to_vec());
+    storage.put_raw("persistent.ron", b"nope".to_vec());
+    let sh = shell_with(&storage, ShellConfig::default());
+    assert_eq!(sh.prefs(), &Preferences::default());
+}
+
+#[test]
+fn fullscreen_is_only_offered_where_supported() {
+    let mut sh = shell();
+    assert!(sh.prefs_view().fullscreen.is_none());
+    sh.input(InputAction::Hotkey(Hotkey::ToggleFullscreen));
+    assert!(!sh.take_effects().contains(&Effect::SetFullscreen(true)));
+
+    let cfg = ShellConfig {
+        fullscreen_supported: true,
+        ..Default::default()
+    };
+    let mut sh = shell_with(&MemoryStorage::new(), cfg);
+    assert_eq!(sh.prefs_view().fullscreen, Some(false));
+    sh.take_effects();
+    sh.input(InputAction::Hotkey(Hotkey::ToggleFullscreen));
+    assert!(sh.take_effects().contains(&Effect::SetFullscreen(true)));
+    assert!(sh.prefs().fullscreen);
+    sh.apply(UiEvent::SetFullscreen(false));
+    assert!(!sh.prefs().fullscreen);
+}
+
+// ---------------------------------------------------------------------- i18n
+
+#[test]
+fn language_change_translates_ui_and_the_current_line() {
+    let mut sh = shell();
+    assert_eq!(sh.language(), "en");
+    sh.apply(UiEvent::StartGame);
+    play_lines(&mut sh, 1);
+    let english = current_text(&sh);
+    sh.apply(UiEvent::SetLanguage("fr".into()));
+    assert_eq!(sh.language(), "fr");
+    assert_eq!(sh.texts().get("ui.menu.new_game"), "Nouvelle partie");
+    let french = current_text(&sh);
+    assert_ne!(english, french);
+    assert!(sh.game().unwrap().dialogue.is_complete());
+    // The speaker name is translated as well.
+    sh.apply(UiEvent::SetLanguage("en".into()));
+    assert_eq!(current_text(&sh), english);
+    // An unknown language changes nothing.
+    sh.apply(UiEvent::SetLanguage("zz".into()));
+    assert_eq!(sh.language(), "en");
+}
+
+#[test]
+fn the_language_choice_is_remembered() {
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.apply(UiEvent::SetLanguage("fr".into()));
+    sh.update(PREFS_SAVE_DELAY + 0.1);
+    let again = shell_with(&storage, ShellConfig::default());
+    assert_eq!(again.language(), "fr");
+    assert_eq!(again.texts().get("ui.menu.quit"), "Quitter");
+}
+
+#[test]
+fn initial_language_is_the_preference_then_the_system_then_the_source() {
+    let with_system = |system: Option<&str>| ShellConfig {
+        system_language: system.map(str::to_owned),
+        ..Default::default()
+    };
+    // System language, regional variant included.
+    let sh = shell_with(&MemoryStorage::new(), with_system(Some("fr-FR")));
+    assert_eq!(sh.language(), "fr");
+    // Unknown system language: the source language.
+    let sh = shell_with(&MemoryStorage::new(), with_system(Some("de-DE")));
+    assert_eq!(sh.language(), "en");
+    let sh = shell_with(&MemoryStorage::new(), with_system(None));
+    assert_eq!(sh.language(), "en");
+    // A stored preference beats the system.
+    let storage = MemoryStorage::new();
+    let mut first = shell_with(&storage, with_system(Some("fr")));
+    first.apply(UiEvent::SetLanguage("en".into()));
+    first.update(PREFS_SAVE_DELAY + 0.1);
+    let second = shell_with(&storage, with_system(Some("fr")));
+    assert_eq!(second.language(), "en");
+}
+
+#[test]
+fn the_game_can_override_interface_texts() {
+    let mut ui_overrides = HashMap::new();
+    ui_overrides.insert(
+        "en".to_owned(),
+        vec![("ui.menu.new_game".to_owned(), "Begin".to_owned())],
+    );
+    let cfg = ShellConfig {
+        ui_overrides,
+        ..Default::default()
+    };
+    let mut sh = shell_with(&MemoryStorage::new(), cfg);
+    assert_eq!(sh.texts().get("ui.menu.new_game"), "Begin");
+    assert_eq!(sh.texts().get("ui.menu.quit"), "Quit");
+    sh.apply(UiEvent::SetLanguage("fr".into()));
+    assert_eq!(sh.texts().get("ui.menu.new_game"), "Nouvelle partie");
+}
+
+#[test]
+fn the_language_list_names_every_language() {
+    let sh = shell();
+    let view = sh.prefs_view();
+    let names: Vec<_> = view.languages.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(names, ["English", "Fran\u{e7}ais"]);
+}
+
+// -------------------------------------------------------------- real files
+
+#[test]
+fn saves_land_in_the_data_directory() {
+    let dir = std::env::temp_dir().join(format!("orbit_shell_files_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let mut sh = Shell::new(
+            story(),
+            Box::new(FileStorage::new(&dir)),
+            localizer(),
+            Theme::default(),
+            ShellConfig::default(),
+        );
+        sh.apply(UiEvent::StartGame);
+        play_lines(&mut sh, 2);
+        sh.update(0.1);
+        sh.apply(UiEvent::SaveSlot(slot(0)));
+        sh.on_exit();
+    }
+    assert!(dir.join("saves").join("auto_0.sav").is_file());
+    assert!(dir.join("saves").join("manual_001.sav").is_file());
+    assert!(dir.join("persistent.ron").is_file());
+    let _ = std::fs::remove_dir_all(&dir);
+}

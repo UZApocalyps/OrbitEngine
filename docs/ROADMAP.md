@@ -156,7 +156,7 @@ Crates du workspace :
   - le format d'histoire n'expose que fade et dissolve (le masque de `orbit_render2d` n'est pas encore pilotable depuis le RON) ;
   - polices CJK/arabe absentes du bundle web (lourdes) : texte non latin à valider sur le web au M2 ;
   - audio non vérifié à l'oreille sur le web (l'état « audio started » est vérifié) ; la démo utilise du WAV, l'OGG est décodé mais non exercé par la démo ;
-  - pas encore de skip/auto/historique/saves/rollback (M2).
+  - skip, auto, historique, saves et rollback : livrés au M2.
 - `orbit_render2d` : batching de sprites, calques, render targets (base des transitions), caméra 2D.
 - `orbit_text` : textbox, machine à écrire, avance du texte. Validation CJK/RTL.
 - `orbit_audio` : musique avec boucle et fade, effets sonores.
@@ -170,15 +170,29 @@ Crates du workspace :
 - **Fin :** ~20 répliques lues depuis un RON, 2 personnages, 1 choix, fond, musique et transition, en natif et sur le web.
 
 ### M2 : Fonctionnalités VN de base
-- Snapshots et état de scène déclaratif. Rollback avec restauration de l'audio.
-- Save/load multi-slots avec miniatures et autosave ; stockage fichiers et IndexedDB.
-- **[edge]** Saves entre versions : hash de l'histoire et IDs stables. Un slot incompatible est signalé, sans crash.
+- **Statut : fait.** Le player (natif et web) enchaîne chargement, « cliquer pour démarrer », menu principal, jeu et écrans (pause, sauvegarde, chargement, préférences, historique), avec rollback, skip, auto, saves multi-slots à miniatures, autosave, préférences persistées, i18n à chaud et variables persistantes. Architecture : `Shell` (machine d'état sans GPU dans `orbit_runtime`), voir ADR 0008. Tests automatisés sans GPU de la machine d'état, du rollback (stage + audio), du skip/auto, des flux save/load, de l'autosave et des persistants ; vérifié à la main en natif et sur le web (menu, partie, save avec miniature, rollback, historique, load, préférences en français, rechargement de page, Continuer).
+- Snapshots et état de scène déclaratif. Rollback avec restauration de l'audio : la musique de la scène est relancée si elle diffère, laissée telle quelle sinon.
+- Save/load multi-slots avec miniatures et autosave ; stockage fichiers (natif) et `localStorage` (web ; IndexedDB repoussé, cf. ADR 0008).
+- **[edge]** Saves entre versions : hash de l'histoire et IDs stables. Un slot incompatible est grisé, un slot endommagé donne une notification, sans crash.
 - Skip (tout ou déjà lu), auto, historique.
 - Variables persistantes vs variables de partie.
 - Menu principal, pause, préférences, thèmes de niveau 1 (système de widgets maison).
 - i18n runtime.
 - Tests sans GPU : rollback, round-trip save/load, tests de propriété.
 - **Fin :** la suite de tests automatisés passe en CI.
+- **Dettes courtes :**
+  - `localStorage` : environ 5 Mo par origine, une save avec miniature pèse 30 à 60 Ko ; à la saturation l'écriture échoue proprement (notification) ; passage à IndexedDB si cela devient un problème ;
+  - la langue système n'est détectée que si l'OS la fournit (`sys-locale`) ; le fuseau horaire natif vient de `time` (UTC s'il est indisponible, notamment sous Unix multithread) ;
+  - polices CJK/arabe toujours absentes du bundle web : le texte non latin d'une traduction n'est pas affiché correctement ;
+  - pas de manette ni de tactile ; répétitions de touches non filtrées ;
+  - le `UiTexts` du `Theme` (`screens.texts`) n'est plus lu : les textes moteur passent par `Texts` (clés `ui.*`) ; à retirer au prochain changement de format du thème ;
+  - les textes de l'interface n'existent qu'en anglais et en français (autres langues : anglais), surchargeables par jeu via `RuntimeConfig::ui_text_overrides` mais sans fichier de thème pour l'instant ;
+  - sons d'UI : branchés (`Theme::sounds`, chemins relatifs à la racine des assets) mais aucun son par défaut ni test à l'oreille ;
+  - la miniature est le décor et les personnages (sans textbox) rendus à 320x180 au moment de la demande de save ; la dernière autosave faite à la fermeture de la fenêtre n'a pas de miniature (pas de relecture GPU possible à ce moment) ;
+  - la liste des traductions est un fichier `i18n/index.txt` à tenir à jour (le web ne peut pas lister un dossier) ;
+  - sur le web, l'autosave de fermeture n'existe pas (un onglet qui se ferme ne prévient pas l'application) : seules les autosaves de progression et les préférences (écrites au fil de l'eau) sont garanties ;
+  - le quick menu chevauche le bas de la textbox ;
+  - l'écran de fin renvoie toujours au menu principal (plus de « recommencer » direct).
 
 ### M3 : Éditeur v1, sans code
 - Application egui sur `egui-wgpu` / `egui-winit` ; dock : explorateur, graphe, éditeur de scène, inspecteur, preview, console de validation.

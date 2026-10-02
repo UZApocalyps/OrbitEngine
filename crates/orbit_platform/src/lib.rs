@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use thiserror::Error;
-use web_time::Instant;
+use web_time::{Instant, SystemTime, UNIX_EPOCH};
 use winit::application::ApplicationHandler;
 #[cfg(not(target_arch = "wasm32"))]
 use winit::dpi::LogicalSize;
@@ -72,6 +72,48 @@ pub enum InputEvent {
     },
 }
 
+/// Something the application asks of the host window / process. Polled with
+/// [`App::host_requests`] after every update and input, so the app never
+/// needs a handle on the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostRequest {
+    /// Borderless fullscreen on or off. Ignored on the web (the page decides).
+    SetFullscreen(bool),
+    /// Close the application (native only; a browser tab cannot quit).
+    Quit,
+}
+
+/// Whether [`HostRequest::SetFullscreen`] does anything on this platform.
+pub const FULLSCREEN_SUPPORTED: bool = cfg!(not(target_arch = "wasm32"));
+
+/// Milliseconds since the Unix epoch (works on the web too).
+pub fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Offset of the local time zone from UTC, in minutes (east is positive).
+/// `0` when it cannot be determined.
+pub fn local_utc_offset_minutes() -> i32 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // `getTimezoneOffset` is UTC minus local, hence the sign.
+        -(js_sys::Date::new_0().get_timezone_offset() as i32)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        time::UtcOffset::current_local_offset()
+            .map_or(0, |offset| i32::from(offset.whole_minutes()))
+    }
+}
+
+/// The user's preferred language as a BCP 47 tag (`fr-FR`), when the system or
+/// browser tells.
+pub fn system_language() -> Option<String> {
+    sys_locale::get_locale().filter(|l| !l.is_empty())
+}
+
 /// The application driven by [`run`].
 pub trait App {
     /// Advances the simulation. Called once per frame before [`App::render`].
@@ -87,6 +129,10 @@ pub trait App {
     /// only; the browser has no notion of closing the canvas).
     fn close_requested(&mut self) -> bool {
         true
+    }
+    /// Requests for the host, drained after every update and input event.
+    fn host_requests(&mut self) -> Vec<HostRequest> {
+        Vec::new()
     }
 }
 
@@ -186,6 +232,25 @@ fn platform_attributes(
 }
 
 impl Runner {
+    /// Executes what the app asked of the window.
+    fn serve_requests(&mut self, event_loop: &ActiveEventLoop) {
+        let (Some(app), Some(window)) = (self.app.as_mut(), self.window.as_ref()) else {
+            return;
+        };
+        for request in app.host_requests() {
+            match request {
+                HostRequest::SetFullscreen(on) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    window
+                        .set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
+                    #[cfg(target_arch = "wasm32")]
+                    let _ = (on, window);
+                }
+                HostRequest::Quit => event_loop.exit(),
+            }
+        }
+    }
+
     fn create_window(&self, event_loop: &ActiveEventLoop) -> Arc<Window> {
         let attrs = Window::default_attributes().with_title(self.config.title.clone());
         // On the web the page (CSS) sizes the canvas: forcing an inner size
@@ -250,7 +315,19 @@ impl ApplicationHandler<UserEvent> for Runner {
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        self.handle_window_event(event_loop, id, event);
+        self.serve_requests(event_loop);
+    }
+}
+
+impl Runner {
+    fn handle_window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _id: WindowId,
+        event: WindowEvent,
+    ) {
         let Some(app) = self.app.as_mut() else {
             return; // still initializing
         };

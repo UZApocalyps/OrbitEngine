@@ -1,8 +1,8 @@
-// Demo story for OrbitEngine (schema version 2), played by `orbit run-text` and the player.
+// Demo story for OrbitEngine (schema version 3), played by `orbit run-text` and the player.
 // Everything is referenced by stable ids: nodes (N), strings (T), characters (C), assets (A).
 // Assets are declared once in the manifest below (id -> relative path); nodes never hold a path.
 (
-    schema_version: 2,
+    schema_version: 3,
     title: "Demo",
     strings: (
         source_lang: "en",
@@ -38,6 +38,7 @@
             "01JBX0T0000000000000000029": "Yes, it is the theme of this very story.",
             "01JBX0T0000000000000000030": "The music fades away.",
             "01JBX0T0000000000000000031": "Thank you for playing the OrbitEngine demo!",
+            "01JBX0T0000000000000000032": "Welcome back! You have already finished this story at least once.",
         },
     ),
     assets: (assets: [
@@ -71,7 +72,12 @@
         ),
     ],
     positions: [],
-    variables: [(name: "helped", initial: Bool(false))],
+    // `helped` belongs to one playthrough (saved with the game). `plays` is Persistent:
+    // it counts the finished playthroughs and survives across games (stored apart from saves).
+    variables: [
+        (name: "helped", initial: Bool(false)),
+        (name: "plays", initial: Int(0), scope: Persistent),
+    ],
     scenes: [(
         id: "01JBX0S0000000000000000001",
         name: "main",
@@ -79,6 +85,10 @@
             (id: "01JBX0N0000000000000000001", kind: Label(name: "start")),
             (id: "01JBX0N0000000000000000002", kind: Background(asset: "01JBX0A0000000000000000001", transition: Some((kind: Fade((r: 0, g: 0, b: 0)), duration: 1.0)))),
             (id: "01JBX0N0000000000000000003", kind: PlayMusic(asset: "01JBX0A0000000000000000007", fade_in: 2.0, looping: true)),
+            (id: "01JBX0N0000000000000000059", kind: If(condition: Binary(Gt, Var("plays"), Lit(Int(0))), then_target: "01JBX0N0000000000000000060", else_target: Some("01JBX0N0000000000000000062"))),
+            (id: "01JBX0N0000000000000000060", kind: Label(name: "welcome_back")),
+            (id: "01JBX0N0000000000000000061", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000032")),
+            (id: "01JBX0N0000000000000000062", kind: Label(name: "first_scene")),
             (id: "01JBX0N0000000000000000004", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000003")),
             (id: "01JBX0N0000000000000000005", kind: Show(character: "01JBX0C0000000000000000001", expression: "neutral", position: Left, transition: Some((kind: Dissolve, duration: 0.5)))),
             (id: "01JBX0N0000000000000000006", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000004")),
@@ -132,6 +142,7 @@
             (id: "01JBX0N0000000000000000052", kind: Call(label: "01JBX0N0000000000000000051")),
             (id: "01JBX0N0000000000000000053", kind: Hide(character: "01JBX0C0000000000000000002", transition: Some((kind: Dissolve, duration: 0.5)))),
             (id: "01JBX0N0000000000000000054", kind: StopMusic(fade_out: 2.0)),
+            (id: "01JBX0N0000000000000000063", kind: SetVar(var: "plays", value: Binary(Add, Var("plays"), Lit(Int(1))))),
             (id: "01JBX0N0000000000000000055", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000030")),
             (id: "01JBX0N0000000000000000056", kind: End),
             (id: "01JBX0N0000000000000000051", kind: Label(name: "farewell")),

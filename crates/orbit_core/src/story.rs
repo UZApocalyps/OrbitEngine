@@ -13,7 +13,7 @@ use crate::migrate;
 use crate::validate;
 
 /// Version of the on-disk schema produced by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 /// A whole story: definitions (characters, assets, strings...) and an ordered
 /// list of scenes. Execution starts at the first node of the first scene and
@@ -246,6 +246,13 @@ impl Story {
             .iter()
             .find_map(|s| s.nodes.first())
             .map(|n| n.id)
+    }
+
+    /// Names of the variables declared with [`crate::VarScope::Persistent`].
+    pub fn persistent_variables(&self) -> impl Iterator<Item = &VarDecl> {
+        self.variables
+            .iter()
+            .filter(|v| v.scope == crate::VarScope::Persistent)
     }
 
     pub fn character(&self, id: CharacterId) -> Option<&Character> {
