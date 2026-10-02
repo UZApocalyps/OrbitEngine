@@ -2879,6 +2879,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit_render3d"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "log",
+ "orbit_gfx",
+ "orbit_scene",
+ "pollster 1.0.1",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "orbit_runtime"
 version = "0.1.0"
 dependencies = [
@@ -2891,6 +2903,7 @@ dependencies = [
  "orbit_pak",
  "orbit_platform",
  "orbit_render2d",
+ "orbit_render3d",
  "orbit_save",
  "orbit_text",
  "orbit_ui",
