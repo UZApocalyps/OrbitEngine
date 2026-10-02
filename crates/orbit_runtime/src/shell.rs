@@ -1472,6 +1472,7 @@ impl Shell {
             UiEvent::PlaySound(path) => self.effects.push(Effect::PlayAsset(path)),
             UiEvent::Custom { name, args } => self.effects.push(Effect::Custom { name, args }),
             UiEvent::VarOp(op) => self.apply_var_op(&op),
+            UiEvent::SceneGoto(scene) => self.goto_scene(&scene),
             UiEvent::Back => self.close_top(),
             UiEvent::ReturnToMainMenu => self.leave_game(),
             UiEvent::Quit => {
@@ -1568,6 +1569,24 @@ impl Shell {
         let theme = self.theme.clone();
         if let Some(game) = &mut self.game {
             game.rollback(&theme);
+        }
+        self.pump_audio();
+    }
+
+    /// `UiAction::SceneGoto`: in a game, jumps to the scene and closes the
+    /// screens (the jump goes through the VM, so rollback, history and saves
+    /// stay consistent). At the title there is no game: ignored.
+    fn goto_scene(&mut self, scene: &str) {
+        let theme = self.theme.clone();
+        let Some(game) = &mut self.game else {
+            log::warn!("scene jump to `{scene}` ignored: no game is running");
+            return;
+        };
+        if game.goto_scene(scene, &theme) {
+            self.stack.clear();
+            if self.prefs_timer.is_some() {
+                self.flush_prefs();
+            }
         }
         self.pump_audio();
     }

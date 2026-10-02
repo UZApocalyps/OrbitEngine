@@ -139,8 +139,8 @@ pub struct DataScreen {
     slots_category: usize,
     slots_page: usize,
     confirm: Confirm,
-    /// Actions run that have no effect yet (`SceneGoto`, `VarSet`), for
-    /// hosts that want to say so.
+    /// Actions run that have no effect yet (none today; see
+    /// `UiAction::is_supported`), for hosts that want to say so.
     unsupported: Vec<UiAction>,
     /// A variable changed locally: the tree is rebuilt after the event.
     vars_dirty: bool,
@@ -683,10 +683,7 @@ impl DataScreen {
                 }
                 Some(UiEvent::VarOp(op.clone()))
             }
-            UiAction::SceneGoto(_) => {
-                self.unsupported.push(action.clone());
-                None
-            }
+            UiAction::SceneGoto(scene) => Some(UiEvent::SceneGoto(scene.clone())),
         });
     }
 }
@@ -943,10 +940,10 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_actions_do_nothing() {
+    fn scene_goto_is_reported_to_the_host() {
         let mut s = screen(ctx());
         // New, Save, Quit, Warp -> tag 4 once Continue is absent.
-        assert!(click(&mut s, 4).is_empty());
+        assert_eq!(click(&mut s, 4), vec![UiEvent::SceneGoto("x".into())]);
     }
 
     #[test]
@@ -1079,10 +1076,9 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_actions_are_reported_for_the_host() {
+    fn supported_actions_are_not_reported_as_unsupported() {
         let mut s = screen(ctx());
-        assert!(click(&mut s, 4).is_empty());
-        assert_eq!(s.take_unsupported(), vec![UiAction::SceneGoto("x".into())]);
+        assert!(!click(&mut s, 4).is_empty());
         assert!(s.take_unsupported().is_empty());
     }
 

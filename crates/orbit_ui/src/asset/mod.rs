@@ -19,7 +19,7 @@ mod slots;
 pub use orbit_ui_data::{
     BindPath, Cond, Issue, LayoutDef, SYSTEM_SCREENS, ScreenAsset, SettingKey, Severity, SlotsMode,
     SplashContent, SplashDef, TextRef, UI_VERSION, UiAction, UiBundle, WidgetDef, WidgetKind,
-    from_ron, migrate, to_ron, validate, validate_with_vars, variable_issues,
+    from_ron, migrate, scene_issues, to_ron, validate, validate_with_vars, variable_issues,
 };
 pub use preview::{NavStep, PreviewNav, sample_saves};
 pub use screen::{DataContext, DataScreen};

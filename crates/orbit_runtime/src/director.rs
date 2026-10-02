@@ -267,6 +267,24 @@ impl Director {
         }
     }
 
+    /// Jumps to the start of a scene (id, or name) from outside the story
+    /// (`UiAction::SceneGoto`): any pause or transition in progress is
+    /// dropped and the scene runs to its first line or choice. Returns
+    /// `false` (nothing changed) for an unknown scene.
+    pub fn goto_scene(&mut self, scene: &str) -> bool {
+        let Some(id) = self.vm.find_scene(scene) else {
+            log::warn!("scene jump ignored: no scene `{scene}`");
+            return false;
+        };
+        if let Err(err) = self.vm.goto_scene(id) {
+            log::warn!("scene jump ignored: {err}");
+            return false;
+        }
+        self.pending = None;
+        self.run();
+        true
+    }
+
     // ------------------------------------------------------------ time travel
 
     /// `true` if [`Director::rollback`] has somewhere to go.

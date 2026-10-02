@@ -75,7 +75,10 @@ pub enum UiAction {
         #[serde(default)]
         args: Vec<String>,
     },
-    /// Reserved: jump to a scene. Not supported at runtime yet.
+    /// Jumps the running game to the start of a scene (by scene id; a scene
+    /// name is accepted too). Closes the screens; rollback returns to the
+    /// line shown before the jump (ADR 0011, addendum UI-09). Ignored at the
+    /// title (there is no game to jump in).
     SceneGoto(String),
     /// A no-code story variable operation (set, add, toggle...). The shell
     /// applies it to the running game.
@@ -83,8 +86,9 @@ pub enum UiAction {
 }
 
 impl UiAction {
-    /// `false` for the actions that are declared but do nothing yet.
+    /// `false` for the actions that are declared but do nothing yet (none
+    /// since `SceneGoto` is supported; kept for future reserved actions).
     pub fn is_supported(&self) -> bool {
-        !matches!(self, UiAction::SceneGoto(_))
+        true
     }
 }

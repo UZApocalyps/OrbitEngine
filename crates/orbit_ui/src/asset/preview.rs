@@ -179,6 +179,7 @@ impl PreviewNav {
             UiEvent::ToggleSkip => "ToggleSkip".to_owned(),
             UiEvent::ToggleAuto => "ToggleAuto".to_owned(),
             UiEvent::SetLanguage(code) => format!("SetLanguage({code})"),
+            UiEvent::SceneGoto(scene) => format!("SceneGoto({scene})"),
             _ => return None,
         };
         Some(format!("Action: {name}"))

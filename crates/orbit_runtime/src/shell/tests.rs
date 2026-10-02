@@ -1409,3 +1409,42 @@ fn at_the_title_only_persistent_variables_change() {
     sh.start_new_game();
     assert_eq!(game_var(&sh, "plays"), Some(Value::Int(1)));
 }
+
+fn shown_node(sh: &Shell) -> Option<orbit_core::NodeId> {
+    sh.game()?.director.shown().map(|i| i.node())
+}
+
+#[test]
+fn a_scene_goto_button_jumps_closes_the_screens_and_rolls_back() {
+    let epilogue_line: orbit_core::NodeId = "01JBX0N0000000000000000021".parse().unwrap();
+    let mut before = None;
+    let (mut sh, _) = press("SceneGoto(\"epilogue\")", |sh| {
+        in_game(sh);
+        before = shown_node(sh);
+    });
+    assert!(before.is_some());
+    assert_eq!(sh.top(), None, "the screens are closed");
+    assert_eq!(shown_node(&sh), Some(epilogue_line));
+    // Saved after the jump, rolled back, then loaded: back after the jump.
+    sh.apply(UiEvent::SaveSlot(slot(0)));
+    sh.update(5.0);
+    sh.apply(UiEvent::Rollback);
+    assert_eq!(shown_node(&sh), before, "rollback returns before the jump");
+    sh.apply(UiEvent::LoadSlot(slot(0)));
+    sh.update(0.02);
+    assert_eq!(shown_node(&sh), Some(epilogue_line));
+    sh.apply(UiEvent::Rollback);
+    assert_eq!(shown_node(&sh), before, "the history survives the load");
+
+    // By id; unknown scenes change nothing.
+    sh.apply(UiEvent::SceneGoto("01JBX0S0000000000000000002".into()));
+    assert_eq!(shown_node(&sh), Some(epilogue_line));
+    sh.apply(UiEvent::SceneGoto("nowhere".into()));
+    assert_eq!(shown_node(&sh), Some(epilogue_line));
+}
+
+#[test]
+fn a_scene_goto_at_the_title_is_ignored() {
+    let (sh, _) = press("SceneGoto(\"epilogue\")", |_| {});
+    assert!(!sh.has_game());
+}

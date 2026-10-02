@@ -133,6 +133,31 @@ pub fn variable_issues(
     out
 }
 
+/// Warnings for `SceneGoto` actions whose scene is not in the story
+/// (`known` says whether a scene id or name exists). Empty targets are
+/// errors of [`validate`] and are not repeated here.
+pub fn scene_issues(screen: &ScreenAsset, known: &dyn Fn(&str) -> bool) -> Vec<Issue> {
+    let mut out = Vec::new();
+    let sid = screen.id.as_str();
+    let mut check = |actions: &[UiAction], wid: &str| {
+        for a in actions {
+            if let UiAction::SceneGoto(scene) = a
+                && !scene.trim().is_empty()
+                && !known(scene.trim())
+            {
+                out.push(Issue::warning(sid, wid, format!("jumps to `{scene}`, which is not a scene of the story")));
+            }
+        }
+    };
+    check(&screen.on_cancel, "");
+    screen.root.walk(&mut |w| {
+        if let WidgetKind::Button { action, .. } = &w.kind {
+            check(action, &w.id);
+        }
+    });
+    out
+}
+
 /// Checks `screen`; `theme` (when given) is used to verify style names.
 pub fn validate(screen: &ScreenAsset, theme: Option<&Theme>) -> Vec<Issue> {
     let mut out = Vec::new();
@@ -181,6 +206,9 @@ fn check_action(sid: &str, wid: &str, action: &UiAction, out: &mut Vec<Issue>) {
     match action {
         UiAction::Open(id) | UiAction::Replace(id) if id.trim().is_empty() => {
             out.push(Issue::error(sid, wid, "Open / Replace needs a screen id"));
+        }
+        UiAction::SceneGoto(scene) if scene.trim().is_empty() => {
+            out.push(Issue::error(sid, wid, "SceneGoto needs a scene"));
         }
         _ => {}
     }
@@ -326,13 +354,18 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_things_are_warnings() {
-        let out = issues(
-            "(kind: Button(text: Literal(\"x\"), action: [SceneGoto(\"a\")]), children: [\
-             (kind: Toggle(text: Literal(\"y\"), bind: Var(\"v\")))])",
-        );
-        assert_eq!(out.len(), 1, "only SceneGoto is unsupported");
-        assert!(out.iter().all(|i| i.severity == Severity::Warning));
+    fn scene_goto_is_checked() {
+        let ok = "(kind: Button(text: Literal(\"x\"), action: [SceneGoto(\"a\")]), children: [\
+                  (kind: Toggle(text: Literal(\"y\"), bind: Var(\"v\")))])";
+        assert!(issues(ok).is_empty(), "SceneGoto is supported");
+        assert_eq!(errors("(kind: Button(text: Literal(\"x\"), action: [SceneGoto(\" \")]))"), 1);
+
+        let asset = from_ron(&format!("(id: \"s\", on_cancel: [SceneGoto(\"b\")], root: {ok})")).unwrap();
+        let out = scene_issues(&asset, &|s| s == "a");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].severity, Severity::Warning);
+        assert!(out[0].message.contains("`b`"));
+        assert!(scene_issues(&asset, &|_| true).is_empty());
     }
 
     #[test]

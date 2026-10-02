@@ -621,12 +621,14 @@ fn screens_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         .unwrap_or_default();
     let images = images_of(ctx);
     let vars = ctx.story().map(orbit_editor_api::varwidgets::story_vars).unwrap_or_default();
+    let scenes = story_scenes(ctx);
     let env = Env {
         tr: &tr,
         screens: &screens,
         styles: &styles,
         images: &images,
         vars: &vars,
+        scenes: &scenes,
     };
     let enable_card = st
         .doc
@@ -1034,6 +1036,7 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         styles: &names,
         images: &images,
         vars: &[],
+        scenes: &[],
     };
     ui.columns(2, |cols| {
         let (left, right) = cols.split_at_mut(1);
@@ -1421,6 +1424,13 @@ fn splash_props(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, tr: &T
     }
 }
 
+/// Scenes of the open story as `(id, name)`, for `SceneGoto`.
+fn story_scenes(ctx: &EditorContext<'_>) -> Vec<(String, String)> {
+    ctx.story()
+        .map(|s| s.scenes.iter().map(|sc| (sc.id.to_string(), sc.name.clone())).collect())
+        .unwrap_or_default()
+}
+
 // ------------------------------------------------------------ diagnostics
 
 fn diagnostics(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
@@ -1430,7 +1440,12 @@ fn diagnostics(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         vars.as_deref()
             .and_then(|v| orbit_editor_api::varwidgets::type_of(v, n))
     };
-    let issues: Vec<Issue> = doc.diagnostics_with(&ty_of, vars.is_some());
+    let mut issues: Vec<Issue> = doc.diagnostics_with(&ty_of, vars.is_some());
+    if ctx.story().is_some() {
+        let scenes = story_scenes(ctx);
+        let known = |key: &str| scenes.iter().any(|(id, name)| id == key || name == key);
+        issues.extend(doc.bundle.scene_issues(&known));
+    }
     ui.separator();
     let errors = issues.iter().filter(|i| i.severity == Severity::Error).count();
     let warnings = issues.len() - errors;
