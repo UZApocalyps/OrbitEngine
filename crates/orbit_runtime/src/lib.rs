@@ -33,6 +33,10 @@
 //!   asynchronously and the save is written when it arrives (or after a
 //!   timeout, without thumbnail).
 
+/// 3D renderer (ADR 0014), compiled only with the `3d` feature.
+#[cfg(feature = "3d")]
+pub use orbit_render3d as render3d;
+
 pub mod director;
 pub mod format;
 mod game;

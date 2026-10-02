@@ -5,6 +5,7 @@
 //! the `scene3d_version` [`migrate`] skeleton. glTF import lives in
 //! [`import`] (feature `gltf-import`, M6-02).
 
+pub mod assets;
 pub mod migrate;
 mod validate;
 
@@ -14,6 +15,7 @@ pub mod import;
 use serde::{Deserialize, Serialize};
 
 pub use orbit_core::Node3dId;
+pub use assets::{MeshAsset, PrimitiveData, TextureAsset};
 pub use validate::{Issue, Severity, validate, validate_prefab};
 
 /// Current `scene3d_version`.

@@ -22,6 +22,11 @@ orbit_pak.workspace = true
 image.workspace = true
 log.workspace = true
 thiserror.workspace = true
+orbit_render3d = { workspace = true, optional = true }
+
+[features]
+# 3D scenes (ADR 0014). Off by default: 2D-only builds and wasm stay unchanged.
+3d = ["dep:orbit_render3d"]
 
 [lints]
 workspace = true

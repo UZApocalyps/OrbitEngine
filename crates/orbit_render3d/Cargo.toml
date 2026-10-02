@@ -1,0 +1,21 @@
+[package]
+name = "orbit_render3d"
+description = "OrbitEngine 3D renderer (ADR 0014): forward PBR metallic-roughness + unlit, WebGL2 compatible, rendering into a texture for 2D compositing."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_gfx.workspace = true
+orbit_scene = { path = "../orbit_scene", default-features = false }
+bytemuck.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true
+
+[lints]
+workspace = true
