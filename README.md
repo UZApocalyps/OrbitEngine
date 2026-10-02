@@ -103,6 +103,16 @@ cargo xtask check-arch
 
 `RUST_LOG=debug cargo run -p orbit_player` règle le niveau de logs natif ; sur le web les logs vont dans la console du navigateur.
 
+## Installer l'éditeur
+
+Les installeurs sont produits par `cargo-packager` (CI : job `release`, attaché à une GitHub Release en brouillon) :
+
+* **Windows** : `orbit-editor_<version>_x64-setup.exe` (NSIS, installation par utilisateur ou pour tous, `/S` pour le mode silencieux) et `orbit-editor_<version>_x64_en-US.msi` (WiX, par machine). Raccourcis Menu Démarrer (et Bureau), entrée « Applications et fonctionnalités » pour désinstaller, icône de l'éditeur.
+* **Linux** : `.AppImage` (portable : `chmod +x` puis lancer) et `.deb` (`sudo apt install ./orbit-editor_<version>_amd64.deb`, fichier `.desktop` et icônes inclus).
+* **Contenu** : l'exécutable, le projet démo (`examples/stories/`, `assets/demo/`) et un dossier `templates/` à côté de l'exécutable (les templates de player de l'export de jeux ; il peut être vide tant qu'ils ne sont pas livrés). Les polices et le logo sont dans l'exécutable. Version = celle du workspace, affichée dans la barre d'état (en bas à droite).
+* **Construire soi-même** : `cargo install cargo-packager --locked`, `cargo build --release -p orbit_editor`, puis dans `crates/orbit_editor` : `cargo packager --release --formats wix,nsis` (Windows) ou `--formats appimage,deb` (Linux). Sortie dans `target/packager/`. WiX et NSIS sont téléchargés automatiquement.
+* Pas d'auto-update ni de signature de code pour l'instant (Windows affichera SmartScreen). Une archive portable (zip / tar.gz) reste produite par la CI.
+
 ## Licence
 
 Provisoire : `MIT OR Apache-2.0` (voir ROADMAP §6). Seules des dépendances sous licences permissives sont acceptées (`deny.toml`).

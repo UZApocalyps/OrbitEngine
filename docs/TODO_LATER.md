@@ -19,3 +19,6 @@ Idées validées mais hors des jalons en cours. À replanifier dans la roadmap l
 - Réglages : forme et style de la bulle (thème), queue orientée vers le locuteur, taille max / retour à la ligne auto, empilement ou remplacement des bulles précédentes (effet conversation à deux).
 - Doit rester compatible avec : machine à écrire, historique, rollback/skip (état des bulles déclaratif), localisation (taille variable du texte), et le MCP (outils de placement).
 - Dépend de : `orbit_ui` (thèmes), éditeur M3 (placement visuel), M5 (animation d'apparition des bulles).
+
+## Auto-update de l'éditeur
+- Mise à jour automatique de l'éditeur installé (`cargo-packager-updater` : manifeste signé hébergé avec les releases GitHub). Non nécessaire pour un moteur à gros jalons ; à reprendre avec la signature de code Windows et le projet démo copié dans le dossier utilisateur.
