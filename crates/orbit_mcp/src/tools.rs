@@ -1603,7 +1603,7 @@ fn list_variables(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
 
 /// Every built-in tool.
 pub fn builtin_tools() -> Vec<ToolDef> {
-    vec![
+    let mut tools = vec![
         def::<NoArgs>(
             "list_scenes",
             "List scenes",
@@ -1765,5 +1765,23 @@ pub fn builtin_tools() -> Vec<ToolDef> {
             Kind::Read,
             save,
         ),
+    ];
+    tools.extend(ui_tool_defs());
+    tools
+}
+
+fn ui_tool_defs() -> Vec<ToolDef> {
+    use crate::ui_tools as u;
+    vec![
+        def::<u::NoArgs>("list_ui", "List the UI", "List the project's ui/ folder: screens (with their system role), theme styles, system-screen links, splashes and validation issues.", Kind::Read, u::list_ui),
+        def::<u::ScreenIdArg>("read_ui_screen", "Read a UI screen", "Read a UI screen (ui/<id>.screen.ron) as RON, with its validation issues.", Kind::Read, u::read_ui_screen),
+        def::<u::WriteScreenArgs>("write_ui_screen", "Create or edit a UI screen", "Create or replace a UI screen from RON (ScreenAsset; its id names it). Refused, nothing written, when the UI would have errors; warnings are returned.", Kind::Edit, u::write_ui_screen),
+        def::<u::ScreenIdArg>("delete_ui_screen", "Delete a UI screen", "Delete a UI screen and the system-screen links pointing to it. Refused if that leaves errors.", Kind::Destructive, u::delete_ui_screen),
+        def::<u::StyleNameArg>("read_ui_style", "Read a theme style", "Read a named style of ui/theme.ron as RON.", Kind::Read, u::read_ui_style),
+        def::<u::WriteStyleArgs>("write_ui_style", "Create or edit a theme style", "Create or replace a named style in ui/theme.ron (the theme is created if missing) from RON.", Kind::Edit, u::write_ui_style),
+        def::<u::StyleNameArg>("delete_ui_style", "Delete a theme style", "Delete a named style of ui/theme.ron.", Kind::Destructive, u::delete_ui_style),
+        def::<u::SystemScreenArgs>("set_ui_system_screen", "Link a system screen", "Make a screen stand in for a system screen (main_menu, pause, preferences, save, load), or unlink it.", Kind::Edit, u::set_ui_system_screen),
+        def::<u::AddSplashArgs>("add_ui_splash", "Add a splash", "Add a text or image splash screen shown before the main menu.", Kind::Edit, u::add_ui_splash),
+        def::<u::IndexArg>("delete_ui_splash", "Delete a splash", "Delete a splash by index (see list_ui).", Kind::Destructive, u::delete_ui_splash),
     ]
 }

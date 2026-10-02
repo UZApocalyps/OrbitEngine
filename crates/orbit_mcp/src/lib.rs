@@ -24,6 +24,7 @@ pub use orbit_project::sandbox;
 pub mod schema;
 pub mod server;
 pub mod tools;
+pub mod ui_tools;
 pub mod views;
 
 pub use error::{ErrorKind, ToolError};
