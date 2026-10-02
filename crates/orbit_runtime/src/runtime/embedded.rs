@@ -782,16 +782,41 @@ impl Runtime {
         stage: &StageState,
         target: TextureId,
     ) -> Result<(), RenderError> {
+        self.render_stage_to_target_at(story, stage, target, None)
+    }
+
+    /// Like [`Runtime::render_stage_to_target`], with the animations of the
+    /// characters `time` seconds into their playback (`None`: first frame).
+    pub fn render_stage_to_target_at(
+        &mut self,
+        story: &Story,
+        stage: &StageState,
+        target: TextureId,
+        time: Option<f32>,
+    ) -> Result<(), RenderError> {
+        let clock = time.map(|t| crate::stage::AnimClock::at(stage, t));
         let mut scene = Scene::new();
         stage_scene(
             &self.ctx.renderer,
             &self.store,
             story,
             stage,
-            None,
+            clock.as_ref(),
             &mut scene,
         );
         self.ctx.renderer.render_to_target(target, &scene)
+    }
+
+    /// Whether a character of `stage` plays a frame animation (the scene
+    /// view then has to keep drawing).
+    pub fn stage_is_animated(story: &Story, stage: &StageState) -> bool {
+        stage.characters.iter().any(|c| {
+            story
+                .character(c.character)
+                .and_then(|ch| ch.expression(&c.expression))
+                .and_then(|e| e.animation())
+                .is_some_and(|a| a.is_animated())
+        })
     }
 
     /// Size in pixels of the image of `asset`, when the store has its texture.

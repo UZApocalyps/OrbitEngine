@@ -89,6 +89,7 @@
 
     // ---- editing gestures
     "edit.pick_image": "Choose an image",
+    "edit.pick_animation": "Choose an animated GIF or APNG",
     "edit.pick_music": "Choose a music file",
     "edit.pick_sound": "Choose a sound",
     "edit.kind.image": "image",

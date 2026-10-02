@@ -281,6 +281,12 @@ pub struct PreviewHost {
     scene_egui_texture: Option<egui::TextureId>,
     scene_cache: Option<SceneCache>,
     scene_drawn: Option<SceneKey>,
+    /// Seconds the scene view has been playing its characters animations,
+    /// and when it last advanced (`None`: the stage shown is still).
+    scene_time: f32,
+    scene_tick: Option<Instant>,
+    scene_stage: Option<orbit_runtime::StageState>,
+    scene_animated: bool,
 }
 
 /// What a scene view picture was drawn for: when none of it changed, the
@@ -340,6 +346,10 @@ impl PreviewHost {
             scene_egui_texture: None,
             scene_cache: None,
             scene_drawn: None,
+            scene_time: 0.0,
+            scene_tick: None,
+            scene_stage: None,
+            scene_animated: false,
         })
     }
 
@@ -544,7 +554,7 @@ impl PreviewHost {
         }
 
         // ---- the scene view
-        if self.update_scene_view(core, egui_renderer) {
+        if self.update_scene_view(core, egui_renderer, now) {
             wake.redraw = true;
         }
 
@@ -654,11 +664,13 @@ impl PreviewHost {
         &mut self,
         core: &mut EditorCore,
         egui_renderer: &mut egui_wgpu::Renderer,
+        now: Instant,
     ) -> bool {
         let visible = std::mem::take(&mut core.state.scene_view.visible);
         core.state.scene_view.available = true;
         let wanted = core.state.scene_view.wanted_size;
         if !visible || wanted[0] == 0 || wanted[1] == 0 {
+            self.scene_tick = None;
             return false;
         }
         let size = choose_target_size(self.scene_target.as_ref().map(|t| t.size), wanted);
@@ -699,8 +711,33 @@ impl PreviewHost {
             epoch: self.runtime.assets_epoch(),
         };
         if self.scene_drawn.as_ref() == Some(&key) {
-            return false;
+            // Nothing changed: still, unless a character plays an animation,
+            // which is redrawn at the elapsed time (the story is not
+            // replayed).
+            let Some(stage) = self.scene_stage.as_ref().filter(|_| self.scene_animated) else {
+                self.scene_tick = None;
+                return false;
+            };
+            let dt = self
+                .scene_tick
+                .map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32().min(0.1));
+            self.scene_tick = Some(now);
+            self.scene_time += dt;
+            let story = session.project.story();
+            if let Err(e) =
+                self.runtime
+                    .render_stage_to_target_at(story, stage, target, Some(self.scene_time))
+            {
+                log::error!("scene view render failed: {e}");
+            }
+            self.scene_frames += 1;
+            core.state.scene_view.frames = self.scene_frames;
+            return true;
         }
+        self.scene_time = 0.0;
+        self.scene_tick = Some(now);
+        self.scene_animated = false;
+        self.scene_stage = None;
         let interacting = core.state.scene_view.interacting;
         let story = Arc::new(session.project.story().clone());
         let (shown, actors, notice) = match node.filter(|n| story.locate(*n).is_some()) {
@@ -767,9 +804,15 @@ impl PreviewHost {
         let notice = cache.notice.clone();
         let at = scene_view::scene_at(arc, &cache.source, node)?;
         let stage = scene_view::stage_state(story, &at.after);
-        if let Err(e) = self.runtime.render_stage_to_target(story, &stage, target) {
+        self.scene_animated = orbit_runtime::Runtime::stage_is_animated(story, &stage);
+        let time = self.scene_animated.then_some(0.0);
+        if let Err(e) = self
+            .runtime
+            .render_stage_to_target_at(story, &stage, target, time)
+        {
             log::error!("scene view render failed: {e}");
         }
+        self.scene_stage = Some(stage);
         self.scene_frames += 1;
         let actors = scene_view::actors(story, &at.after)
             .into_iter()

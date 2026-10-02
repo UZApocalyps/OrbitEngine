@@ -475,14 +475,13 @@ impl Ui {
     /// (the pointer then no longer hovers/presses widgets).
     fn drag_list(&mut self, p: [f32; 2]) -> bool {
         const THRESHOLD: f32 = 8.0;
-        let Some((list, y0, first0, mut active)) = self.list_drag else {
+        let Some((list, y0, first0, active)) = self.list_drag else {
             return false;
         };
         if !active && (p[1] - y0).abs() < THRESHOLD {
             return false;
         }
         if !active {
-            active = true;
             // The press turned into a scroll: it must not click a row.
             self.pressed = None;
             self.list_drag = Some((list, y0, first0, true));

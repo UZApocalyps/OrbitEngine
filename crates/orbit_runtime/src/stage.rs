@@ -40,6 +40,16 @@ pub struct AnimClock {
 }
 
 impl AnimClock {
+    /// A clock where every character of `stage` started `time` seconds ago
+    /// (a still picture of the stage at that moment of its animations: the
+    /// editor's scene view).
+    pub fn at(stage: &StageState, time: f32) -> Self {
+        let mut clock = Self::default();
+        clock.sync([stage]);
+        clock.advance(time);
+        clock
+    }
+
     /// Advances the clock by `dt` seconds.
     pub fn advance(&mut self, dt: f32) {
         if dt.is_finite() && dt > 0.0 {
@@ -193,6 +203,21 @@ impl CharacterPlacement {
     }
 }
 
+/// Size factor of an animation frame of `size` pixels relative to the
+/// `reference` frame (the first one) of the same animation. Frames of a
+/// sequence may differ in size: they keep the pixel scale of the reference
+/// instead of being stretched to the same height, and stay anchored at the
+/// bottom center. `[1, 1]` for a degenerate size.
+pub fn frame_scale(size: [u32; 2], reference: [u32; 2]) -> [f32; 2] {
+    if size[0] == 0 || size[1] == 0 || reference[0] == 0 || reference[1] == 0 {
+        return [1.0, 1.0];
+    }
+    [
+        size[0] as f32 / reference[0] as f32,
+        size[1] as f32 / reference[1] as f32,
+    ]
+}
+
 /// Maps a stage character and its texture size to its placement.
 pub fn character_placement(character: &StageCharacter, texture: [u32; 2]) -> CharacterPlacement {
     CharacterPlacement {
@@ -222,6 +247,33 @@ mod tests {
 
     fn asset(n: u128) -> AssetId {
         AssetId::from_u128(n)
+    }
+
+    #[test]
+    fn frames_keep_the_pixel_scale_of_the_first_frame() {
+        assert_eq!(frame_scale([100, 200], [100, 200]), [1.0, 1.0]);
+        // A wider and shorter frame is not stretched to the same height.
+        assert_eq!(frame_scale([150, 100], [100, 200]), [1.5, 0.5]);
+        assert_eq!(frame_scale([0, 100], [100, 200]), [1.0, 1.0]);
+        assert_eq!(frame_scale([10, 10], [0, 0]), [1.0, 1.0]);
+    }
+
+    #[test]
+    fn a_clock_at_a_time_gives_that_elapsed_time() {
+        let mut stage = StageState::default();
+        stage.characters.push(StageCharacter {
+            character: who(1),
+            expression: "a".into(),
+            image: asset(1),
+            x: 0.5,
+            y: 1.0,
+            scale: [1.0, 1.0],
+            flip_x: false,
+            flip_y: false,
+        });
+        let clock = AnimClock::at(&stage, 1.5);
+        assert!((clock.elapsed(who(1), "a") - 1.5).abs() < 1e-6);
+        assert_eq!(clock.elapsed(who(2), "a"), 0.0);
     }
 
     fn who(n: u128) -> CharacterId {
