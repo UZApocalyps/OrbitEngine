@@ -12,8 +12,8 @@ use orbit_core::{
 };
 use orbit_editor_api::fields::{
     self, asset_picker, character_picker, expr_editor, expression_picker, field,
-    is_simple_condition, label_picker, position_picker, seconds_field, simple_condition_editor,
-    transition_editor, value_editor,
+    is_simple_condition, label_picker, position_picker, scene_label_picker, scene_picker,
+    seconds_field, simple_condition_editor, transition_editor, value_editor,
 };
 use orbit_editor_api::{
     DockSlot, EditorContext, EditorPlugin, EditorRegistry, InspectorDef, Level, PanelDef, Plugin,
@@ -356,6 +356,7 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
         NodeKind::Label { name } => label(ui, ctx, id, &name),
         NodeKind::Choice { options } => choice(ui, ctx, id, &options),
         NodeKind::Jump { target } => jump(ui, ctx, id, target, true),
+        NodeKind::JumpScene { scene, label } => jump_scene(ui, ctx, id, scene, label),
         NodeKind::Call { label } => jump(ui, ctx, id, label, false),
         NodeKind::SetVar { var, value } => set_var(ui, ctx, id, &var, &value),
         NodeKind::If {
@@ -530,6 +531,58 @@ fn jump(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, target: NodeId, is
     ui.add_space(4.0);
     if new_label_button(ui) {
         with_new_label(ctx, id, build);
+    }
+}
+
+fn jump_scene(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    id: NodeId,
+    scene: orbit_core::SceneId,
+    label: Option<NodeId>,
+) {
+    let Some(story) = ctx.story() else { return };
+    let mut new_scene = None;
+    let mut new_label = None;
+    field(ui, "Scène cible", |ui| {
+        new_scene = scene_picker(ui, ("jump_scene", id), story, scene);
+    });
+    field(ui, "Étiquette de cette scène (facultatif)", |ui| {
+        new_label = scene_label_picker(
+            ui,
+            ("jump_scene_label", id),
+            story,
+            scene,
+            label,
+            "Début de la scène",
+        );
+    });
+    let target_node = story.scene_entry(scene, label);
+    if let Some(s) = new_scene {
+        // Another scene: the label of the old one no longer applies.
+        commit(
+            ctx,
+            id,
+            NodeKind::JumpScene {
+                scene: s,
+                label: None,
+            },
+            "scene",
+        );
+    } else if let Some(l) = new_label {
+        commit(ctx, id, NodeKind::JumpScene { scene, label: l }, "label");
+    }
+    info(
+        ui,
+        "Passe à cette scène : une scène ne se poursuit jamais dans la suivante.",
+    );
+    ui.add_space(4.0);
+    if let Some(node) = target_node
+        && ui
+            .small_button(format!("{}  Aller à la scène", icons::ARROW_SQUARE_OUT))
+            .clicked()
+    {
+        ctx.select(Selection::Node(node));
     }
 }
 

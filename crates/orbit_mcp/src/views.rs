@@ -88,6 +88,16 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
             format!("choice {}", items.join(" | "))
         }
         NodeKind::Jump { target } => format!("jump -> {}", label_ref(story, *target)),
+        NodeKind::JumpScene { scene, label } => {
+            let name = story.scene(*scene).map_or_else(
+                || format!("{scene} (missing)"),
+                |s| format!("{} ({scene})", quote(&s.name)),
+            );
+            match label {
+                Some(l) => format!("jump_scene -> scene {name} at {}", label_ref(story, *l)),
+                None => format!("jump_scene -> scene {name}"),
+            }
+        }
         NodeKind::SetVar { var, value } => format!("set {var} = {value}"),
         NodeKind::If {
             condition,

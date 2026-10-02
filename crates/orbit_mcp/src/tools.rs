@@ -343,6 +343,15 @@ pub enum CommandSpec {
         /// Label id or name.
         target: String,
     },
+    /// Jump to another scene: scenes never continue into the next one, this
+    /// is the only way to go from one scene to another.
+    JumpScene {
+        /// Target scene id or name.
+        scene: String,
+        /// Label of that scene to land on (id or name; default: the start of
+        /// the scene).
+        label: Option<String>,
+    },
     /// A jump destination.
     Label {
         /// Label name (unique in the project).
@@ -381,6 +390,7 @@ pub fn spec_variant(spec: &CommandSpec) -> &'static str {
         CommandSpec::SetVar { .. } => "SetVar",
         CommandSpec::If { .. } => "If",
         CommandSpec::Jump { .. } => "Jump",
+        CommandSpec::JumpScene { .. } => "JumpScene",
         CommandSpec::Label { .. } => "Label",
         CommandSpec::Call { .. } => "Call",
         CommandSpec::Return => "Return",
@@ -397,6 +407,7 @@ pub const NODE_KIND_TOOLS: &[(&str, &str)] = &[
     ("Say", "add_dialogue"),
     ("Choice", "add_choice"),
     ("Jump", "add_command type=jump"),
+    ("JumpScene", "add_command type=jump_scene"),
     ("SetVar", "add_command type=set_var"),
     ("If", "add_command type=if"),
     ("Background", "add_command type=background"),
@@ -915,6 +926,27 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
         CommandSpec::Jump { target } => NodeKind::Jump {
             target: find_label(story, target.trim())?,
         },
+        CommandSpec::JumpScene { scene, label } => {
+            let target = find_scene(story, scene.trim())?;
+            let label = label
+                .as_deref()
+                .map(|l| {
+                    let id = find_label(story, l.trim())?;
+                    if target.nodes.iter().any(|n| n.id == id) {
+                        Ok(id)
+                    } else {
+                        Err(ToolError::invalid(format!(
+                            "label `{l}` is not in scene `{}`",
+                            target.name
+                        )))
+                    }
+                })
+                .transpose()?;
+            NodeKind::JumpScene {
+                scene: target.id,
+                label,
+            }
+        }
         CommandSpec::Label { name } => {
             let name = non_empty(name, "label name")?;
             let taken = story

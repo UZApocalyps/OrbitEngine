@@ -39,7 +39,7 @@ pub enum Command {
     /// Inserts a whole scene at `index` in the scene list.
     InsertScene { index: usize, scene: Scene },
     /// Removes a scene and its nodes. Refused if a node of another scene
-    /// still targets one of them.
+    /// still targets one of them, or jumps to the scene itself.
     RemoveScene { id: SceneId },
     /// Renames a scene.
     RenameScene { id: SceneId, name: String },
@@ -103,6 +103,8 @@ pub enum CommandError {
     StringInUse(StringId, NodeId),
     #[error("node {0} is still targeted by node {1}")]
     StillReferenced(NodeId, NodeId),
+    #[error("scene {0} is still the target of the scene jump {1}")]
+    SceneStillTargeted(SceneId, NodeId),
     #[error("scene {0} already exists")]
     DuplicateScene(SceneId),
     #[error("unknown character {0}")]

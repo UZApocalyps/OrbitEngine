@@ -954,3 +954,77 @@ fn story_survives_a_restart() {
     let reopened = HeadlessHost::open(&f.dir).unwrap();
     assert_eq!(reopened.project().story(), &saved);
 }
+
+#[test]
+fn scene_jumps_are_added_checked_and_protect_their_target() {
+    use orbit_core::NodeKind;
+
+    let mut f = Fixture::new("jump_scene");
+    f.ok("create_scene", json!({"name": "a"}));
+    f.ok("create_scene", json!({"name": "b"}));
+    let mid = f.ok(
+        "add_command",
+        json!({"scene": "b", "command": {"type": "label", "name": "mid"}}),
+    );
+    let mid_id = id_of(&mid, "/node/id");
+    f.ok(
+        "add_command",
+        json!({"scene": "a", "command": {"type": "label", "name": "own"}}),
+    );
+
+    // To the start of the scene, then to a label of that scene.
+    let start = f.ok(
+        "add_command",
+        json!({"scene": "a", "command": {"type": "jump_scene", "scene": "b"}}),
+    );
+    assert!(
+        start["node"]["content"]
+            .as_str()
+            .is_some_and(|d| d.contains("jump_scene")),
+        "{start}"
+    );
+    f.ok(
+        "add_command",
+        json!({"scene": "a", "command": {"type": "jump_scene", "scene": "b", "label": "mid"}}),
+    );
+    let jumps: Vec<_> = f.story().scenes[0]
+        .nodes
+        .iter()
+        .filter_map(|n| match &n.kind {
+            NodeKind::JumpScene { scene, label } => Some((*scene, *label)),
+            _ => None,
+        })
+        .collect();
+    let b = f.story().scenes[1].id;
+    assert_eq!(jumps.len(), 2);
+    assert_eq!(jumps[0], (b, None));
+    assert_eq!(jumps[1].0, b);
+    assert_eq!(jumps[1].1.map(|l| l.to_string()), Some(mid_id));
+
+    // A label of another scene, or an unknown scene, is refused.
+    let e = f.err(
+        "add_command",
+        json!({"scene": "a", "command": {"type": "jump_scene", "scene": "b", "label": "own"}}),
+    );
+    assert_eq!(e.kind, ErrorKind::InvalidArguments);
+    assert!(e.message.contains("not in scene"), "{e}");
+    let e = f.err(
+        "add_command",
+        json!({"scene": "a", "command": {"type": "jump_scene", "scene": "nope"}}),
+    );
+    assert_eq!(e.kind, ErrorKind::NotFound);
+
+    // The target scene cannot be deleted while a jump aims at it.
+    let e = f.err("delete_scene", json!({"scene": "b"}));
+    assert_eq!(e.kind, ErrorKind::Refused);
+    assert!(e.message.contains("scene jump"), "{e}");
+    assert_eq!(f.story().scenes.len(), 2);
+
+    // And the story validates (errors none).
+    let report = f.ok("validate", json!({}));
+    assert_eq!(
+        report["errors"].as_array().map(Vec::len),
+        Some(0),
+        "{report}"
+    );
+}

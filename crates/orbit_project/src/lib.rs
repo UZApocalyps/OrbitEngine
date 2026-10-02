@@ -10,6 +10,9 @@
 
 mod command;
 mod ext;
+pub mod graph;
+pub mod graph_layout;
+pub mod graph_ops;
 pub mod ops;
 mod project;
 mod storage;

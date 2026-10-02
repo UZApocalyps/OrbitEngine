@@ -255,6 +255,8 @@ impl EditorCore {
             }
         };
         self.close_now();
+        let (layout, layout_warning) =
+            orbit_project::graph_layout::load_layout(&location.storage(), &location.story_file);
 
         let recovery_dir = location.recovery_dir(self.store.dir());
         let remembered = match &location.manifest {
@@ -271,6 +273,16 @@ impl EditorCore {
         self.state.current_scene = None;
         self.state.clipboard = None;
         self.state.collapsed_scenes.clear();
+        self.state.graph = orbit_editor_api::GraphState {
+            persist: !layout.is_empty(),
+            layout,
+            dirty: false,
+            generation: self.project_generation,
+            ..Default::default()
+        };
+        if let Some(warning) = layout_warning {
+            self.state.console.push(Level::Warn, warning);
+        }
         self.diag_key = None;
         dock::show_panel(&mut self.dock, builtin::panels::SCENE);
         self.sync_info();
@@ -347,7 +359,12 @@ impl EditorCore {
     }
 
     fn close_now(&mut self) {
+        self.flush_layout();
         self.project_generation += 1;
+        self.state.graph = orbit_editor_api::GraphState {
+            generation: self.project_generation,
+            ..Default::default()
+        };
         if let Some(session) = self.session.take() {
             self.registry.project.dispatch(&ProjectEvent::Closed);
             session.close();
@@ -423,6 +440,7 @@ impl EditorCore {
     /// Clean shutdown: saves the config, ends the session (a modified
     /// project keeps its recovery snapshot).
     pub fn shutdown(&mut self) {
+        self.flush_layout();
         self.persist();
         if let Some(session) = self.session.take() {
             session.close();
@@ -600,6 +618,10 @@ impl EditorCore {
                     .push(Level::Warn, format!("Autosave impossible : {e}"));
             }
         }
+        // Graph positions: written once a drag has ended.
+        if self.state.graph.dirty && !ctx.input(|i| i.pointer.any_down()) {
+            self.flush_layout();
+        }
         // Layout: written once a drag has ended.
         if !ctx.input(|i| i.pointer.any_down()) {
             let layout = ron::to_string(&self.dock).unwrap_or_default();
@@ -607,6 +629,27 @@ impl EditorCore {
                 self.saved_layout = layout;
                 self.persist();
             }
+        }
+    }
+
+    /// Writes the graph positions (`.layout` sidecar) when they changed.
+    pub fn flush_layout(&mut self) {
+        if !self.state.graph.dirty {
+            return;
+        }
+        self.state.graph.dirty = false;
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        if let Err(e) = orbit_project::graph_layout::save_layout(
+            &session.location.storage(),
+            &session.location.story_file,
+            &self.state.graph.layout,
+        ) {
+            self.state.console.push(
+                Level::Warn,
+                format!("Positions du graphe non enregistrées : {e}"),
+            );
         }
     }
 

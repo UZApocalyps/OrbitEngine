@@ -10,6 +10,9 @@
 //!   `Persistent`). Existing variables become `Game` variables.
 //! * v3 -> v4 (M3a): `NodeKind::Custom` (plugin nodes) is added. Purely
 //!   additive: a v3 document is a valid v4 document.
+//! * v4 -> v5 (M3d): scenes no longer fall through into the next one;
+//!   `NodeKind::JumpScene` is added. To keep what existing stories do, every
+//!   scene that fell into the next non-empty one gets a `JumpScene` to it.
 
 use std::borrow::Cow;
 
@@ -33,7 +36,7 @@ pub fn read_version(source: &str) -> Result<u32, CoreError> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -262,6 +265,44 @@ fn v3_to_v4(source: &str) -> Result<String, CoreError> {
     story.to_ron()
 }
 
+/// v4 -> v5. A v4 scene whose last node does not end the flow (`Jump`,
+/// `Choice`, `End`, `Return`) continued into the next non-empty scene: that
+/// continuation becomes an explicit `JumpScene` appended to the scene. The
+/// last scene (nothing to fall into) and empty scenes are left alone.
+fn v4_to_v5(source: &str) -> Result<String, CoreError> {
+    use crate::ids::NodeId;
+    use crate::story::{Node, NodeKind, Story};
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 5;
+    for i in 0..story.scenes.len() {
+        let falls_through = story.scenes[i].nodes.last().is_some_and(|n| {
+            !matches!(
+                n.kind,
+                NodeKind::Jump { .. }
+                    | NodeKind::JumpScene { .. }
+                    | NodeKind::Choice { .. }
+                    | NodeKind::End
+                    | NodeKind::Return
+            )
+        });
+        if !falls_through {
+            continue;
+        }
+        let next = story.scenes[i + 1..]
+            .iter()
+            .find(|s| !s.nodes.is_empty())
+            .map(|s| s.id);
+        if let Some(scene) = next {
+            story.scenes[i].nodes.push(Node {
+                id: NodeId::new(),
+                kind: NodeKind::JumpScene { scene, label: None },
+            });
+        }
+    }
+    story.to_ron()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,13 +412,77 @@ mod tests {
     }
 
     #[test]
-    fn v3_story_migrates_to_v4_unchanged() {
+    fn v3_story_migrates_to_current_unchanged() {
         use crate::story::Story;
 
         let v3 = V2_STORY.replace("schema_version: 2", "schema_version: 3");
         let story = Story::from_ron(&v3).unwrap();
-        assert_eq!(story.schema_version, 4);
+        assert_eq!(story.schema_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(story.scenes[0].nodes.len(), 2);
+    }
+
+    /// Four scenes: `a` falls through (-> `c`, `b` is empty), `c` ends with a
+    /// jump, `d` is last and falls off the end; a fifth ends with `End` and a
+    /// sixth with a choice, which already leave the scene.
+    const V4_STORY: &str = r#"(
+    schema_version: 4,
+    title: "Chain",
+    strings: (source_lang: "en", entries: {"01JBX0T0000000000000000001": "Hi"}),
+    scenes: [
+        (id: "01JBX0S0000000000000000001", name: "a", nodes: [
+            (id: "01JBX0N0000000000000000001", kind: Say(text_id: "01JBX0T0000000000000000001")),
+        ]),
+        (id: "01JBX0S0000000000000000002", name: "b", nodes: []),
+        (id: "01JBX0S0000000000000000003", name: "c", nodes: [
+            (id: "01JBX0N0000000000000000002", kind: Label(name: "start")),
+            (id: "01JBX0N0000000000000000003", kind: Jump(target: "01JBX0N0000000000000000002")),
+        ]),
+        (id: "01JBX0S0000000000000000004", name: "d", nodes: [
+            (id: "01JBX0N0000000000000000004", kind: Say(text_id: "01JBX0T0000000000000000001")),
+            (id: "01JBX0N0000000000000000005", kind: Call(label: "01JBX0N0000000000000000002")),
+        ]),
+        (id: "01JBX0S0000000000000000005", name: "e", nodes: [
+            (id: "01JBX0N0000000000000000006", kind: End),
+        ]),
+        (id: "01JBX0S0000000000000000006", name: "f", nodes: [
+            (id: "01JBX0N0000000000000000007", kind: Say(text_id: "01JBX0T0000000000000000001")),
+        ]),
+    ],
+)"#;
+
+    #[test]
+    fn v4_scenes_that_fell_through_get_an_explicit_jump_scene() {
+        use crate::story::{NodeKind, Story};
+
+        let story = Story::from_ron_unchecked(V4_STORY).unwrap();
+        assert_eq!(story.schema_version, CURRENT_SCHEMA_VERSION);
+        let last = |i: usize| story.scenes[i].nodes.last().unwrap().kind.clone();
+        // a fell into c (b is empty).
+        assert_eq!(
+            last(0),
+            NodeKind::JumpScene {
+                scene: story.scenes[2].id,
+                label: None
+            }
+        );
+        assert_eq!(story.scenes[0].nodes.len(), 2);
+        // b stays empty; c ends with a jump: unchanged.
+        assert!(story.scenes[1].nodes.is_empty());
+        assert_eq!(story.scenes[2].nodes.len(), 2);
+        // d (a call, then the end of the scene) fell into e.
+        assert_eq!(
+            last(3),
+            NodeKind::JumpScene {
+                scene: story.scenes[4].id,
+                label: None
+            }
+        );
+        // e ends with End; f is the last scene: nothing to fall into.
+        assert_eq!(story.scenes[4].nodes.len(), 1);
+        assert_eq!(story.scenes[5].nodes.len(), 1);
+        // Already current: a second pass changes nothing, and it round-trips.
+        let again = Story::from_ron_unchecked(&story.to_ron().unwrap()).unwrap();
+        assert_eq!(story, again);
     }
 
     #[test]

@@ -1414,3 +1414,152 @@ fn custom_node_emits_a_generic_event_and_falls_through() {
         }]
     );
 }
+
+// ------------------------------------------------------------ scene jumps
+
+/// Scene `a`: say "a1", say "a2". Scene `b`: say "b1", label, say "b2".
+/// Returns the story, the ids of `a` and `b`, and the label of `b`.
+fn two_scenes() -> (Story, SceneId, SceneId, NodeId) {
+    let mut b = B::new();
+    let scene = |b: &mut B, name: &str, build: &dyn Fn(&mut B) -> NodeId| {
+        let before = std::mem::take(&mut b.nodes);
+        let label = build(b);
+        let nodes = std::mem::replace(&mut b.nodes, before);
+        let id = SceneId::new();
+        b.story.scenes.push(Scene {
+            id,
+            name: name.into(),
+            nodes,
+        });
+        (id, label)
+    };
+    let (a, _) = scene(&mut b, "a", &|b| {
+        b.say(None, "a1");
+        b.say(None, "a2")
+    });
+    let (sb, label) = scene(&mut b, "b", &|b| {
+        b.say(None, "b1");
+        let l = b.label(NodeId::new(), "mid");
+        b.say(None, "b2");
+        l
+    });
+    (b.story, a, sb, label)
+}
+
+fn say_trace(story: Story) -> Vec<String> {
+    let mut vm = vm_for(story);
+    trace(&mut vm, &mut first)
+}
+
+#[test]
+fn a_scene_never_falls_into_the_next_one() {
+    let (story, ..) = two_scenes();
+    let out = say_trace(story);
+    let text = out.join("|");
+    assert!(text.contains("a1") && text.contains("a2"), "{text}");
+    assert!(!text.contains("b1"), "{text}");
+    assert!(text.ends_with("end"), "{text}");
+}
+
+#[test]
+fn jump_scene_enters_the_scene_at_its_start_or_at_a_label() {
+    let (mut story, _, sb, label) = two_scenes();
+    story.scenes[0].nodes.push(Node {
+        id: NodeId::new(),
+        kind: NodeKind::JumpScene {
+            scene: sb,
+            label: None,
+        },
+    });
+    let text = say_trace(story.clone()).join("|");
+    for want in ["a1", "a2", "b1", "b2"] {
+        assert!(text.contains(want), "{want} missing from {text}");
+    }
+    assert!(text.find("a2").unwrap() < text.find("b1").unwrap());
+    assert!(text.ends_with("end"));
+
+    // With a label: skips b1.
+    story.scenes[0].nodes.pop();
+    story.scenes[0].nodes.push(Node {
+        id: NodeId::new(),
+        kind: NodeKind::JumpScene {
+            scene: sb,
+            label: Some(label),
+        },
+    });
+    let text = say_trace(story).join("|");
+    assert!(text.contains("b2") && !text.contains("b1"), "{text}");
+}
+
+#[test]
+fn jump_scene_to_an_unknown_scene_is_an_error_and_to_an_empty_one_ends() {
+    let (mut story, ..) = two_scenes();
+    story.scenes[0].nodes.push(Node {
+        id: NodeId::new(),
+        kind: NodeKind::JumpScene {
+            scene: SceneId::new(),
+            label: None,
+        },
+    });
+    let mut vm = vm_for(story.clone());
+    let out = trace(&mut vm, &mut first);
+    assert!(out.last().unwrap().contains("unknown scene"), "{out:?}");
+
+    let empty = SceneId::new();
+    story.scenes.push(Scene {
+        id: empty,
+        name: "vide".into(),
+        nodes: Vec::new(),
+    });
+    let last = story.scenes[0].nodes.len() - 1;
+    story.scenes[0].nodes[last].kind = NodeKind::JumpScene {
+        scene: empty,
+        label: None,
+    };
+    let text = say_trace(story).join("|");
+    assert!(text.contains("a2") && !text.contains("b1"), "{text}");
+    assert!(text.ends_with("end"), "{text}");
+}
+
+#[test]
+fn rollback_and_seek_cross_scene_jumps() {
+    use std::sync::Arc;
+
+    let (mut story, _, sb, _) = two_scenes();
+    story.scenes[0].nodes.push(Node {
+        id: NodeId::new(),
+        kind: NodeKind::JumpScene {
+            scene: sb,
+            label: None,
+        },
+    });
+    let b1 = story.scenes[1].nodes[0].id;
+    let b2 = story.scenes[1].nodes.last().unwrap().id;
+    let story = Arc::new(story);
+
+    // Seek: "play from here" on a line of the second scene.
+    let crate::SeekOutcome::Found(path) = crate::seek(&story, b2, crate::SeekLimits::default())
+    else {
+        panic!("reachable through the jump");
+    };
+    assert!(path.choices.is_empty());
+    let vm = path.into_vm(&story).unwrap();
+    assert_eq!(vm.position(), Some(b2));
+
+    // Rollback across the jump: a1, a2, b1, b2, then back to b1.
+    let mut vm = Vm::from_start(story.clone()).unwrap();
+    for _ in 0..3 {
+        assert!(matches!(vm.step(), StepResult::Say { .. }));
+    }
+    let StepResult::Say { node, .. } = vm.step() else {
+        panic!("b2")
+    };
+    assert_eq!(node, b2);
+    assert!(vm.rollback(1).is_some());
+    assert!(vm.can_roll_forward());
+    let StepResult::Say { node, .. } = vm.step() else {
+        panic!("a line")
+    };
+    assert_eq!(node, b2, "replays the line the player rolled back from");
+    let _ = b1;
+}

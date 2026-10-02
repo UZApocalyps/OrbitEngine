@@ -7,6 +7,7 @@
 pub mod app;
 pub mod args;
 pub mod bench;
+pub mod bench_graph;
 pub mod builtin;
 pub mod config;
 pub mod core;

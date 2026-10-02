@@ -11,6 +11,7 @@ pub fn kind_key(kind: &NodeKind) -> String {
         NodeKind::Say { .. } => "Say".into(),
         NodeKind::Choice { .. } => "Choice".into(),
         NodeKind::Jump { .. } => "Jump".into(),
+        NodeKind::JumpScene { .. } => "JumpScene".into(),
         NodeKind::SetVar { .. } => "SetVar".into(),
         NodeKind::If { .. } => "If".into(),
         NodeKind::Background { .. } => "Background".into(),
@@ -36,6 +37,7 @@ pub fn kind_label(kind: &NodeKind) -> &'static str {
         NodeKind::Say { .. } => "Réplique",
         NodeKind::Choice { .. } => "Choix",
         NodeKind::Jump { .. } => "Saut",
+        NodeKind::JumpScene { .. } => "Saut de scène",
         NodeKind::SetVar { .. } => "Variable",
         NodeKind::If { .. } => "Condition",
         NodeKind::Background { .. } => "Décor",
@@ -58,6 +60,7 @@ pub fn kind_icon(kind: &NodeKind) -> &'static str {
         NodeKind::Say { .. } => icons::CHAT_TEXT,
         NodeKind::Choice { .. } => icons::GIT_BRANCH,
         NodeKind::Jump { .. } => icons::ARROW_BEND_UP_RIGHT,
+        NodeKind::JumpScene { .. } => icons::ARROW_SQUARE_OUT,
         NodeKind::SetVar { .. } => icons::FUNCTION,
         NodeKind::If { .. } => icons::GIT_BRANCH,
         NodeKind::Background { .. } => icons::IMAGE,
@@ -90,6 +93,7 @@ pub fn kind_color(kind: &NodeKind) -> egui::Color32 {
         }
         NodeKind::Label { .. }
         | NodeKind::Jump { .. }
+        | NodeKind::JumpScene { .. }
         | NodeKind::Call { .. }
         | NodeKind::Return
         | NodeKind::End => Color32::from_rgb(98, 190, 168),
@@ -141,6 +145,13 @@ pub fn summary(story: &Story, node: &Node) -> String {
         }
         NodeKind::Choice { options } => format!("{} option(s)", options.len()),
         NodeKind::Jump { target } => format!("→ {}", label_name(story, *target)),
+        NodeKind::JumpScene { scene, label } => {
+            let name = story.scene(*scene).map_or("?", |s| s.name.as_str());
+            match label {
+                Some(l) => format!("→ Scène {name} › {}", label_name(story, *l)),
+                None => format!("→ Scène {name}"),
+            }
+        }
         NodeKind::SetVar { var, value } => format!("{var} = {value}"),
         NodeKind::If {
             condition,

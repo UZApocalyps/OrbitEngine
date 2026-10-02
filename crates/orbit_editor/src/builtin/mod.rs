@@ -8,6 +8,7 @@ mod definitions;
 pub mod drafts;
 pub mod edit;
 mod explorer;
+pub mod graph;
 mod inspector;
 mod nodeinfo;
 mod preview;
@@ -38,6 +39,7 @@ pub mod ids {
     pub const SCENE: &str = "orbit.scene";
     pub const CHARACTERS: &str = "orbit.characters";
     pub const VARIABLES: &str = "orbit.variables";
+    pub const GRAPH: &str = "orbit.graph";
 }
 
 /// Full ids of the built-in panels.
@@ -51,6 +53,7 @@ pub mod panels {
     pub const SCENE: &str = "orbit.scene.scene";
     pub const CHARACTERS: &str = "orbit.characters.characters";
     pub const VARIABLES: &str = "orbit.variables.variables";
+    pub const GRAPH: &str = "orbit.graph.graph";
 }
 
 /// The built-in plugins, in registration order (menus first, then panels in
@@ -60,6 +63,7 @@ pub fn plugins() -> Vec<Box<dyn EditorPlugin>> {
         Box::new(actions::CorePlugin),
         Box::new(welcome::WelcomePlugin),
         Box::new(scene::ScenePlugin),
+        Box::new(graph::GraphPlugin),
         Box::new(explorer::ExplorerPlugin),
         Box::new(inspector::InspectorPlugin),
         Box::new(definitions::CharactersPlugin),

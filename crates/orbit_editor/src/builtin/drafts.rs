@@ -63,6 +63,12 @@ pub fn builtin_insertables() -> Vec<Insertable> {
             "Navigation",
         ),
         item(
+            "JumpScene",
+            "Saut de scène",
+            icons::ARROW_SQUARE_OUT,
+            "Navigation",
+        ),
+        item(
             "Call",
             "Appeler une routine",
             icons::PHONE_CALL,
@@ -287,6 +293,27 @@ pub fn drafts_for(
             let mut v = vec![NodeDraft::plain(kind)];
             v.extend(helper);
             v
+        }
+        "JumpScene" => {
+            // The scene after this one, else the first other scene.
+            let scenes = &story.scenes;
+            let here = scenes.iter().position(|s| s.id == scene);
+            let target = here
+                .and_then(|i| scenes.get(i + 1))
+                .or_else(|| {
+                    scenes
+                        .iter()
+                        .find(|s| Some(s.id) != here.map(|i| scenes[i].id))
+                })
+                .ok_or_else(|| {
+                    DraftError::Message(
+                        "Créez une autre scène pour y faire un saut de scène.".to_owned(),
+                    )
+                })?;
+            vec![NodeDraft::plain(NodeKind::JumpScene {
+                scene: target.id,
+                label: None,
+            })]
         }
         "Return" => vec![NodeDraft::plain(NodeKind::Return)],
         "End" => vec![NodeDraft::plain(NodeKind::End)],

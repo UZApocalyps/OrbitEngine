@@ -44,6 +44,7 @@ fn kind_tag(kind: &NodeKind) -> u8 {
         NodeKind::Return => 15,
         NodeKind::End => 16,
         NodeKind::Custom { .. } => 17,
+        NodeKind::JumpScene { .. } => 18,
     }
 }
 

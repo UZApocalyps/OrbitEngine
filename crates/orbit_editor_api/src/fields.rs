@@ -10,7 +10,7 @@ use std::hash::Hash;
 use egui::{Color32, ComboBox, DragValue, RichText, TextEdit, Ui};
 use orbit_core::{
     AssetId, AssetKind, BinOp, CharacterId, Color, CustomData, Expr, NodeId, NodeKind, Position,
-    Story, Transition, TransitionKind, UnOp, Value, ValueType,
+    SceneId, Story, Transition, TransitionKind, UnOp, Value, ValueType,
 };
 
 /// Anything usable as an egui id salt, cheap to copy.
@@ -270,6 +270,80 @@ pub fn label_picker(
                         );
                     }
                 }
+            }
+        });
+    (chosen != current).then_some(chosen)
+}
+
+/// Scene chooser (target of a scene jump).
+pub fn scene_picker(
+    ui: &mut Ui,
+    salt: impl Salt,
+    story: &Story,
+    current: SceneId,
+) -> Option<SceneId> {
+    let known = story.scene(current);
+    let selected = known.map_or("(scène supprimée)".to_owned(), |s| s.name.clone());
+    let mut chosen = current;
+    ComboBox::from_id_salt(salt)
+        .selected_text(if known.is_some() {
+            RichText::new(selected)
+        } else {
+            RichText::new(selected).color(danger(ui))
+        })
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            for scene in &story.scenes {
+                ui.selectable_value(&mut chosen, scene.id, &scene.name);
+            }
+        });
+    (chosen != current).then_some(chosen)
+}
+
+/// Chooser among the labels of one scene, with a first entry (`none_label`)
+/// for "none". Returns `Some(new)` only when the user changed it.
+pub fn scene_label_picker(
+    ui: &mut Ui,
+    salt: impl Salt,
+    story: &Story,
+    scene: SceneId,
+    current: Option<NodeId>,
+    none_label: &str,
+) -> Option<Option<NodeId>> {
+    let labels: Vec<(NodeId, &str)> = story
+        .scene(scene)
+        .map(|s| {
+            s.nodes
+                .iter()
+                .filter_map(|n| match &n.kind {
+                    NodeKind::Label { name } => Some((n.id, name.as_str())),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let known = current.is_none_or(|c| labels.iter().any(|(id, _)| *id == c));
+    let selected = match current {
+        None => none_label.to_owned(),
+        Some(c) => labels
+            .iter()
+            .find(|(id, _)| *id == c)
+            .map_or("(étiquette absente de la scène)".to_owned(), |(_, n)| {
+                (*n).to_owned()
+            }),
+    };
+    let mut chosen = current;
+    ComboBox::from_id_salt(salt)
+        .selected_text(if known {
+            RichText::new(selected)
+        } else {
+            RichText::new(selected).color(danger(ui))
+        })
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut chosen, None, none_label);
+            for (id, name) in &labels {
+                ui.selectable_value(&mut chosen, Some(*id), *name);
             }
         });
     (chosen != current).then_some(chosen)

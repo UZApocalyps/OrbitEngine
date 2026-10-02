@@ -205,17 +205,11 @@ impl Vm {
     }
 
     /// The node executed after `id` when it does not jump: the next node of
-    /// its scene, else the first node of the next non-empty scene.
+    /// its scene. A scene never falls into the next one: after its last node
+    /// the story ends (`None`), unless a `JumpScene` leaves it.
     fn next_after(&self, id: NodeId) -> Option<NodeId> {
         let &(s, n) = self.index.get(&id)?;
-        let scene = &self.story.scenes[s];
-        if let Some(next) = scene.nodes.get(n + 1) {
-            return Some(next.id);
-        }
-        self.story.scenes[s + 1..]
-            .iter()
-            .find_map(|sc| sc.nodes.first())
-            .map(|n| n.id)
+        self.story.scenes[s].nodes.get(n + 1).map(|next| next.id)
     }
 
     fn eval(&self, node: NodeId, expr: &orbit_core::Expr) -> Result<Value, VmError> {
@@ -318,6 +312,16 @@ impl Vm {
                     return Ok(Some(result));
                 }
                 NodeKind::Jump { target } => self.jump(*target)?,
+                NodeKind::JumpScene { scene, label } => {
+                    if story.scene(*scene).is_none() {
+                        return Err(VmError::UnknownScene(*scene));
+                    }
+                    match label {
+                        Some(l) => self.jump(*l)?,
+                        // An empty scene has nothing to run: the story ends.
+                        None => self.state.pc = story.scene_entry(*scene, None),
+                    }
+                }
                 NodeKind::SetVar { var, value } => {
                     let v = self.eval(pc, value)?;
                     if self.persistent_names.contains(var) {

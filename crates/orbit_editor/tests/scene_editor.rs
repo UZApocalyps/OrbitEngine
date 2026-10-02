@@ -215,6 +215,20 @@ fn a_story_is_built_with_the_editor_operations_only_and_validates() {
     // A choice with its two branches (the skeleton the editor builds).
     with_ctx(&mut core, |c| edit::insert_kind(c, "Choice")).unwrap();
 
+    // Scenes never continue into the next one: the welcome scene reaches the
+    // new one with a scene jump line ("Saut de scène", aimed at the next
+    // scene by default).
+    let last_welcome = story(&core).scenes[0].nodes.last().unwrap().id;
+    let jump = with_ctx(&mut core, |c| {
+        c.select(Selection::Node(last_welcome));
+        edit::insert_kind(c, "JumpScene")
+    })
+    .unwrap();
+    assert!(matches!(
+        story(&core).node(jump[0]).map(|n| &n.kind),
+        Some(NodeKind::JumpScene { scene: s, label: None }) if *s == scene
+    ));
+
     let story_now = story(&core).clone();
     let report = validate(&story_now);
     assert!(report.errors.is_empty(), "{:?}", report.errors);

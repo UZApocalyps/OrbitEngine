@@ -31,6 +31,8 @@ Options :
                            arrêt brutal : pas de confirmation, la sauvegarde automatique reste
   --generate-story <n> <fichier.ron>
                            écrit une histoire de test d'environ <n> nœuds (un scène) puis quitte
+  --generate-graph <n> <fichier.ron>
+                           écrit une histoire de test d'environ <n> blocs de graphe (scènes liées) puis quitte
   --autoscroll <px>        fait défiler l'éditeur de scène de <px> pixels par frame ; avec --exit-after,
                            journalise le temps de frame (moyenne, p95, max) à la sortie
   -h, --help               affiche cette aide
@@ -59,6 +61,7 @@ pub struct Args {
     pub edit_delay: f32,
     pub preview_capture: Option<PathBuf>,
     pub generate_story: Option<(usize, PathBuf)>,
+    pub generate_graph: Option<(usize, PathBuf)>,
     pub autoscroll: Option<f32>,
     pub help: bool,
 }
@@ -90,6 +93,12 @@ impl Args {
                     let n = n.parse().map_err(|_| format!("nombre invalide : {n}"))?;
                     let path = PathBuf::from(value("--generate-story")?);
                     out.generate_story = Some((n, path));
+                }
+                "--generate-graph" => {
+                    let n = value("--generate-graph")?;
+                    let n = n.parse().map_err(|_| format!("nombre invalide : {n}"))?;
+                    let path = PathBuf::from(value("--generate-graph")?);
+                    out.generate_graph = Some((n, path));
                 }
                 "--autoscroll" => {
                     let v = value("--autoscroll")?;

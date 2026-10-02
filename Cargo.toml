@@ -79,6 +79,7 @@ egui-wgpu = { version = "0.36.2", default-features = false }
 egui_dock = { version = "0.21.1", features = ["serde"] }
 egui-phosphor = { version = "0.14.0", default-features = false, features = ["regular"] }
 rfd = "0.17"
+egui-snarl = { version = "0.12", default-features = false, features = ["serde"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -97,3 +98,10 @@ opt-level = 3
 [profile.release-wasm]
 inherits = "release"
 opt-level = "s"
+
+# Vendored egui-snarl 0.12.0, unmodified except for its Cargo.toml: egui is
+# depended on with default-features = false (upstream enables egui default_fonts,
+# whose OFL / UFL fonts are outside deny.toml). See vendor/egui-snarl/VENDORED.md.
+[patch.crates-io]
+egui-snarl = { path = "vendor/egui-snarl" }
+egui-scale = { path = "vendor/egui-scale" }

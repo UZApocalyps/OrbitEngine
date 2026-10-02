@@ -123,6 +123,7 @@ fn instantiate(clip: &NodeClip) -> Vec<NodeDraft> {
                     }
                 }
                 NodeKind::Jump { target } => *target = remap(*target),
+                NodeKind::JumpScene { label, .. } => *label = label.map(remap),
                 NodeKind::Call { label } => *label = remap(*label),
                 NodeKind::If {
                     then_target,

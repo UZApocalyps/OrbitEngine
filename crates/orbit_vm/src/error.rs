@@ -1,6 +1,6 @@
 //! VM errors.
 
-use orbit_core::{CharacterId, EvalError, NodeId};
+use orbit_core::{CharacterId, EvalError, NodeId, SceneId};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Error)]
@@ -9,6 +9,8 @@ pub enum VmError {
     EmptyStory,
     #[error("unknown node {0}")]
     UnknownNode(NodeId),
+    #[error("unknown scene {0}")]
+    UnknownScene(SceneId),
     #[error("node {node}: unknown character {character}")]
     UnknownCharacter {
         node: NodeId,

@@ -14,11 +14,13 @@ use crate::migrate;
 use crate::validate;
 
 /// Version of the on-disk schema produced by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 4;
+pub const CURRENT_SCHEMA_VERSION: u32 = 5;
 
 /// A whole story: definitions (characters, assets, strings...) and an ordered
-/// list of scenes. Execution starts at the first node of the first scene and
-/// falls through to the next scene when a scene ends.
+/// list of scenes. Execution starts at the first node of the first non-empty
+/// scene. A scene never falls through into the next one: execution passes from
+/// scene to scene only through an explicit [`NodeKind::JumpScene`], and a
+/// scene whose last node is reached without a jump ends the game.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Story {
@@ -81,6 +83,14 @@ pub enum NodeKind {
     /// Unconditional jump to a Label.
     Jump {
         target: NodeId,
+    },
+    /// Unconditional jump to another scene (schema v5): to its first node,
+    /// or to `label` (a `Label` of that scene) when set. This is the only way
+    /// to leave a scene: it does not fall through into the next one.
+    JumpScene {
+        scene: SceneId,
+        #[serde(default)]
+        label: Option<NodeId>,
     },
     /// Assigns the value of an expression to a variable.
     SetVar {
@@ -161,6 +171,7 @@ impl NodeKind {
     pub fn targets(&self) -> Vec<NodeId> {
         match self {
             NodeKind::Jump { target } => vec![*target],
+            NodeKind::JumpScene { label, .. } => label.iter().copied().collect(),
             NodeKind::Call { label } => vec![*label],
             NodeKind::If {
                 then_target,
@@ -169,6 +180,14 @@ impl NodeKind {
             } => std::iter::once(*then_target).chain(*else_target).collect(),
             NodeKind::Choice { options } => options.iter().map(|o| o.target).collect(),
             _ => Vec::new(),
+        }
+    }
+
+    /// The scene this node jumps to, for a `JumpScene`.
+    pub fn target_scene(&self) -> Option<SceneId> {
+        match self {
+            NodeKind::JumpScene { scene, .. } => Some(*scene),
+            _ => None,
         }
     }
 
@@ -256,6 +275,12 @@ impl Story {
 
     pub fn scene(&self, id: SceneId) -> Option<&Scene> {
         self.scenes.iter().find(|s| s.id == id)
+    }
+
+    /// Where a jump to `scene` lands: `label` when given, else the first
+    /// node of the scene (`None` for an empty scene).
+    pub fn scene_entry(&self, scene: SceneId, label: Option<NodeId>) -> Option<NodeId> {
+        label.or_else(|| self.scene(scene)?.nodes.first().map(|n| n.id))
     }
 
     /// First node of the first non-empty scene.

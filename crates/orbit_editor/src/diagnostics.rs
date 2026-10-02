@@ -38,6 +38,16 @@ pub fn describe_error(story: &Story, error: &ValidationError) -> (Option<NodeId>
                 label_of(story, *target)
             ),
         ),
+        E::UnknownScene { node, .. } => (Some(*node), "Scène cible introuvable".to_owned()),
+        E::LabelNotInScene { node, scene, .. } => (
+            Some(*node),
+            format!(
+                "Cette étiquette n'appartient pas à la scène cible{}",
+                story
+                    .scene(*scene)
+                    .map_or(String::new(), |s| format!(" (« {} »)", s.name))
+            ),
+        ),
         E::EmptyChoice(n) => (Some(*n), "Ce choix n'a aucune option".to_owned()),
         E::UnknownString { node, .. } => (
             *node,
@@ -92,6 +102,10 @@ fn describe_warning(warning: &ValidationWarning) -> (Option<NodeId>, String) {
         W::PossibleInfiniteLoop(n) => (
             Some(*n),
             "Boucle possible sans réplique, choix ni attente".to_owned(),
+        ),
+        W::SceneEndsGame { node, .. } => (
+            *node,
+            "La partie se termine ici (la scène n'a ni saut, ni fin, ni retour)".to_owned(),
         ),
         W::AllOptionsConditional(n) => (
             Some(*n),

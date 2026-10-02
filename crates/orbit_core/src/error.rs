@@ -34,6 +34,14 @@ pub enum ValidationError {
     UnknownTarget { from: NodeId, target: NodeId },
     #[error("node {from} targets node {target} which is not a Label")]
     TargetNotLabel { from: NodeId, target: NodeId },
+    #[error("node {node} jumps to unknown scene {scene}")]
+    UnknownScene { node: NodeId, scene: SceneId },
+    #[error("node {node} jumps to label {label} which is not in scene {scene}")]
+    LabelNotInScene {
+        node: NodeId,
+        label: NodeId,
+        scene: SceneId,
+    },
     #[error("choice node {0} has no options")]
     EmptyChoice(NodeId),
     /// `node` is `None` when the string is a character name.
@@ -93,6 +101,14 @@ pub enum ValidationWarning {
     PossibleInfiniteLoop(NodeId),
     #[error("every option of choice {0} has a condition: the player may get stuck")]
     AllOptionsConditional(NodeId),
+    /// Execution reaches the end of `scene` without a jump, an `End` or a
+    /// `Return`: the game ends there (scenes never fall into the next one).
+    /// `node` is the last node reached, `None` for an empty scene.
+    #[error("scene {scene} reaches its end without a jump, End or Return: the game ends here")]
+    SceneEndsGame {
+        scene: SceneId,
+        node: Option<NodeId>,
+    },
 }
 
 /// Errors from loading / saving / migrating a story.

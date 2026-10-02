@@ -82,6 +82,9 @@ pub(crate) fn apply(cmd: &Command, story: &mut Story) -> Result<Applied, Command
                     {
                         return Err(CommandError::StillReferenced(hit, node.id));
                     }
+                    if node.kind.target_scene() == Some(*id) {
+                        return Err(CommandError::SceneStillTargeted(*id, node.id));
+                    }
                 }
             }
             let scene = story.scenes.remove(index);

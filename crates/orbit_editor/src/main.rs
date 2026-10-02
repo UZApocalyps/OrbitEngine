@@ -37,6 +37,23 @@ fn main() -> ExitCode {
             }
         };
     }
+    if let Some((blocks, path)) = &args.generate_graph {
+        let story = orbit_editor::bench_graph::generate_graph_story(*blocks);
+        let written = story
+            .to_ron()
+            .map_err(|e| e.to_string())
+            .and_then(|text| std::fs::write(path, text).map_err(|e| e.to_string()));
+        return match written {
+            Ok(()) => {
+                println!("{} : {blocks} blocs demandés", path.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("erreur : {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     match orbit_editor::app::run(args, t0) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

@@ -226,6 +226,26 @@ impl Cx<'_> {
                 NodeKind::Choice { options } if options.is_empty() => {
                     self.errors.push(ValidationError::EmptyChoice(id));
                 }
+                NodeKind::JumpScene { scene, label } => match story.scene(*scene) {
+                    None => self.errors.push(ValidationError::UnknownScene {
+                        node: id,
+                        scene: *scene,
+                    }),
+                    // A label that does not exist at all is reported with the
+                    // other targets above.
+                    Some(sc) => {
+                        if let Some(l) = label
+                            && index.contains_key(l)
+                            && !sc.nodes.iter().any(|n| n.id == *l)
+                        {
+                            self.errors.push(ValidationError::LabelNotInScene {
+                                node: id,
+                                label: *l,
+                                scene: *scene,
+                            });
+                        }
+                    }
+                },
                 NodeKind::Background { asset, transition } => {
                     self.check_asset(Some(id), *asset, AssetKind::Image);
                     if let Some(t) = transition {
@@ -393,14 +413,31 @@ impl Cx<'_> {
                 NodeKind::Say { .. } | NodeKind::Choice { .. } | NodeKind::Wait { .. }
             )
         };
+        // Scene of every node: a scene never falls into the next one.
+        let mut scene_of: Vec<usize> = Vec::with_capacity(flat.len());
+        for (si, scene) in self.story.scenes.iter().enumerate() {
+            scene_of.extend(std::iter::repeat_n(si, scene.nodes.len()));
+        }
+        let story = self.story;
+        // Where a jump to a scene lands (`None`: an empty scene, the end).
+        let scene_entry = |scene: crate::ids::SceneId, label: Option<NodeId>| {
+            story
+                .scene_entry(scene, label)
+                .and_then(|n| index.get(&n).copied())
+        };
+        let next_of =
+            |i: usize| (i + 1 < flat.len() && scene_of[i + 1] == scene_of[i]).then_some(i + 1);
         // `strict` edges only: no fall-through after a Call (it is taken when
         // the callee returns, which cycle detection cannot see).
         let succ = |i: usize, with_call_continuation: bool| -> Vec<usize> {
             let node = flat[i];
-            let next = (i + 1 < flat.len()).then_some(i + 1);
+            let next = next_of(i);
             let target = |t: NodeId| index.get(&t).copied();
             match &node.kind {
                 NodeKind::Jump { target: t } => target(*t).into_iter().collect(),
+                NodeKind::JumpScene { scene, label } => {
+                    scene_entry(*scene, *label).into_iter().collect()
+                }
                 NodeKind::If {
                     then_target,
                     else_target,
@@ -441,6 +478,40 @@ impl Cx<'_> {
             if !reached[i] && !matches!(node.kind, NodeKind::Label { .. }) {
                 self.warnings
                     .push(ValidationWarning::UnreachableNode(node.id));
+            }
+        }
+
+        // Scenes whose end is reached: the game ends there.
+        let mut ends: Vec<(crate::ids::SceneId, Option<NodeId>)> = Vec::new();
+        for (i, node) in flat.iter().enumerate().filter(|(i, _)| reached[*i]) {
+            let falls_off = next_of(i).is_none()
+                && !matches!(
+                    node.kind,
+                    NodeKind::Jump { .. }
+                        | NodeKind::JumpScene { .. }
+                        | NodeKind::Choice { .. }
+                        | NodeKind::End
+                        | NodeKind::Return
+                        | NodeKind::If {
+                            else_target: Some(_),
+                            ..
+                        }
+                );
+            if falls_off {
+                ends.push((self.story.scenes[scene_of[i]].id, Some(node.id)));
+            }
+            // A jump into an empty scene ends there too.
+            if let NodeKind::JumpScene { scene, label: None } = &node.kind
+                && self.story.scene(*scene).is_some_and(|s| s.nodes.is_empty())
+            {
+                ends.push((*scene, None));
+            }
+        }
+        let mut seen_scenes = HashSet::new();
+        for (scene, node) in ends {
+            if seen_scenes.insert(scene) {
+                self.warnings
+                    .push(ValidationWarning::SceneEndsGame { scene, node });
             }
         }
 
@@ -565,7 +636,7 @@ mod tests {
         let l = label();
         let j = node(NodeKind::Jump { target: l.id });
         let say = say(&mut s);
-        let s = with_nodes(s, vec![say, j, l]);
+        let s = with_nodes(s, vec![say, j, l, node(NodeKind::End)]);
         let report = validate(&s);
         assert!(report.is_ok(), "{report:?}");
         assert!(report.warnings.is_empty(), "{report:?}");
@@ -772,7 +843,15 @@ mod tests {
         });
         let s = with_nodes(
             s,
-            vec![bad_cond, bad_assign, type_err, undefined, ok_numeric, l],
+            vec![
+                bad_cond,
+                bad_assign,
+                type_err,
+                undefined,
+                ok_numeric,
+                l,
+                node(NodeKind::End),
+            ],
         );
         let report = validate(&s);
         assert_eq!(
@@ -808,10 +887,190 @@ mod tests {
             else_target: None,
         });
         let sy = say(&mut s);
-        let s = with_nodes(s, vec![set, iff, sy, l]);
+        let s = with_nodes(s, vec![set, iff, sy, l, node(NodeKind::End)]);
         let report = validate(&s);
         assert!(report.is_ok(), "{report:?}");
         assert!(report.warnings.is_empty(), "{report:?}");
+    }
+
+    fn scene(name: &str, nodes: Vec<Node>) -> Scene {
+        Scene {
+            id: SceneId::new(),
+            name: name.into(),
+            nodes,
+        }
+    }
+
+    #[test]
+    fn jump_scene_targets_are_checked() {
+        let mut s = Story::new("t");
+        let inner = label();
+        let b = scene("b", vec![inner.clone(), node(NodeKind::End)]);
+        let other_label = label();
+        let c = scene("c", vec![other_label.clone(), node(NodeKind::End)]);
+        let ghost_scene = SceneId::new();
+        let ghost_label = NodeId::new();
+        let to_ghost = node(NodeKind::JumpScene {
+            scene: ghost_scene,
+            label: None,
+        });
+        let wrong_label = node(NodeKind::JumpScene {
+            scene: b.id,
+            label: Some(other_label.id),
+        });
+        let missing_label = node(NodeKind::JumpScene {
+            scene: b.id,
+            label: Some(ghost_label),
+        });
+        let fine = node(NodeKind::JumpScene {
+            scene: b.id,
+            label: Some(inner.id),
+        });
+        let (g, w, m) = (to_ghost.id, wrong_label.id, missing_label.id);
+        s.scenes
+            .push(scene("a", vec![to_ghost, wrong_label, missing_label, fine]));
+        s.scenes.push(b.clone());
+        s.scenes.push(c);
+        let errors = validate(&s).errors;
+        assert!(errors.contains(&ValidationError::UnknownScene {
+            node: g,
+            scene: ghost_scene
+        }));
+        assert!(errors.contains(&ValidationError::LabelNotInScene {
+            node: w,
+            label: other_label.id,
+            scene: b.id
+        }));
+        assert!(errors.contains(&ValidationError::UnknownTarget {
+            from: m,
+            target: ghost_label
+        }));
+        assert_eq!(errors.len(), 3, "{errors:?}");
+    }
+
+    #[test]
+    fn scenes_do_not_fall_into_each_other() {
+        let mut s = Story::new("t");
+        let first = say(&mut s);
+        let first_id = first.id;
+        let second = say(&mut s);
+        let a = scene("a", vec![first]);
+        let b = scene("b", vec![second]);
+        s.scenes.push(a.clone());
+        s.scenes.push(b.clone());
+        let report = validate(&s);
+        assert!(report.is_ok(), "{report:?}");
+        // `a` ends the game, and `b` is never reached.
+        assert!(report.warnings.contains(&ValidationWarning::SceneEndsGame {
+            scene: a.id,
+            node: Some(first_id)
+        }));
+        assert!(
+            report
+                .warnings
+                .contains(&ValidationWarning::UnreachableNode(b.nodes[0].id))
+        );
+        assert!(
+            !report.warnings.iter().any(
+                |w| matches!(w, ValidationWarning::SceneEndsGame { scene, .. } if *scene == b.id)
+            ),
+            "an unreachable scene does not end the game"
+        );
+    }
+
+    #[test]
+    fn a_jump_scene_reaches_the_target_and_ends_the_flow() {
+        let mut s = Story::new("t");
+        let l = label();
+        let say_b = say(&mut s);
+        let say_b_id = say_b.id;
+        let b = scene("b", vec![say_b, l.clone(), node(NodeKind::End)]);
+        let a = scene(
+            "a",
+            vec![node(NodeKind::JumpScene {
+                scene: b.id,
+                label: None,
+            })],
+        );
+        let c = scene(
+            "c",
+            vec![node(NodeKind::JumpScene {
+                scene: b.id,
+                label: Some(l.id),
+            })],
+        );
+        s.scenes = vec![a, b, c];
+        let report = validate(&s);
+        assert!(report.is_ok(), "{report:?}");
+        // Scene b is reached, a ends with the jump; only `c` is never reached.
+        assert_eq!(
+            report.warnings,
+            vec![ValidationWarning::UnreachableNode(s.scenes[2].nodes[0].id)]
+        );
+        let _ = say_b_id;
+    }
+
+    #[test]
+    fn a_jump_into_an_empty_scene_ends_the_game() {
+        let mut s = Story::new("t");
+        let empty = scene("vide", Vec::new());
+        let a = scene(
+            "a",
+            vec![node(NodeKind::JumpScene {
+                scene: empty.id,
+                label: None,
+            })],
+        );
+        s.scenes = vec![a, empty.clone()];
+        let report = validate(&s);
+        assert!(report.is_ok(), "{report:?}");
+        assert_eq!(
+            report.warnings,
+            vec![ValidationWarning::SceneEndsGame {
+                scene: empty.id,
+                node: None
+            }]
+        );
+    }
+
+    #[test]
+    fn an_if_without_else_at_the_end_of_a_scene_ends_the_game() {
+        let mut s = Story::new("t");
+        let l = label();
+        let iff = node(NodeKind::If {
+            condition: Expr::lit(true),
+            then_target: l.id,
+            else_target: None,
+        });
+        let iff_id = iff.id;
+        let a = scene("a", vec![l, node(NodeKind::End), iff]);
+        // The `If` is dead code after the End: unreachable, not an ending.
+        s.scenes = vec![a.clone()];
+        let report = validate(&s);
+        assert_eq!(
+            report.warnings,
+            vec![ValidationWarning::UnreachableNode(iff_id)]
+        );
+        // Reached, it falls off the end of the scene.
+        let l2 = label();
+        let iff2 = node(NodeKind::If {
+            condition: Expr::lit(true),
+            then_target: l2.id,
+            else_target: None,
+        });
+        let iff2_id = iff2.id;
+        let mut s2 = Story::new("t");
+        s2.scenes = vec![
+            scene("b", vec![iff2]),
+            scene("c", vec![l2, node(NodeKind::End)]),
+        ];
+        assert_eq!(
+            validate(&s2).warnings,
+            vec![ValidationWarning::SceneEndsGame {
+                scene: s2.scenes[0].id,
+                node: Some(iff2_id)
+            }]
+        );
     }
 
     #[test]

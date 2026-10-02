@@ -369,6 +369,8 @@ enum RowAction {
         speaker: Option<CharacterId>,
     },
     PlayFrom(NodeId),
+    /// Jump to the scene a `JumpScene` targets (its start or its label).
+    GoToScene(SceneId, Option<NodeId>),
     DragStart(NodeId),
     AddAtEnd,
     Insert(String),
@@ -1047,6 +1049,16 @@ fn describe(story: &Story, node: &Node) -> (String, String) {
         NodeKind::Label { name } => ("Étiquette".into(), name.clone()),
         NodeKind::Choice { options } => ("Choix".into(), format!("{} option(s)", options.len())),
         NodeKind::Jump { target } => ("Saut vers".into(), label(*target)),
+        NodeKind::JumpScene { scene, label: l } => {
+            let name = story.scene(*scene).map_or("?", |s| s.name.as_str());
+            (
+                "Saut vers la scène".into(),
+                match l {
+                    Some(l) => format!("{name} › {}", label(*l)),
+                    None => name.to_owned(),
+                },
+            )
+        }
         NodeKind::SetVar { var, value } => ("Variable".into(), format!("{var} = {value}")),
         NodeKind::If {
             condition,
@@ -1368,6 +1380,29 @@ fn draw_row(
         );
         if p.clicked() {
             actions.push(RowAction::PlayFrom(node.id));
+        }
+    }
+
+    // A scene jump: a button (and a double click) to go to its scene.
+    if let NodeKind::JumpScene { scene, label } = &node.kind
+        && !editing
+    {
+        let go = Rect::from_center_size(
+            Pos2::new(rect.right() - 18.0, rect.top() + 20.0),
+            vec2(24.0, 22.0),
+        );
+        let b = ui
+            .interact(go, hover_id.with("go"), Sense::click())
+            .on_hover_text("Aller à la scène");
+        painter.text(
+            go.center(),
+            Align2::CENTER_CENTER,
+            icons::ARROW_SQUARE_OUT,
+            FontId::proportional(15.0),
+            if b.hovered() { accent(ui) } else { weak(ui) },
+        );
+        if b.clicked() || response.double_clicked() {
+            actions.push(RowAction::GoToScene(*scene, *label));
         }
     }
 
@@ -1826,6 +1861,13 @@ fn apply_actions(
                     text,
                     expected_version: ctx.node_version(id),
                 });
+            }
+            RowAction::GoToScene(scene, label) => {
+                let node = ctx.story().and_then(|s| s.scene_entry(scene, label));
+                match node {
+                    Some(node) => ctx.select(Selection::Node(node)),
+                    None => ctx.select(Selection::Scene(scene)),
+                }
             }
             RowAction::PlayFrom(id) => {
                 ctx.select(Selection::Node(id));
