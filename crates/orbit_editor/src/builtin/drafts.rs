@@ -220,6 +220,10 @@ pub fn drafts_for(
                 .and_then(|c| c.default_position.clone())
                 .unwrap_or(Position::Center);
             vec![NodeDraft::plain(NodeKind::Show {
+                scale: None,
+                scale_y: None,
+                flip_x: false,
+                flip_y: false,
                 character,
                 expression,
                 position,

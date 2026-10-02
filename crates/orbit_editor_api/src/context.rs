@@ -286,6 +286,8 @@ pub struct EditorState {
     pub maximized_panel: Option<String>,
     /// The preview: what the host published and what the panel posted.
     pub preview: PreviewState,
+    /// The scene view: the stage at the selected node.
+    pub scene_view: crate::SceneViewState,
     /// Positions of the graph blocks (`.layout` sidecar).
     pub graph: crate::GraphState,
 }

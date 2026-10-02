@@ -399,6 +399,7 @@ pub fn add_character(
                 color,
                 expressions: Vec::new(),
                 default_position: None,
+                default_scale: 1.0,
             }),
             index: Some(index),
         })
@@ -627,17 +628,16 @@ pub fn rename_expression(
             NodeKind::Show {
                 character: c,
                 expression,
-                position,
-                transition,
-            } if *c == character && expression == old => Some((
-                n.id,
-                NodeKind::Show {
-                    character: *c,
-                    expression: new.to_owned(),
-                    position: position.clone(),
-                    transition: *transition,
-                },
-            )),
+                ..
+            } if *c == character && expression == old => {
+                // Only the expression changes: position, scale and mirroring
+                // are kept.
+                let mut kind = n.kind.clone();
+                if let NodeKind::Show { expression, .. } = &mut kind {
+                    *expression = new.to_owned();
+                }
+                Some((n.id, kind))
+            }
             _ => None,
         })
         .collect();
@@ -857,4 +857,162 @@ pub fn labels(story: &Story) -> Vec<(NodeId, String)> {
 /// Whether a position is usable in this story (built-in or declared).
 pub fn position_exists(story: &Story, position: &Position) -> bool {
     story.resolve_position(position).is_some()
+}
+
+/// How a `Show` node places a character: where, how big, mirrored or not.
+/// This is what the inspector and the scene view edit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShowLook {
+    pub position: Position,
+    /// Scale override; `None` uses the character's default scale.
+    pub scale: Option<f32>,
+    /// Vertical scale for a non-uniform stretch; `None` follows `scale`.
+    pub scale_y: Option<f32>,
+    pub flip_x: bool,
+    pub flip_y: bool,
+}
+
+impl ShowLook {
+    /// Effective `[x, y]` scale once the character's default is applied.
+    pub fn effective_scale(&self, default_scale: f32) -> [f32; 2] {
+        let x = self.scale.unwrap_or(default_scale);
+        [x, self.scale_y.unwrap_or(x)]
+    }
+
+    /// Sets an effective `[x, y]` scale: uniform values are stored as a
+    /// single `scale` (no `scale_y`), so the file stays minimal.
+    pub fn set_effective_scale(&mut self, scale: [f32; 2]) {
+        self.scale = Some(scale[0]);
+        self.scale_y = (scale[1] != scale[0]).then_some(scale[1]);
+    }
+
+    /// Whether the look differs from "standard" (default scale, no mirror).
+    pub fn is_default_style(&self) -> bool {
+        self.scale.is_none() && self.scale_y.is_none() && !self.flip_x && !self.flip_y
+    }
+}
+
+/// The look of a `Show` node, or `None` when `node` is not a `Show`.
+pub fn show_look(story: &Story, node: NodeId) -> Option<ShowLook> {
+    match &story.node(node)?.kind {
+        NodeKind::Show {
+            position,
+            scale,
+            scale_y,
+            flip_x,
+            flip_y,
+            ..
+        } => Some(ShowLook {
+            position: position.clone(),
+            scale: *scale,
+            scale_y: *scale_y,
+            flip_x: *flip_x,
+            flip_y: *flip_y,
+        }),
+        _ => None,
+    }
+}
+
+/// Checks a look: scales finite and bounded, free coordinates finite and
+/// in range, named positions known.
+pub fn check_show_look(story: &Story, look: &ShowLook) -> Result<(), ProjectError> {
+    for s in [look.scale, look.scale_y].into_iter().flatten() {
+        if !orbit_core::scale_is_valid(s) {
+            return Err(reject(format!(
+                "L'échelle doit être comprise entre {} et {} (reçu {s}).",
+                orbit_core::SCALE_MIN,
+                orbit_core::SCALE_MAX
+            )));
+        }
+    }
+    if let Position::Free { x, y } = &look.position
+        && !(orbit_core::FREE_POSITION_RANGE.contains(x)
+            && orbit_core::FREE_POSITION_RANGE.contains(y))
+    {
+        return Err(reject(format!(
+            "La position libre ({x}, {y}) est hors limites ({}..{}).",
+            orbit_core::FREE_POSITION_RANGE.start(),
+            orbit_core::FREE_POSITION_RANGE.end()
+        )));
+    }
+    if !position_exists(story, &look.position) {
+        return Err(reject("Position inconnue."));
+    }
+    Ok(())
+}
+
+/// The command that gives a `Show` node a new look (everything else of the
+/// node is kept). Use it with [`Project::execute_merged`] for a live drag;
+/// [`set_show_look`] is the one-shot form.
+pub fn show_look_command(
+    story: &Story,
+    node: NodeId,
+    look: &ShowLook,
+) -> Result<Command, ProjectError> {
+    check_show_look(story, look)?;
+    let mut kind = story
+        .node(node)
+        .ok_or_else(|| reject("Nœud introuvable."))?
+        .kind
+        .clone();
+    let NodeKind::Show {
+        position,
+        scale,
+        scale_y,
+        flip_x,
+        flip_y,
+        ..
+    } = &mut kind
+    else {
+        return Err(reject("Ce nœud n'est pas un « Montrer »."));
+    };
+    *position = look.position.clone();
+    *scale = look.scale;
+    *scale_y = look.scale_y;
+    *flip_x = look.flip_x;
+    *flip_y = look.flip_y;
+    Ok(Command::SetNodeKind {
+        id: node,
+        kind,
+        expected_version: None,
+    })
+}
+
+/// Gives a `Show` node a new position / scale / mirroring as one undo entry.
+pub fn set_show_look(
+    project: &mut Project,
+    node: NodeId,
+    look: &ShowLook,
+) -> Result<(), ProjectError> {
+    let command = show_look_command(project.story(), node, look)?;
+    project.transaction_labeled("Placer le personnage", |tx| tx.execute(command))
+}
+
+/// Sets a character's default scale (one undo entry). Refused outside
+/// `SCALE_MIN..=SCALE_MAX`.
+pub fn set_default_scale(
+    project: &mut Project,
+    character: CharacterId,
+    scale: f32,
+) -> Result<(), ProjectError> {
+    if !orbit_core::scale_is_valid(scale) {
+        return Err(reject(format!(
+            "L'échelle doit être comprise entre {} et {}.",
+            orbit_core::SCALE_MIN,
+            orbit_core::SCALE_MAX
+        )));
+    }
+    let mut def = project
+        .story()
+        .character(character)
+        .ok_or_else(|| reject("Personnage introuvable."))?
+        .clone();
+    def.default_scale = scale;
+    project.transaction_labeled("Échelle du personnage", |tx| {
+        tx.execute(Command::SetCharacter {
+            id: character,
+            character: Some(def),
+            index: None,
+        })
+    })
 }

@@ -145,7 +145,9 @@ pub fn expression_picker(
     (chosen != current).then_some(chosen)
 }
 
-/// Stage position chooser: the three built-in ones and the declared ones.
+/// Stage position chooser: the three built-in ones, the declared ones and
+/// "Libre" (custom coordinates, edited with two fields next to the chooser).
+/// Switching to "Libre" starts from where the current position is.
 pub fn position_picker(
     ui: &mut Ui,
     salt: impl Salt,
@@ -158,6 +160,7 @@ pub fn position_picker(
         Position::Right => "Droite".to_owned(),
         Position::Custom(n) if story.resolve_position(p).is_some() => n.clone(),
         Position::Custom(n) => format!("{n} (inconnue)"),
+        Position::Free { x, y } => format!("Libre  ({x:.2}, {y:.2})"),
     };
     let mut chosen = current.clone();
     ComboBox::from_id_salt(salt)
@@ -174,6 +177,10 @@ pub fn position_picker(
                     Position::Custom(def.name.clone()),
                     format!("{}  ({:.2}, {:.2})", def.name, def.x, def.y),
                 );
+            }
+            if !matches!(current, Position::Free { .. }) {
+                let (x, y) = story.resolve_position(current).unwrap_or((0.5, 1.0));
+                ui.selectable_value(&mut chosen, Position::Free { x, y }, "Libre…");
             }
         });
     (chosen != *current).then_some(chosen)
@@ -446,6 +453,38 @@ pub fn seconds_field(ui: &mut Ui, value: f32) -> Option<f32> {
             .max_decimals(2),
     );
     (v != value).then_some(v)
+}
+
+/// Sprite scale slider (logarithmic, `×0.80`), within the valid range.
+/// Returns the new value on a change.
+pub fn scale_slider(ui: &mut Ui, value: f32) -> Option<f32> {
+    let mut v = value.clamp(orbit_core::SCALE_MIN, orbit_core::SCALE_MAX);
+    ui.spacing_mut().slider_width = (ui.available_width() - 76.0).max(60.0);
+    let response = ui.add(
+        egui::Slider::new(&mut v, orbit_core::SCALE_MIN..=orbit_core::SCALE_MAX)
+            .logarithmic(true)
+            .prefix("×")
+            .max_decimals(2)
+            // `Always` (the default) rounds the stored value at every frame,
+            // which would count as an edit.
+            .clamping(egui::SliderClamping::Edits),
+    );
+    // Only a user edit counts.
+    response.changed().then_some(v)
+}
+
+/// A normalized stage coordinate (`0.00`..`1.00`, slightly beyond is allowed)
+/// with a one-letter label. Returns the new value on a change.
+pub fn coord_field(ui: &mut Ui, label: &str, value: f32) -> Option<f32> {
+    let mut v = value;
+    ui.label(RichText::new(label).small().color(weak(ui)));
+    let response = ui.add(
+        DragValue::new(&mut v)
+            .speed(0.005)
+            .range(orbit_core::FREE_POSITION_RANGE)
+            .max_decimals(3),
+    );
+    response.changed().then_some(v)
 }
 
 /// Optional transition: none, fade to a color, or dissolve, with a duration.

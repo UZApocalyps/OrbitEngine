@@ -558,3 +558,101 @@ fn random_actions_with_saves_keep_invariants() {
         }
     }
 }
+
+/// The demo with every `Show` scaled, mirrored and placed freely.
+fn demo_with_styled_shows() -> Arc<Story> {
+    let mut story = Story::clone(&demo());
+    for scene in &mut story.scenes {
+        for node in &mut scene.nodes {
+            if let NodeKind::Show {
+                position,
+                scale,
+                flip_x,
+                flip_y,
+                ..
+            } = &mut node.kind
+            {
+                *position = orbit_core::Position::Free { x: 0.4, y: 0.95 };
+                *scale = Some(0.75);
+                *flip_x = true;
+                *flip_y = false;
+            }
+        }
+    }
+    Arc::new(story)
+}
+
+#[test]
+fn scale_mirror_and_free_position_survive_save_and_load() {
+    let story = demo_with_styled_shows();
+    let mut vm = Vm::from_start(story.clone()).unwrap();
+    play(&mut vm, 6, 0);
+    let on_stage = vm.snapshot().scene.characters.clone();
+    assert!(!on_stage.is_empty());
+    assert!(on_stage.iter().all(|c| c.scale == [0.75, 0.75] && c.flip_x));
+
+    let save = SaveData::capture(&vm, info(1));
+    let decoded = SaveData::decode(&save.encode().unwrap()).unwrap();
+    let mut loaded = Vm::from_start(story).unwrap();
+    assert!(decoded.apply_to(&mut loaded).unwrap());
+    assert_eq!(loaded.snapshot().scene.characters, on_stage);
+    // The history checkpoints carry it too: roll back one line and compare.
+    let back = loaded.rollback(1).unwrap();
+    assert!(back.scene.characters.iter().all(|c| c.flip_x));
+}
+
+#[test]
+fn version_1_saves_still_load_unscaled() {
+    let story = demo();
+    let mut vm = Vm::from_start(story.clone()).unwrap();
+    play(&mut vm, 8, 0);
+    let save = SaveData::capture(&vm, info(7));
+    assert!(save.meta.has_history);
+
+    // Hand-built v1 container: same meta, v1 body layout.
+    let mut meta = save.meta.clone();
+    meta.format_version = 1;
+    let meta_bytes = postcard::to_stdvec(&meta).unwrap();
+    let body = crate::legacy_v1::encode_body_for_tests(&save.vm_state, save.history.as_ref());
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"ORBS");
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&meta_bytes);
+    bytes.extend_from_slice(&body);
+
+    let decoded = SaveData::decode(&bytes).expect("v1 save must decode");
+    // v1 knows neither the `Show` node of a character nor its look.
+    let mut expected = save.vm_state.clone();
+    for c in &mut expected.scene.characters {
+        c.source = None;
+    }
+    assert_eq!(
+        decoded.vm_state.scene.characters.len(),
+        expected.scene.characters.len()
+    );
+    assert_eq!(decoded.vm_state.pc, expected.pc);
+    assert_eq!(decoded.vm_state.vars, expected.vars);
+    assert!(
+        decoded
+            .vm_state
+            .scene
+            .characters
+            .iter()
+            .all(|c| c.source.is_none())
+    );
+    assert_eq!(
+        decoded.history.as_ref().map(|h| h.checkpoints.len()),
+        save.history.as_ref().map(|h| h.checkpoints.len())
+    );
+    assert!(
+        decoded
+            .vm_state
+            .scene
+            .characters
+            .iter()
+            .all(|c| c.scale == [1.0, 1.0] && !c.flip_x && !c.flip_y)
+    );
+    let mut loaded = Vm::from_start(story).unwrap();
+    assert!(decoded.apply_to(&mut loaded).unwrap());
+}

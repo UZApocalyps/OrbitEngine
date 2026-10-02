@@ -24,6 +24,8 @@ orbit_platform.workspace = true
 orbit_gfx.workspace = true
 orbit_render2d.workspace = true
 orbit_runtime.workspace = true
+orbit_vm.workspace = true
+orbit_save.workspace = true
 orbit_assets.workspace = true
 orbit_audio.workspace = true
 orbit_ui.workspace = true
@@ -42,7 +44,6 @@ image = { workspace = true, features = ["jpeg"] }
 pollster.workspace = true
 
 [dev-dependencies]
-orbit_vm.workspace = true
 hound.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]

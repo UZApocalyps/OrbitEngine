@@ -55,6 +55,7 @@ impl B {
         let id = CharacterId::new();
         let name_id = self.story.strings.add(name);
         self.story.characters.push(Character {
+            default_scale: 1.0,
             id,
             name_id,
             color: Color::WHITE,
@@ -516,6 +517,10 @@ fn presentation_events_and_scene_state() {
         looping: true,
     });
     b.push(NodeKind::Show {
+        scale: None,
+        scale_y: None,
+        flip_x: false,
+        flip_y: false,
         character: ana,
         expression: "neutral".into(),
         position: Position::Left,
@@ -524,6 +529,10 @@ fn presentation_events_and_scene_state() {
     b.push(NodeKind::PlaySound { asset: sfx });
     b.say(Some(ana), "Hi");
     b.push(NodeKind::Show {
+        scale: None,
+        scale_y: None,
+        flip_x: false,
+        flip_y: false,
         character: ana,
         expression: "happy".into(),
         position: Position::Custom("far".into()),
@@ -602,6 +611,10 @@ fn show_with_bad_references_is_an_error() {
     let ana = b.character("Ana", &[("neutral", img)]);
     let ghost = CharacterId::new();
     let n1 = b.push(NodeKind::Show {
+        scale: None,
+        scale_y: None,
+        flip_x: false,
+        flip_y: false,
         character: ghost,
         expression: "x".into(),
         position: Position::Left,
@@ -625,6 +638,10 @@ fn show_with_bad_references_is_an_error() {
         let _ = ana;
         let ana2 = b.character("Ana", &[("neutral", img)]);
         b.push(NodeKind::Show {
+            scale: None,
+            scale_y: None,
+            flip_x: false,
+            flip_y: false,
             character: ana2,
             expression: expression.into(),
             position,
@@ -669,6 +686,10 @@ fn complex_story() -> Story {
         transition: Some(Transition::dissolve(1.0)),
     });
     b.push(NodeKind::Show {
+        scale: None,
+        scale_y: None,
+        flip_x: false,
+        flip_y: false,
         character: ana,
         expression: "neutral".into(),
         position: Position::Center,
@@ -849,6 +870,10 @@ fn rb_story() -> RbStory {
         transition: Some(Transition::dissolve(0.5)),
     });
     b.push(NodeKind::Show {
+        scale: None,
+        scale_y: None,
+        flip_x: false,
+        flip_y: false,
         character: ana,
         expression: "smile".into(),
         position: Position::Left,
@@ -1562,4 +1587,90 @@ fn rollback_and_seek_cross_scene_jumps() {
     };
     assert_eq!(node, b2, "replays the line the player rolled back from");
     let _ = b1;
+}
+
+/// Scale and mirroring: effective scale resolution, in-place update by a
+/// second `Show`, and restoration by rollback, snapshot restore and the
+/// "scene as events" rebuild.
+#[test]
+fn show_scale_and_flip_are_tracked_and_restored() {
+    let mut b = B::new();
+    let img = b.asset(AssetKind::Image, "a.png");
+    let ana = b.character("Ana", &[("neutral", img)]);
+    b.story
+        .characters
+        .iter_mut()
+        .find(|c| c.id == ana)
+        .unwrap()
+        .default_scale = 0.5;
+    let show = |position: Position, scale, scale_y, flip_x, flip_y| NodeKind::Show {
+        character: ana,
+        expression: "neutral".into(),
+        position,
+        transition: None,
+        scale,
+        scale_y,
+        flip_x,
+        flip_y,
+    };
+    // 1: default scale (0.5), no mirror. 2: override + mirror X + free
+    // position. 3: non uniform stretch + mirror Y.
+    b.push(show(Position::Left, None, None, false, false));
+    b.say(Some(ana), "one");
+    b.push(show(
+        Position::Free { x: 0.3, y: 0.8 },
+        Some(1.5),
+        None,
+        true,
+        false,
+    ));
+    b.say(Some(ana), "two");
+    b.push(show(Position::Center, Some(2.0), Some(0.5), false, true));
+    b.say(Some(ana), "three");
+    let story = b.build();
+    let mut vm = vm_for(story.clone());
+
+    assert!(matches!(vm.step(), StepResult::Say { .. }));
+    let events = vm.take_events();
+    assert!(matches!(
+        &events[0],
+        PresentationEvent::Show { scale, flip_x: false, flip_y: false, .. } if *scale == [0.5, 0.5]
+    ));
+    assert_eq!(vm.scene().character(ana).unwrap().scale, [0.5, 0.5]);
+
+    assert!(matches!(vm.step(), StepResult::Say { .. }));
+    let events = vm.take_events();
+    assert!(matches!(
+        &events[0],
+        PresentationEvent::Show { x, y, scale, flip_x: true, .. }
+            if (*x, *y) == (0.3, 0.8) && *scale == [1.5, 1.5]
+    ));
+    let c = vm.scene().character(ana).unwrap().clone();
+    assert_eq!(c.position, Position::Free { x: 0.3, y: 0.8 });
+    assert!(c.flip_x && !c.flip_y);
+    assert_eq!(vm.scene().characters.len(), 1, "updated in place");
+
+    assert!(matches!(vm.step(), StepResult::Say { .. }));
+    vm.take_events();
+    let c = vm.scene().character(ana).unwrap();
+    assert_eq!(c.scale, [2.0, 0.5]);
+    assert!(!c.flip_x && c.flip_y);
+
+    // Rollback to line two brings back its scale, mirror and free position,
+    // both in the scene and in the rebuild events.
+    let p = vm.rollback(1).unwrap();
+    let c = p.scene.character(ana).unwrap();
+    assert_eq!(c.scale, [1.5, 1.5]);
+    assert!(c.flip_x);
+    assert!(matches!(
+        p.events.last(),
+        Some(PresentationEvent::Show { x, y, scale, flip_x: true, .. })
+            if (*x, *y) == (0.3, 0.8) && *scale == [1.5, 1.5]
+    ));
+
+    // A saved state restores the same look.
+    let state = vm.snapshot();
+    let mut other = vm_for(story);
+    other.restore(state).unwrap();
+    assert_eq!(other.scene().character(ana).unwrap().scale, [1.5, 1.5]);
 }

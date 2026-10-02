@@ -1028,3 +1028,116 @@ fn scene_jumps_are_added_checked_and_protect_their_target() {
         "{report}"
     );
 }
+
+#[test]
+fn show_accepts_scale_mirror_and_free_positions_and_characters_a_default_scale() {
+    let mut f = Fixture::new("look");
+    f.write_asset_source("incoming/alice.png");
+    let img = f.ok("import_asset", json!({"source": "incoming/alice.png"}));
+    let created = f.ok(
+        "create_character",
+        json!({"name": "Alice", "default_scale": 0.8,
+               "expressions": [{"name": "happy", "asset": id_of(&img, "/id")}]}),
+    );
+    assert_eq!(created["default_scale"], 0.8);
+    f.ok("create_scene", json!({"name": "intro"}));
+
+    // Free position, uniform scale and mirror through add_command.
+    f.ok(
+        "add_command",
+        json!({"scene": "intro", "command": {"type": "show", "character": "Alice",
+               "expression": "happy", "position": {"x": 0.4, "y": 0.95},
+               "scale": 1.25, "flip_x": true}}),
+    );
+    // Non uniform stretch with a named position.
+    f.ok(
+        "add_command",
+        json!({"scene": "intro", "command": {"type": "show", "character": "Alice",
+               "expression": "happy", "position": "left", "scale": 1.0,
+               "scale_y": 0.5, "flip_y": true}}),
+    );
+    // add_dialogue inserts a show with the same options.
+    f.ok(
+        "add_dialogue",
+        json!({"scene": "intro", "speaker": "Alice", "text": "Hi", "expression": "happy",
+               "position": {"x": 0.7, "y": 1.0}, "scale": 0.5, "flip_x": true}),
+    );
+    let shows: Vec<_> = f.story().scenes[0]
+        .nodes
+        .iter()
+        .filter_map(|n| match &n.kind {
+            orbit_core::NodeKind::Show {
+                position,
+                scale,
+                scale_y,
+                flip_x,
+                flip_y,
+                ..
+            } => Some((position.clone(), *scale, *scale_y, *flip_x, *flip_y)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        shows,
+        [
+            (
+                orbit_core::Position::Free { x: 0.4, y: 0.95 },
+                Some(1.25),
+                None,
+                true,
+                false
+            ),
+            (
+                orbit_core::Position::Left,
+                Some(1.0),
+                Some(0.5),
+                false,
+                true
+            ),
+            (
+                orbit_core::Position::Free { x: 0.7, y: 1.0 },
+                Some(0.5),
+                None,
+                true,
+                false
+            ),
+        ]
+    );
+    assert_eq!(f.story().characters[0].default_scale, 0.8);
+    assert_eq!(f.ok("validate", json!({}))["ok"], true);
+    // The scene description carries the look.
+    let text = f.call("read_scene", json!({"scene": "intro"})).unwrap();
+    assert!(
+        text.contains("free(0.400, 0.950) scale 1.25 mirrored-x"),
+        "{text}"
+    );
+    // The file on disk is the story, and edit_character changes the default.
+    f.ok(
+        "edit_character",
+        json!({"character": "Alice", "default_scale": 1.5}),
+    );
+    assert_eq!(f.story().characters[0].default_scale, 1.5);
+    assert_eq!(&f.on_disk(), f.story());
+
+    // Out-of-range values are refused and change nothing.
+    let before = f.story().clone();
+    for bad in [
+        json!({"type": "show", "character": "Alice", "expression": "happy", "scale": 0.0}),
+        json!({"type": "show", "character": "Alice", "expression": "happy", "scale": 50.0}),
+        json!({"type": "show", "character": "Alice", "expression": "happy", "scale_y": -1.0}),
+        json!({"type": "show", "character": "Alice", "expression": "happy",
+               "position": {"x": 9.0, "y": 0.5}}),
+    ] {
+        let e = f.err("add_command", json!({"scene": "intro", "command": bad}));
+        assert_eq!(e.kind, ErrorKind::InvalidArguments, "{e}");
+    }
+    f.err(
+        "edit_character",
+        json!({"character": "Alice", "default_scale": 0.0}),
+    );
+    f.err(
+        "create_character",
+        json!({"name": "Bob", "default_scale": 99.0}),
+    );
+    assert_eq!(*f.story(), before);
+}

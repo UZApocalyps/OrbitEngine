@@ -496,6 +496,7 @@ mod tests {
         .unwrap();
         let id = orbit_core::CharacterId::new();
         let ch = Character {
+            default_scale: 1.0,
             id,
             name_id,
             color: Color::WHITE,

@@ -14,7 +14,7 @@ use crate::migrate;
 use crate::validate;
 
 /// Version of the on-disk schema produced by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 5;
+pub const CURRENT_SCHEMA_VERSION: u32 = 6;
 
 /// A whole story: definitions (characters, assets, strings...) and an ordered
 /// list of scenes. Execution starts at the first node of the first non-empty
@@ -111,13 +111,29 @@ pub enum NodeKind {
         #[serde(default)]
         transition: Option<Transition>,
     },
-    /// Shows (or updates) a character on stage.
+    /// Shows (or updates) a character on stage. Showing a character that is
+    /// already there replaces its expression, position, scale and mirroring
+    /// (a `Show` always describes the whole look), animated by `transition`.
     Show {
         character: CharacterId,
         expression: String,
         position: Position,
         #[serde(default)]
         transition: Option<Transition>,
+        /// Sprite scale (uniform, or horizontal when `scale_y` is set).
+        /// `None` uses the character's `default_scale` (schema v6).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<f32>,
+        /// Vertical scale for a non-uniform stretch; `None` keeps the
+        /// horizontal scale (schema v6).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale_y: Option<f32>,
+        /// Mirrors the sprite on the X axis (schema v6).
+        #[serde(default, skip_serializing_if = "is_false")]
+        flip_x: bool,
+        /// Mirrors the sprite on the Y axis (schema v6).
+        #[serde(default, skip_serializing_if = "is_false")]
+        flip_y: bool,
     },
     /// Removes a character from the stage.
     Hide {
@@ -320,9 +336,14 @@ impl Story {
                 .iter()
                 .find(|p| &p.name == name)
                 .map(|p| (p.x, p.y)),
+            Position::Free { x, y } => Some((*x, *y)),
             builtin => builtin_position(builtin),
         }
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[cfg(test)]

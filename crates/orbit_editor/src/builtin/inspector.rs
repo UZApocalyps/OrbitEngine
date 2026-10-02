@@ -367,12 +367,7 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
         NodeKind::Background { asset, transition } => {
             background(ui, ctx, id, asset, transition);
         }
-        NodeKind::Show {
-            character,
-            expression,
-            position,
-            transition,
-        } => show(ui, ctx, id, character, &expression, &position, transition),
+        shown @ NodeKind::Show { .. } => show(ui, ctx, id, &shown),
         NodeKind::Hide {
             character,
             transition,
@@ -1056,22 +1051,30 @@ fn background(
     });
 }
 
-fn show(
-    ui: &mut Ui,
-    ctx: &mut EditorContext<'_>,
-    id: NodeId,
-    character: CharacterId,
-    expression: &str,
-    position: &Position,
-    transition: Option<orbit_core::Transition>,
-) {
-    let Some(story) = ctx.story() else { return };
-    let rebuild = |character, expression: String, position, transition| NodeKind::Show {
+/// The inspector of a `Show`: who, which expression, and how they stand:
+/// position (named or free), scale (uniform or stretched) and mirroring.
+fn show(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, kind: &NodeKind) {
+    let NodeKind::Show {
         character,
         expression,
         position,
         transition,
+        scale,
+        scale_y,
+        flip_x,
+        flip_y,
+    } = kind
+    else {
+        return;
     };
+    let (character, transition) = (*character, *transition);
+    let Some(story) = ctx.story() else { return };
+    let default_scale = story.character(character).map_or(1.0, |c| c.default_scale);
+    // Edits are applied to a copy of the node: whatever the widget changes,
+    // the rest of the node (and so of the look) is kept.
+    let mut edited = kind.clone();
+    let mut changed: Option<&str> = None;
+
     let mut new_char = None;
     field(ui, "Personnage", |ui| {
         new_char = character_picker(ui, ("show_char", id), story, Some(character), None);
@@ -1088,59 +1091,170 @@ fn show(
         }
         new_expr = expression_picker(ui, ("show_expr", id), story, character, expression);
     });
+
     let mut new_pos = None;
     field(ui, "Position", |ui| {
         new_pos = position_picker(ui, ("show_pos", id), story, position);
+    });
+    let mut new_xy: (Option<f32>, Option<f32>) = (None, None);
+    if let Position::Free { x, y } = position {
+        ui.horizontal(|ui| {
+            new_xy.0 = fields::coord_field(ui, "X", *x);
+            new_xy.1 = fields::coord_field(ui, "Y", *y);
+        });
+        ui.label(
+            RichText::new("Origine en haut à gauche ; le personnage est ancré par le bas-centre.")
+                .small()
+                .color(faint(ui)),
+        );
+    }
+
+    // Scale: the override, or the character's default when there is none.
+    let mut new_scale: Option<Option<f32>> = None;
+    let mut new_scale_y: Option<Option<f32>> = None;
+    field(ui, "Échelle", |ui| {
+        let shown = scale.unwrap_or(default_scale);
+        ui.horizontal(|ui| {
+            if let Some(v) = fields::scale_slider(ui, shown) {
+                new_scale = Some(Some(v));
+            }
+        });
+        ui.horizontal(|ui| {
+            let mut stretch = scale_y.is_some();
+            if ui
+                .checkbox(&mut stretch, "Étirement vertical distinct")
+                .on_hover_text("Donne une échelle Y différente de l'échelle X")
+                .changed()
+            {
+                // Turning it on starts from the current scale (no jump).
+                new_scale_y = Some(stretch.then_some(shown));
+                if stretch && scale.is_none() {
+                    new_scale = Some(Some(shown));
+                }
+            }
+            let has_override = scale.is_some() || scale_y.is_some();
+            if ui
+                .add_enabled(
+                    has_override,
+                    egui::Button::new(format!(
+                        "{}  Défaut ×{default_scale:.2}",
+                        icons::ARROW_COUNTER_CLOCKWISE
+                    ))
+                    .small(),
+                )
+                .on_hover_text("Reprend l'échelle par défaut du personnage")
+                .clicked()
+            {
+                new_scale = Some(None);
+                new_scale_y = Some(None);
+            }
+        });
+        if let Some(sy) = scale_y {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Y").small().color(weak(ui)));
+                if let Some(v) = fields::scale_slider(ui, *sy) {
+                    new_scale_y = Some(Some(v));
+                }
+            });
+        }
+    });
+
+    // Mirroring.
+    let (mut fx, mut fy) = (*flip_x, *flip_y);
+    field(ui, "Miroir", |ui| {
+        ui.horizontal(|ui| {
+            ui.toggle_value(&mut fx, format!("{}  Miroir X", icons::FLIP_HORIZONTAL))
+                .on_hover_text("Inverse l'image de gauche à droite");
+            ui.toggle_value(&mut fy, format!("{}  Miroir Y", icons::FLIP_VERTICAL))
+                .on_hover_text("Inverse l'image de haut en bas");
+        });
     });
     let mut new_tr = None;
     field(ui, "Transition", |ui| {
         new_tr = transition_editor(ui, ("show_tr", id), transition);
     });
-    if let Some(Some(c)) = new_char {
-        // Keep the expression when the new character has it, else take its first.
-        let expr = story
-            .character(c)
-            .map(|d| {
-                if d.expression(expression).is_some() {
-                    expression.to_owned()
-                } else {
-                    d.expressions
-                        .first()
-                        .map(|e| e.name.clone())
-                        .unwrap_or_default()
-                }
-            })
-            .unwrap_or_default();
-        commit(
-            ctx,
-            id,
-            rebuild(c, expr, position.clone(), transition),
-            "character",
-        );
+    ui.add_space(6.0);
+    let open_view = ui
+        .button(format!(
+            "{}  Placer dans l'éditeur de vue",
+            icons::FRAME_CORNERS
+        ))
+        .on_hover_text("Ouvre l'éditeur de vue : glissez le personnage pour le placer librement")
+        .clicked();
+
+    // ---- apply
+    if let NodeKind::Show {
+        character: c,
+        expression: e,
+        position: p,
+        transition: t,
+        scale: sc,
+        scale_y: sy,
+        flip_x: ffx,
+        flip_y: ffy,
+    } = &mut edited
+    {
+        if let Some(Some(nc)) = new_char {
+            // Keep the expression when the new character has it, else take its first.
+            *e = story
+                .character(nc)
+                .map(|d| {
+                    if d.expression(expression).is_some() {
+                        expression.clone()
+                    } else {
+                        d.expressions
+                            .first()
+                            .map(|x| x.name.clone())
+                            .unwrap_or_default()
+                    }
+                })
+                .unwrap_or_default();
+            *c = nc;
+            changed = Some("character");
+        }
+        if let Some(ne) = new_expr {
+            *e = ne;
+            changed = Some("expression");
+        }
+        if let Some(np) = new_pos {
+            *p = np;
+            changed = Some("position");
+        }
+        if let Position::Free { x, y } = p
+            && (new_xy.0.is_some() || new_xy.1.is_some())
+        {
+            *x = new_xy.0.unwrap_or(*x);
+            *y = new_xy.1.unwrap_or(*y);
+            changed = Some("position_xy");
+        }
+        if let Some(v) = new_scale {
+            *sc = v;
+            changed = Some("scale");
+        }
+        if let Some(v) = new_scale_y {
+            *sy = v;
+            changed = Some("scale_y");
+        }
+        if fx != *flip_x {
+            *ffx = fx;
+            changed = Some("flip_x");
+        }
+        if fy != *flip_y {
+            *ffy = fy;
+            changed = Some("flip_y");
+        }
+        if let Some(nt) = new_tr {
+            *t = nt;
+            changed = Some("transition");
+        }
     }
-    if let Some(e) = new_expr {
-        commit(
-            ctx,
-            id,
-            rebuild(character, e, position.clone(), transition),
-            "expression",
-        );
+    if let Some(field) = changed {
+        commit(ctx, id, edited, field);
     }
-    if let Some(p) = new_pos {
-        commit(
-            ctx,
-            id,
-            rebuild(character, expression.to_owned(), p, transition),
-            "position",
-        );
-    }
-    if let Some(t) = new_tr {
-        commit(
-            ctx,
-            id,
-            rebuild(character, expression.to_owned(), position.clone(), t),
-            "transition",
-        );
+    if open_view {
+        ctx.request(orbit_editor_api::EditorRequest::ShowPanel(
+            super::panels::SCENEVIEW.to_owned(),
+        ));
     }
 }
 

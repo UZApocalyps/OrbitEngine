@@ -554,13 +554,33 @@ fn describe_event(story: &Story, event: &PresentationEvent) -> String {
             position,
             x,
             y,
+            scale,
+            flip_x,
+            flip_y,
             transition,
             ..
-        } => format!(
-            "[show {} ({expression}) at {position:?} ({x}, {y}){}]",
-            name(*character),
-            describe_transition(transition)
-        ),
+        } => {
+            // Only what differs from the standard look is spelled out.
+            let mut look = String::new();
+            if *scale != [1.0, 1.0] {
+                if scale[0] == scale[1] {
+                    look.push_str(&format!(", scale {}", scale[0]));
+                } else {
+                    look.push_str(&format!(", scale {}x{}", scale[0], scale[1]));
+                }
+            }
+            if *flip_x {
+                look.push_str(", mirrored x");
+            }
+            if *flip_y {
+                look.push_str(", mirrored y");
+            }
+            format!(
+                "[show {} ({expression}) at {position:?} ({x}, {y}){look}{}]",
+                name(*character),
+                describe_transition(transition)
+            )
+        }
         PresentationEvent::Hide {
             character,
             transition,

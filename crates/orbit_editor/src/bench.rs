@@ -43,6 +43,7 @@ pub fn generate_story(nodes: usize) -> Story {
             let id = CharacterId::new();
             let name_id = story.strings.add(*name);
             story.characters.push(Character {
+                default_scale: 1.0,
                 id,
                 name_id,
                 color,
@@ -85,6 +86,10 @@ pub fn generate_story(nodes: usize) -> Story {
         };
         let who = characters[block % characters.len()];
         add(NodeKind::Show {
+            scale: None,
+            scale_y: None,
+            flip_x: false,
+            flip_y: false,
             character: who,
             expression: "neutral".into(),
             position: if block.is_multiple_of(2) {

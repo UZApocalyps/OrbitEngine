@@ -96,6 +96,20 @@ impl Sprite2d {
         self.uv = uv;
         self
     }
+
+    /// Mirrors the picture in place, on the X and/or Y axis, by swapping the
+    /// texture coordinates (the quad keeps its footprint, so the anchor and
+    /// the bounding box are unchanged). Calling it twice undoes it. Works with
+    /// any sub-region set by [`Self::uv`], and does not affect batching.
+    pub fn flipped(mut self, flip_x: bool, flip_y: bool) -> Self {
+        if flip_x {
+            self.uv.swap(0, 2);
+        }
+        if flip_y {
+            self.uv.swap(1, 3);
+        }
+        self
+    }
 }
 
 /// A list of sprites drawn together (one scene = one render pass).
@@ -282,6 +296,37 @@ mod tests {
         assert!((r[1][0] - 100.0).abs() < 1e-4 && (r[1][1] - 120.0).abs() < 1e-4);
         let sc = corners(&s.scale([2.0, 2.0]));
         assert_eq!(sc[3], [140.0, 120.0]);
+    }
+
+    #[test]
+    fn flipping_swaps_uvs_in_place_and_keeps_batching() {
+        let base = Sprite2d::new(TextureId(1), [100.0, 100.0], [20.0, 10.0]).anchor([0.5, 1.0]);
+        let flipped = base.clone().flipped(true, false);
+        assert_eq!(flipped.uv, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(base.clone().flipped(false, true).uv, [0.0, 1.0, 1.0, 0.0]);
+        assert_eq!(flipped.clone().flipped(true, false).uv, base.uv);
+        // Same footprint.
+        assert_eq!(corners(&flipped), corners(&base));
+        // Mirrored and plain sprites of one texture still share a batch, and
+        // the vertices carry the swapped coordinates.
+        let (mut order, mut v, mut b) = (Vec::new(), Vec::new(), Vec::new());
+        build_batches(&[base, flipped], &mut order, &mut v, &mut b);
+        assert_eq!(b.len(), 1);
+        assert_eq!(v[0].uv, [0.0, 0.0]);
+        assert_eq!(v[4].uv, [1.0, 0.0]);
+        assert_eq!(v[7].uv, [0.0, 1.0]);
+    }
+
+    #[test]
+    fn negative_scale_mirrors_around_the_anchor() {
+        // The renderer does not cull back faces, so a negative scale is also
+        // a valid way to mirror around the anchor.
+        let s = Sprite2d::new(TextureId(0), [100.0, 100.0], [20.0, 10.0])
+            .anchor([0.5, 1.0])
+            .scale([-1.0, 1.0]);
+        let c = corners(&s);
+        assert_eq!(c[0], [110.0, 90.0]);
+        assert_eq!(c[1], [90.0, 90.0]);
     }
 
     #[test]

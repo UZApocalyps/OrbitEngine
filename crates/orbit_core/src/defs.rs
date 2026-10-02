@@ -65,8 +65,22 @@ impl Transition {
     }
 }
 
+/// Smallest accepted sprite scale (1.0 = native size, see the runtime).
+pub const SCALE_MIN: f32 = 0.05;
+/// Largest accepted sprite scale.
+pub const SCALE_MAX: f32 = 10.0;
+/// Free positions may lie slightly off screen (a character walking in), but
+/// stay within this normalized range on both axes.
+pub const FREE_POSITION_RANGE: std::ops::RangeInclusive<f32> = -2.0..=3.0;
+
+/// Whether `scale` is a valid sprite scale: finite and within
+/// [`SCALE_MIN`]..=[`SCALE_MAX`].
+pub fn scale_is_valid(scale: f32) -> bool {
+    scale.is_finite() && (SCALE_MIN..=SCALE_MAX).contains(&scale)
+}
+
 /// Where a character stands on stage.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Position {
     Left,
@@ -74,6 +88,14 @@ pub enum Position {
     Right,
     /// A position defined in [`crate::Story::positions`], by name.
     Custom(String),
+    /// A free position given inline, in normalized stage coordinates (origin
+    /// top-left, the sprite is anchored by its bottom-center point). Added in
+    /// schema v6; this is what the scene view writes when a character is
+    /// dragged.
+    Free {
+        x: f32,
+        y: f32,
+    },
 }
 
 /// A custom stage position in normalized screen coordinates: `x` and `y` are
@@ -93,7 +115,7 @@ pub fn builtin_position(position: &Position) -> Option<(f32, f32)> {
         Position::Left => Some((0.25, 1.0)),
         Position::Center => Some((0.5, 1.0)),
         Position::Right => Some((0.75, 1.0)),
-        Position::Custom(_) => None,
+        Position::Custom(_) | Position::Free { .. } => None,
     }
 }
 
@@ -119,6 +141,18 @@ pub struct Character {
     /// when unset, so existing stories are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_position: Option<Position>,
+    /// Scale applied when a `Show` does not override it (schema v6). `1.0`
+    /// is the native size; not written to the file when it is `1.0`.
+    #[serde(default = "default_scale", skip_serializing_if = "is_default_scale")]
+    pub default_scale: f32,
+}
+
+fn default_scale() -> f32 {
+    1.0
+}
+
+fn is_default_scale(scale: &f32) -> bool {
+    *scale == 1.0
 }
 
 impl Character {

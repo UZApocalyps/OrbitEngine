@@ -13,6 +13,25 @@ pub struct CharacterOnStage {
     pub character: CharacterId,
     pub expression: String,
     pub position: Position,
+    /// Effective sprite scale `[x, y]`: the `Show` override or the
+    /// character's default scale (1.0 = native size).
+    #[serde(default = "unit_scale")]
+    pub scale: [f32; 2],
+    /// Mirrored on the X axis.
+    #[serde(default)]
+    pub flip_x: bool,
+    /// Mirrored on the Y axis.
+    #[serde(default)]
+    pub flip_y: bool,
+    /// The `Show` node that last placed the character. Editor metadata (the
+    /// scene view selects it when the character is clicked); the VM never
+    /// reads it, and it may be `None` (states restored from format-1 saves).
+    #[serde(default)]
+    pub source: Option<NodeId>,
+}
+
+fn unit_scale() -> [f32; 2] {
+    [1.0, 1.0]
 }
 
 /// The music currently playing.

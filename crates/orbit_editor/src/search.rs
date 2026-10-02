@@ -322,6 +322,7 @@ mod tests {
         let name_id = story.strings.add("Clara");
         let clara = orbit_core::CharacterId::new();
         story.characters.push(Character {
+            default_scale: 1.0,
             id: clara,
             name_id,
             color: Color::WHITE,

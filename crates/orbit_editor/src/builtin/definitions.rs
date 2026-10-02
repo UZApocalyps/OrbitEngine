@@ -289,6 +289,36 @@ fn character_details(
                 None,
             ));
         }
+
+        // Default scale: what a `Show` uses unless it sets its own.
+        ui.add_space(8.0);
+        ui.label(RichText::new("Échelle par défaut").small().color(weak(ui)));
+        ui.horizontal(|ui| {
+            let reset = ui
+                .add_enabled(
+                    def.default_scale != 1.0,
+                    egui::Button::new(icons::ARROW_COUNTER_CLOCKWISE).small(),
+                )
+                .on_hover_text("Remet l'échelle par défaut à ×1.00")
+                .clicked();
+            let new_scale = if reset {
+                Some(1.0)
+            } else {
+                fields::scale_slider(ui, def.default_scale)
+            };
+            if let Some(v) = new_scale {
+                let mut new = def.clone();
+                new.default_scale = v;
+                pending.push((
+                    Command::SetCharacter {
+                        id: new.id,
+                        character: Some(new),
+                        index: None,
+                    },
+                    (!reset).then(|| format!("char-scale:{id}")),
+                ));
+            }
+        });
     });
     for (command, key) in pending {
         let result = match key {

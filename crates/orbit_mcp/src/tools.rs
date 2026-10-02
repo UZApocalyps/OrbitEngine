@@ -14,9 +14,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value as Json, json};
 
 use crate::convert::{
-    build_transition, check_identifier, find_asset, find_character, find_label, find_scene,
-    find_speaker, insertion_index, json_to_custom, json_to_value, parse_color, parse_id,
-    parse_position,
+    build_transition, check_identifier, check_scale, find_asset, find_character, find_label,
+    find_scene, find_speaker, free_position, insertion_index, json_to_custom, json_to_value,
+    parse_color, parse_id, parse_position,
 };
 use crate::error::{ErrorKind, ToolError};
 use crate::sandbox::Sandbox;
@@ -164,6 +164,30 @@ fn release_strings(cx: &mut ToolCx<'_>, ids: Vec<StringId>) -> Result<(), ToolEr
 #[serde(deny_unknown_fields)]
 struct NoArgs {}
 
+/// A stage position: a name or free normalized coordinates.
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum PositionArg {
+    /// `left`, `center`, `right` or the name of a custom position.
+    Named(String),
+    /// Free position in normalized stage coordinates: `x` and `y` in
+    /// `0.0..=1.0` (slightly outside is allowed to walk in from off screen),
+    /// origin top-left; the sprite is anchored by its bottom-center point, so
+    /// `y: 1.0` is standing on the bottom edge.
+    Free { x: f32, y: f32 },
+}
+
+fn resolve_position_arg(
+    story: &orbit_core::Story,
+    position: Option<&PositionArg>,
+) -> Result<orbit_core::Position, ToolError> {
+    match position {
+        None => parse_position(story, "center"),
+        Some(PositionArg::Named(name)) => parse_position(story, name),
+        Some(PositionArg::Free { x, y }) => free_position(*x, *y),
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SceneArg {
@@ -201,8 +225,15 @@ struct AddDialogueArgs {
     /// If given, a `show` node displaying the speaker with this expression is
     /// inserted just before the line (requires a speaker).
     expression: Option<String>,
-    /// Stage position for that `show` node: left, center (default), right or a custom position name.
-    position: Option<String>,
+    /// Stage position for that `show` node: left, center (default), right,
+    /// a custom position name, or a free `{"x": 0.4, "y": 1.0}`.
+    position: Option<PositionArg>,
+    /// Sprite scale override for that `show` node (default: the character's `default_scale`).
+    scale: Option<f32>,
+    /// Mirror the sprite horizontally in that `show` node.
+    flip_x: Option<bool>,
+    /// Mirror the sprite vertically in that `show` node.
+    flip_y: Option<bool>,
     /// Insert after this node id (`start` inserts at the beginning). Default: at the end of the scene.
     after: Option<String>,
     /// Alternative to `after`: explicit index in the scene.
@@ -291,9 +322,21 @@ pub enum CommandSpec {
         character: String,
         /// Expression name (must exist on the character).
         expression: String,
-        /// left, center (default), right or a custom position name.
-        position: Option<String>,
+        /// left, center (default), right, a custom position name, or a free
+        /// position `{"x": 0.4, "y": 1.0}` (normalized, origin top-left, the
+        /// sprite is anchored by its bottom-center).
+        position: Option<PositionArg>,
         transition: Option<TransitionArg>,
+        /// Sprite scale override (1.0 = native size; 0.05 to 10). Default:
+        /// the character's `default_scale`. Showing an already visible
+        /// character again updates its position, scale and mirroring.
+        scale: Option<f32>,
+        /// Vertical scale for a non-uniform stretch (default: same as `scale`).
+        scale_y: Option<f32>,
+        /// Mirror the sprite on the X axis (default false).
+        flip_x: Option<bool>,
+        /// Mirror the sprite on the Y axis (default false).
+        flip_y: Option<bool>,
     },
     /// Remove a character from the stage.
     Hide {
@@ -478,6 +521,9 @@ struct CreateCharacterArgs {
     color: Option<String>,
     /// Sprites of the character, one per expression.
     expressions: Option<Vec<ExpressionArg>>,
+    /// Default sprite scale (1.0 = native size; 0.05 to 10), used by `show`
+    /// nodes that do not set their own `scale`.
+    default_scale: Option<f32>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -493,6 +539,8 @@ struct EditCharacterArgs {
     set_expressions: Option<Vec<ExpressionArg>>,
     /// Expression names to remove (refused while a `show` node uses them).
     remove_expressions: Option<Vec<String>>,
+    /// New default sprite scale (1.0 = native size; 0.05 to 10).
+    default_scale: Option<f32>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -686,7 +734,7 @@ fn add_dialogue(cx: &mut ToolCx<'_>, a: AddDialogueArgs) -> Result<String, ToolE
                         .join(", ")
                 )));
             }
-            let position = parse_position(story, a.position.as_deref().unwrap_or("center"))?;
+            let position = resolve_position_arg(story, a.position.as_ref())?;
             Some(Node {
                 id: NodeId::new(),
                 kind: NodeKind::Show {
@@ -694,6 +742,10 @@ fn add_dialogue(cx: &mut ToolCx<'_>, a: AddDialogueArgs) -> Result<String, ToolE
                     expression: expression.clone(),
                     position,
                     transition: None,
+                    scale: a.scale.map(|s| check_scale("scale", s)).transpose()?,
+                    scale_y: None,
+                    flip_x: a.flip_x.unwrap_or(false),
+                    flip_y: a.flip_y.unwrap_or(false),
                 },
             })
         }
@@ -702,9 +754,14 @@ fn add_dialogue(cx: &mut ToolCx<'_>, a: AddDialogueArgs) -> Result<String, ToolE
                 "`expression` needs a speaker (a character) to show",
             ));
         }
-        (None, _) if a.position.is_some() => {
+        (None, _)
+            if a.position.is_some()
+                || a.scale.is_some()
+                || a.flip_x.is_some()
+                || a.flip_y.is_some() =>
+        {
             return Err(ToolError::invalid(
-                "`position` only applies with `expression`",
+                "`position`, `scale`, `flip_x` and `flip_y` only apply with `expression`",
             ));
         }
         (None, _) => None,
@@ -857,6 +914,10 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
             expression,
             position,
             transition: t,
+            scale,
+            scale_y,
+            flip_x,
+            flip_y,
         } => {
             let id = find_character(story, character)?;
             let ch = story
@@ -875,8 +936,12 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
             NodeKind::Show {
                 character: id,
                 expression: expression.clone(),
-                position: parse_position(story, position.as_deref().unwrap_or("center"))?,
+                position: resolve_position_arg(story, position.as_ref())?,
                 transition: transition(t)?,
+                scale: scale.map(|s| check_scale("scale", s)).transpose()?,
+                scale_y: scale_y.map(|s| check_scale("scale_y", s)).transpose()?,
+                flip_x: flip_x.unwrap_or(false),
+                flip_y: flip_y.unwrap_or(false),
             }
         }
         CommandSpec::Hide {
@@ -1130,6 +1195,11 @@ fn create_character(cx: &mut ToolCx<'_>, a: CreateCharacterArgs) -> Result<Strin
         }
     };
     let expressions = build_expressions(cx, a.expressions.as_deref().unwrap_or_default())?;
+    let default_scale = a
+        .default_scale
+        .map(|s| check_scale("default_scale", s))
+        .transpose()?
+        .unwrap_or(1.0);
     let name_id = StringId::new();
     let id = CharacterId::new();
     exec(
@@ -1149,6 +1219,7 @@ fn create_character(cx: &mut ToolCx<'_>, a: CreateCharacterArgs) -> Result<Strin
                 color,
                 expressions,
                 default_position: None,
+                default_scale,
             }),
             index: None,
         },
@@ -1177,10 +1248,14 @@ fn edit_character(cx: &mut ToolCx<'_>, a: EditCharacterArgs) -> Result<String, T
         && a.color.is_none()
         && a.set_expressions.is_none()
         && a.remove_expressions.is_none()
+        && a.default_scale.is_none()
     {
         return Err(ToolError::invalid(
-            "nothing to change: give name, color, set_expressions and/or remove_expressions",
+            "nothing to change: give name, color, default_scale, set_expressions and/or remove_expressions",
         ));
+    }
+    if let Some(scale) = a.default_scale {
+        character.default_scale = check_scale("default_scale", scale)?;
     }
     let new_name = a
         .name

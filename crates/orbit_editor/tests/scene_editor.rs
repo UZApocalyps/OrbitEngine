@@ -181,6 +181,10 @@ fn a_story_is_built_with_the_editor_operations_only_and_validates() {
         c.exec(Command::SetNodeKind {
             id: second_show,
             kind: NodeKind::Show {
+                scale: None,
+                scale_y: None,
+                flip_x: false,
+                flip_y: false,
                 character: ben,
                 expression: "neutral".into(),
                 position: Position::Right,
@@ -500,6 +504,10 @@ fn every_node_kind_has_an_inspector_that_draws_and_edits() {
             transition: Some(Transition::dissolve(1.0)),
         },
         NodeKind::Show {
+            scale: None,
+            scale_y: None,
+            flip_x: false,
+            flip_y: false,
             character: ana,
             expression: "neutral".into(),
             position: Position::Custom("far".into()),
@@ -655,6 +663,10 @@ fn characters_and_variables_panels_draw_and_renames_follow_their_usages() {
     });
     let _ = sprite;
     let show = ops::NodeDraft::plain(NodeKind::Show {
+        scale: None,
+        scale_y: None,
+        flip_x: false,
+        flip_y: false,
         character: ana,
         expression: "happy".into(),
         position: Position::Left,

@@ -1084,17 +1084,17 @@ fn describe(story: &Story, node: &Node) -> (String, String) {
             expression,
             position,
             transition: t,
+            scale,
+            scale_y,
+            flip_x,
+            flip_y,
         } => (
             "Afficher".into(),
             format!(
-                "{} ({expression})  ·  {}{}",
+                "{} ({expression})  ·  {}{}{}",
                 who(*character),
-                match position {
-                    orbit_core::Position::Left => "gauche".to_owned(),
-                    orbit_core::Position::Center => "centre".to_owned(),
-                    orbit_core::Position::Right => "droite".to_owned(),
-                    orbit_core::Position::Custom(n) => n.clone(),
-                },
+                super::nodeinfo::position_name(position),
+                super::nodeinfo::look_text(*scale, *scale_y, *flip_x, *flip_y),
                 transition(t)
             ),
         ),

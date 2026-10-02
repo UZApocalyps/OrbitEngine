@@ -2339,6 +2339,7 @@ dependencies = [
  "orbit_project",
  "orbit_render2d",
  "orbit_runtime",
+ "orbit_save",
  "orbit_ui",
  "orbit_vm",
  "pollster 1.0.1",

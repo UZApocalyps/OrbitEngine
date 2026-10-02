@@ -13,6 +13,10 @@
 //! * v4 -> v5 (M3d): scenes no longer fall through into the next one;
 //!   `NodeKind::JumpScene` is added. To keep what existing stories do, every
 //!   scene that fell into the next non-empty one gets a `JumpScene` to it.
+//! * v5 -> v6 (scene view): `Show` gains optional `scale`, `scale_y`,
+//!   `flip_x`, `flip_y`, `Position::Free` is added and characters get a
+//!   `default_scale`. Purely additive: every new field has a default, so a v5
+//!   document is a valid v6 document.
 
 use std::borrow::Cow;
 
@@ -36,7 +40,7 @@ pub fn read_version(source: &str) -> Result<u32, CoreError> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -187,6 +191,7 @@ fn v1_to_v2(source: &str) -> Result<String, CoreError> {
                                 color: Color::rgb(200, 200, 200),
                                 expressions: Vec::new(),
                                 default_position: None,
+                                default_scale: 1.0,
                             });
                             speakers.insert(name, id);
                             id
@@ -262,6 +267,17 @@ fn v3_to_v4(source: &str) -> Result<String, CoreError> {
 
     let mut story: Story = ron::from_str(source)?;
     story.schema_version = 4;
+    story.to_ron()
+}
+
+/// v5 -> v6. All new fields default (`scale` absent, no mirroring, character
+/// `default_scale` 1.0) and the new `Position::Free` variant is only ever
+/// written by v6 tools, so only the version number changes.
+fn v5_to_v6(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 6;
     story.to_ron()
 }
 
@@ -483,6 +499,53 @@ mod tests {
         // Already current: a second pass changes nothing, and it round-trips.
         let again = Story::from_ron_unchecked(&story.to_ron().unwrap()).unwrap();
         assert_eq!(story, again);
+    }
+
+    #[test]
+    fn v5_story_migrates_to_v6_with_default_scale_and_no_mirroring() {
+        use crate::defs::Position;
+        use crate::story::{NodeKind, Story};
+
+        let v5 = r#"(
+    schema_version: 5,
+    title: "Old",
+    strings: (source_lang: "en", entries: {"01JBX0T0000000000000000001": "Al"}),
+    characters: [
+        (id: "01JBX0C0000000000000000001", name_id: "01JBX0T0000000000000000001", color: (r: 1, g: 2, b: 3),
+         expressions: [(name: "neutral", image: "01JBX0A0000000000000000001")]),
+    ],
+    assets: (assets: [(id: "01JBX0A0000000000000000001", kind: Image, path: "a.png")]),
+    scenes: [
+        (id: "01JBX0S0000000000000000001", name: "a", nodes: [
+            (id: "01JBX0N0000000000000000001", kind: Show(character: "01JBX0C0000000000000000001", expression: "neutral", position: Left, transition: None)),
+            (id: "01JBX0N0000000000000000002", kind: End),
+        ]),
+    ],
+)"#;
+        let story = Story::from_ron(v5).unwrap();
+        assert_eq!(story.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(story.characters[0].default_scale, 1.0);
+        let NodeKind::Show {
+            position,
+            scale,
+            scale_y,
+            flip_x,
+            flip_y,
+            ..
+        } = &story.scenes[0].nodes[0].kind
+        else {
+            panic!("expected Show");
+        };
+        assert_eq!(*position, Position::Left);
+        assert_eq!(
+            (*scale, *scale_y, *flip_x, *flip_y),
+            (None, None, false, false)
+        );
+        // Unset fields are not written back.
+        let text = story.to_ron().unwrap();
+        assert!(
+            !text.contains("flip_x") && !text.contains("scale") && !text.contains("default_scale")
+        );
     }
 
     #[test]

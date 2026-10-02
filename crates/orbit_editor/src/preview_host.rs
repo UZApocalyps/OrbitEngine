@@ -13,12 +13,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use orbit_core::Story;
+use orbit_editor_api::SceneViewActor;
 use orbit_editor_api::{
     Level, PreviewCommand, PreviewInput, PreviewSpeed, PreviewStatus, Selection,
 };
 use orbit_gfx::{Gfx, wgpu};
 use orbit_platform::{InputEvent, KeyCode, MouseButton};
 use orbit_render2d::{Readback, ReadbackStatus, Renderer2d, TextureId};
+use orbit_runtime::preview::ResumeSource;
+use orbit_runtime::scene_view;
+use orbit_runtime::stage::character_size;
 use orbit_runtime::{
     EmbeddedConfig, LoadOutcome, PlayFrom, PlaySpeed, PlayStatus, Runtime, RuntimeError,
 };
@@ -273,8 +277,36 @@ pub struct PreviewHost {
     asset_stamps: HashMap<String, SystemTime>,
     /// Last reload latency in milliseconds, for the debug overlay and tests.
     pub last_reload_ms: Option<u128>,
+    /// Pictures drawn into the scene view's target.
+    pub scene_frames: u64,
     /// `EditorCore::asset_epoch` as last seen: files changed on disk.
     seen_asset_epoch: u64,
+    /// The scene view's own target and what it was last drawn for.
+    scene_target: Option<Target>,
+    scene_egui_texture: Option<egui::TextureId>,
+    scene_cache: Option<SceneCache>,
+    scene_drawn: Option<SceneKey>,
+}
+
+/// What a scene view picture was drawn for: when none of it changed, the
+/// picture is still right and nothing is drawn (zero frames at rest).
+#[derive(Clone, Debug, PartialEq)]
+struct SceneKey {
+    generation: u64,
+    revision: u64,
+    node: Option<orbit_core::NodeId>,
+    size: [u32; 2],
+    epoch: u64,
+}
+
+/// The path to the node shown by the scene view: found once, reused while a
+/// character is dragged (the story changes at every frame, the path does not).
+struct SceneCache {
+    generation: u64,
+    node: orbit_core::NodeId,
+    structure: u64,
+    source: ResumeSource,
+    notice: Option<String>,
 }
 
 impl PreviewHost {
@@ -307,7 +339,12 @@ impl PreviewHost {
             reload_started: None,
             asset_stamps: HashMap::new(),
             last_reload_ms: None,
+            scene_frames: 0,
             seen_asset_epoch: 0,
+            scene_target: None,
+            scene_egui_texture: None,
+            scene_cache: None,
+            scene_drawn: None,
         })
     }
 
@@ -499,6 +536,11 @@ impl PreviewHost {
             }
         }
 
+        // ---- the scene view
+        if self.update_scene_view(core, egui_renderer) {
+            wake.redraw = true;
+        }
+
         // ---- notices, publication
         for notice in self.runtime.take_notices() {
             let level = if notice.warning {
@@ -556,42 +598,190 @@ impl PreviewHost {
     }
 
     fn set_target(&mut self, egui_renderer: &mut egui_wgpu::Renderer, size: [u32; 2]) {
-        let created = self
-            .runtime
-            .renderer_mut()
-            .create_render_target("preview", size[0], size[1]);
-        let id = match created {
-            Ok(id) => id,
-            Err(e) => {
-                log::error!("cannot create the preview target: {e}");
-                return;
-            }
-        };
-        let Some(view) = self.runtime.renderer().target_gamma_view(id) else {
-            log::error!("the preview target has no gamma view");
-            return;
-        };
-        let device = self.runtime.renderer().gfx().device().clone();
-        match self.egui_texture {
-            // Same egui id: the shapes of this frame stay valid.
-            Some(texture) => egui_renderer.update_egui_texture_from_wgpu_texture(
-                &device,
-                &view,
-                wgpu::FilterMode::Linear,
-                texture,
-            ),
-            None => {
-                self.egui_texture = Some(egui_renderer.register_native_texture(
-                    &device,
-                    &view,
-                    wgpu::FilterMode::Linear,
-                ));
-            }
-        }
-        if let Some(old) = self.target.replace(Target { id, size }) {
+        let created = create_shared_target(
+            &mut self.runtime,
+            egui_renderer,
+            "preview",
+            size,
+            &mut self.egui_texture,
+        );
+        if let Some(new) = created
+            && let Some(old) = self.target.replace(new)
+        {
             self.runtime.renderer_mut().release_texture(old.id);
         }
-        log::info!("preview target {}x{}", size[0], size[1]);
+    }
+
+    /// The scene view: simulates the story up to the node the panel asked
+    /// for, draws that stage with the real renderer into the panel's own
+    /// target and publishes the placement of its characters. Draws only when
+    /// something it depends on changed. Returns whether the UI must run once
+    /// more to show what was published.
+    fn update_scene_view(
+        &mut self,
+        core: &mut EditorCore,
+        egui_renderer: &mut egui_wgpu::Renderer,
+    ) -> bool {
+        let visible = std::mem::take(&mut core.state.scene_view.visible);
+        core.state.scene_view.available = true;
+        let wanted = core.state.scene_view.wanted_size;
+        if !visible || wanted[0] == 0 || wanted[1] == 0 {
+            return false;
+        }
+        let size = choose_target_size(self.scene_target.as_ref().map(|t| t.size), wanted);
+        if self.scene_target.as_ref().map(|t| t.size) != Some(size) {
+            let created = create_shared_target(
+                &mut self.runtime,
+                egui_renderer,
+                "scene view",
+                size,
+                &mut self.scene_egui_texture,
+            );
+            if let Some(new) = created
+                && let Some(old) = self.scene_target.replace(new)
+            {
+                self.runtime.renderer_mut().release_texture(old.id);
+            }
+        }
+        let Some((target, size)) = self.scene_target.as_ref().map(|t| (t.id, t.size)) else {
+            return false;
+        };
+        let node = core.state.scene_view.wanted_node;
+        let Some(session) = core.session.as_ref() else {
+            return Self::publish_scene_view(
+                core,
+                None,
+                Vec::new(),
+                None,
+                size,
+                self.scene_egui_texture,
+                self.scene_frames,
+            );
+        };
+        let key = SceneKey {
+            generation: core.project_generation,
+            revision: session.project.revision(),
+            node,
+            size,
+            epoch: self.runtime.assets_epoch(),
+        };
+        if self.scene_drawn.as_ref() == Some(&key) {
+            return false;
+        }
+        let interacting = core.state.scene_view.interacting;
+        let story = session.project.story().clone();
+        let (shown, actors, notice) = match node.filter(|n| story.locate(*n).is_some()) {
+            Some(node) => match self.draw_scene_view(&story, &key, node, target, interacting) {
+                Ok((actors, notice)) => (Some(node), actors, notice),
+                Err(e) => {
+                    log::warn!("scene view: {e}");
+                    (None, Vec::new(), Some(e))
+                }
+            },
+            None => {
+                self.scene_cache = None;
+                (None, Vec::new(), None)
+            }
+        };
+        self.scene_drawn = Some(key);
+        Self::publish_scene_view(
+            core,
+            shown,
+            actors,
+            notice,
+            size,
+            self.scene_egui_texture,
+            self.scene_frames,
+        )
+    }
+
+    /// Finds (or reuses) the path to `node`, draws the stage after it into
+    /// `target` and returns the characters on it with the search's notice.
+    fn draw_scene_view(
+        &mut self,
+        story: &Story,
+        key: &SceneKey,
+        node: orbit_core::NodeId,
+        target: TextureId,
+        interacting: bool,
+    ) -> Result<(Vec<SceneViewActor>, Option<String>), String> {
+        let arc = Arc::new(story.clone());
+        let structure = orbit_save::story_hash(story);
+        let fresh = self.scene_cache.as_ref().is_some_and(|c| {
+            c.generation == key.generation
+                && c.node == node
+                && (interacting || c.structure == structure)
+        });
+        if !fresh {
+            let started = Instant::now();
+            self.scene_cache = None;
+            let (source, notice) =
+                scene_view::seek_before(&arc, node, orbit_vm::SeekLimits::default())?;
+            log::debug!(
+                target: "orbit_editor::perf",
+                "scene view: path to the node found in {} ms",
+                started.elapsed().as_millis()
+            );
+            self.scene_cache = Some(SceneCache {
+                generation: key.generation,
+                node,
+                structure,
+                source,
+                notice,
+            });
+        }
+        let cache = self.scene_cache.as_ref().ok_or("no path")?;
+        let notice = cache.notice.clone();
+        let at = scene_view::scene_at(&arc, &cache.source, node)?;
+        let stage = scene_view::stage_state(story, &at.after);
+        if let Err(e) = self.runtime.render_stage_to_target(story, &stage, target) {
+            log::error!("scene view render failed: {e}");
+        }
+        self.scene_frames += 1;
+        let actors = scene_view::actors(story, &at.after)
+            .into_iter()
+            .map(|a| SceneViewActor {
+                character: a.character,
+                source: a.source,
+                x: a.x,
+                y: a.y,
+                scale: a.scale,
+                flip_x: a.flip_x,
+                flip_y: a.flip_y,
+                base_size: self
+                    .runtime
+                    .image_size(story, a.image)
+                    .map_or([0.0, 0.0], character_size),
+            })
+            .collect();
+        Ok((actors, notice))
+    }
+
+    /// Copies the scene view's result into the shared state; `true` when it
+    /// differs from what the panel last saw.
+    fn publish_scene_view(
+        core: &mut EditorCore,
+        node: Option<orbit_core::NodeId>,
+        actors: Vec<SceneViewActor>,
+        notice: Option<String>,
+        size: [u32; 2],
+        texture: Option<egui::TextureId>,
+        frames: u64,
+    ) -> bool {
+        let sv = &mut core.state.scene_view;
+        let changed = sv.node != node
+            || sv.actors != actors
+            || sv.notice != notice
+            || sv.texture_size != size
+            || sv.texture != texture
+            || sv.frames != frames;
+        sv.node = node;
+        sv.actors = actors;
+        sv.notice = notice;
+        sv.texture_size = size;
+        sv.texture = texture;
+        sv.frames = frames;
+        changed
     }
 
     /// Copies what the runtime knows into `EditorState::preview`.
@@ -666,6 +856,49 @@ impl PreviewHost {
             }
         }
     }
+}
+
+/// Creates a render target of `size` and shows it to egui as a texture (the
+/// same egui id on a resize, so the shapes already built stay valid).
+fn create_shared_target(
+    runtime: &mut Runtime,
+    egui_renderer: &mut egui_wgpu::Renderer,
+    name: &str,
+    size: [u32; 2],
+    egui_texture: &mut Option<egui::TextureId>,
+) -> Option<Target> {
+    let id = match runtime
+        .renderer_mut()
+        .create_render_target(name, size[0], size[1])
+    {
+        Ok(id) => id,
+        Err(e) => {
+            log::error!("cannot create the {name} target: {e}");
+            return None;
+        }
+    };
+    let Some(view) = runtime.renderer().target_gamma_view(id) else {
+        log::error!("the {name} target has no gamma view");
+        return None;
+    };
+    let device = runtime.renderer().gfx().device().clone();
+    match *egui_texture {
+        Some(texture) => egui_renderer.update_egui_texture_from_wgpu_texture(
+            &device,
+            &view,
+            wgpu::FilterMode::Linear,
+            texture,
+        ),
+        None => {
+            *egui_texture = Some(egui_renderer.register_native_texture(
+                &device,
+                &view,
+                wgpu::FilterMode::Linear,
+            ));
+        }
+    }
+    log::info!("{name} target {}x{}", size[0], size[1]);
+    Some(Target { id, size })
 }
 
 /// The part of the published state a change of which needs a UI frame.

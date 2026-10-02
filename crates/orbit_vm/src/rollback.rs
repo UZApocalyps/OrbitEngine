@@ -198,6 +198,9 @@ pub fn scene_events(story: &Story, scene: &SceneState) -> Vec<PresentationEvent>
             position: c.position.clone(),
             x,
             y,
+            scale: c.scale,
+            flip_x: c.flip_x,
+            flip_y: c.flip_y,
             transition: None,
         });
     }

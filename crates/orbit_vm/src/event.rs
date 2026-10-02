@@ -63,6 +63,11 @@ pub enum PresentationEvent {
         /// sprite anchored by its bottom-center).
         x: f32,
         y: f32,
+        /// Effective sprite scale `[x, y]` (the `Show` override or the
+        /// character's default scale; 1.0 = native size).
+        scale: [f32; 2],
+        flip_x: bool,
+        flip_y: bool,
         transition: Option<Transition>,
     },
     Hide {

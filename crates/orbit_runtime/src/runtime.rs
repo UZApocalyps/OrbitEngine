@@ -31,7 +31,7 @@ use crate::loading::{
     AssetStore, LoadedStory, PendingAsset, finish_loading, parse_story, start_loading,
 };
 use crate::shell::{AutosaveConfig, Effect, Shell, ShellConfig};
-use crate::stage::{CANVAS, StageState, character_size, cover_size, to_virtual};
+use crate::stage::{CANVAS, StageState, character_placement, cover_size};
 use orbit_ui::UiInput;
 
 mod embedded;
@@ -1135,12 +1135,13 @@ fn stage_scene(
         let Some(tex) = texture(c.image) else {
             continue;
         };
-        let size = renderer
-            .texture_size(tex)
-            .map_or([0.0, 0.0], character_size);
+        let texture_size = renderer.texture_size(tex).unwrap_or([0, 0]);
+        let placement = character_placement(c, texture_size);
         scene.push(
-            Sprite2d::new(tex, to_virtual(c.x, c.y), size)
+            Sprite2d::new(tex, placement.anchor, placement.size)
                 .anchor([0.5, 1.0])
+                .scale(placement.scale)
+                .flipped(placement.flip_x, placement.flip_y)
                 .layer(Layer::CHARACTERS)
                 .z(i as f32),
         );

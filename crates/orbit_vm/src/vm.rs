@@ -360,6 +360,10 @@ impl Vm {
                     expression,
                     position,
                     transition,
+                    scale,
+                    scale_y,
+                    flip_x,
+                    flip_y,
                 } => {
                     let def = story
                         .character(*character)
@@ -379,10 +383,18 @@ impl Vm {
                         .resolve_position(position)
                         .ok_or(VmError::UnknownPosition { node: pc })?;
                     self.state.pc = next;
+                    // A per-show override wins over the character's default;
+                    // an absent vertical scale follows the horizontal one.
+                    let scale_x = scale.unwrap_or(def.default_scale);
+                    let scale = [scale_x, scale_y.unwrap_or(scale_x)];
                     let entry = CharacterOnStage {
                         character: *character,
                         expression: expression.clone(),
                         position: position.clone(),
+                        scale,
+                        flip_x: *flip_x,
+                        flip_y: *flip_y,
+                        source: Some(pc),
                     };
                     match self
                         .state
@@ -401,6 +413,9 @@ impl Vm {
                         position: position.clone(),
                         x,
                         y,
+                        scale,
+                        flip_x: *flip_x,
+                        flip_y: *flip_y,
                         transition: *transition,
                     });
                     if let Some(duration) = blocking_duration(transition) {

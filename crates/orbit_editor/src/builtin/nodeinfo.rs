@@ -121,6 +121,37 @@ fn asset_name(story: &Story, id: orbit_core::AssetId) -> String {
     story.asset_path(id).unwrap_or("?").to_owned()
 }
 
+/// A stage position in words ("gauche", "libre (0.40, 0.95)"...).
+pub fn position_name(position: &orbit_core::Position) -> String {
+    use orbit_core::Position;
+    match position {
+        Position::Left => "gauche".to_owned(),
+        Position::Center => "centre".to_owned(),
+        Position::Right => "droite".to_owned(),
+        Position::Custom(n) => n.clone(),
+        Position::Free { x, y } => format!("libre ({x:.2}, {y:.2})"),
+    }
+}
+
+/// What a `Show` changes about the sprite besides its position, for a list
+/// row: `"  ·  ×0.8  ·  miroir X"`, empty for the standard look.
+pub fn look_text(scale: Option<f32>, scale_y: Option<f32>, flip_x: bool, flip_y: bool) -> String {
+    let mut out = String::new();
+    match (scale, scale_y) {
+        (Some(s), Some(sy)) if sy != s => out.push_str(&format!("  ·  ×{s:.2} / ×{sy:.2}")),
+        (Some(s), _) => out.push_str(&format!("  ·  ×{s:.2}")),
+        (None, Some(sy)) => out.push_str(&format!("  ·  ×{sy:.2} (vertical)")),
+        (None, None) => {}
+    }
+    if flip_x {
+        out.push_str("  ·  miroir X");
+    }
+    if flip_y {
+        out.push_str("  ·  miroir Y");
+    }
+    out
+}
+
 /// Cuts a long text for a list row.
 pub fn truncate(text: &str, max_chars: usize) -> String {
     let single_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -162,8 +193,16 @@ pub fn summary(story: &Story, node: &Node) -> String {
         NodeKind::Show {
             character,
             expression,
+            scale,
+            scale_y,
+            flip_x,
+            flip_y,
             ..
-        } => format!("{} ({expression})", character_name(story, *character)),
+        } => format!(
+            "{} ({expression}){}",
+            character_name(story, *character),
+            look_text(*scale, *scale_y, *flip_x, *flip_y)
+        ),
         NodeKind::Hide { character, .. } => character_name(story, *character),
         NodeKind::PlayMusic { asset, .. } | NodeKind::PlaySound { asset } => {
             asset_name(story, *asset)

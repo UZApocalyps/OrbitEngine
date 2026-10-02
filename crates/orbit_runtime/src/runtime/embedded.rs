@@ -106,6 +106,10 @@ pub(super) struct Embedded {
     /// The music the game started (not to restart it at every hot reload).
     music: Option<orbit_core::AssetId>,
     dirty: bool,
+    /// Bumped when the story or an asset file was swapped: what a still
+    /// image of the stage (see [`Runtime::render_stage_to_target`]) shows may
+    /// have changed.
+    epoch: u64,
     limits: SeekLimits,
     /// Skip was asked before a playthrough existed: applied when one starts.
     pending_skip: bool,
@@ -124,6 +128,7 @@ impl Embedded {
             last_error: None,
             music: None,
             dirty: true,
+            epoch: 0,
             limits: SeekLimits::default(),
             pending_skip: false,
         }
@@ -229,6 +234,7 @@ impl Runtime {
         let found = self.store.forget(&mut self.ctx.renderer, path);
         if found {
             self.emb_mut().dirty = true;
+            self.emb_mut().epoch += 1;
         }
         found
     }
@@ -262,6 +268,7 @@ impl Runtime {
             matches!(self.phase, Phase::Failed(_)) && self.emb().status != PlayStatus::Stopped;
         self.emb_mut().story = Some(story.clone());
         self.emb_mut().dirty = true;
+        self.emb_mut().epoch += 1;
         if let Some(from) = awaiting.play {
             self.play(from);
         } else if let Some(source) = resume {
@@ -518,6 +525,35 @@ impl Runtime {
         self.ctx.renderer.set_pixel_ratio_override(None);
         self.emb_mut().dirty = false;
         result
+    }
+
+    /// Draws a still `stage` (background and characters: no game, no UI)
+    /// into `target`, with the very same code as the game. Textures come from
+    /// the runtime's asset store, paths from `story` (the host passes the
+    /// project's current story): an image the store does not have yet is
+    /// simply not drawn, see [`Runtime::assets_epoch`].
+    pub fn render_stage_to_target(
+        &mut self,
+        story: &Story,
+        stage: &StageState,
+        target: TextureId,
+    ) -> Result<(), RenderError> {
+        let mut scene = Scene::new();
+        stage_scene(&self.ctx.renderer, &self.store, story, stage, &mut scene);
+        self.ctx.renderer.render_to_target(target, &scene)
+    }
+
+    /// Size in pixels of the image of `asset`, when the store has its texture.
+    pub fn image_size(&self, story: &Story, asset: orbit_core::AssetId) -> Option<[u32; 2]> {
+        let path = &story.assets.get(asset)?.path;
+        let texture = self.store.texture(path)?;
+        self.ctx.renderer.texture_size(texture)
+    }
+
+    /// Changes whenever the story or an image file was swapped in the
+    /// runtime: a still stage drawn before is out of date.
+    pub fn assets_epoch(&self) -> u64 {
+        self.emb().epoch
     }
 
     // ------------------------------------------------------- observation

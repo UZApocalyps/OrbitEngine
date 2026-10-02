@@ -248,6 +248,35 @@ pub fn parse_position(story: &Story, text: &str) -> Result<Position, ToolError> 
     }
 }
 
+/// A free stage position `(x, y)` in normalized coordinates (origin top-left,
+/// the sprite is anchored by its bottom-center): finite and within
+/// `FREE_POSITION_RANGE`.
+pub fn free_position(x: f32, y: f32) -> Result<Position, ToolError> {
+    let range = orbit_core::FREE_POSITION_RANGE;
+    if range.contains(&x) && range.contains(&y) {
+        Ok(Position::Free { x, y })
+    } else {
+        Err(ToolError::invalid(format!(
+            "free position ({x}, {y}) must be finite and within {}..{} on both axes",
+            range.start(),
+            range.end()
+        )))
+    }
+}
+
+/// A sprite scale: finite and within `SCALE_MIN..=SCALE_MAX`.
+pub fn check_scale(name: &str, scale: f32) -> Result<f32, ToolError> {
+    if orbit_core::scale_is_valid(scale) {
+        Ok(scale)
+    } else {
+        Err(ToolError::invalid(format!(
+            "`{name}` must be between {} and {} (got {scale})",
+            orbit_core::SCALE_MIN,
+            orbit_core::SCALE_MAX
+        )))
+    }
+}
+
 /// `#rrggbb`, `#rgb` or a few color names.
 pub fn parse_color(text: &str) -> Result<Color, ToolError> {
     let t = text.trim().to_ascii_lowercase();

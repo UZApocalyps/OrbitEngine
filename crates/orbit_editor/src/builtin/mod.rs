@@ -18,6 +18,7 @@ mod problems;
 pub mod reveal;
 mod sample;
 mod scene;
+mod sceneview;
 mod search;
 pub mod thumbs;
 mod ui_util;
@@ -51,6 +52,7 @@ pub mod ids {
     pub const LIBRARY: &str = "orbit.library";
     pub const PROBLEMS: &str = "orbit.problems";
     pub const SEARCH: &str = "orbit.search";
+    pub const SCENEVIEW: &str = "orbit.sceneview";
 }
 
 /// Full ids of the built-in panels.
@@ -68,6 +70,7 @@ pub mod panels {
     pub const LIBRARY: &str = "orbit.library.library";
     pub const PROBLEMS: &str = "orbit.problems.problems";
     pub const SEARCH: &str = "orbit.search.search";
+    pub const SCENEVIEW: &str = "orbit.sceneview.sceneview";
 }
 
 /// State the built-in plugins share with the editor core.
@@ -99,6 +102,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(definitions::VariablesPlugin),
         Box::new(library::LibraryPlugin::new(shared.moves.clone())),
         Box::new(preview::PreviewPlugin),
+        Box::new(sceneview::SceneViewPlugin),
         Box::new(console::ConsolePlugin),
         Box::new(problems::ProblemsPlugin),
         Box::new(search::SearchPlugin::new(shared.search.clone())),

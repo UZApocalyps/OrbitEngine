@@ -5,7 +5,7 @@ use orbit_core::{
     AssetKind, BinOp, ChoiceOption, Color, CustomData, Expr, Node, NodeId, NodeKind, Position,
     PositionDef, Story, Value, VarScope, validate,
 };
-use orbit_project::ops::{self, NodeClip, NodeDraft};
+use orbit_project::ops::{self, NodeClip, NodeDraft, ShowLook};
 use orbit_project::{Command, Project, ProjectError};
 
 fn project() -> (Project, orbit_core::SceneId) {
@@ -78,6 +78,10 @@ fn replace_node_kind_round_trips_for_every_kind() {
             transition: Some(orbit_core::Transition::dissolve(1.0)),
         },
         NodeKind::Show {
+            scale: None,
+            scale_y: None,
+            flip_x: false,
+            flip_y: false,
             character,
             expression: "x".into(),
             position: Position::Left,
@@ -362,6 +366,10 @@ fn characters_and_expressions() {
     })
     .unwrap();
     let show = NodeDraft::plain(NodeKind::Show {
+        scale: None,
+        scale_y: None,
+        flip_x: false,
+        flip_y: false,
         character: ana,
         expression: "happy".into(),
         position: Position::Right,
@@ -480,4 +488,136 @@ fn unique_names() {
     assert_eq!(ops::unique_name("Scène", ["a"]), "Scène");
     assert_eq!(ops::unique_name("Scène", ["Scène"]), "Scène 2");
     assert_eq!(ops::unique_name("Scène", ["Scène", "Scène 2"]), "Scène 3");
+}
+
+fn show_node(p: &mut Project, scene: orbit_core::SceneId) -> (orbit_core::CharacterId, NodeId) {
+    let img = ops::add_asset(p, AssetKind::Image, "a/ana.png").unwrap();
+    let ana = ops::add_character(p, "Ana", Color::WHITE).unwrap();
+    let mut def = p.story().character(ana).unwrap().clone();
+    def.expressions.push(orbit_core::Expression {
+        name: "happy".into(),
+        image: img,
+    });
+    p.execute(Command::SetCharacter {
+        id: ana,
+        character: Some(def),
+        index: None,
+    })
+    .unwrap();
+    let show = NodeDraft::plain(NodeKind::Show {
+        character: ana,
+        expression: "happy".into(),
+        position: Position::Left,
+        transition: None,
+        scale: None,
+        scale_y: None,
+        flip_x: false,
+        flip_y: false,
+    });
+    let id = show.node.id;
+    ops::insert_drafts(p, scene, 0, vec![show], "x").unwrap();
+    (ana, id)
+}
+
+#[test]
+fn show_look_is_one_undo_entry_and_keeps_the_rest_of_the_node() {
+    let (mut p, scene) = project();
+    let (ana, show) = show_node(&mut p, scene);
+    let mut look = ops::show_look(p.story(), show).unwrap();
+    assert!(look.is_default_style());
+    look.position = Position::Free { x: 0.3, y: 0.9 };
+    look.set_effective_scale([0.8, 0.8]);
+    look.flip_x = true;
+    assert_eq!(look.scale_y, None, "uniform scale stores no scale_y");
+    undoable(&mut p, |p| ops::set_show_look(p, show, &look).unwrap());
+    ops::set_show_look(&mut p, show, &look).unwrap();
+    assert_eq!(ops::show_look(p.story(), show), Some(look.clone()));
+    let NodeKind::Show { expression, .. } = &p.story().node(show).unwrap().kind else {
+        panic!()
+    };
+    assert_eq!(expression, "happy");
+    assert!(validate(p.story()).errors.is_empty());
+
+    // Renaming the expression keeps the look.
+    ops::rename_expression(&mut p, ana, "happy", "joyeuse").unwrap();
+    assert_eq!(ops::show_look(p.story(), show), Some(look.clone()));
+
+    // Invalid looks are refused and change nothing.
+    let before = p.story().clone();
+    for bad in [
+        ShowLook {
+            scale: Some(0.0),
+            ..look.clone()
+        },
+        ShowLook {
+            scale: Some(f32::NAN),
+            ..look.clone()
+        },
+        ShowLook {
+            scale: Some(11.0),
+            ..look.clone()
+        },
+        ShowLook {
+            scale_y: Some(-1.0),
+            ..look.clone()
+        },
+        ShowLook {
+            position: Position::Free {
+                x: f32::INFINITY,
+                y: 0.5,
+            },
+            ..look.clone()
+        },
+        ShowLook {
+            position: Position::Custom("nowhere".into()),
+            ..look.clone()
+        },
+    ] {
+        assert!(ops::set_show_look(&mut p, show, &bad).is_err(), "{bad:?}");
+    }
+    assert_eq!(*p.story(), before);
+    // Not a Show node.
+    let line = say(&mut p, scene, 1, "hi");
+    assert!(ops::set_show_look(&mut p, line, &look).is_err());
+}
+
+#[test]
+fn a_live_drag_of_a_show_is_one_undo_entry() {
+    let (mut p, scene) = project();
+    let (_ana, show) = show_node(&mut p, scene);
+    let before = p.story().clone();
+    let mut look = ops::show_look(p.story(), show).unwrap();
+    // Many frames of one drag, then the gesture ends.
+    for i in 1..=30 {
+        look.position = Position::Free {
+            x: 0.2 + i as f32 * 0.01,
+            y: 0.95,
+        };
+        let c = ops::show_look_command(p.story(), show, &look).unwrap();
+        p.execute_merged(c, "show-look").unwrap();
+    }
+    p.end_merge();
+    let after = p.story().clone();
+    assert_ne!(before, after);
+    assert!(p.undo().unwrap());
+    assert_eq!(*p.story(), before, "one undo reverts the whole drag");
+    assert!(p.redo().unwrap());
+    assert_eq!(*p.story(), after);
+}
+
+#[test]
+fn default_scale_is_validated_undoable_and_round_trips() {
+    let (mut p, _scene) = project();
+    let ana = ops::add_character(&mut p, "Ana", Color::WHITE).unwrap();
+    undoable(&mut p, |p| ops::set_default_scale(p, ana, 0.6).unwrap());
+    ops::set_default_scale(&mut p, ana, 0.6).unwrap();
+    for bad in [0.0, -1.0, f32::NAN, 100.0] {
+        assert!(ops::set_default_scale(&mut p, ana, bad).is_err());
+    }
+    let ron = p.story().to_ron().unwrap();
+    assert!(ron.contains("default_scale: 0.6"));
+    assert_eq!(Story::from_ron(&ron).unwrap(), *p.story());
+    // Back to 1.0: the field is not written any more.
+    ops::set_default_scale(&mut p, ana, 1.0).unwrap();
+    assert!(!p.story().to_ron().unwrap().contains("default_scale"));
 }

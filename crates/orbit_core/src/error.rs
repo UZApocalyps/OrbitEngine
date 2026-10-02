@@ -73,6 +73,11 @@ pub enum ValidationError {
     },
     #[error("node {node} uses unknown position `{name}`")]
     UnknownPosition { node: NodeId, name: String },
+    #[error("node {node} has a free position ({x}, {y}) that is not finite or lies outside -2..3")]
+    InvalidFreePosition { node: NodeId, x: f32, y: f32 },
+    /// `node` is `None` when the scale is a character's default scale.
+    #[error("{} has an invalid scale {scale} (must be finite, in 0.05..=10)", owner(.node))]
+    InvalidScale { node: Option<NodeId>, scale: f32 },
     #[error("node {node} has an invalid duration {seconds} (must be finite and >= 0)")]
     InvalidDuration { node: NodeId, seconds: f32 },
     #[error("node {node}: {message}")]

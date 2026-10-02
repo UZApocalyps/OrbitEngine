@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::defs::{AssetKind, Position};
+use crate::defs::{AssetKind, FREE_POSITION_RANGE, Position, scale_is_valid};
 use crate::error::{ValidationError, ValidationWarning};
 use crate::expr::Expr;
 use crate::ids::{AssetId, NodeId};
@@ -122,6 +122,12 @@ impl Cx<'_> {
                     });
                 }
                 self.check_asset(None, e.image, AssetKind::Image);
+            }
+            if !scale_is_valid(c.default_scale) {
+                self.errors.push(ValidationError::InvalidScale {
+                    node: None,
+                    scale: c.default_scale,
+                });
             }
         }
 
@@ -257,6 +263,9 @@ impl Cx<'_> {
                     expression,
                     position,
                     transition,
+                    scale,
+                    scale_y,
+                    ..
                 } => {
                     match story.character(*character) {
                         None => self.errors.push(ValidationError::UnknownCharacter {
@@ -271,6 +280,23 @@ impl Cx<'_> {
                             });
                         }
                         Some(_) => {}
+                    }
+                    if let Position::Free { x, y } = position
+                        && !(FREE_POSITION_RANGE.contains(x) && FREE_POSITION_RANGE.contains(y))
+                    {
+                        self.errors.push(ValidationError::InvalidFreePosition {
+                            node: id,
+                            x: *x,
+                            y: *y,
+                        });
+                    }
+                    for s in [scale, scale_y].into_iter().flatten() {
+                        if !scale_is_valid(*s) {
+                            self.errors.push(ValidationError::InvalidScale {
+                                node: Some(id),
+                                scale: *s,
+                            });
+                        }
                     }
                     if story.resolve_position(position).is_none() {
                         let name = match position {
@@ -618,6 +644,7 @@ mod tests {
         let id = CharacterId::new();
         let name_id = story.strings.add("Ana");
         story.characters.push(Character {
+            default_scale: 1.0,
             id,
             name_id,
             color: Color::WHITE,
@@ -703,6 +730,79 @@ mod tests {
     }
 
     #[test]
+    fn scale_and_free_position_are_validated() {
+        let show = |ana, position: Position, scale, scale_y| {
+            node(NodeKind::Show {
+                character: ana,
+                expression: "happy".into(),
+                position,
+                transition: None,
+                scale,
+                scale_y,
+                flip_x: true,
+                flip_y: true,
+            })
+        };
+        let mut s = Story::new("t");
+        let (ana, _) = character(&mut s);
+        let ok = show(
+            ana,
+            Position::Free { x: 0.4, y: 0.95 },
+            Some(0.5),
+            Some(1.5),
+        );
+        // Off screen, but inside the allowed range: a character walking in.
+        let walking_in = show(ana, Position::Free { x: -0.3, y: 1.0 }, None, None);
+        let bad_pos = [
+            Position::Free {
+                x: f32::NAN,
+                y: 0.5,
+            },
+            Position::Free {
+                x: 0.5,
+                y: f32::INFINITY,
+            },
+            Position::Free { x: 4.0, y: 0.5 },
+        ]
+        .map(|p| show(ana, p, None, None));
+        let bad_scales =
+            [0.0, -1.0, f32::NAN, 0.01, 11.0].map(|v| show(ana, Position::Left, Some(v), None));
+        let bad_scale_y = show(ana, Position::Left, Some(1.0), Some(0.0));
+        let mut nodes = vec![ok, walking_in, bad_scale_y];
+        nodes.extend(bad_pos);
+        nodes.extend(bad_scales);
+        let errors = validate(&with_nodes(s.clone(), nodes)).errors;
+        let count = |f: fn(&ValidationError) -> bool| errors.iter().filter(|e| f(e)).count();
+        assert_eq!(
+            count(|e| matches!(e, ValidationError::InvalidFreePosition { .. })),
+            3,
+            "{errors:?}"
+        );
+        assert_eq!(
+            count(|e| matches!(e, ValidationError::InvalidScale { node: Some(_), .. })),
+            6,
+            "{errors:?}"
+        );
+        // A character's default scale is checked too.
+        s.characters[0].default_scale = 0.0;
+        let errors = validate(&s).errors;
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::InvalidScale { node: None, .. }))
+        );
+    }
+
+    #[test]
+    fn free_positions_resolve_without_a_declaration() {
+        let s = Story::new("t");
+        assert_eq!(
+            s.resolve_position(&Position::Free { x: 0.1, y: 0.2 }),
+            Some((0.1, 0.2))
+        );
+    }
+
+    #[test]
     fn unknown_character_expression_asset_and_position() {
         let mut s = Story::new("t");
         let (ana, _) = character(&mut s);
@@ -713,6 +813,10 @@ mod tests {
             y: 1.0,
         });
         let ok = node(NodeKind::Show {
+            scale: None,
+            scale_y: None,
+            flip_x: false,
+            flip_y: false,
             character: ana,
             expression: "happy".into(),
             position: Position::Custom("far".into()),
@@ -723,12 +827,20 @@ mod tests {
             transition: None,
         });
         let bad_expr = node(NodeKind::Show {
+            scale: None,
+            scale_y: None,
+            flip_x: false,
+            flip_y: false,
             character: ana,
             expression: "sad".into(),
             position: Position::Left,
             transition: None,
         });
         let bad_pos = node(NodeKind::Show {
+            scale: None,
+            scale_y: None,
+            flip_x: false,
+            flip_y: false,
             character: ana,
             expression: "happy".into(),
             position: Position::Custom("nowhere".into()),

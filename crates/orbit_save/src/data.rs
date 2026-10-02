@@ -1,6 +1,6 @@
 //! The save file format and [`SaveData`].
 //!
-//! # Format (version 1)
+//! # Format (version 2)
 //!
 //! A binary container, little endian:
 //!
@@ -23,6 +23,10 @@
 //! layout. Human-editable data (persistent variables, preferences) use RON
 //! instead, see [`crate::persistent`].
 //!
+//! Version 2 (scene view) added the sprite scale and mirroring to the VM's
+//! character-on-stage entries. Version 1 saves are still decoded (see
+//! `legacy_v1`): their characters come back unscaled and unmirrored.
+//!
 //! The meta block is separate so the slot list can show the label, date,
 //! preview text and thumbnail without decoding the VM state.
 
@@ -33,7 +37,7 @@ use crate::error::SaveError;
 use crate::hash::story_hash;
 
 /// Version of the container and of the postcard layouts below.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 const MAGIC: &[u8; 4] = b"ORBS";
 const HEADER_LEN: usize = 12;
 /// Default number of checkpoints embedded in a save.
@@ -185,7 +189,15 @@ impl SaveData {
 
     /// Decodes a whole save. Never panics on malformed input.
     pub fn decode(bytes: &[u8]) -> Result<SaveData, SaveError> {
-        let (meta, body_bytes) = split(bytes)?;
+        let (meta, version, body_bytes) = split(bytes)?;
+        if version == 1 {
+            let (vm_state, history) = crate::legacy_v1::decode_body(body_bytes)?;
+            return Ok(SaveData {
+                meta,
+                vm_state,
+                history,
+            });
+        }
         let body: SaveBody = postcard::from_bytes(body_bytes)
             .map_err(|e| SaveError::Corrupt(format!("save body: {e}")))?;
         Ok(SaveData {
@@ -197,12 +209,12 @@ impl SaveData {
 
     /// Decodes only the metadata (cheap, for slot lists).
     pub fn decode_meta(bytes: &[u8]) -> Result<SaveMeta, SaveError> {
-        split(bytes).map(|(meta, _)| meta)
+        split(bytes).map(|(meta, _, _)| meta)
     }
 }
 
 /// Parses the header and the meta block; returns the meta and the rest.
-fn split(bytes: &[u8]) -> Result<(SaveMeta, &[u8]), SaveError> {
+fn split(bytes: &[u8]) -> Result<(SaveMeta, u32, &[u8]), SaveError> {
     if bytes.len() < HEADER_LEN || &bytes[..4] != MAGIC {
         return Err(SaveError::Corrupt("not an OrbitEngine save".into()));
     }
@@ -215,8 +227,8 @@ fn split(bytes: &[u8]) -> Result<(SaveMeta, &[u8]), SaveError> {
             "save format version {version} is newer than this game supports ({FORMAT_VERSION})"
         )));
     }
-    // Older versions (< FORMAT_VERSION) would be decoded with their own
-    // layout here. Only version 1 exists so far.
+    // Older versions (< FORMAT_VERSION) have their own body layout, see
+    // `decode`.
     let meta_len = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
     let rest = &bytes[HEADER_LEN..];
     if meta_len > rest.len() {
@@ -225,5 +237,5 @@ fn split(bytes: &[u8]) -> Result<(SaveMeta, &[u8]), SaveError> {
     let (meta_bytes, body) = rest.split_at(meta_len);
     let meta: SaveMeta = postcard::from_bytes(meta_bytes)
         .map_err(|e| SaveError::Corrupt(format!("save header: {e}")))?;
-    Ok((meta, body))
+    Ok((meta, version, body))
 }

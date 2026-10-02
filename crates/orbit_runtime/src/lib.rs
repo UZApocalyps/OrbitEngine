@@ -40,6 +40,7 @@ pub mod input;
 pub mod loading;
 pub mod preview;
 mod runtime;
+pub mod scene_view;
 mod shell;
 pub mod stage;
 
@@ -51,4 +52,4 @@ pub use runtime::{
     RuntimeError, error_markup, escape_markup, parse_translation_index,
 };
 pub use shell::AutosaveConfig;
-pub use stage::{StageCharacter, StageEffect, StageState};
+pub use stage::{CharacterPlacement, StageCharacter, StageEffect, StageState, character_placement};

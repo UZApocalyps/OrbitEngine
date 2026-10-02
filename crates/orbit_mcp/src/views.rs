@@ -41,7 +41,28 @@ fn describe_position(p: &Position) -> String {
         Position::Center => "center".to_owned(),
         Position::Right => "right".to_owned(),
         Position::Custom(name) => name.clone(),
+        Position::Free { x, y } => format!("free({x:.3}, {y:.3})"),
     }
+}
+
+/// ` scale 0.8 mirrored-x` style suffix of a `Show` (empty for the standard
+/// look), shared by the node and event descriptions.
+fn describe_look(scale: [f32; 2], flip_x: bool, flip_y: bool) -> String {
+    let mut out = String::new();
+    if scale[0] != 1.0 || scale[1] != 1.0 {
+        if scale[0] == scale[1] {
+            out.push_str(&format!(" scale {}", scale[0]));
+        } else {
+            out.push_str(&format!(" scale {}x{}", scale[0], scale[1]));
+        }
+    }
+    if flip_x {
+        out.push_str(" mirrored-x");
+    }
+    if flip_y {
+        out.push_str(" mirrored-y");
+    }
+    out
 }
 
 fn asset_label(story: &Story, id: orbit_core::AssetId) -> String {
@@ -123,12 +144,23 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
             expression,
             position,
             transition,
-        } => format!(
-            "show {} ({expression}) at {}{}",
-            character_name(story, *character),
-            describe_position(position),
-            describe_transition(transition)
-        ),
+            scale,
+            scale_y,
+            flip_x,
+            flip_y,
+        } => {
+            // The override is shown as written; no override means the
+            // character's default scale applies.
+            let look = scale.map_or_else(String::new, |s| {
+                describe_look([s, scale_y.unwrap_or(s)], false, false)
+            }) + &describe_look([1.0, 1.0], *flip_x, *flip_y);
+            format!(
+                "show {} ({expression}) at {}{look}{}",
+                character_name(story, *character),
+                describe_position(position),
+                describe_transition(transition)
+            )
+        }
         NodeKind::Hide {
             character,
             transition,
@@ -211,6 +243,8 @@ pub fn characters_json(story: &Story) -> Json {
                     "id": c.id.to_string(),
                     "name": story.text(c.name_id).unwrap_or(""),
                     "color": format!("#{:02x}{:02x}{:02x}", c.color.r, c.color.g, c.color.b),
+                    // Through the shortest decimal form: 0.8f32 is not 0.800000011920929.
+                    "default_scale": c.default_scale.to_string().parse::<f64>().unwrap_or(1.0),
                     "expressions": c.expressions.iter().map(|e| json!({
                         "name": e.name,
                         "asset": e.image.to_string(),
@@ -465,11 +499,15 @@ fn describe_event(story: &Story, event: &PresentationEvent) -> String {
             expression,
             position,
             transition,
+            scale,
+            flip_x,
+            flip_y,
             ..
         } => format!(
-            "show {} ({expression}) at {}{}",
+            "show {} ({expression}) at {}{}{}",
             character_name(story, *character),
             describe_position(position),
+            describe_look(*scale, *flip_x, *flip_y),
             describe_transition(transition)
         ),
         PresentationEvent::Hide {

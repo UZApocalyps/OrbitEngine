@@ -16,8 +16,9 @@ pub mod value;
 
 pub use custom::CustomData;
 pub use defs::{
-    AssetEntry, AssetKind, AssetManifest, Character, Color, Expression, Position, PositionDef,
-    StringTable, Transition, TransitionKind, VarDecl, VarScope,
+    AssetEntry, AssetKind, AssetManifest, Character, Color, Expression, FREE_POSITION_RANGE,
+    Position, PositionDef, SCALE_MAX, SCALE_MIN, StringTable, Transition, TransitionKind, VarDecl,
+    VarScope, scale_is_valid,
 };
 pub use error::{CoreError, ValidationError, ValidationWarning};
 pub use expr::{BinOp, EvalError, Expr, ParseError, TypeError, UnOp};
