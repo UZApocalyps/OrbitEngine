@@ -52,3 +52,41 @@ winresource = { version = "0.1", default-features = false }
 
 [lints]
 workspace = true
+
+# Installers (cargo-packager, MIT / Apache-2.0): MSI (WiX) and NSIS on Windows,
+# AppImage and .deb on Linux. See docs/premiers-pas.md and ADR 0009 section 8.
+# The version is the workspace package version. Paths are relative to this
+# crate: `cargo build --release -p orbit_editor`, then `cargo packager
+# --release` from this folder.
+[package.metadata.packager]
+product-name = "OrbitEngine Editor"
+identifier = "dev.orbitengine.editor"
+description = "OrbitEngine editor: write visual novels without code."
+long-description = "Native editor of the OrbitEngine visual novel engine: scene and graph editors, asset library, live preview and MCP."
+authors = ["OrbitEngine contributors"]
+category = "DeveloperTool"
+out-dir = "../../target/packager"
+binaries-dir = "../../target/release"
+binaries = [{ path = "orbit-editor", main = true }]
+icons = [
+    "../../assets/brand/icon.ico",
+    "../../assets/brand/icon-32.png",
+    "../../assets/brand/icon-64.png",
+    "../../assets/brand/icon-256.png",
+]
+# Next to the executable: the demo project and its assets, and the (possibly
+# empty) `templates/` folder where the game player templates go.
+resources = [
+    { src = "../../examples/stories", target = "examples/stories" },
+    { src = "../../assets/demo", target = "assets/demo" },
+    { src = "../../packaging/templates", target = "templates" },
+]
+
+[package.metadata.packager.nsis]
+installer-icon = "../../assets/brand/icon.ico"
+installer-mode = "both"
+languages = ["French", "English"]
+
+[package.metadata.packager.deb]
+depends = ["libvulkan1", "libxkbcommon0", "libwayland-client0", "libx11-6"]
+section = "devel"
