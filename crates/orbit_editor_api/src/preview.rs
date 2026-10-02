@@ -125,6 +125,9 @@ pub struct PreviewState {
     pub ui_request: Option<UiPreviewRequest>,
     /// Widget of the shown screen to outline in the UI preview.
     pub ui_highlight: Option<Vec<usize>>,
+    /// Language of the game texts (`ui.*`) in the UI preview; `None`: the
+    /// story's source language (not the editor's).
+    pub ui_language: Option<String>,
 }
 
 impl PreviewState {

@@ -281,7 +281,7 @@ pub(crate) struct Shell {
     effects: Vec<Effect>,
 }
 
-fn make_texts(language: &str, overrides: &HashMap<String, Vec<(String, String)>>) -> Texts {
+pub(crate) fn make_texts(language: &str, overrides: &HashMap<String, Vec<(String, String)>>) -> Texts {
     let mut table = TextTable::builtin(language);
     let primary = language
         .split(['-', '_'])

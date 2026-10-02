@@ -304,7 +304,8 @@ impl EditorCore {
 
     /// Whether the open project has unsaved edits.
     pub fn is_modified(&mut self) -> bool {
-        self.session.as_mut().is_some_and(Session::modified)
+        let ui = self.registry.ui_link.dirty.get();
+        self.session.as_mut().is_some_and(|s| s.modified() || ui)
     }
 
     /// Opens a project, asking first when the current one has unsaved edits.
@@ -367,6 +368,8 @@ impl EditorCore {
         self.state.selected_asset = None;
         self.state.pending_reveal = None;
         self.reset_project_services();
+        self.registry.ui_link.dirty.set(false);
+        self.registry.ui_link.focus.set(false);
         dock::show_panel(&mut self.dock, builtin::panels::SCENE);
         self.sync_info();
         self.remember(&title, &remembered);
@@ -429,6 +432,12 @@ impl EditorCore {
             return false;
         };
         self.registry.project.dispatch(&ProjectEvent::BeforeSave);
+        if self.registry.ui_link.dirty.get() {
+            // The interface editor could not write its `ui/` folder.
+            let message = self.state.t("uied.save_failed_short");
+            self.state.push_toast(Level::Error, message);
+            return false;
+        }
         match session.save() {
             Ok(()) => {
                 if let Some(watcher) = &self.watcher {
@@ -467,6 +476,8 @@ impl EditorCore {
         };
         self.watcher = None;
         self.live.reset();
+        self.registry.ui_link.dirty.set(false);
+        self.registry.ui_link.focus.set(false);
         self.shared.search.0.borrow_mut().clear();
         if let Some(session) = self.session.take() {
             self.registry.project.dispatch(&ProjectEvent::Closed);
@@ -1092,11 +1103,12 @@ impl EditorCore {
     }
 
     fn sync_info(&mut self) {
+        let ui_dirty = self.registry.ui_link.dirty.get();
         self.state.project = self.session.as_mut().map(|s| ProjectInfo {
             name: s.name.clone(),
             root: s.location.root.clone(),
             story_file: s.location.story_file.clone(),
-            modified: s.modified(),
+            modified: s.modified() || ui_dirty,
             has_manifest: s.location.manifest.is_some(),
         });
     }

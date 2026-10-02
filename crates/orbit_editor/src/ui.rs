@@ -172,6 +172,23 @@ impl EditorCore {
             return;
         }
         let typing = ctx.egui_wants_keyboard_input();
+        // The panel rewrites `focus` each frame it is drawn.
+        if self.registry.ui_link.focus.replace(false) && !typing {
+            let link = &self.registry.ui_link;
+            let redo = ctx.input_mut(|i| {
+                i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
+                    || i.consume_key(Modifiers::COMMAND, Key::Y)
+            });
+            let undo = !redo && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Z));
+            if redo || undo {
+                link.history.set(link.history.get() + if redo { 1 } else { -1 });
+                ctx.request_repaint();
+                // Keep the focus: the panel sets it again when it draws.
+                link.focus.set(true);
+                return;
+            }
+            link.focus.set(true);
+        }
         let mut bindings: Vec<(KeyboardShortcut, String)> = self
             .registry
             .actions()

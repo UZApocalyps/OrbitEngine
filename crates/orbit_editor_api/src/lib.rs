@@ -36,7 +36,7 @@ pub use preview::{
     PreviewCommand, PreviewInput, PreviewSpeed, PreviewState, PreviewStatus, UiPreviewRequest,
 };
 pub use registry::{
-    ActionDef, DockSlot, EditorRegistry, InspectorDef, MenuDef, MenuSlot, PanelDef,
+    ActionDef, DockSlot, EditorRegistry, InspectorDef, MenuDef, MenuSlot, PanelDef, UiEditorLink,
     RegisteredAction, RegisteredPanel, shortcut_text,
 };
 pub use scene_view::{SceneViewActor, SceneViewState};

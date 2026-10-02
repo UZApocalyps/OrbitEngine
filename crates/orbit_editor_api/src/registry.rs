@@ -235,9 +235,24 @@ impl RegisteredAction {
     }
 }
 
+/// Shared flags between the host and the interface editor panel, which
+/// owns its own document (`ui/` folder) outside the story.
+#[derive(Default, Debug)]
+pub struct UiEditorLink {
+    /// The panel has unsaved edits (counts in the project's "modified").
+    pub dirty: std::cell::Cell<bool>,
+    /// The panel has the keyboard focus (last click was inside it): the
+    /// host routes Ctrl+Z / Ctrl+Y to it instead of the story.
+    pub focus: std::cell::Cell<bool>,
+    /// Undo (-1) / redo (+1) steps the host asked for, applied at next draw.
+    pub history: std::cell::Cell<i32>,
+}
+
 /// Everything registered by plugins, project side included.
 #[derive(Default)]
 pub struct EditorRegistry {
+    /// See [`UiEditorLink`].
+    pub ui_link: std::rc::Rc<UiEditorLink>,
     /// The project-side registry (node types, importers, MCP tools, hooks).
     pub project: ProjectRegistry,
     current: String,

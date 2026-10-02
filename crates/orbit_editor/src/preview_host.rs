@@ -36,6 +36,8 @@ use orbit_mcp::live_tools::{ChoiceSelector, LiveCall};
 /// A reload waits for this long without a new edit (typing is a stream of
 /// edits)...
 pub const RELOAD_QUIET: Duration = Duration::from_millis(100);
+/// How often the `ui/` folder is looked at while the game plays.
+pub const UI_POLL: Duration = Duration::from_millis(400);
 /// ...but never longer than this since the first one.
 pub const RELOAD_MAX_WAIT: Duration = Duration::from_millis(250);
 /// Interval between two frames while the game animates.
@@ -222,6 +224,26 @@ pub fn changed_assets(
     changed
 }
 
+/// `(file name, length, modification time)` of the files of a folder, sorted.
+pub type UiStamps = Vec<(String, u64, Option<SystemTime>)>;
+
+/// The top-level files of the `ui/` folder (empty when it does not exist).
+pub fn ui_stamps(dir: &Path) -> UiStamps {
+    let mut stamps: UiStamps = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|e| {
+                    let meta = e.metadata().ok().filter(|m| m.is_file())?;
+                    Some((e.file_name().to_string_lossy().into_owned(), meta.len(), meta.modified().ok()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    stamps.sort();
+    stamps
+}
+
 fn flow_text(flow: Option<&orbit_runtime::director::Flow>) -> String {
     use orbit_runtime::director::Flow;
     match flow {
@@ -270,6 +292,11 @@ pub struct PreviewHost {
     reload_started: Option<(Instant, Duration)>,
     /// Modification times of the project's assets (see [`changed_assets`]).
     asset_stamps: HashMap<String, SystemTime>,
+    /// Files of the project's `ui/` folder as last seen (`None`: not yet),
+    /// for the hot reload during Play.
+    ui_stamps: Option<UiStamps>,
+    ui_next_poll: Option<Instant>,
+    ui_error: Option<String>,
     /// Last reload latency in milliseconds, for the debug overlay and tests.
     pub last_reload_ms: Option<u128>,
     /// Pictures drawn into the scene view's target.
@@ -333,6 +360,9 @@ impl PreviewHost {
             last_error: None,
             reload_started: None,
             asset_stamps: HashMap::new(),
+            ui_stamps: None,
+            ui_next_poll: None,
+            ui_error: None,
             last_reload_ms: None,
             scene_frames: 0,
             seen_asset_epoch: 0,
@@ -381,6 +411,10 @@ impl PreviewHost {
         }
         // The project's own screens (`ui/`) are part of what Play shows.
         let ui_dir = session.location.root.join("ui");
+        // The shell built below reads `ui/` now: the hot reload compares
+        // against what it will see next.
+        self.ui_stamps = Some(ui_stamps(&ui_dir));
+        self.ui_error = None;
         self.runtime
             .set_ui_dir(ui_dir.is_dir().then(|| ui_dir.to_string_lossy().into_owned()));
         let outcome = self.runtime.load_story(story, &root.to_string_lossy());
@@ -453,6 +487,13 @@ impl PreviewHost {
         if self.debounce.due(now) {
             self.load(core, now);
             force_draw = true;
+        }
+
+        // ---- `ui/` changed on disk while the game plays: swap the screens
+        let playing = self.runtime.status() != PlayStatus::Stopped && self.seen.is_some();
+        if playing && self.poll_ui(core, now) {
+            force_draw = true;
+            wake.redraw = true;
         }
 
         // ---- the UI editor asks for a screen or the splashes
@@ -571,13 +612,70 @@ impl PreviewHost {
             let next = now + FRAME_INTERVAL;
             at = Some(at.map_or(next, |d| d.min(next)));
         }
+        if playing && let Some(next) = self.ui_next_poll {
+            at = Some(at.map_or(next, |d| d.min(next)));
+        }
         wake.at = at;
         wake
     }
 
+    /// Looks at the `ui/` folder (at most every [`UI_POLL`]) and, when it
+    /// changed, hands the new bundle to the running shell. An invalid one is
+    /// refused: the previous screens stay and the problem is shown once.
+    /// Returns whether the screens were replaced.
+    fn poll_ui(&mut self, core: &mut EditorCore, now: Instant) -> bool {
+        if self.ui_next_poll.is_some_and(|t| now < t) {
+            return false;
+        }
+        self.ui_next_poll = Some(now + UI_POLL);
+        let Some(root) = core.session.as_ref().map(|s| s.location.root.clone()) else {
+            return false;
+        };
+        let dir = root.join("ui");
+        let stamps = ui_stamps(&dir);
+        if self.ui_stamps.as_ref() == Some(&stamps) {
+            return false;
+        }
+        let first_sight = self.ui_stamps.is_none();
+        self.ui_stamps = Some(stamps.clone());
+        if first_sight {
+            return false;
+        }
+        self.runtime
+            .set_ui_dir(dir.is_dir().then(|| dir.to_string_lossy().into_owned()));
+        match self.runtime.reload_ui() {
+            Ok(()) => {
+                self.ui_error = None;
+                log::info!("preview: ui/ changed on disk, screens reloaded");
+                true
+            }
+            Err(error) => {
+                if self.ui_error.as_deref() != Some(error.as_str()) {
+                    let text = core.state.tf("preview.ui_reload_failed", &[("error", &error)]);
+                    core.state.console.push(Level::Error, text.clone());
+                    core.state.push_toast(Level::Error, text);
+                    self.ui_error = Some(error);
+                }
+                false
+            }
+        }
+    }
+
     /// Shows (or stops showing) a UI screen / the splashes instead of the game.
     fn apply_ui_request(&mut self, core: &mut EditorCore, request: UiPreviewRequest) {
-        let language = core.state.i18n.lang().code().to_owned();
+        // The game's interface language, not the editor's: the one chosen
+        // for the preview, else the story's own.
+        let language = core
+            .state
+            .preview
+            .ui_language
+            .clone()
+            .or_else(|| {
+                core.session
+                    .as_ref()
+                    .map(|s| s.project.story().strings.source_lang.clone())
+            })
+            .unwrap_or_else(|| "en".to_owned());
         let (bundle_ron, target) = match &request {
             UiPreviewRequest::Off => {
                 self.runtime.clear_ui_preview();
@@ -1427,6 +1525,25 @@ mod tests {
         // Nothing found: the given folder.
         story.assets.assets[0].path = "missing.png".into();
         assert_eq!(find_assets_root(&stories, &story), stories);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ui_stamps_see_added_changed_and_removed_files() {
+        let dir = std::env::temp_dir().join(format!("orbit_ui_stamps_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(ui_stamps(&dir).is_empty(), "a missing folder is empty");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.screen.ron"), "1").unwrap();
+        let first = ui_stamps(&dir);
+        assert_eq!(first.len(), 1);
+        assert_eq!(ui_stamps(&dir), first, "stable while nothing changes");
+        std::fs::write(dir.join("a.screen.ron"), "12").unwrap();
+        assert_ne!(ui_stamps(&dir), first, "length change is seen");
+        std::fs::write(dir.join("b.screen.ron"), "1").unwrap();
+        assert_eq!(ui_stamps(&dir).len(), 2);
+        std::fs::remove_file(dir.join("a.screen.ron")).unwrap();
+        assert_eq!(ui_stamps(&dir).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

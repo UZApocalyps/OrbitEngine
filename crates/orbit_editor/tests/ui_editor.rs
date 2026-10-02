@@ -160,3 +160,67 @@ fn an_unreadable_folder_is_reported_not_fatal() {
     open_panel(&mut core, &ctx);
     settle(&mut core, &ctx);
 }
+
+#[test]
+fn unsaved_interface_edits_count_as_modified_and_ask_before_switching_project() {
+    use orbit_editor::core::{Dialog, Pending, UnsavedChoice};
+    let dir = TempDir::new("dirty");
+    let (mut core, ctx, project) = core_with_project(&dir);
+    assert!(!core.is_modified());
+    // What the panel publishes while its document has unsaved edits.
+    core.registry.ui_link.dirty.set(true);
+    assert!(core.is_modified());
+    settle(&mut core, &ctx);
+    assert!(core.state.project.as_ref().unwrap().modified);
+
+    core.open_project(&project);
+    assert_eq!(
+        core.dialog,
+        Some(Dialog::ConfirmUnsaved {
+            then: Pending::Open(project.clone())
+        })
+    );
+    core.dialog = None;
+    // Discarding goes through and forgets the flag.
+    core.resolve_unsaved(Pending::Open(project), UnsavedChoice::Discard);
+    assert!(!core.registry.ui_link.dirty.get());
+    assert!(!core.is_modified());
+}
+
+#[test]
+fn undo_and_redo_go_to_the_interface_editor_while_it_has_the_focus() {
+    let dir = TempDir::new("undo");
+    let (mut core, ctx, _project) = core_with_project(&dir);
+    let key = |key: egui::Key, shift: bool| egui::Event::Key {
+        key,
+        physical_key: Some(key),
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers {
+            command: true,
+            ctrl: true,
+            shift,
+            ..Default::default()
+        },
+    };
+    let press = |core: &mut EditorCore, ctx: &Context, event: egui::Event| {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1360.0, 820.0))),
+            time: Some(10.0),
+            events: vec![event],
+            ..RawInput::default()
+        };
+        let output = ctx.run_ui(input, |ui| core.ui(ui));
+        output.drop_without_applying_deltas();
+    };
+    // No focus: the panel is not asked.
+    press(&mut core, &ctx, key(egui::Key::Z, false));
+    assert_eq!(core.registry.ui_link.history.get(), 0);
+    // Focus: Ctrl+Z is an undo for it, Ctrl+Shift+Z a redo.
+    core.registry.ui_link.focus.set(true);
+    press(&mut core, &ctx, key(egui::Key::Z, false));
+    assert_eq!(core.registry.ui_link.history.get(), -1);
+    core.registry.ui_link.focus.set(true);
+    press(&mut core, &ctx, key(egui::Key::Z, true));
+    assert_eq!(core.registry.ui_link.history.get(), 0, "undo then redo");
+}

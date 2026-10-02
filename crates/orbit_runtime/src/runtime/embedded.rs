@@ -377,6 +377,39 @@ impl Runtime {
         self.config.ui_dir = dir;
     }
 
+    /// Reads the `ui/` folder again and swaps it into the live shell without
+    /// restarting the story (open menus close). A folder that cannot be read
+    /// or has errors is refused with its message and the previous screens
+    /// stay. Does nothing without a `ui_dir` or a shell.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn reload_ui(&mut self) -> Result<(), String> {
+        let Some(dir) = self.config.ui_dir.clone() else {
+            return Ok(());
+        };
+        let bundle = UiBundle::load_dir(std::path::Path::new(&dir))?;
+        if let Some(issue) = bundle
+            .validate()
+            .into_iter()
+            .find(|i| i.severity == orbit_ui::Severity::Error)
+        {
+            return Err(format!("`{}` {}: {}", issue.screen, issue.widget, issue.message));
+        }
+        if self.shell_mut().is_none() {
+            return Ok(());
+        }
+        self.ui_splashes = bundle.splashes.clone();
+        if let Some(theme) = bundle.theme.clone() {
+            self.ctx.theme = theme.clone();
+            self.config.theme = theme;
+            self.ui_sounds = UiSoundBank::new(&self.config.theme, &self.assets_loader);
+        }
+        if let Some(shell) = self.shell_mut() {
+            shell.set_ui_bundle(&bundle);
+        }
+        self.emb_mut().dirty = true;
+        Ok(())
+    }
+
     /// The text of the last story the runtime refused, if any.
     pub fn last_error(&self) -> Option<&str> {
         self.embedded.as_ref()?.last_error.as_deref()
@@ -871,7 +904,8 @@ impl Runtime {
         let preview = match target {
             UiPreviewTarget::Screen(id) => {
                 let theme = bundle.theme.clone().unwrap_or_else(|| self.ctx.theme.clone());
-                let texts = orbit_ui::Texts::builtin(language);
+                // The same table the shell of the game would use.
+                let texts = crate::shell::make_texts(language, &self.config.ui_text_overrides);
                 // Mock story variables: the declared initial values.
                 let vars: std::collections::BTreeMap<String, orbit_core::Value> = self
                     .embedded

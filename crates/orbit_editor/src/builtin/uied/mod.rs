@@ -27,7 +27,7 @@ use egui::{Align2, Color32, CornerRadius, FontId, RichText, ScrollArea, Sense, U
 use orbit_core::AssetKind;
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, PanelDef,
-    Plugin, PluginManifest, Translator, UiPreviewRequest, icons,
+    Plugin, PluginManifest, Translator, UiPreviewRequest, UiText as _, icons,
 };
 use orbit_ui::{
     Issue, ScreenAsset, Severity, SplashContent, SplashDef, UiBundle, WidgetDef, WidgetKind,
@@ -60,13 +60,27 @@ impl Plugin for UiEditorPlugin {
 
 impl EditorPlugin for UiEditorPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
+        // Saving the project saves the interface documents too.
+        let saver = self.state.clone();
+        let save_link = reg.ui_link.clone();
+        reg.project.on_project_event(move |event| {
+            if matches!(event, orbit_plugin_api::ProjectEvent::BeforeSave)
+                && let Ok(mut st) = saver.try_borrow_mut()
+                && let Some(doc) = st.doc.as_mut()
+                && doc.dirty()
+                && doc.save().is_ok()
+            {
+                save_link.dirty.set(false);
+            }
+        });
         let state = self.state.clone();
+        let link = reg.ui_link.clone();
         reg.panel(PanelDef::new(
             "editor",
             "uied.title",
             icons::BROWSERS,
             DockSlot::Hidden,
-            move |ui, ctx| panel(ui, ctx, &state),
+            move |ui, ctx| panel(ui, ctx, &state, &link),
         ));
         reg.action(
             ActionDef::new("open", "uied.open", |ctx| {
@@ -113,8 +127,12 @@ struct State {
     style_rename_for: String,
     new_style: String,
     mode: Mode,
-    sent: Option<(Mode, String, u64)>,
+    sent: Option<(Mode, String, u64, String)>,
+    /// Language of the game texts in the preview (`""`: the story's own).
+    preview_lang: String,
     saw_active: bool,
+    /// The last click was inside this panel.
+    focused: bool,
     /// The screen the preview showed last time we looked (to notice when a
     /// click inside it navigated).
     last_shown: Option<String>,
@@ -139,7 +157,9 @@ impl Default for State {
             new_style: String::new(),
             mode: Mode::Off,
             sent: None,
+            preview_lang: String::new(),
             saw_active: false,
+            focused: false,
             last_shown: None,
         }
     }
@@ -152,9 +172,6 @@ impl State {
         let root = ctx.project_info().map(|p| p.root.clone());
         if root == self.root {
             return;
-        }
-        if self.doc.as_ref().is_some_and(UiDoc::dirty) {
-            ctx.warn(ctx.t("uied.lost_edits"));
         }
         *self = Self {
             root: root.clone(),
@@ -180,6 +197,33 @@ impl State {
                 self.error = Some(e);
             }
         }
+    }
+
+    /// Shares the dirty flag and the keyboard focus with the host, applies
+    /// the undo / redo it routed here (Ctrl+Z / Ctrl+Y while this panel has
+    /// the focus).
+    fn sync_link(&mut self, ui: &Ui, link: &orbit_editor_api::UiEditorLink) {
+        if ui.input(|i| i.pointer.any_pressed()) {
+            self.focused = ui.rect_contains_pointer(ui.max_rect());
+        }
+        link.focus.set(self.focused);
+        let mut steps = link.history.replace(0);
+        if let Some(doc) = self.doc.as_mut() {
+            while steps != 0 {
+                if steps < 0 {
+                    doc.undo();
+                    steps += 1;
+                } else {
+                    doc.redo();
+                    steps -= 1;
+                }
+            }
+        }
+        self.publish_dirty(link);
+    }
+
+    fn publish_dirty(&self, link: &orbit_editor_api::UiEditorLink) {
+        link.dirty.set(self.doc.as_ref().is_some_and(UiDoc::dirty));
     }
 
     /// Keeps the selection pointing at things that exist.
@@ -233,9 +277,11 @@ impl State {
         };
         match want {
             Some((mode, id)) => {
-                let key = (mode, id.clone(), doc.revision);
+                let key = (mode, id.clone(), doc.revision, self.preview_lang.clone());
                 if self.sent.as_ref() != Some(&key) {
                     let bundle_ron = doc.bundle_ron();
+                    ctx.state_mut().preview.ui_language =
+                        (!self.preview_lang.is_empty()).then(|| self.preview_lang.clone());
                     ctx.state_mut().preview.ui_request = Some(match mode {
                         Mode::Splashes => UiPreviewRequest::Splashes { bundle_ron },
                         _ => UiPreviewRequest::Screen { bundle_ron, id },
@@ -296,9 +342,15 @@ impl State {
 
 // ------------------------------------------------------------------ panel
 
-fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<State>>) {
+fn panel(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    state: &Rc<RefCell<State>>,
+    link: &orbit_editor_api::UiEditorLink,
+) {
     let mut st = state.borrow_mut();
     st.sync(ctx);
+    st.sync_link(ui, link);
     if !ctx.has_project() {
         ui.add_space(24.0);
         ui.vertical_centered(|ui| {
@@ -336,6 +388,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<State>>) {
     diagnostics(ui, ctx, &mut st);
     st.ensure_selection();
     st.drive_preview(ctx);
+    st.publish_dirty(link);
 }
 
 fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
@@ -432,6 +485,28 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
                 ctx.request(EditorRequest::ShowPanel(panels::PREVIEW.to_owned()));
             }
         }
+        // Language of the game texts (`ui.*`) in the preview: the story's
+        // own by default, not the editor's.
+        let lang_label = match st.preview_lang.as_str() {
+            "" => ctx.t("uied.lang.auto"),
+            "en" => ctx.t("uied.lang.en"),
+            "fr" => ctx.t("uied.lang.fr"),
+            other => other.to_owned(),
+        };
+        egui::ComboBox::from_id_salt("uied_preview_lang")
+            .selected_text(lang_label)
+            .width(110.0)
+            .show_ui(ui, |ui| {
+                for (code, key) in [
+                    ("", "uied.lang.auto"),
+                    ("en", "uied.lang.en"),
+                    ("fr", "uied.lang.fr"),
+                ] {
+                    ui.selectable_value(&mut st.preview_lang, code.to_owned(), ctx.t(key));
+                }
+            })
+            .response
+            .on_hover_text(ctx.t("uied.lang_tip"));
         if icon_button(ui, icons::CORNERS_OUT, &ctx.t("uied.maximize")).clicked() {
             ctx.request(EditorRequest::ToggleMaximizePanel(panels::UI_EDITOR.to_owned()));
         }
@@ -1209,11 +1284,72 @@ fn splash_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         ScrollArea::vertical()
             .id_salt("uied_splash_props")
             .auto_shrink([false, false])
-            .show(ui, |ui| splash_props(ui, st, &tr, &images));
+            .show(ui, |ui| splash_props(ui, ctx, st, &tr));
     });
 }
 
-fn splash_props(ui: &mut Ui, st: &mut State, tr: &Translator, images: &[String]) {
+/// The standard image chooser of the editor for a field that stores a project
+/// path: thumbnail, the project's images, drop from the asset library and
+/// import of a new file.
+fn image_path_picker(ui: &mut Ui, ctx: &mut EditorContext<'_>, salt: &str, path: &mut String) {
+    let mut imported = None;
+    if let Some(story) = ctx.story() {
+        let known = story
+            .assets
+            .assets
+            .iter()
+            .find(|a| a.kind == AssetKind::Image && a.path == *path);
+        if let Some(asset) = known {
+            super::thumbs::show(
+                ui,
+                ctx,
+                story,
+                asset.id,
+                vec2(ui.available_width().min(240.0), 135.0),
+            );
+            ui.add_space(4.0);
+        }
+        let text = if path.is_empty() {
+            RichText::new(ui.t("uied.splash_pick_image")).color(weak(ui))
+        } else if known.is_none() {
+            RichText::new(path.as_str()).color(danger(ui))
+        } else {
+            RichText::new(path.as_str())
+        };
+        let combo = egui::ComboBox::from_id_salt(salt)
+            .selected_text(text)
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                let mut any = false;
+                for a in story.assets.assets.iter().filter(|a| a.kind == AssetKind::Image) {
+                    any = true;
+                    ui.selectable_value(path, a.path.clone(), &a.path);
+                }
+                if !any {
+                    ui.label(RichText::new(ui.t("uied.no_images")).small().color(faint(ui)));
+                }
+            });
+        if let Some(id) = orbit_editor_api::fields::asset_drop(ui, &combo.response, AssetKind::Image)
+            && let Some(a) = story.assets.get(id)
+        {
+            path.clone_from(&a.path);
+        }
+    }
+    if ui
+        .small_button(format!("{}  {}", icons::FILE_PLUS, ui.t("inspector.asset.add_file")))
+        .on_hover_text(ui.t("inspector.asset.add_file.tip"))
+        .clicked()
+    {
+        imported = super::edit::import_asset_dialog(ctx, AssetKind::Image);
+    }
+    if let Some(id) = imported
+        && let Some(a) = ctx.story().and_then(|s| s.assets.get(id))
+    {
+        path.clone_from(&a.path);
+    }
+}
+
+fn splash_props(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, tr: &Translator) {
     let Some(index) = st.splash else {
         ui.label(RichText::new(tr.t("uied.select_splash")).color(weak(ui)));
         return;
@@ -1250,18 +1386,9 @@ fn splash_props(ui: &mut Ui, st: &mut State, tr: &Translator, images: &[String])
         };
     }
     match &mut s.content {
-        SplashContent::Image(path) | SplashContent::Video(path) => {
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(path).desired_width(ui.available_width() - 30.0));
-                ui.menu_button(icons::CARET_DOWN, |ui| {
-                    for img in images {
-                        if ui.button(img).clicked() {
-                            path.clone_from(img);
-                            ui.close();
-                        }
-                    }
-                });
-            });
+        SplashContent::Image(path) => image_path_picker(ui, ctx, "uied_splash_image", path),
+        SplashContent::Video(path) => {
+            ui.add(egui::TextEdit::singleline(path).desired_width(f32::INFINITY));
         }
         SplashContent::Text(text) => {
             ui.add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY));

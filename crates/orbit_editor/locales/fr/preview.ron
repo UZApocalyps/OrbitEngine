@@ -53,5 +53,6 @@
     "preview.story_error": "Erreur dans l'histoire : la preview garde la dernière version valide",
 
     // ---- console line
-    "preview.console": "Preview : {text}",
+    "preview.ui_reload_failed": "Le dossier ui/ n’a pas été rechargé (les écrans précédents restent) : {error}",
+    "preview.console":"Preview : {text}",
 }
