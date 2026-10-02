@@ -195,6 +195,13 @@ fn load_translations(
                 report.total
             ));
         }
+        let stale = orbit_i18n::stale_entries(&story.strings, &translation).len();
+        if stale > 0 {
+            warnings.push(format!(
+                "translation {}: {stale} string(s) were translated from a source text that has since changed (see `orbit i18n stale`)",
+                translation.lang
+            ));
+        }
         out.push(translation);
     }
     Ok(out)

@@ -61,6 +61,12 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
         include_str!("../locales/fr/export.ron"),
     ),
     (
+        "translations",
+        &["transl"],
+        include_str!("../locales/en/translations.ron"),
+        include_str!("../locales/fr/translations.ron"),
+    ),
+    (
         "assistant",
         &["assistant", "live"],
         include_str!("../locales/en/assistant.ron"),
