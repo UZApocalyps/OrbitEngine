@@ -7,6 +7,9 @@
 //! builds the app once the window exists (GPU initialization is async, and on
 //! the web it must not block the browser event loop).
 
+mod gamepad;
+pub use gamepad::{GamepadButton, StickDpad};
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -127,6 +130,12 @@ pub enum InputEvent {
     Scroll {
         dx: f32,
         dy: f32,
+    },
+    /// A gamepad button (native only for now; the left stick is reported as
+    /// d-pad presses).
+    Gamepad {
+        button: GamepadButton,
+        pressed: bool,
     },
 }
 
@@ -356,6 +365,8 @@ where
         app: None,
         last_frame: None,
         redraw_wanted: false,
+        #[cfg(not(target_arch = "wasm32"))]
+        gamepads: gamepad::Poller::new(),
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -380,6 +391,8 @@ struct Runner {
     last_frame: Option<Instant>,
     /// On-demand mode: a frame was requested and not drawn yet.
     redraw_wanted: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    gamepads: Option<gamepad::Poller>,
 }
 
 /// Web: bind the window to the page's canvas (or append a new one).
@@ -562,6 +575,13 @@ impl ApplicationHandler<UserEvent> for Runner {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let (Some(pad), Some(app)) = (self.gamepads.as_mut(), self.app.as_mut()) {
+            for (button, pressed) in pad.poll() {
+                app.input(&InputEvent::Gamepad { button, pressed });
+                self.redraw_wanted = true;
+            }
+        }
         self.schedule(event_loop);
     }
 }

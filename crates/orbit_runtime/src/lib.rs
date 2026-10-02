@@ -36,6 +36,7 @@
 pub mod director;
 pub mod format;
 mod game;
+pub mod gamepad_bindings;
 pub mod input;
 pub mod loading;
 pub mod preview;

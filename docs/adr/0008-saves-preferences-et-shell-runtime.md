@@ -20,3 +20,7 @@ Le M2 ajoute au player menu principal, pause, rollback, saves multi-slots avec m
 - Les saves restent lisibles d'une version à l'autre tant que `FORMAT_VERSION` est géré ; la compatibilité avec une histoire modifiée est jugée par `orbit_save::check_compat`.
 - La relecture GPU est asynchrone sur toutes les plateformes : toute fonctionnalité future de capture (aperçu de l'éditeur, MCP) peut réutiliser `start_readback` / `poll_readback`.
 - Nouvelles dépendances (licences permissives) : `postcard`, `base64` (web), `sys-locale`, `time` (natif, fuseau horaire).
+
+## Addendum M7-08 : manette
+
+`Preferences` gagne `gamepad: BTreeMap<String, String>` (action vers nom de bouton, `#[serde(default)]` : les anciens fichiers se chargent, les entrées absentes ou invalides prennent le défaut). Actions : `advance` (South), `back` (East), `menu` (Start), `skip` (RightBumper), `auto` (North), `rollback` (LeftBumper), `history` (West). Croix directionnelle et stick gauche = navigation (fixe), RightTrigger = page suivante. Natif : `gilrs` dans `orbit_platform` (`InputEvent::Gamepad`). Lacune : web (Gamepad API) non branché ; pas d écran de remappage encore (édition du fichier de préférences).

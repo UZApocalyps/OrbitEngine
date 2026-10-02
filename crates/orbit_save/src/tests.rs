@@ -459,6 +459,14 @@ fn persistent_variables_and_read_lines_live_outside_saves() {
 }
 
 #[test]
+fn old_preferences_without_gamepad_still_load() {
+    let old = "(volumes: (master: 0.5, music: 0.8, sfx: 1.0, voice: 1.0), text_speed: 40.0, auto_delay: 2.0, skip_mode: ReadOnly, fullscreen: false, language: None)";
+    let prefs = Preferences::from_ron(old).unwrap();
+    assert!(prefs.gamepad.is_empty());
+    assert_eq!(prefs.volumes.master, 0.5);
+}
+
+#[test]
 fn preferences_roundtrip_default_and_sanitize() {
     let story = demo();
     let storage = MemoryStorage::new();
@@ -477,6 +485,7 @@ fn preferences_roundtrip_default_and_sanitize() {
         skip_mode: SkipMode::All,
         fullscreen: true,
         language: Some("fr".into()),
+        gamepad: [("advance".to_owned(), "East".to_owned())].into(),
     };
     mgr.save_prefs(&prefs).unwrap();
     assert_eq!(mgr.load_prefs().unwrap(), prefs);
