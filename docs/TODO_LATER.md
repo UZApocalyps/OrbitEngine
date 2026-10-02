@@ -32,7 +32,7 @@ Idées validées mais hors des jalons en cours. À replanifier dans la roadmap l
 - Décision (2026-10-02) : validé, planifié en TL-02 de [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md).
 
 ## Optimisations
-- Taille du bundle web : fait au M4 (10,2 → 4,4 Mo, budget en CI). Pistes restantes : décodage JPEG / polices chargés à la demande, `cosmic-text` sans `swash` inutile, binaryen récent, `twiggy` pour chercher les gros morceaux.
+- Taille du bundle web : fait au M4 (10,2 → 4,4 Mo, budget en CI). TL-03 : 4,79 → 4,62 Mo (JPEG décodé par le navigateur sur le web, `wasm-opt --converge`), budget CI 4,7 Mo, rapport `twiggy` en CI. Restent : `naga` (~530 Ko), `ron`/serde des types story, harfrust/skrifa (swash est nécessaire au rendu des glyphes) ; polices déjà hors du wasm (pak).
 - Profilage CPU/GPU du runtime et de l'éditeur.
 
 ## Dialogues en bulles positionnables

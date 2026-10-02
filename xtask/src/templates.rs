@@ -24,10 +24,10 @@ use crate::{Result, cargo, run, workspace_root};
 /// wasm-opt), in bytes. The CI fails above it (`cargo xtask wasm-budget`).
 /// Raise it on purpose, with a line in docs/adr/0010-export.md, never to
 /// silence a regression.
-pub const WASM_BUDGET_BYTES: u64 = 4_800_000;
+pub const WASM_BUDGET_BYTES: u64 = 4_700_000;
 
 /// The same, compressed with brotli (what a visitor downloads).
-pub const WASM_BUDGET_BROTLI_BYTES: u64 = 1_650_000;
+pub const WASM_BUDGET_BROTLI_BYTES: u64 = 1_630_000;
 
 /// Size of the web player before this work (release profile, no wasm-opt),
 /// for the record: 10 167 000 bytes.
@@ -245,6 +245,9 @@ fn web_template(out: &Path, o: &Options) -> Result {
         run(Command::new(&tool)
             .args([
                 "-Oz",
+                "--converge",
+                "--low-memory-unused",
+                "--zero-filled-memory",
                 "--enable-bulk-memory",
                 "--enable-nontrapping-float-to-int",
                 "--enable-sign-ext",
@@ -258,7 +261,7 @@ fn web_template(out: &Path, o: &Options) -> Result {
             .arg("-o")
             .arg(&optimized))?;
         fs::rename(&optimized, &bg)?;
-        report_size("after wasm-opt -Oz", &bg)?;
+        report_size("after wasm-opt -Oz --converge", &bg)?;
     } else {
         println!(
             "  warning: wasm-opt not found, the web player is left unoptimized (about 15 % bigger).\n  \

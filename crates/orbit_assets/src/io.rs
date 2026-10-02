@@ -99,3 +99,80 @@ async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
         .map_err(js_err)?;
     Ok(js_sys::Uint8Array::new(&buf).to_vec())
 }
+
+/// Web only: like `spawn_load` for an image, but JPEG is decoded by the
+/// browser (the Rust JPEG decoder is left out of the wasm to keep the bundle
+/// small); PNG goes through `decode_image`.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn spawn_load_image(source: Source, path: String, slot: Slot<crate::ImageData>) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let read = match &source {
+            Source::Root(root) => {
+                let url = format!("{}/{}", root.trim_end_matches('/'), path);
+                fetch_bytes(&url).await.map_err(|message| AssetError::Io {
+                    path: path.clone(),
+                    message,
+                })
+            }
+            Source::Pak { pak, prefix } => pak.read_async(&pak_path(prefix, &path)).await,
+        };
+        match read {
+            Err(err) => slot.fail(err),
+            Ok(bytes) => {
+                let decoded = if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+                    browser_decode(&bytes).await
+                } else {
+                    crate::decode_image(&bytes)
+                };
+                match decoded {
+                    Ok(value) => slot.ready(value),
+                    Err(msg) => slot.fail(decode_error(&path, msg)),
+                }
+            }
+        }
+    });
+}
+
+/// Decodes an encoded image with `createImageBitmap` and reads the pixels
+/// back as non-premultiplied RGBA8 through an offscreen 2D canvas.
+#[cfg(target_arch = "wasm32")]
+async fn browser_decode(bytes: &[u8]) -> Result<crate::ImageData, String> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    let js_err = |e: wasm_bindgen::JsValue| format!("{e:?}");
+    let window = web_sys::window().ok_or("no window")?;
+    let array = js_sys::Uint8Array::from(bytes);
+    let parts = js_sys::Array::of1(&array);
+    let blob = web_sys::Blob::new_with_u8_array_sequence(&parts).map_err(js_err)?;
+    let options = web_sys::ImageBitmapOptions::new();
+    options.set_premultiply_alpha(web_sys::PremultiplyAlpha::None);
+    options.set_color_space_conversion(web_sys::ColorSpaceConversion::None);
+    let bitmap = JsFuture::from(
+        window
+            .create_image_bitmap_with_blob_and_image_bitmap_options(&blob, &options)
+            .map_err(js_err)?,
+    )
+    .await
+    .map_err(js_err)?;
+    let bitmap: web_sys::ImageBitmap = bitmap.dyn_into().map_err(js_err)?;
+    let (width, height) = (bitmap.width(), bitmap.height());
+    let canvas = web_sys::OffscreenCanvas::new(width, height).map_err(js_err)?;
+    let ctx = canvas
+        .get_context("2d")
+        .map_err(js_err)?
+        .ok_or("no 2d context")?
+        .dyn_into::<web_sys::OffscreenCanvasRenderingContext2d>()
+        .map_err(|o| format!("{o:?}"))?;
+    ctx.draw_image_with_image_bitmap(&bitmap, 0.0, 0.0)
+        .map_err(js_err)?;
+    let data = ctx
+        .get_image_data(0.0, 0.0, f64::from(width), f64::from(height))
+        .map_err(js_err)?;
+    bitmap.close();
+    Ok(crate::ImageData {
+        width,
+        height,
+        rgba: data.data().0,
+    })
+}
