@@ -10,6 +10,7 @@
 
 mod command;
 mod ext;
+pub mod export;
 pub mod graph;
 pub mod graph_layout;
 pub mod graph_ops;
@@ -19,6 +20,7 @@ pub mod sandbox;
 mod storage;
 
 pub use command::{Command, CommandError};
+pub use export::{ExportProfile, ExportTarget, PakCompression, slugify};
 pub use ext::{AssetUser, asset_users};
 pub use project::{ChangeEvent, ChangeKind, Project, ProjectError, SubscriptionId, Transaction};
 pub use storage::{

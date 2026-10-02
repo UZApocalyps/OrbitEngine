@@ -8,6 +8,10 @@
 //! * web: bytes are fetched with `fetch` as a browser task; decoding then runs
 //!   on the main thread (no threads in plain wasm32).
 //!
+//! A loader can also read from a **pak** ([`PakSource`], see `orbit_pak`): the
+//! same calls, but the bytes come from the game's pak file, natively or, on
+//! the web, lazily with HTTP range requests.
+//!
 //! [`FileWatcher`] polls a file for changes (hot reload; inert on the web).
 //!
 //! This crate is the only place allowed to touch `std::fs` / `std::thread`.
@@ -17,11 +21,13 @@ mod audio;
 mod handle;
 mod image_data;
 mod io;
+mod pak;
 mod watch;
 
 pub use audio::{PcmAudio, decode_audio};
 pub use handle::{AssetHandle, AssetPoll};
 pub use image_data::{ImageData, decode_image};
+pub use pak::{PakLocation, PakSource};
 pub use watch::FileWatcher;
 
 use std::sync::Arc;
@@ -39,10 +45,19 @@ pub enum AssetError {
     Decode { path: String, message: String },
 }
 
-/// Loads assets relative to a root. Cheap to clone.
+/// Where an [`AssetLoader`] reads from.
+#[derive(Debug, Clone)]
+pub(crate) enum Source {
+    /// A directory (native) or a URL prefix (web).
+    Root(Arc<str>),
+    /// A pak; `prefix` is prepended to every requested path.
+    Pak { pak: PakSource, prefix: Arc<str> },
+}
+
+/// Loads assets relative to a root (or from a pak). Cheap to clone.
 #[derive(Debug, Clone)]
 pub struct AssetLoader {
-    root: Arc<str>,
+    source: Source,
 }
 
 /// Validates a relative asset path: non-empty, no absolute prefix, no `..`, no
@@ -71,12 +86,28 @@ impl AssetLoader {
     /// (web; resolved against the page URL).
     pub fn new(root: impl Into<String>) -> Self {
         Self {
-            root: root.into().into(),
+            source: Source::Root(root.into().into()),
         }
     }
 
+    /// A loader reading from `pak`: a requested path `p` is the entry
+    /// `<prefix>/<p>` (`prefix` empty means `p` itself).
+    pub fn from_pak(pak: PakSource, prefix: impl Into<String>) -> Self {
+        let prefix: String = prefix.into();
+        Self {
+            source: Source::Pak {
+                pak,
+                prefix: prefix.trim_matches('/').into(),
+            },
+        }
+    }
+
+    /// The root (directory or URL prefix), or `<pak>` for a pak loader.
     pub fn root(&self) -> &str {
-        &self.root
+        match &self.source {
+            Source::Root(root) => root,
+            Source::Pak { .. } => "<pak>",
+        }
     }
 
     /// Loads raw bytes.
@@ -109,7 +140,7 @@ impl AssetLoader {
                 return handle;
             }
         };
-        io::spawn_load(self.root.clone(), normalized, decode, slot);
+        io::spawn_load(self.source.clone(), normalized, decode, slot);
         handle
     }
 }

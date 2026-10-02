@@ -1,0 +1,19 @@
+[package]
+name = "orbit_pak"
+description = "OrbitEngine game files: the versioned asset pak (index + data, optional LZ4) and the compiled game pack (postcard story + translations). No I/O, compiles to wasm."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_core.workspace = true
+orbit_i18n.workspace = true
+serde.workspace = true
+postcard.workspace = true
+thiserror.workspace = true
+lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+
+[lints]
+workspace = true

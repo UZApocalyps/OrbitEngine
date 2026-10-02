@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+orbit_pak.workspace = true
 image = { workspace = true, features = ["jpeg"] }
 hound.workspace = true
 lewton.workspace = true
@@ -18,7 +19,7 @@ thiserror.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
-web-sys = { workspace = true, features = ["Window", "Response"] }
+web-sys = { workspace = true, features = ["Window", "Response", "Request", "RequestInit", "Headers"] }
 
 [lints]
 workspace = true
