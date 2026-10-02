@@ -448,7 +448,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) {
         });
         return;
     }
-    let Some(story) = ctx.story().cloned() else {
+    let Some(scene_count) = ctx.story().map(|s| s.scenes.len()) else {
         return;
     };
     let revision = ctx.project().map_or(0, |p| p.revision());
@@ -464,13 +464,15 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) {
             st.search.clear();
             st.view.fit_all();
         }
-        if st.model_key != Some((generation, revision)) {
-            st.model = GraphModel::build(&story);
+        if st.model_key != Some((generation, revision))
+            && let Some(story) = ctx.story()
+        {
+            st.model = GraphModel::build(story);
             st.model_key = Some((generation, revision));
             st.content_key = None;
         }
     }
-    if story.scenes.is_empty() {
+    if scene_count == 0 {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("Ce projet n'a pas encore de scène").font(bold(16.0)));
@@ -519,12 +521,15 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) {
         }
     }
 
-    let toolbar_events = toolbar(ui, ctx, shared, &story);
+    let toolbar_events = toolbar(ui, ctx, shared);
 
     // Content of the view.
     {
         let mut st = shared.borrow_mut();
-        let matches: HashSet<BlockId> = matches_of(&story, &st.model, &st.search)
+        let matches: HashSet<BlockId> = ctx
+            .story()
+            .map(|s| matches_of(s, &st.model, &st.search))
+            .unwrap_or_default()
             .into_iter()
             .collect();
         let selected = selected_set(ctx, &st.model);
@@ -545,10 +550,12 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) {
             BlockId::Label(n) => n.as_u128() as u64,
         }));
         let key = hash_of(&parts);
-        if st.content_key != Some(key) {
+        if st.content_key != Some(key)
+            && let Some(story) = ctx.story()
+        {
             let content = build_content(
                 ctx,
-                &story,
+                story,
                 &st.model,
                 &ctx.state().graph.layout,
                 &selected,
@@ -595,12 +602,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) {
     }
 }
 
-fn toolbar(
-    ui: &mut Ui,
-    ctx: &mut EditorContext<'_>,
-    shared: &Shared,
-    story: &Story,
-) -> Vec<GraphEvent> {
+fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) -> Vec<GraphEvent> {
     let mut events = Vec::new();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -637,7 +639,10 @@ fn toolbar(
             if focus {
                 response.request_focus();
             }
-            let matches = matches_of(story, &st.model, &st.search);
+            let matches = ctx
+                .story()
+                .map(|s| matches_of(s, &st.model, &st.search))
+                .unwrap_or_default();
             let jump = response.has_focus() && ui.input(|i| i.key_pressed(Key::Enter));
             if response.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
                 st.search.clear();
@@ -700,7 +705,7 @@ fn focus_block(shared: &Shared, block: BlockId, min_zoom: Option<f32>) {
 /// Overview of the whole graph, bottom right; click or drag to move there.
 fn minimap(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared, canvas: egui::Rect) {
     let mut st = shared.borrow_mut();
-    if !st.show_minimap || st.model.blocks.len() < 2 {
+    if !st.show_minimap || st.model.blocks.len() < 12 {
         return;
     }
     let layout = &ctx.state().graph.layout;
