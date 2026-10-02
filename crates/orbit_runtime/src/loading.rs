@@ -218,7 +218,7 @@ mod tests {
         // Break a reference: point a Jump/Call-like target at nothing by
         // removing a string the story uses.
         let broken = DEMO.replace(
-            "\"01JBX0T0000000000000000004\": \"Hello! Welcome to OrbitEngine.\",",
+            "\"01JBX0T0000000000000000004\": \"Neo-Kyoto, 2087. Rain hammers the megatower blocks while neon bleeds across every wet window.\",",
             "",
         );
         assert_ne!(broken, DEMO, "test fixture drifted");

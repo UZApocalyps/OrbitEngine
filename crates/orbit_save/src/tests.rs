@@ -50,7 +50,7 @@ fn encode_decode_roundtrip_with_history_and_thumbnail() {
     let save = SaveData::capture(&vm, capture);
     assert_eq!(save.meta.format_version, FORMAT_VERSION);
     assert_eq!(save.meta.story_hash, story_hash(&story));
-    assert_eq!(save.meta.label, "main");
+    assert_eq!(save.meta.label, "hub");
     assert!(!save.meta.preview.is_empty());
     assert!(save.meta.has_history);
 
@@ -166,7 +166,9 @@ fn compat_with_a_modified_story() {
     // The node the save points to was removed: incompatible, no panic.
     let target = save.vm_state.shown.as_ref().unwrap().node();
     let mut cut = (*story).clone();
-    cut.scenes[0].nodes.retain(|n| n.id != target);
+    for scene in &mut cut.scenes {
+        scene.nodes.retain(|n| n.id != target);
+    }
     let Compat::Incompatible(reason) = check_compat(&cut, &save) else {
         panic!("expected incompatible");
     };

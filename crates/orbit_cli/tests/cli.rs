@@ -60,7 +60,7 @@ fn validate_checks_files_only_on_request() {
         "",
     );
     assert_eq!(r.code, 1);
-    assert_eq!(r.err.matches("does not exist").count(), 8, "{}", r.err);
+    assert_eq!(r.err.matches("does not exist").count(), 10, "{}", r.err);
 
     // Create every asset: now it passes.
     let story = Story::from_ron(&std::fs::read_to_string(demo).unwrap()).unwrap();
@@ -115,14 +115,15 @@ fn run_text_plays_both_branches() {
     let demo = demo_path();
     let demo = demo.to_str().unwrap();
 
-    let r = orbit(&["run-text", demo], "1\n");
+    // Take the job, buy the chip, break in, hack by listening, sell out to Helix.
+    let r = orbit(&["run-text", demo], "1\n1\n1\n1\n1\n1\n3\n1\n");
     assert_eq!(r.code, 0, "{}", r.err);
-    assert!(r.out.contains("1) Help Bob carry the box."), "{}", r.out);
     assert!(
-        r.out.contains("Bob: Thanks again for yesterday"),
+        r.out.contains("1) Take the job for the standard fee."),
         "{}",
         r.out
     );
+    assert!(r.out.contains("ENDING 2"), "{}", r.out);
     assert!(
         r.out.contains("[music assets/demo/music_theme.wav"),
         "{}",
@@ -132,10 +133,11 @@ fn run_text_plays_both_branches() {
     assert!(r.out.contains("with dissolve 0.5s"), "{}", r.out);
     assert!(r.out.trim_end().ends_with("[end]"), "{}", r.out);
 
-    let r = orbit(&["run-text", demo], "2\n");
+    // Refuse the job: the short ending.
+    let r = orbit(&["run-text", demo], "4\n");
     assert_eq!(r.code, 0, "{}", r.err);
-    assert!(r.out.contains("I am still annoyed"), "{}", r.out);
-    assert!(!r.out.contains("Thanks again"), "{}", r.out);
+    assert!(r.out.contains("ENDING 1"), "{}", r.out);
+    assert!(!r.out.contains("ENDING 2"), "{}", r.out);
 }
 
 #[test]
@@ -143,11 +145,11 @@ fn run_text_reprompts_on_invalid_input_and_fails_on_eof() {
     let demo = demo_path();
     let demo = demo.to_str().unwrap();
 
-    let r = orbit(&["run-text", demo], "abc\n0\n3\n\n2\n");
+    let r = orbit(&["run-text", demo], "abc\n0\n9\n\n4\n");
     assert_eq!(r.code, 0, "{}", r.err);
     assert_eq!(
         r.out
-            .matches("please enter a number between 1 and 2")
+            .matches("please enter a number between 1 and 4")
             .count(),
         4
     );
@@ -165,7 +167,7 @@ fn run_text_step_waits_for_enter() {
     let r = orbit(&["run-text", demo, "--step"], "\n\n");
     assert_eq!(r.code, 1);
     // One Enter per line, then the choice, then enters for the rest.
-    let input = format!("{}1\n{}", "\n".repeat(9), "\n".repeat(40));
+    let input = format!("{}4\n{}", "\n".repeat(7), "\n".repeat(40));
     let r = orbit(&["run-text", demo, "--step"], &input);
     assert_eq!(r.code, 0, "{}", r.err);
 }
@@ -202,14 +204,14 @@ fn run_text_rollback_replays_the_previous_line() {
     let demo = demo.to_str().unwrap();
     // At the choice: roll back one step (re-shows the last line, waits),
     // Enter goes forward to the choice again, then pick option 1.
-    let r = orbit(&["run-text", demo], "b\n\n1\n");
+    let r = orbit(&["run-text", demo], "b\n\n4\n");
     assert_eq!(r.code, 0, "{}", r.err);
     assert!(r.out.contains("[rollback]"), "{}", r.out);
-    assert_eq!(r.out.matches("heavy box in the street").count(), 2);
-    assert_eq!(r.out.matches("1) Help Bob carry the box.").count(), 2);
+    assert_eq!(r.out.matches("A neural chip, prototype").count(), 2);
+    assert_eq!(r.out.matches("4) Refuse and go back to sleep.").count(), 2);
     assert!(r.out.trim_end().ends_with("[end]"), "{}", r.out);
     // Nothing before the first line to go back to is reported, not fatal.
-    let r = orbit(&["run-text", demo], "b\nb 99\nb\nf 99\n1\n");
+    let r = orbit(&["run-text", demo], "b\nb 99\nb\nf 99\n4\n");
     assert_eq!(r.code, 0, "{}", r.err);
     assert!(r.out.contains("[rollback]"), "{}", r.out);
 }
@@ -221,8 +223,8 @@ fn run_text_saves_loads_and_keeps_persistent_data() {
     let dir = temp_dir("saves");
     let dir_arg = dir.to_str().unwrap();
 
-    // First game: save at the choice, then finish (helping Bob).
-    let r = orbit(&["run-text", demo, "--save-dir", dir_arg], "s 1\ns q\n1\n");
+    // First game: save at the choice, then finish (refusing the job).
+    let r = orbit(&["run-text", demo, "--save-dir", dir_arg], "s 1\ns q\n4\n");
     assert_eq!(r.code, 0, "{}", r.err);
     assert!(r.out.contains("[saved to manual #1]"), "{}", r.out);
     assert!(r.out.contains("[saved to quicksave]"), "{}", r.out);
@@ -231,8 +233,8 @@ fn run_text_saves_loads_and_keeps_persistent_data() {
     assert!(dir.join("persistent.ron").is_file());
 
     // Second game: the persistent counter shows a welcome line, a bad slot is
-    // reported, and loading the save returns to the choice (then refuse).
-    let r = orbit(&["run-text", demo, "--save-dir", dir_arg], "l 7\nl 1\n2\n");
+    // reported, and loading the save returns to the choice (then refuse again).
+    let r = orbit(&["run-text", demo, "--save-dir", dir_arg], "l 7\nl 1\n4\n");
     assert_eq!(r.code, 0, "{}", r.err);
     assert!(r.out.contains("Welcome back"), "{}", r.out);
     assert!(
@@ -241,8 +243,8 @@ fn run_text_saves_loads_and_keeps_persistent_data() {
         r.out
     );
     assert!(r.out.contains("[loaded manual #1]"), "{}", r.out);
-    assert!(r.out.contains("I am still annoyed"), "{}", r.out);
-    assert!(!r.out.contains("Thanks again"), "{}", r.out);
+    assert!(r.out.contains("ENDING 1"), "{}", r.out);
+    assert!(!r.out.contains("ENDING 2"), "{}", r.out);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -250,7 +252,7 @@ fn run_text_saves_loads_and_keeps_persistent_data() {
 fn run_text_without_save_dir_keeps_everything_in_memory() {
     let demo = demo_path();
     let demo = demo.to_str().unwrap();
-    let r = orbit(&["run-text", demo], "s 1\nl 1\nh\n1\n");
+    let r = orbit(&["run-text", demo], "s 1\nl 1\nh\n4\n");
     assert_eq!(r.code, 0, "{}", r.err);
     assert!(r.out.contains("[loaded manual #1]"), "{}", r.out);
     assert!(

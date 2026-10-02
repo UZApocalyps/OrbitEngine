@@ -279,7 +279,7 @@ fn history_is_localized() {
     sh.apply(UiEvent::SetLanguage("fr".into()));
     let view = sh.history_view();
     assert!(
-        view.entries.iter().any(|e| e.text.contains("soir")),
+        view.entries.iter().any(|e| e.text.contains("pluie")),
         "{:?}",
         view.entries
     );

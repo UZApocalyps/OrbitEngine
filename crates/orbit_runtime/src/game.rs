@@ -464,9 +464,9 @@ mod tests {
         let (mut g, theme) = game();
         play_to_choice(&mut g, &theme);
         let menu = g.menu.as_ref().expect("menu is shown");
-        assert_eq!(menu.len(), 2);
+        assert_eq!(menu.len(), 4);
         assert!(!g.dialogue.has_line());
-        // Digit 9 is out of range: still choosing. Digit 2 picks "Stay home".
+        // Digit 9 is out of range: still choosing. Digit 2 picks "Haggle".
         g.menu_input(MenuInput::Number(9), &theme);
         assert_eq!(g.kind(), FlowKind::Choice);
         g.menu_input(MenuInput::Number(2), &theme);
@@ -539,7 +539,7 @@ mod tests {
             }
         }
         assert_eq!(g.kind(), FlowKind::Choice, "skip must reach the choice");
-        assert!(seen_lines >= 8, "only {seen_lines} lines skipped");
+        assert!(seen_lines >= 6, "only {seen_lines} lines skipped");
         assert!(!g.skip_button_on(), "skip is switched off at a choice");
         // Time passing on the choice changes nothing.
         g.update(5.0, &theme);
@@ -646,8 +646,11 @@ mod tests {
         let wait = g.auto_wait();
         assert!(wait > 1.0, "delay grows with the line length");
         g.update(wait, &theme);
-        assert_ne!(g.kind(), FlowKind::Say, "auto advanced past the line");
-        let _ = generation;
+        assert_ne!(
+            g.director.generation(),
+            generation,
+            "auto advanced past the line"
+        );
     }
 
     #[test]
@@ -748,7 +751,7 @@ mod tests {
         let Flow::Say(line) = g.director.flow() else {
             panic!("expected a line")
         };
-        assert!(line.text.contains("soir"), "{}", line.text);
+        assert!(line.text.contains("pluie"), "{}", line.text);
         assert!(g.dialogue.is_complete());
     }
 }

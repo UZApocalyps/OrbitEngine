@@ -577,7 +577,7 @@ mod tests {
         match d.flow() {
             Flow::Say(line) => {
                 assert!(line.speaker.is_none()); // narrator
-                assert!(line.text.contains("quiet evening"));
+                assert!(line.text.contains("Neo-Kyoto"));
             }
             other => panic!("expected the first line, got {other:?}"),
         }
@@ -603,7 +603,8 @@ mod tests {
     fn lines_carry_speaker_name_and_color() {
         let mut d = demo();
         d.advance(); // skip the transition
-        d.advance(); // narrator line -> Show alice (dissolve)
+        d.advance(); // first narrator line
+        d.advance(); // second narrator line -> Show alice (dissolve)
         d.update(10.0);
         let Flow::Say(line) = d.flow() else {
             panic!("expected a line, got {:?}", d.flow());
@@ -641,7 +642,7 @@ mod tests {
         let mut d = demo();
         let p = play_to_end(&mut d);
         assert!(p.lines >= 20, "only {} lines", p.lines);
-        assert_eq!(p.choices, 1);
+        assert!(p.choices >= 5, "only {} choices", p.choices);
         assert!(p.transitions >= 3);
         assert!(
             p.audio
@@ -667,8 +668,8 @@ mod tests {
         for _ in 0..1000 {
             match d.flow().clone() {
                 Flow::Choice(labels) => {
-                    assert_eq!(labels.len(), 2);
-                    assert!(labels[0].contains("Help Bob"));
+                    assert_eq!(labels.len(), 4);
+                    assert!(labels[0].contains("Take the job"));
                     assert!(!d.choose(5)); // out of range: unchanged
                     assert!(matches!(d.flow(), Flow::Choice(_)));
                     assert!(d.choose(1));
@@ -705,7 +706,7 @@ mod tests {
     #[test]
     fn rollback_rebuilds_the_stage_with_cuts() {
         let mut d = demo();
-        play_until_line(&mut d, "Sorry to bother you"); // Bob has just appeared
+        play_until_line(&mut d, "Sorry to wake you"); // Bob has just appeared
         assert_eq!(d.stage().characters.len(), 2);
         // Back to the line before Bob entered: only Alice on stage.
         assert!(d.rollback(1));
@@ -724,7 +725,7 @@ mod tests {
     #[test]
     fn rollback_within_the_same_music_does_not_touch_the_audio() {
         let mut d = demo();
-        play_until_line(&mut d, "Sorry to bother you");
+        play_until_line(&mut d, "Sorry to wake you");
         d.take_audio(); // the music started at the beginning
         assert!(d.music().is_some());
         assert!(d.rollback(1));
@@ -764,22 +765,22 @@ mod tests {
     #[test]
     fn rollback_to_the_start_stops_at_the_oldest_point() {
         let mut d = demo();
-        play_until_line(&mut d, "Hello! Welcome");
+        play_until_line(&mut d, "Another night");
         while d.rollback(1) {}
         assert!(!d.can_rollback());
-        assert!(matches!(d.flow(), Flow::Say(l) if l.text.contains("quiet evening")));
+        assert!(matches!(d.flow(), Flow::Say(l) if l.text.contains("Neo-Kyoto")));
         assert!(d.can_roll_forward());
     }
 
     #[test]
     fn rollback_to_a_backlog_entry() {
         let mut d = demo();
-        play_until_line(&mut d, "Sorry to bother you");
+        play_until_line(&mut d, "Sorry to wake you");
         let backlog = d.vm().backlog();
         let first = backlog.first().unwrap();
         let seq = first.checkpoint.expect("rollback is possible");
         assert!(d.rollback_to(seq));
-        assert!(matches!(d.flow(), Flow::Say(l) if l.text.contains("quiet evening")));
+        assert!(matches!(d.flow(), Flow::Say(l) if l.text.contains("Neo-Kyoto")));
         assert!(!d.rollback_to(99_999), "unknown entry: nothing happens");
     }
 
@@ -797,27 +798,27 @@ mod tests {
                 other => panic!("{other:?}"),
             }
         }
-        assert!(d.choose(0)); // help Bob
-        play_until_line(&mut d, "Thank you, I owe you one");
+        assert!(d.choose(0)); // take the job
+        play_until_line(&mut d, "Fifty credits up front");
         // Back to the choice, take the other branch.
         while !matches!(d.flow(), Flow::Choice(_)) {
             assert!(d.rollback(1));
         }
-        assert!(d.choose(1));
-        play_until_line(&mut d, "Sorry, I am really busy");
+        assert!(d.choose(1)); // haggle
+        play_until_line(&mut d, "You are pushing it");
     }
 
     #[test]
     fn resumed_shows_the_saved_screen_without_transition() {
         let mut d = demo();
-        play_until_line(&mut d, "Sorry to bother you");
+        play_until_line(&mut d, "Sorry to wake you");
         let vm_state = d.vm().snapshot();
         let stage = d.stage().clone();
         let story = d.vm().story().clone();
         let mut vm = Vm::from_start(story.clone()).unwrap();
         vm.restore(vm_state).unwrap();
         let mut resumed = Director::resumed(vm, d.localizer().clone());
-        assert!(matches!(resumed.flow(), Flow::Say(l) if l.text.contains("Sorry to bother")));
+        assert!(matches!(resumed.flow(), Flow::Say(l) if l.text.contains("Sorry to wake")));
         assert_eq!(resumed.stage(), &stage);
         assert!(resumed.transition().is_none());
         // The music of the scene is asked for (no fade-in surprise).
@@ -833,7 +834,7 @@ mod tests {
     #[test]
     fn set_localizer_translates_the_line_on_screen() {
         let mut d = demo();
-        play_until_line(&mut d, "Hello! Welcome");
+        play_until_line(&mut d, "Another night");
         let mut loc = Localizer::from_story(d.vm().story());
         loc.add_translation_ron(include_str!("../../../examples/stories/i18n/demo.fr.ron"))
             .unwrap();
@@ -842,7 +843,7 @@ mod tests {
         let Flow::Say(line) = d.flow() else {
             panic!("a line is expected")
         };
-        assert!(line.text.contains("Bienvenue"), "{}", line.text);
+        assert!(line.text.contains("Encore une nuit"), "{}", line.text);
         assert_eq!(line.speaker.as_ref().map(|s| s.0.as_str()), Some("Alice"));
     }
 
