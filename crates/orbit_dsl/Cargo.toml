@@ -1,0 +1,18 @@
+[package]
+name = "orbit_dsl"
+description = "OrbitEngine text DSL: a printer / parser view of the story IR (ADR 0015 §5). The RON IR stays the source of truth; edits come back as orbit_project commands."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_core.workspace = true
+orbit_project.workspace = true
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true
