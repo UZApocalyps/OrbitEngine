@@ -2479,6 +2479,7 @@ dependencies = [
  "orbit_core",
  "orbit_export",
  "orbit_mcp",
+ "orbit_project",
  "orbit_save",
  "orbit_vm",
  "serde_json",

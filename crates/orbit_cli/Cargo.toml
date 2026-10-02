@@ -16,6 +16,7 @@ orbit_core.workspace = true
 orbit_vm.workspace = true
 orbit_save.workspace = true
 orbit_mcp.workspace = true
+orbit_project.workspace = true
 orbit_export.workspace = true
 
 [dev-dependencies]

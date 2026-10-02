@@ -97,7 +97,7 @@ L'éditeur expose le même MCP en **HTTP streamable** sur `127.0.0.1`. L'IA trav
 
 Le serveur est **désactivé par défaut** : rien n'écoute tant que vous ne l'avez pas demandé.
 
-1. Ouvrez un projet, puis le panneau **Assistant IA** (menu Affichage, ou la palette de commandes ; il est dans la zone du bas, à côté de la console).
+1. Ouvrez un projet, puis le panneau **Assistant IA** (icône robot de la barre d'état, menu Outils → Assistant IA (MCP)…, Ctrl+Maj+A ou la palette de commandes ; il est dans la zone du bas, à côté de la console).
 2. Choisissez le port (7878 par défaut ; modifiable tant que le serveur est arrêté) puis **Activer le serveur MCP**. L'état passe à « À l'écoute », puis à « N client(s) connecté(s) » quand un client a une session ouverte.
 3. Un **jeton d'accès** est généré une fois pour toutes (conservé dans la configuration de l'éditeur) : il est masqué, avec des boutons pour l'afficher, le copier, et en **générer un nouveau** (le serveur redémarre, l'ancien jeton cesse de fonctionner immédiatement).
 4. Les boutons **Commande Claude Code** et **.mcp.json** copient une configuration prête à coller, avec l'en-tête d'autorisation.
@@ -164,7 +164,7 @@ Une preview qui ne peut pas démarrer (histoire invalide) renvoie l'erreur de va
 
 * **État** : arrêté / à l'écoute / client(s) connecté(s) (un client est « connecté » tant qu'il a une session ouverte et a écrit dans les 90 dernières secondes), adresse, port, jeton (masqué), requêtes refusées.
 * **Journal en direct** de ce que fait l'IA : outil, arguments résumés, résultat, durée, « annulable », et un lien **« révéler »** (sélectionne le nœud touché dans l'éditeur). Les erreurs y sont en rouge. Le même journal est écrit dans `<projet>/.orbit/mcp.log`.
-* **Indicateur discret** quand l'IA modifie le projet : « L'IA modifie le projet » dans le panneau et « IA : modification en cours » dans la barre d'état (« IA : MCP actif » sinon).
+* **Indicateur discret** quand l'IA modifie le projet : « L'IA modifie le projet » dans le panneau et « IA : modification en cours » dans la barre d'état (l'icône robot reste grise serveur arrêté, verte serveur actif).
 * **Annuler la dernière action de l'IA** ; vider le journal.
 
 ### Sécurité du mode live

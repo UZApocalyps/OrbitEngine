@@ -1446,8 +1446,16 @@ fn import_asset(cx: &mut ToolCx<'_>, a: ImportAssetArgs) -> Result<String, ToolE
 }
 
 fn validate(cx: &mut ToolCx<'_>, a: ValidateArgs) -> Result<String, ToolError> {
-    let sandbox = cx.sandbox.clone();
-    let exists = move |path: &str| sandbox.resolve(path).is_ok_and(|p| p.is_file());
+    // Same root as the editor: a story opened alone may keep its assets in a
+    // parent folder. Paths are only tested for existence, never read.
+    let root = orbit_project::find_assets_root(cx.sandbox.root(), cx.project.story());
+    let exists = move |path: &str| {
+        let rel = std::path::Path::new(path);
+        let plain = rel
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+        plain && root.join(rel).is_file()
+    };
     let check = a.check_files.unwrap_or(true);
     let report = views::validate_project(
         cx.project.story(),

@@ -11,11 +11,11 @@
 
 use std::time::Duration;
 
-use egui::{Align, Align2, Color32, FontId, Layout, RichText, Sense, Ui, vec2};
+use egui::{Align, Align2, Color32, FontId, Key, Layout, Modifiers, RichText, Sense, Ui, vec2};
 use orbit_editor_api::ai::{AiCommand, AiLogEntry, AiServerStatus};
 use orbit_editor_api::{
-    DockSlot, EditorContext, EditorPlugin, EditorRegistry, Location, PanelDef, Plugin,
-    PluginManifest, icons,
+    ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Location,
+    PanelDef, Plugin, PluginManifest, icons,
 };
 
 use super::ids;
@@ -46,6 +46,25 @@ impl EditorPlugin for AssistantPlugin {
             DockSlot::Bottom,
             panel,
         ));
+        // Opens (or brings back, even when the saved layout lacks it) the panel.
+        reg.action(
+            ActionDef::new("open", "Assistant IA (MCP)…", |c| {
+                c.request(EditorRequest::ShowPanel(
+                    super::panels::ASSISTANT.to_owned(),
+                ));
+            })
+            .icon(icons::ROBOT)
+            .category("Outils")
+            .shortcut(
+                Modifiers {
+                    command: true,
+                    shift: true,
+                    ..Modifiers::NONE
+                },
+                Key::A,
+            )
+            .menu("tools", 200),
+        );
     }
 }
 

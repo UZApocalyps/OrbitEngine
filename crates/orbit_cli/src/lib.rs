@@ -195,12 +195,15 @@ fn validate_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Re
 
     let mut report = orbit_core::validate(&story);
     if check_files {
+        // Same resolution as the editor and the MCP server: a story file
+        // opened alone may keep its assets in a parent folder.
         let root = root.unwrap_or_else(|| {
-            if target.is_dir() {
-                target.to_owned()
+            let base = if target.is_dir() {
+                target
             } else {
-                PathBuf::from(".")
-            }
+                story_path.parent().unwrap_or(Path::new(""))
+            };
+            orbit_project::find_assets_root(base, &story)
         });
         report
             .errors

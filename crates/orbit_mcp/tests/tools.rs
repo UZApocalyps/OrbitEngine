@@ -1028,3 +1028,18 @@ fn scene_jumps_are_added_checked_and_protect_their_target() {
         "{report}"
     );
 }
+
+// A story opened alone keeps its assets in a parent folder: validate must
+// resolve them from the same root as the editor (no false "missing file").
+#[test]
+fn validate_finds_the_demo_assets_above_a_lone_story_file() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let absolute = manifest_dir.join("../../examples/stories/demo.ron");
+    let relative = PathBuf::from("../../examples/stories/demo.ron");
+    for path in [relative, absolute] {
+        let mut host = HeadlessHost::open(&path).unwrap();
+        let text = host.call_tool("validate", json!({})).unwrap();
+        let report: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(report["error_count"], 0, "{path:?}: {report}");
+    }
+}

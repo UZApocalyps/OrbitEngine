@@ -6,6 +6,7 @@ use egui::{
     Margin, Modifiers, Panel, RichText, Stroke, TextEdit, Ui, vec2,
 };
 use egui_dock::DockArea;
+use orbit_editor_api::ai::AiServerStatus;
 use orbit_editor_api::{
     EditorContext, EditorRegistry, EditorRequest, Level, Location, ThemeMode, icons, shortcut_text,
 };
@@ -36,8 +37,9 @@ fn edits_text(shortcut: &KeyboardShortcut) -> bool {
     let plain = shortcut.modifiers == Modifiers::NONE;
     matches!(
         shortcut.logical_key,
-        Key::Z | Key::Y | Key::X | Key::C | Key::V | Key::A
-    ) || (plain && matches!(shortcut.logical_key, Key::Delete | Key::Backspace))
+        Key::Z | Key::Y | Key::X | Key::C | Key::V
+    ) || (shortcut.logical_key == Key::A && !shortcut.modifiers.shift)
+        || (plain && matches!(shortcut.logical_key, Key::Delete | Key::Backspace))
 }
 
 fn modifier_count(shortcut: &KeyboardShortcut) -> u8 {
@@ -76,9 +78,15 @@ impl EditorCore {
                 EditorContext::new(session.as_mut().map(|s| &mut s.project), state, registry);
 
             menu_clicks = menu_bar(ui, &ectx, theme, &mut palette_request);
-            if status_bar(ui, &ectx, theme, *show_frame_counter) {
+            let mut open_assistant = false;
+            if status_bar(ui, &ectx, theme, *show_frame_counter, &mut open_assistant) {
                 ectx.request(EditorRequest::ShowPanel(
                     crate::builtin::panels::PROBLEMS.to_owned(),
+                ));
+            }
+            if open_assistant {
+                ectx.request(EditorRequest::ShowPanel(
+                    crate::builtin::panels::ASSISTANT.to_owned(),
                 ));
             }
             egui::CentralPanel::default()
@@ -298,7 +306,13 @@ fn menu_bar(
 
 // -------------------------------------------------------------- status bar
 
-fn status_bar(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme, frame_counter: bool) -> bool {
+fn status_bar(
+    ui: &mut Ui,
+    ectx: &EditorContext<'_>,
+    theme: &Theme,
+    frame_counter: bool,
+    open_assistant: &mut bool,
+) -> bool {
     let mut open_problems = false;
     let frame = Frame::new()
         .fill(theme.panel())
@@ -364,24 +378,53 @@ fn status_bar(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme, frame_counte
                             .small()
                             .color(theme.text_faint()),
                     );
-                    // The live MCP: a discreet light, brighter while the AI edits.
-                    if ectx.state().ai.status.is_running() {
-                        ui.separator();
-                        let editing = ectx.state().ai.edited_within(2.5);
-                        let (color, text) = if editing {
-                            (theme.accent(), "IA : modification en cours")
-                        } else {
-                            (theme.success(), "IA : MCP actif")
-                        };
-                        ui.label(
-                            RichText::new(format!("{} {text}", icons::ROBOT))
-                                .small()
-                                .color(color),
-                        );
-                        if editing {
-                            ui.ctx()
-                                .request_repaint_after(std::time::Duration::from_millis(400));
+                    // The live MCP: an always-visible robot (grey when the server
+                    // is off, green when it listens, accent while the AI edits);
+                    // a click opens the "Assistant IA" panel.
+                    ui.separator();
+                    let ai = &ectx.state().ai;
+                    let editing = ai.edited_within(2.5);
+                    let (color, tip) = match &ai.status {
+                        AiServerStatus::Stopped => (
+                            theme.text_faint(),
+                            "Assistant IA : serveur MCP arrêté".to_owned(),
+                        ),
+                        AiServerStatus::Listening => (
+                            theme.success(),
+                            "Assistant IA : serveur MCP à l'écoute".to_owned(),
+                        ),
+                        AiServerStatus::Connected { clients } => (
+                            theme.success(),
+                            format!("Assistant IA : {clients} client(s) connecté(s)"),
+                        ),
+                        AiServerStatus::Failed(e) => {
+                            (theme.danger(), format!("Assistant IA : échec ({e})"))
                         }
+                    };
+                    let (color, tip) = if editing && ai.status.is_running() {
+                        (
+                            theme.accent(),
+                            "Assistant IA : modification en cours".to_owned(),
+                        )
+                    } else {
+                        (color, tip)
+                    };
+                    let response = ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(format!("{} IA", icons::ROBOT))
+                                    .small()
+                                    .color(color),
+                            )
+                            .frame(false),
+                        )
+                        .on_hover_text(format!("{tip}\nCliquer pour ouvrir le panneau"));
+                    if response.clicked() {
+                        *open_assistant = true;
+                    }
+                    if editing {
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(400));
                     }
                 });
             });
