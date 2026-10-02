@@ -16,6 +16,9 @@ thiserror.workspace = true
 
 [dev-dependencies]
 pollster.workspace = true
+# Shader validation + GLSL ES 3.00 (WebGL2) translation test; same version
+# as the one wgpu pulls in.
+naga = { version = "=30.0.1", features = ["wgsl-in", "glsl-out"] }
 
 [lints]
 workspace = true

@@ -5,8 +5,9 @@
 //! agree byte for byte; sizes are checked by unit tests.
 
 use bytemuck::{Pod, Zeroable};
-use orbit_scene::{AlphaMode, Light, MaterialDef};
+use orbit_scene::{AlphaMode, Fog, Light, MaterialDef};
 
+use crate::environment::Sh9;
 use crate::math::{self, Mat4, Vec3};
 
 /// Hard cap of lights in the frame uniform (desktop low profile, ADR 0014
@@ -34,14 +35,34 @@ pub struct LightGpu {
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 pub struct FrameUniform {
     pub view_proj: Mat4,
+    /// Inverse of `view_proj` (sky view directions).
+    pub inv_view_proj: Mat4,
+    /// World to shadow-map clip space of the shadow light.
+    pub light_view_proj: Mat4,
     /// xyz: camera world position.
     pub camera_pos: [f32; 4],
-    /// rgb: ambient color * intensity (linear).
-    pub ambient: [f32; 4],
-    /// x: light count.
+    /// rgb: background color (linear), w: 1 when the sky cubemap is used.
+    pub background: [f32; 4],
+    /// x: light count, y: shadow light index, z: PCF radius.
     pub counts: [u32; 4],
+    /// x: depth bias, y: shadow texel size, z: 1 when shadows are enabled.
+    pub shadow: [f32; 4],
+    /// rgb: fog color (linear), w: mode (0 none, 1 linear, 2 exponential).
+    pub fog_color: [f32; 4],
+    /// x: start, y: end, z: density.
+    pub fog: [f32; 4],
+    /// x: exposure, y: mode (0 raw HDR, 1 clamp, 2 ACES), z: vignette.
+    pub post: [f32; 4],
+    /// xy: 1 / target size in pixels.
+    pub viewport: [f32; 4],
+    /// Diffuse ambient SH9 (rgb per coefficient), see [`crate::environment`].
+    pub sh: [[f32; 4]; 9],
     pub lights: [LightGpu; MAX_LIGHTS],
 }
+
+pub const POST_RAW: f32 = 0.0;
+pub const POST_CLAMP: f32 = 1.0;
+pub const POST_ACES: f32 = 2.0;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
@@ -134,11 +155,12 @@ pub fn pack_light(l: &WorldLight) -> LightGpu {
 }
 
 /// Packs the frame uniform. `lights` must already be sorted; at most
-/// `max_lights` (clamped to [`MAX_LIGHTS`]) are kept.
+/// `max_lights` (clamped to [`MAX_LIGHTS`]) are kept. Shadows, fog and
+/// post fields are left neutral (no shadow, no fog, exposure 1, clamp).
 pub fn pack_frame(
     view_proj: Mat4,
     camera_pos: Vec3,
-    ambient: Vec3,
+    ambient: &Sh9,
     lights: &[WorldLight],
     max_lights: usize,
 ) -> FrameUniform {
@@ -149,11 +171,43 @@ pub fn pack_frame(
     }
     FrameUniform {
         view_proj,
+        inv_view_proj: math::inverse(&view_proj).unwrap_or(math::IDENTITY),
+        light_view_proj: math::IDENTITY,
         camera_pos: [camera_pos[0], camera_pos[1], camera_pos[2], 1.0],
-        ambient: [ambient[0], ambient[1], ambient[2], 0.0],
+        background: [0.0; 4],
         counts: [count as u32, 0, 0, 0],
+        shadow: [0.0; 4],
+        fog_color: [0.0; 4],
+        fog: [0.0; 4],
+        post: [1.0, POST_CLAMP, 0.0, 0.0],
+        viewport: [1.0, 1.0, 0.0, 0.0],
+        sh: ambient.map(|c| [c[0], c[1], c[2], 0.0]),
         lights: packed,
     }
+}
+
+/// Fog fields: `(fog_color, fog)`.
+pub fn pack_fog(fog: Option<&Fog>) -> ([f32; 4], [f32; 4]) {
+    match fog {
+        None => ([0.0; 4], [0.0; 4]),
+        Some(Fog::Linear { color, start, end }) => (
+            [color[0], color[1], color[2], 1.0],
+            [*start, end.max(*start), 0.0, 0.0],
+        ),
+        Some(Fog::Exponential { color, density }) => (
+            [color[0], color[1], color[2], 2.0],
+            [0.0, 0.0, density.max(0.0), 0.0],
+        ),
+    }
+}
+
+/// Index (in the packed, sorted list) of the light casting shadows: the
+/// first directional light with `shadows: true` among the kept ones.
+pub fn shadow_light_index(lights: &[WorldLight], max_lights: usize) -> Option<usize> {
+    lights
+        .iter()
+        .take(max_lights.min(MAX_LIGHTS))
+        .position(|l| matches!(l.light, Light::Directional { shadows: true, .. }))
 }
 
 pub fn pack_object(model: Mat4) -> ObjectUniform {
@@ -201,7 +255,10 @@ mod tests {
     #[test]
     fn uniform_sizes_match_wgsl() {
         assert_eq!(size_of::<LightGpu>(), 64);
-        assert_eq!(size_of::<FrameUniform>(), 64 + 16 * 3 + 64 * MAX_LIGHTS);
+        assert_eq!(
+            size_of::<FrameUniform>(),
+            64 * 3 + 16 * 8 + 16 * 9 + 64 * MAX_LIGHTS
+        );
         assert_eq!(size_of::<ObjectUniform>(), 128);
         assert_eq!(size_of::<MaterialUniform>(), 64);
         // WebGL2 guarantees 16 KiB uniform blocks.
@@ -220,17 +277,41 @@ mod tests {
             direction: [0.0, 0.0, -1.0],
         };
         let lights = vec![light; 6];
-        let f = pack_frame(math::IDENTITY, [0.0, 1.0, 2.0], [0.1; 3], &lights, 4);
+        let sh = crate::environment::constant_sh([0.1; 3]);
+        let f = pack_frame(math::IDENTITY, [0.0, 1.0, 2.0], &sh, &lights, 4);
         assert_eq!(f.counts[0], 4);
         assert_eq!(f.lights[0].position, [1.0, 2.0, 3.0, LIGHT_POINT]);
         assert_eq!(f.lights[0].color, [2.0, 1.0, 0.5, 0.0]);
         assert_eq!(f.lights[0].direction[3], 10.0);
         assert_eq!(f.lights[4], LightGpu::zeroed());
-        let f = pack_frame(math::IDENTITY, [0.0; 3], [0.0; 3], &lights, 99);
+        let f = pack_frame(math::IDENTITY, [0.0; 3], &sh, &lights, 99);
         assert_eq!(f.counts[0], 6);
-        // Byte layout: counts start right after view_proj + 2 vec4.
+        // Byte layout: counts start right after 3 mat4 + 2 vec4.
         let bytes = bytemuck::bytes_of(&f);
-        assert_eq!(&bytes[96..100], &6u32.to_le_bytes());
+        assert_eq!(&bytes[224..228], &6u32.to_le_bytes());
+    }
+
+    #[test]
+    fn shadow_light_and_fog_packing() {
+        let dir = |shadows| WorldLight {
+            light: Light::Directional {
+                color: [1.0; 3],
+                intensity: 1.0,
+                shadows,
+            },
+            position: [0.0; 3],
+            direction: [0.0, -1.0, 0.0],
+        };
+        assert_eq!(shadow_light_index(&[dir(false), dir(true)], 8), Some(1));
+        assert_eq!(shadow_light_index(&[dir(false), dir(true)], 1), None);
+        let (c, p) = pack_fog(Some(&Fog::Linear {
+            color: [0.5; 3],
+            start: 4.0,
+            end: 2.0,
+        }));
+        assert_eq!(c[3], 1.0);
+        assert_eq!(p[1], 4.0);
+        assert_eq!(pack_fog(None).0[3], 0.0);
     }
 
     #[test]
