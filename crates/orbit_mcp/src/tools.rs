@@ -636,6 +636,53 @@ fn read_scene(cx: &mut ToolCx<'_>, a: SceneArg) -> Result<String, ToolError> {
     Ok(render_scene(cx.project, scene))
 }
 
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ReadDslArgs {
+    /// Scene id or exact name; omit for the whole story.
+    #[serde(default)]
+    scene: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ApplyDslArgs {
+    /// Scene id or exact name the text covers; omit when the text covers the
+    /// whole story (as returned by `read_dsl` without `scene`).
+    #[serde(default)]
+    scene: Option<String>,
+    /// The edited DSL text. Lines keep their `#@id` annotations; a line
+    /// without one is a new node.
+    text: String,
+}
+
+fn dsl_scope(cx: &ToolCx<'_>, scene: &Option<String>) -> Result<orbit_dsl::Scope, ToolError> {
+    match scene {
+        Some(key) => Ok(orbit_dsl::Scope::Scene(
+            find_scene(cx.project.story(), key)?.id,
+        )),
+        None => Ok(orbit_dsl::Scope::Story),
+    }
+}
+
+fn read_dsl(cx: &mut ToolCx<'_>, a: ReadDslArgs) -> Result<String, ToolError> {
+    match dsl_scope(cx, &a.scene)? {
+        orbit_dsl::Scope::Scene(id) => orbit_dsl::print_scene(cx.project.story(), id)
+            .ok_or_else(|| ToolError::not_found("scene not found")),
+        orbit_dsl::Scope::Story => Ok(orbit_dsl::print_story(cx.project.story())),
+    }
+}
+
+fn apply_dsl(cx: &mut ToolCx<'_>, a: ApplyDslArgs) -> Result<String, ToolError> {
+    let scope = dsl_scope(cx, &a.scene)?;
+    match orbit_dsl::apply(cx.project, &a.text, scope) {
+        Ok(n) => Ok(format!("applied: {n} command(s)")),
+        Err(e) => Err(ToolError::invalid(format!(
+            "DSL text rejected, nothing changed:\n{e}"
+        ))),
+    }
+}
+
 fn unique_scene_name(
     cx: &ToolCx<'_>,
     name: &str,
@@ -1617,6 +1664,20 @@ pub fn builtin_tools() -> Vec<ToolDef> {
             "Read a scene as numbered lines: index, node id, version and content (dialogue, choices with their target labels, commands). Use the ids with edit/delete/move tools, `after`, and the version as `expected_version`.",
             Kind::Read,
             read_scene,
+        ),
+        def::<ReadDslArgs>(
+            "read_dsl",
+            "Read the story as DSL text",
+            "Read a scene (or the whole story) as the editable text DSL, with `#@id` annotations keeping node identities.",
+            Kind::Read,
+            read_dsl,
+        ),
+        def::<ApplyDslArgs>(
+            "apply_dsl",
+            "Apply edited DSL text",
+            "Apply edited DSL text (from `read_dsl`) as one undoable transaction. On syntax errors returns line:column diagnostics and changes nothing.",
+            Kind::Edit,
+            apply_dsl,
         ),
         def::<CreateSceneArgs>(
             "create_scene",

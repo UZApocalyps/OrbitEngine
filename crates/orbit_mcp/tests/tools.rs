@@ -284,6 +284,31 @@ fn building_a_story_keeps_it_valid_and_saved() {
 }
 
 #[test]
+fn dsl_text_reads_and_applies_and_rejects_bad_text() {
+    let mut f = Fixture::new("dsl");
+    f.ok("create_character", json!({"name": "Alice"}));
+    f.ok("create_scene", json!({"name": "s"}));
+    f.ok(
+        "add_dialogue",
+        json!({"scene": "s", "text": "Hello", "speaker": "Alice"}),
+    );
+    let text = f.call("read_dsl", json!({"scene": "s"})).unwrap();
+    assert!(text.contains("Hello"), "{text}");
+    let edited = text.replace("Hello", "Bonjour");
+    f.call("apply_dsl", json!({"scene": "s", "text": edited}))
+        .unwrap();
+    assert!(f.call("read_dsl", json!({})).unwrap().contains("Bonjour"));
+    // A broken text is refused with a position and changes nothing.
+    let before = f.story().clone();
+    let bad = format!("{text}\n@@@ (\n");
+    let err = f
+        .call("apply_dsl", json!({"scene": "s", "text": bad}))
+        .unwrap_err();
+    assert!(format!("{err:?}").contains(':'), "{err:?}");
+    assert_eq!(f.story(), &before);
+}
+
+#[test]
 fn every_tool_call_is_one_undo_entry() {
     let mut f = Fixture::new("undo");
     f.ok("create_character", json!({"name": "Alice"}));

@@ -26,6 +26,7 @@ mod search;
 pub mod thumbs;
 mod ui_util;
 mod uied;
+pub mod textview;
 mod welcome;
 
 use orbit_editor_api::{
@@ -61,6 +62,7 @@ pub mod ids {
     pub const EXPORT: &str = "orbit.export";
     pub const ASSISTANT: &str = "orbit.assistant";
     pub const UI_EDITOR: &str = "orbit.ui";
+    pub const TEXTVIEW: &str = "orbit.textview";
 }
 
 /// Full ids of the built-in panels.
@@ -82,6 +84,7 @@ pub mod panels {
     pub const EXPORT: &str = "orbit.export.export";
     pub const ASSISTANT: &str = "orbit.assistant.assistant";
     pub const UI_EDITOR: &str = "orbit.ui.editor";
+    pub const TEXTVIEW: &str = "orbit.textview.textview";
 }
 
 /// State the built-in plugins share with the editor core.
@@ -120,6 +123,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(export::ExportPlugin),
         Box::new(assistant::AssistantPlugin),
         Box::new(uied::UiEditorPlugin::default()),
+        Box::new(textview::TextViewPlugin),
         Box::new(SamplePlugin::default()),
     ]
 }
