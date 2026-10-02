@@ -18,7 +18,7 @@ Les cas limites sont marqués **[edge]**.
   - texte : `cosmic-text` (+ éventuellement `glyphon`) ;
   - audio : `kira` (compatible wasm) ;
   - images : `image` ; glTF : `gltf` ;
-  - éditeur : `egui` + `egui-wgpu` + `egui-winit` + `egui_dock` + `egui-snarl` ;
+  - éditeur : `egui` + `egui-wgpu` + `egui-winit` 0.36 (alignés sur wgpu 30 / winit 0.30 ; exigent Rust 1.95) + `egui_dock` + `egui-snarl` + `egui-phosphor` (ADR 0009) ;
   - plateforme web : `wasm-bindgen`, `web-sys`, `web-time`.
 - **Raison :** ne dépendre d'aucun framework dont il faudrait attendre les fonctionnalités, ni subir ses changements d'API.
 - **Scène : ADR à trancher au M0** (ECS ou graphe de scène).
@@ -39,9 +39,10 @@ Les cas limites sont marqués **[edge]**.
 - **[edge] Web = WebGL2.** Pas de compute shaders, lumières et ombres limitées, limites de textures et d'uniform buffers à respecter dès `orbit_gfx`. WebGPU reste un bonus (backlog).
 
 ### 1.2 UI de l'éditeur et UI en jeu
-- **Éditeur : egui** via `egui-wgpu` et `egui-winit`, avec `egui_dock` pour les panneaux et `egui-snarl` pour le graphe de nœuds.
+- **Éditeur : egui** via `egui-wgpu` et `egui-winit`, avec `egui_dock` pour les panneaux et `egui-snarl` pour le graphe de nœuds (versions et système de plugins : [ADR 0009](adr/0009-architecture-editeur.md)).
   - L'éditeur utilise la même `orbit_platform` et le même `orbit_gfx` que le player.
   - La preview est **le vrai runtime, rendu dans une texture wgpu** affichée dans un panneau egui. Le WYSIWYG est exact.
+  - **Rendu à la demande** (pas de redessin continu hors preview en lecture) et **extensible par plugins** : les outils intégrés sont eux-mêmes des plugins (ADR 0009).
 - **UI en jeu : widgets et thèmes maison** (textbox, boutons, menus, sliders, listes), rendus par `orbit_render2d`.
   - Layouts et styles data-driven (RON), entièrement éditables dans l'éditeur de thème.
   - On n'utilise pas egui en jeu : il est inadapté à l'habillage artistique d'un VN.
@@ -67,7 +68,8 @@ Les cas limites sont marqués **[edge]**.
 - **Stratégie en 2 couches :**
   1. **Rhai** (Rust pur, compatible wasm) : conditions, variables, logique de jeu.
   2. **Plugins Rust natifs, compilés statiquement** (`orbit_plugin_api`), sans dylib. L'export avec plugins = `cargo build` du player.
-- Option future desktop uniquement : hosting C# ou plugins WASM (backlog, aucun engagement ; C# ne fonctionne pas sur le web).
+- **Plugins de l'éditeur** (M3a, ADR 0009) : `orbit_plugin_api` (sans egui) et `orbit_editor_api`, compilés statiquement ; l'extension de l'IR passe par `NodeKind::Custom`. Le M8 ajoute le côté runtime / player complet.
+- Option future desktop uniquement : hosting C# ou plugins WASM sandboxés (wasmtime, backlog, aucun engagement ; C# ne fonctionne pas sur le web).
 - **Invariant dès le M0, pour ne pas bloquer l'ajout ultérieur du scripting :**
   - L'état de jeu n'est modifiable que **via l'API du VM** (store snapshotté).
   - Le **RNG est seedé** et sauvegardé.
@@ -100,9 +102,10 @@ Crates du workspace :
 - `orbit_runtime` : runtime maison qui orchestre plateforme, rendu, audio, texte et VM (pont VM ↔ scène, transitions).
 - `orbit_script` : Rhai, API du VM, sandbox (M8).
 - `orbit_dsl` : parser et printer du DSL texte (M8).
-- `orbit_plugin_api` : traits stables pour les plugins Rust (M8).
+- `orbit_plugin_api` : plugins Rust, partie sans GPU ni egui (manifeste, nœuds `Custom`, validateurs, importeurs, outils MCP, hooks ; handlers runtime complétés au M8). Créée au M3a, `API_VERSION` 0 tant que seuls des plugins internes existent.
+- `orbit_editor_api` : partie egui des plugins (panneaux, actions, inspecteurs, vues de nœuds) ; M3a.
 - `orbit_player` : binaire du jeu (desktop, web, Android).
-- `orbit_editor` : application egui (`egui-wgpu` / `egui-winit`).
+- `orbit_editor` : application egui (`egui-wgpu` / `egui-winit`), hôte des plugins ; les outils intégrés sont des plugins.
 - `orbit_mcp` : serveur MCP (SDK `rmcp`) exposant l'API de `orbit_project` à une IA ; headless ou intégré à l'éditeur ; jamais dans le player (cf. 1.6).
 - `orbit_cli` : `validate`, `build`, `export`, `run`, `test-story`, `mcp`.
 - `orbit_export` : templates par plateforme, bundle web.
@@ -115,12 +118,13 @@ Crates du workspace :
   - Prolonge le principe directeur : une fonctionnalité éditable à la main l'est aussi par l'IA, via les mêmes commandes.
 - **Crate `orbit_mcp`** basée sur le SDK Rust officiel `rmcp` (licence permissive à vérifier via `cargo deny` avant adoption ; sinon repli sur un protocole JSON-RPC minimal maison).
 - **Deux modes :**
-  - **headless** : `orbit mcp --project <dir>`, transport stdio, sans GPU, travaille sur les fichiers du projet via `orbit_project`.
-  - **live** : l'éditeur ouvert expose le MCP en local (HTTP streamable sur 127.0.0.1). Les modifs de l'IA apparaissent en direct, comme un collaborateur, **regroupées en une entrée d'undo par appel d'outil**.
+  - **headless** (M3f) : `orbit mcp --project <dir>`, transport stdio, sans GPU, travaille sur les fichiers du projet via `orbit_project`.
+  - **live** (M4) : l'éditeur ouvert expose le MCP en local (HTTP streamable sur 127.0.0.1). Les modifs de l'IA apparaissent en direct, comme un collaborateur, **regroupées en une entrée d'undo par appel d'outil**.
 - **Surface exposée :**
   - *Resources* : manifest du projet, liste des scènes / personnages / assets, schéma de l'IR, résultats de lint.
   - *Tools* : lire une scène ; créer / modifier / supprimer nœuds et lignes de dialogue, choix, branches ; personnages et expressions ; importer un asset ; valider ; build / export ; lancer une preview depuis un nœud ; avancer le VM ; lire l'état du VM et les variables ; **capture d'écran de la preview** pour que l'IA « voie » le rendu (mode live).
-  - Outils étendus plus tard : animation 2D, rig, scène 3D (M5, M6), scripting (M8).
+  - Outils étendus plus tard : animation 2D, rig, scène 3D (M5, M6), scripting (M8) ; **chaque plugin fournit ses propres outils** (`McpToolDef` d'`orbit_plugin_api`, utilisables en headless).
+  - Live : l'UI et le MCP postent leurs commandes dans la même `CommandQueue` (ADR 0009 §7).
 - **Schémas d'outils générés depuis les types de l'IR**, même source que l'inspecteur auto-généré (§2 M3) : pas de divergence entre IR, éditeur et MCP.
 - **[edge] Sécurité :**
   - écoute uniquement sur localhost, **désactivé par défaut**, activation explicite dans l'éditeur ;
@@ -194,31 +198,73 @@ Crates du workspace :
   - le quick menu chevauche le bas de la textbox ;
   - l'écran de fin renvoie toujours au menu principal (plus de « recommencer » direct).
 
-### M3 : Éditeur v1, sans code
-- Application egui sur `egui-wgpu` / `egui-winit` ; dock : explorateur, graphe, éditeur de scène, inspecteur, preview, console de validation.
-- **Preview = le runtime rendu dans une texture wgpu**, intégrée à un panneau egui.
-- Projets, file watching, import d'assets.
-- Graphe macro : scènes, branches, conditions, sauts.
-- Éditeur de scène linéaire : dialogues, choix, fonds, sprites, musique, transitions, variables.
-- Éditeur de personnages : nom, couleur, sprites, expressions.
-- Inspecteur auto-généré depuis l'IR.
-- Preview intégrée : « jouer depuis le début » et « jouer depuis ici ».
-  - **[edge]** Pour « jouer depuis ici », il faut simuler le VM en headless ou utiliser des presets d'état.
-- Undo/redo par commandes. Sauvegarde atomique.
-- Éditeur de thème et de widgets en jeu. Lint en direct.
-- **MCP v1 headless** (`orbit mcp --project <dir>`, stdio, sans GPU) :
-  - resources (manifest, scènes, personnages, assets, schéma de l'IR, lint) ;
-  - outils de lecture et d'édition de l'histoire (nœuds, répliques, choix, branches, personnages, expressions, import d'asset) et de validation, tous via les commandes d'`orbit_project` ;
-  - schémas d'outils générés depuis l'IR (même source que l'inspecteur) ;
-  - testé avec un client MCP réel (ex. Claude Code) ; journal des actions.
-  - **[edge]** Une commande refusée par la validation renvoie une erreur structurée, sans modification partielle du projet.
-- **Fin :** un non-développeur crée une VN de 5 min uniquement depuis l'interface ; **et** une IA crée via MCP une courte scène avec choix qui passe `orbit validate`.
+### M3 : Éditeur v1, sans code (M3a → M3f)
+Architecture : [ADR 0009](adr/0009-architecture-editeur.md) (statut Accepté). Principes : egui 0.36 sur `orbit_platform` (un seul `Gfx`), **outils intégrés = plugins** (`orbit_plugin_api` sans egui, `orbit_editor_api` avec egui), rendu à la demande, toute modification par `Command`. Éditeur natif uniquement (Windows, Linux).
+
+**M3a : socle. Statut : fait.**
+- Relever `rust-toolchain.toml` et `rust-version` à 1.95 (MSRV d'egui 0.36) ; CI 3 cibles verte ; dépendances egui sans `default_fonts`, `cargo deny` vert.
+- `orbit_platform` : mode `OnDemand` (`ControlFlow::Wait` / `WaitUntil`, `HostRequest::RequestRedraw`) et hook d'événements fenêtre bruts, sans changer le player.
+- Crates `orbit_plugin_api`, `orbit_editor_api`, `orbit_editor` (binaire) ; registres (panneaux, actions, menus, raccourcis, inspecteurs, types de nœuds, importeurs, outils MCP, hooks) ; `EditorContext` (lecture du projet, commandes seulement, sélection). Chaque outil intégré est un plugin. `xtask check-arch` mis à jour.
+- App egui : thème maison clair / sombre, Inter, icônes `egui-phosphor`, dock `egui_dock` (disposition par défaut et persistance), palette de commandes (Ctrl+K / Ctrl+Shift+P), menus et raccourcis issus du registre.
+- Ouvrir / créer un projet (dossier, projets récents), sauvegarde atomique (`ProjectStorage`), autosave et recovery, file watching.
+- Undo/redo global branché (menu Édition avec libellés, `Command::label()`), `CommandQueue` locale utilisée par l'UI, état d'éditeur (sélection, layout) séparé du projet.
+- Schéma IR v4 : variante `NodeKind::Custom { plugin_id, kind, version, data }` + migration v3 → v4, aller-retour sans perte d'un nœud dont le plugin est absent.
+- **Fin :** (1) test sans GPU : un plugin d'essai enregistre une action, un panneau et un type de nœud, la palette le trouve et un `Custom` survit à un aller-retour RON ; (2) l'éditeur ouvre `examples/stories/demo.ron`, on modifie une réplique, annule / rétablit, sauvegarde, et `orbit validate` passe ; (3) kill brutal puis relance propose la restauration ; (4) mesures : première frame < 1 s sur le projet démo, **0 frame dessinée en 5 s d'inactivité** (compteur testé).
+- **Réalisé (M3a)** : les quatre critères de fin sont couverts par des tests sans GPU (`crates/orbit_editor/tests/editor.rs`, 14 tests : plugins et palette, aller-retour d'un `Custom`, édition / annulation / sauvegarde / validation, récupération après arrêt brutal, confirmation à la fermeture, disposition persistante, raccourcis clavier, **absence de redessin au repos** à plusieurs tailles de fenêtre) et vérifiés avec le binaire : première frame **≈ 570 à 670 ms** (build release, GPU AMD / Vulkan, démo ouverte), 3 frames au démarrage puis 0 en idle (compteur `--frame-counter`), captures de la frame rendue dans `target/screenshots/`. Crates : `orbit_plugin_api`, `orbit_editor_api`, `orbit_editor` (binaire `orbit-editor`). `orbit_platform` : mode à la demande et hook d'événements bruts, player inchangé. IR v4 (`NodeKind::Custom`, migration v3 → v4 triviale). Toolchain 1.95. Détails et écarts : ADR 0009, « Notes d'implémentation du M3a ».
+- **Dettes M3a** (à reprendre ; rien ne bloque M3b) :
+  - file watching des fichiers du projet (rechargement / conflit) : non fait, à faire avec M3e ;
+  - `CommandQueue` locale pour l'UI (prévue pour le MCP live, M4) : l'UI appelle pour l'instant `Project` directement via `EditorContext` ; seule une file de requêtes d'éditeur (`EditorRequest`) existe ;
+  - disposition et sélection propres au projet (`.layout`, `.orbit/workspace.ron`) : seule la disposition globale est persistée ;
+  - autosave « à l'inactivité » (seul le délai de 30 s existe) ;
+  - navigation (scènes, nœuds, personnages, assets) dans la palette : seules les actions y sont, la navigation arrive avec M3e ; recherche globale (Ctrl+Shift+F) non faite (M3e) ;
+  - raccourcis reconfigurables par l'utilisateur (le registre est prêt, pas le fichier) ; échelle d'interface réglable ;
+  - pas de police à chasse fixe (Inter) ni de police CJK / arabe dans l'éditeur (le texte des répliques japonaises s'affiche en carrés) ;
+  - le modèle de projet « copie de la démo » n'est pas proposé : seul le projet minimal l'est (la démo s'ouvre depuis `examples/stories/demo.ron`) ;
+  - sauvegarder une histoire ouverte réécrit le RON sans ses commentaires ;
+  - la liste de l'explorateur est reconstruite à chaque frame (virtualisée à l'affichage, mais pas incrémentale) : à surveiller sur 5000 nœuds (critère M3c) ;
+  - l'archive portable est produite par la CI (job `editor`, zip Windows et tar.gz Linux), mais n'a pas encore été exécutée sur un vrai runner ; pas d'installeur (M4) ;
+  - le build Linux est vérifié par `cargo check` / `clippy` croisés depuis Windows, pas exécuté.
+
+**M3b : preview intégrée du runtime**
+- `Runtime::render_to_target` et `Runtime::load_story(Arc<Story>)` ; preview dans un panneau egui par texture enregistrée sur le device partagé ; entrées routées seulement au focus ; saves de preview isolées.
+- Hot reload depuis l'état mémoire du projet (debounce ~150 ms), reprise au nœud courant si son ID existe ; invalidation du cache de texture d'un asset modifié.
+- « Jouer depuis le début » et « jouer depuis ici » : recherche de chemin bornée sur le VM headless (`snapshot` / `restore`, RNG seedé), repli sur un panneau de presets d'état (variables, décor).
+- Barre de lecture (lecture / pause / redémarrer, vitesse), erreurs de chargement lisibles dans le panneau ; redessin continu uniquement si la preview joue et est visible.
+- **Fin :** modifier une réplique met la preview à jour en < 200 ms sans la redémarrer ; test sans GPU : l'état du VM obtenu par « jouer depuis ici » sur un nœud de `demo.ron` égale celui d'une lecture complète jusqu'au même nœud ; preview en pause = 0 frame ; capture asynchrone de la cible de preview fonctionnelle (réutilisée par le MCP).
+
+**M3c : éditeur de scène linéaire, personnages, inspecteur auto-généré**
+- Catalogue de commandes étendu (insérer / déplacer / dupliquer / remplacer / supprimer, setters par type de nœud, personnages et expressions, variables, scènes, `SetCustomData`) avec inverses et tests d'undo.
+- Schéma de l'IR via `schemars` (feature `schema` d'`orbit_core`, compatible wasm) ; inspecteur auto-généré depuis ce schéma avec indications d'UI (sélecteurs d'assets, de personnages, de nœuds).
+- Éditeur de scène : liste virtualisée des nœuds (dialogues, choix, décor, sprites, musique, transitions, variables, attente), ajout par menu et par palette, glisser-déposer, édition en place, raccourcis d'écriture rapide (Entrée = nouvelle réplique).
+- Éditeur de personnages : nom, couleur, sprites, expressions, aperçu.
+- Éditeur de variables (portée jeu / persistante) et de conditions (sans écrire d'expression à la main pour les cas simples).
+- **Fin :** un testeur construit sans toucher à un fichier une scène de 20 répliques avec 2 personnages, un choix, un décor et une musique, qui se lance dans la preview ; chaque `NodeKind` est éditable (test d'aller-retour par type) ; scène de 5000 nœuds défilée sans chute sous 60 fps.
+
+**M3d : graphe de scènes**
+- Panneau graphe sur `egui-snarl` derrière un trait `GraphView` (remplaçable) : scènes comme nœuds, arêtes calculées depuis `Jump` / `Choice` / `If` / `Call` ; positions dans le sidecar `.layout`.
+- Création et édition par le graphe via commandes : nouvelle scène, branche depuis un choix, condition, saut ; double-clic ouvre la scène ; mini-carte, zoom, recadrage, détection de scènes orphelines.
+- **Fin :** depuis le graphe seul, on crée un choix avec deux branches qui mènent à deux scènes différentes, jouable dans la preview ; les positions persistent ; 200 nœuds fluides en pan / zoom (sinon repli documenté sur un graphe maison).
+
+**M3e : assets, validation en direct, recherche**
+- Explorateur de projet et d'assets, import (copie dans le projet, `AssetId` stable, manifest, lint de casse), importeurs fournis par plugin, miniatures paresseuses hors thread UI avec cache borné, prévisualisation audio.
+- Console de validation en direct (`orbit_core::validate` déboncée et incrémentale), navigation par clic vers le nœud fautif, avertissements (assets manquants, scènes orphelines, plugin absent).
+- Recherche globale (Ctrl+Shift+F) sur répliques, personnages, variables, assets ; palette étendue à la navigation.
+- Éditeur de thème de l'UI en jeu : inspecteur auto-généré sur le `Theme` RON avec preview (peut glisser vers le backlog sans bloquer la fin de M3).
+- **Fin :** importer un PNG et un audio par glisser-déposer les rend utilisables dans l'éditeur de scène ; une erreur introduite est affichée en < 300 ms et son clic sélectionne le nœud ; la recherche trouve une réplique sur un projet de 10 000 nœuds en < 100 ms.
+
+**M3f : MCP headless**
+- `orbit_mcp` (`rmcp` 3.5, Apache-2.0) et `orbit mcp --project <dir>` sur stdio, sans GPU, via `ProjectHost` ; resources (manifest, scènes, personnages, assets, schéma de l'IR, lint) ; outils de lecture et d'édition de l'histoire, import d'asset et validation, tous via les commandes d'`orbit_project` ; outils fournis par les plugins (`McpToolDef`) ; schémas générés depuis l'IR (même source que l'inspecteur) ; journal des actions.
+- Une commande refusée renvoie une erreur structurée, sans modification partielle ; destructifs signalés. La `CommandQueue` de M3a est prête pour le mode live (M4).
+- **Fin :** un client MCP réel (Claude Code) crée une courte scène avec choix qui passe `orbit validate` ; test de CI comparant schémas MCP et types de l'IR ; `orbit_player` ne dépend ni d'`orbit_mcp` ni de `rmcp` (vérifié par `check-arch`).
+
+**Fin de M3 :** un non-développeur crée une VN de 5 min uniquement depuis l'interface ; **et** une IA crée via MCP une courte scène avec choix qui passe `orbit validate`. Une archive portable de l'éditeur (zip / tar.gz) est produite par la CI.
 
 ### M4 : Export multiplateforme (jalon MVP)
 - `orbit build` et pak d'assets. Lazy loading HTTP sur le web.
 - Export Windows (zip) et Linux (tar.gz).
 - Export web : wasm-bindgen, wasm-opt, brotli, loader avec barre de progression, serveur de test local.
 - Export lancé depuis l'éditeur (bouton, profils, journal).
+- **Distribution de l'éditeur** : installeurs Windows (MSI) et Linux (AppImage / deb) via `cargo-packager` ou `cargo-dist` (ADR 0009 §8) à partir des archives portables du M3 ; auto-update en backlog.
 - **MCP mode live** : l'éditeur expose le MCP en HTTP streamable sur 127.0.0.1 (désactivé par défaut, jeton, panneau de journal des actions de l'IA).
   - Modifs de l'IA visibles en direct, une entrée d'undo par appel d'outil, file de commandes commune avec l'utilisateur, versions par nœud.
   - Outils supplémentaires : preview depuis un nœud, avancer le VM, lire état et variables, **capture d'écran de la preview**, build / export (destructifs signalés).
@@ -278,7 +324,7 @@ Crates du workspace :
 ### M8 : Scripting
 - Rhai dans les expressions et les nœuds Script, avec sandbox ; marche aussi sur le web.
 - Intégration avec l'état annulable : tout passe par l'API du VM, RNG seedé.
-- Plugins Rust : nœuds personnalisés, API versionnée (`orbit_plugin_api`), exemple de mini-jeu. Export avec plugins.
+- Plugins Rust côté runtime : handlers des nœuds `Custom` liés au player, API versionnée stabilisée (`orbit_plugin_api`, créée au M3a), exemple de mini-jeu. Export avec plugins. Chargement dynamique éventuel (WASM, ADR 0009).
 - DSL texte optionnel avec round-trip, édité dans l'éditeur.
 - Éditeur de screens et de menus avancé (layouts personnalisés).
 - **Outils MCP :** lecture / édition des nœuds Script et des expressions, diagnostics de la sandbox Rhai. **[edge]** L'IA n'exécute jamais de code hors sandbox ; l'exécution passe par l'API du VM.
@@ -294,7 +340,8 @@ Crates du workspace :
 
 ## 3. Risques
 - **Charge de développement du moteur maison / renderer 3D** (nouveau plus gros risque avec l'éditeur) : renderer par couches (`orbit_gfx` → `orbit_render2d` / `orbit_render3d`), wasm en CI dès le M0, 3D reportée au M6 après le MVP, périmètre 3D borné (pas d'animation), briques existantes (`wgpu`, `cosmic-text`, `kira`, `gltf`) plutôt que du code maison.
-- **Périmètre de l'éditeur** : UX à deux niveaux, undo/redo dès le départ, no-code comme critère de fin de chaque jalon.
+- **Périmètre de l'éditeur** : UX à deux niveaux, undo/redo dès le départ, no-code comme critère de fin de chaque jalon ; M3 découpé en M3a → M3f.
+- **Plugins et dépendances de l'éditeur** : MSRV 1.95 d'egui, `egui-snarl` en 0.x (graphe derrière un trait remplaçable), API de plugin figée trop tôt (`API_VERSION` 0, plugins internes d'abord).
 - **Rollback et saves** : état déclaratif, VM déterministe, tests de propriété.
 - **Web** : CI wasm dès le M0, budget de taille, lazy loading, profils de qualité WebGL2.
 - **Texte CJK/RTL** : validé dès le M1.
@@ -311,9 +358,9 @@ Crates du workspace :
   - Dialogues, personnages et expressions, choix, branches, variables.
   - Fonds, musique, transitions.
   - Save/load, rollback, skip, auto, historique.
-  - Éditeur no-code : graphe, scène linéaire, preview, undo/redo, thème.
+  - Éditeur no-code extensible par plugins : graphe, scène linéaire, preview, undo/redo, thème ; installeur (M4).
   - Export Windows, Linux et web.
-  - **Pilotage par IA via MCP** : v1 headless (M3) et mode live dans l'éditeur avec preview, capture d'écran et export (M4).
+  - **Pilotage par IA via MCP** : v1 headless (M3f) et mode live dans l'éditeur avec preview, capture d'écran et export (M4).
 - **Exclus :** animations 2D (tweens, timeline, squelettique), 3D, localisation outillée, scripting, DSL, Android, voix.
 - **Critère :** un non-développeur publie en ligne une courte VN, uniquement avec l'interface.
 
@@ -327,6 +374,8 @@ Crates du workspace :
 5. **Base technique :** abandon de Bevy ; moteur maison sur wgpu + winit avec bibliothèques briques remplaçables.
 6. **Import `.rpy` :** pas pour l'instant (backlog).
 7. **Pilotage par IA :** serveur MCP (`orbit_mcp`, SDK `rmcp`) au-dessus d'une API de commandes unique (`orbit_project`, invariant dès le M0) ; headless au M3, live au M4 ; jamais dans le player.
+
+8. **Éditeur extensible :** egui 0.36 intégré à `orbit_platform` (pas `eframe`), outils intégrés = plugins statiques (`orbit_plugin_api` / `orbit_editor_api`), nœuds `Custom` pour étendre l'IR, rendu à la demande ; installeur au M4 (ADR 0009).
 
 ## 6. Questions ouvertes
 1. Licence du moteur : open source très probable, choix exact à trancher plus tard. En attendant, n'ajouter que des dépendances sous licences permissives (MIT, Apache-2.0, BSD, Zlib) via `cargo deny`.

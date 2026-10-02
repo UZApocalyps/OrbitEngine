@@ -556,5 +556,8 @@ fn describe_event(story: &Story, event: &PresentationEvent) -> String {
         ),
         PresentationEvent::StopMusic { fade_out } => format!("[music stop fade-out {fade_out}s]"),
         PresentationEvent::PlaySound { asset: a } => format!("[sound {}]", asset(*a)),
+        PresentationEvent::Custom {
+            plugin_id, kind, ..
+        } => format!("[custom {plugin_id}.{kind}]"),
     }
 }

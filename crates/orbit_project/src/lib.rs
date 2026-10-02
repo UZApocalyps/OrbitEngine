@@ -10,6 +10,12 @@
 
 mod command;
 mod project;
+mod storage;
 
 pub use command::{Command, CommandError};
 pub use project::{ChangeEvent, ChangeKind, Project, ProjectError, SubscriptionId, Transaction};
+pub use storage::{
+    DEFAULT_STORY_FILE, MANIFEST_FILE, MANIFEST_FORMAT, PluginRequirement, ProjectFileError,
+    ProjectManifest, ProjectStorage, STATE_DIR, load_manifest, load_story, save_manifest,
+    save_story,
+};

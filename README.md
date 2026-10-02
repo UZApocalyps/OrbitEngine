@@ -1,8 +1,8 @@
 # OrbitEngine
 
-Moteur de visual novel en Rust (wgpu + winit), avec un éditeur no-code à venir. Cibles : Windows, Linux, Web (WebGL2), Android plus tard. Le plan complet est dans [`docs/ROADMAP.md`](docs/ROADMAP.md), les décisions d'architecture dans [`docs/adr/`](docs/adr).
+Moteur de visual novel en Rust (wgpu + winit) avec son éditeur no-code (en construction). Cibles du jeu : Windows, Linux, Web (WebGL2), Android plus tard ; l'éditeur est natif (Windows et Linux). Le plan complet est dans [`docs/ROADMAP.md`](docs/ROADMAP.md), les décisions d'architecture dans [`docs/adr/`](docs/adr).
 
-État : jalon **M2 terminé** (fonctionnalités VN de base : menu principal, pause, rollback, skip/auto, historique, saves multi-slots avec miniatures et autosave, préférences, i18n, variables persistantes). Le player joue une histoire RON (fond, personnages, choix, musique, transitions) en natif et dans le navigateur, avec rechargement à chaud en natif. Prochain jalon : M3 (éditeur).
+État : jalon **M3a terminé** (socle de l'éditeur : fenêtre egui sur le device wgpu partagé, outils intégrés sous forme de plugins, palette de commandes, projets, undo / redo, sauvegarde atomique, récupération après crash, rendu à la demande) après le **M2** (fonctionnalités VN de base : menu principal, pause, rollback, skip/auto, historique, saves multi-slots avec miniatures et autosave, préférences, i18n, variables persistantes). Le player joue une histoire RON (fond, personnages, choix, musique, transitions) en natif et dans le navigateur, avec rechargement à chaud en natif. Prochain jalon : M3b (preview intégrée du runtime ; architecture dans l'[ADR 0009](docs/adr/0009-architecture-editeur.md)).
 
 ## Structure
 
@@ -13,6 +13,9 @@ Moteur de visual novel en Rust (wgpu + winit), avec un éditeur no-code à venir
 | `crates/orbit_vm` | VM de l'histoire : `step()` pur et non bloquant, événements de présentation, état de scène déclaratif, snapshots, rollback / roll-forward, backlog, variables persistantes. Sans GPU/audio, compile en wasm. |
 | `crates/orbit_save` | Saves (format versionné `postcard`, compatibilité après édition de l'histoire), slots manuels / autosaves en rotation / quicksave, données persistantes et préférences (RON), stockage fichiers (natif) ou `localStorage` (web). Sans GPU, compile en wasm. |
 | `crates/orbit_i18n` | Localisation : traductions RON par `StringId`, repli sur la langue source, couverture. Sans GPU, compile en wasm. |
+| `crates/orbit_plugin_api` | API de plugins, côté projet : manifeste, types de nœuds personnalisés, validateurs, importeurs, outils MCP, hooks d'événements, `API_VERSION`. Sans GPU ni egui, compile en wasm (contrôlée par `check-arch`). |
+| `crates/orbit_editor_api` | API de plugins, côté éditeur (egui) : `EditorPlugin`, `EditorContext` (lecture du projet, commandes seulement, sélection), registres de panneaux, actions (palette, menus, raccourcis) et inspecteurs. |
+| `crates/orbit_editor` | L'éditeur (binaire `orbit-editor`, natif) : `EditorCore` (sans GPU, testé en headless), dock `egui_dock`, thème maison clair / sombre, palette de commandes, projets, récupération, et les outils intégrés qui sont tous des plugins. Jamais lié au player. |
 | `crates/orbit_cli` | Binaire `orbit` : `validate`, `run-text` (jeu en terminal), `mcp` (placeholder M3). |
 | `crates/orbit_platform` | Fenêtre et boucle d'application (winit), natif et web ; requêtes à l'hôte (plein écran, quitter), horloge, fuseau et langue du système. |
 | `crates/orbit_gfx` | Couche wgpu : surface, textures RGBA8, pipeline de sprites (WebGL2 inclus). |
@@ -24,14 +27,17 @@ Moteur de visual novel en Rust (wgpu + winit), avec un éditeur no-code à venir
 | `crates/orbit_runtime` | Runtime : orchestre VM, assets, rendu, texte, audio et UI. `Shell` = machine d'état sans GPU (écrans, saves, autosave, préférences, langue, persistants), `Game` = skip/auto, `Director` = VM + rollback, `Runtime` = GPU, audio, miniatures. Indépendant du binaire. |
 | `crates/orbit_player` | Binaire du jeu (natif et wasm) : lit les arguments / l'URL et lance `orbit_runtime`. Contient aussi la démo visuelle codée en dur (`--demo`) et la galerie des écrans d'UI avec de fausses données (`--ui-gallery`). |
 | `xtask` | Automatisation : `web`, `serve`, `check-arch`, `gen-assets`. |
+| `tools/make_ui_fonts.py` | Génère les copies d'Inter de l'éditeur (`assets/fonts/ui/`) sans les glyphes d'usage privé qui masquent les icônes Phosphor. |
 | `examples/stories/demo.ron` | Histoire d'exemple ; `examples/stories/i18n/` : sa traduction française et `index.txt` (liste des traductions). |
 | `assets/demo/`, `assets/fonts/` | Assets de la démo (générés par `cargo xtask gen-assets`) et police Inter (OFL). |
 
 ## Commandes
 
-Prérequis : Rust via `rustup` (la toolchain 1.94 et la cible wasm sont installées par `rust-toolchain.toml`).
+Prérequis : Rust via `rustup` (la toolchain 1.95 et la cible wasm sont installées par `rust-toolchain.toml`). Linux : les bibliothèques de développement X11 / Wayland / xkbcommon / Vulkan (voir `.github/workflows/ci.yml`).
 
 ```sh
+cargo run -p orbit_editor                               # l'éditeur (accueil, projets récents)
+cargo run -p orbit_editor -- examples/stories/demo.ron  # ouvre l'histoire de démo (ou un dossier de projet)
 cargo run -p orbit_player          # joue examples/stories/demo.ron (natif)
 cargo run -p orbit_player -- ma/story.ron --root ma/    # une autre histoire
 cargo run -p orbit_player -- --new-game                 # sans menu principal, nouvelle partie directe
@@ -53,6 +59,16 @@ cargo xtask serve                  # http://127.0.0.1:8080 (Ctrl+C pour arrêter
 # Architecture : core/project sans GPU ni fenêtre, compilables en wasm
 cargo xtask check-arch
 ```
+
+## L'éditeur
+
+`cargo run -p orbit_editor [-- <projet | histoire.ron>]` (ajoutez `--release` pour la vitesse ; `orbit-editor --help` liste les options).
+
+* **Projet** : un dossier avec `orbit.project.ron` (nom, fichier d'histoire, plugins requis), `story.ron` (l'histoire, RON canonique, lisible par le player et `orbit validate`), `assets/` et `.orbit/` (état d'outil : récupération après crash, ignoré par git). Fichier > Nouveau projet crée un projet minimal ; Fichier > Ouvrir un projet / une histoire (`.ron` seul, sans dossier de projet) utilise le sélecteur de fichiers natif ; la page d'accueil liste les projets récents.
+* **Interface** : dock (explorateur à gauche, accueil au centre, inspecteur à droite, console en bas ; onglets déplaçables, disposition conservée dans `%APPDATA%\OrbitEngine\Editor` ou `~/.config/orbit-engine/editor`), thème sombre ou clair (Affichage), menus et **palette de commandes** (Ctrl+K ou Ctrl+Maj+P : recherche floue, raccourcis affichés ; Affichage > « Afficher : … » rouvre un panneau fermé).
+* **Édition (M3a)** : sélectionner une réplique dans l'explorateur, modifier son texte et son personnage dans l'inspecteur, ajouter (Ctrl+Entrée) ou supprimer (Suppr) une réplique ; l'éditeur de scène complet est M3c. Tout passe par les commandes d'`orbit_project` : Ctrl+Z / Ctrl+Y (ou Ctrl+Maj+Z) annulent et rétablissent (une saisie de texte = une étape), Ctrl+S enregistre de façon atomique, le titre et la barre d'état signalent les modifications non enregistrées, la fermeture demande confirmation. Un enregistrement automatique de secours est écrit toutes les 30 s tant que le projet est modifié ; après un arrêt brutal, le lancement suivant propose de restaurer.
+* **Plugins** : chaque outil (explorateur, inspecteur, console, accueil) est un `EditorPlugin` ; le « Plugin d'essai » (Affichage > Afficher : Plugin d'essai, ou Outils) montre un panneau, des actions et un type de nœud ajoutés par l'API publique.
+* **Performance** : l'éditeur ne dessine une frame que sur événement ou échéance (0 frame au repos). `--frame-counter` journalise chaque frame, `--screenshot <png> --exit-after <s>` enregistre la frame rendue (utile aux tests visuels : `--open-palette`, `--theme light`, `--select-node <n>`, `--run-action <id>`).
 
 ## Jouer une histoire
 

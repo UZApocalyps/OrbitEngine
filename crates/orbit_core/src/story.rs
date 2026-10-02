@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::custom::CustomData;
 use crate::defs::{
     AssetManifest, Character, Position, PositionDef, StringTable, Transition, VarDecl,
     builtin_position,
@@ -13,7 +14,7 @@ use crate::migrate;
 use crate::validate;
 
 /// Version of the on-disk schema produced by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 3;
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 /// A whole story: definitions (characters, assets, strings...) and an ordered
 /// list of scenes. Execution starts at the first node of the first scene and
@@ -137,6 +138,18 @@ pub enum NodeKind {
     Return,
     /// Explicitly ends the story.
     End,
+    /// A node defined by a plugin (schema v4). The VM does not interpret it:
+    /// it emits a generic presentation event and moves on. A project opened
+    /// without the plugin keeps the node untouched (lossless round trip).
+    /// `version` is the plugin's own data version, for its own migrations.
+    Custom {
+        plugin_id: String,
+        kind: String,
+        #[serde(default)]
+        version: u32,
+        #[serde(default)]
+        data: CustomData,
+    },
 }
 
 impl NodeKind {
@@ -315,6 +328,32 @@ mod tests {
     #[test]
     fn ron_roundtrip() {
         let story = sample();
+        let text = story.to_ron().unwrap();
+        let back = Story::from_ron(&text).unwrap();
+        assert_eq!(story, back);
+    }
+
+    #[test]
+    fn custom_node_survives_a_ron_round_trip() {
+        let mut story = sample();
+        let custom = Node {
+            id: NodeId::new(),
+            kind: NodeKind::Custom {
+                plugin_id: "acme.anim".into(),
+                kind: "play_clip".into(),
+                version: 2,
+                data: CustomData::Map(vec![
+                    ("clip".into(), CustomData::Str("walk".into())),
+                    ("loops".into(), CustomData::Int(3)),
+                    ("speed".into(), CustomData::Float(1.5)),
+                    (
+                        "tags".into(),
+                        CustomData::List(vec![CustomData::Bool(true), CustomData::Null]),
+                    ),
+                ]),
+            },
+        };
+        story.scenes[0].nodes.insert(1, custom);
         let text = story.to_ron().unwrap();
         let back = Story::from_ron(&text).unwrap();
         assert_eq!(story, back);

@@ -293,6 +293,9 @@ impl Ui {
                 self.step_selector(id, sign, out);
                 return;
             }
+            // Not a guard: `scroll_by` needs `&mut self` while the scrutinee
+            // borrows `self.nodes`.
+            #[allow(clippy::collapsible_match)]
             Kind::ScrollList { .. } if !horizontal => {
                 if self.scroll_by(id, sign) {
                     return;

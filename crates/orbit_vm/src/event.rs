@@ -80,4 +80,11 @@ pub enum PresentationEvent {
     PlaySound {
         asset: AssetId,
     },
+    /// A plugin-defined node was reached (`NodeKind::Custom`). The VM does
+    /// not interpret it; a runtime plugin may.
+    Custom {
+        plugin_id: String,
+        kind: String,
+        data: orbit_core::CustomData,
+    },
 }

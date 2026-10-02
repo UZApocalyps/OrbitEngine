@@ -6,7 +6,7 @@ default-members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 publish = false
 
@@ -16,6 +16,8 @@ orbit_core = { path = "crates/orbit_core" }
 orbit_project = { path = "crates/orbit_project" }
 orbit_platform = { path = "crates/orbit_platform" }
 orbit_gfx = { path = "crates/orbit_gfx" }
+orbit_plugin_api = { path = "crates/orbit_plugin_api" }
+orbit_editor_api = { path = "crates/orbit_editor_api" }
 
 # --- story/vm ---
 orbit_vm = { path = "crates/orbit_vm" }
@@ -67,11 +69,25 @@ base64 = "0.22"
 sys-locale = "0.3"
 time = { version = "0.3", default-features = false, features = ["std", "local-offset"] }
 
+# --- m3 editor (native only: Windows + Linux) ---
+# egui is built without `default_fonts` (their license is outside deny.toml):
+# the editor ships Inter + the Phosphor icon font itself.
+egui = { version = "0.36.2", default-features = false }
+egui-winit = { version = "0.36.2", default-features = false, features = ["clipboard", "x11", "wayland"] }
+egui-wgpu = { version = "0.36.2", default-features = false }
+egui_dock = { version = "0.21.1", features = ["serde"] }
+egui-phosphor = { version = "0.14.0", default-features = false, features = ["regular"] }
+rfd = "0.17"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# egui and wgpu are unusably slow at opt-level 0 (the editor in debug builds).
+[profile.dev.package."*"]
+opt-level = 1
 
 [profile.release]
 lto = "thin"

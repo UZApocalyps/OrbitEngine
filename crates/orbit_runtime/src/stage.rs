@@ -78,7 +78,8 @@ impl StageState {
             }
             PresentationEvent::PlayMusic { .. }
             | PresentationEvent::StopMusic { .. }
-            | PresentationEvent::PlaySound { .. } => StageEffect::None,
+            | PresentationEvent::PlaySound { .. }
+            | PresentationEvent::Custom { .. } => StageEffect::None,
         }
     }
 }

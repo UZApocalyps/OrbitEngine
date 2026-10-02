@@ -17,7 +17,8 @@ use web_time::{Instant, SystemTime, UNIX_EPOCH};
 use winit::application::ApplicationHandler;
 #[cfg(not(target_arch = "wasm32"))]
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
+pub use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseScrollDelta};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
@@ -37,6 +38,21 @@ pub struct AppConfig {
     /// Web only: id of an existing `<canvas>` element to render into. When
     /// absent or not found, a canvas is created and appended to `<body>`.
     pub canvas_id: Option<String>,
+    /// When frames are produced (continuously, or only on demand).
+    pub redraw: RedrawMode,
+}
+
+/// How the loop schedules frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RedrawMode {
+    /// A frame is drawn as fast as the display allows (games, the player).
+    #[default]
+    Continuous,
+    /// The loop sleeps (`ControlFlow::Wait`) and a frame is drawn only after a
+    /// window event the app reports as needing a repaint, a resize,
+    /// [`HostRequest::RequestRedraw`], or when [`App::next_wake`] is due.
+    /// Idle cost is zero frames (editors).
+    OnDemand,
 }
 
 impl Default for AppConfig {
@@ -45,6 +61,7 @@ impl Default for AppConfig {
             title: "OrbitEngine".to_owned(),
             initial_size: (1280.0, 720.0),
             canvas_id: Some("orbit-canvas".to_owned()),
+            redraw: RedrawMode::Continuous,
         }
     }
 }
@@ -81,6 +98,17 @@ pub enum HostRequest {
     SetFullscreen(bool),
     /// Close the application (native only; a browser tab cannot quit).
     Quit,
+    /// Draw one more frame (meaningful in [`RedrawMode::OnDemand`]).
+    RequestRedraw,
+}
+
+/// What an app made of a raw window event, see [`App::window_event`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EventResponse {
+    /// The event was handled: it is not forwarded as an [`InputEvent`].
+    pub consumed: bool,
+    /// The event changed something visible: draw a frame (on-demand mode).
+    pub repaint: bool,
 }
 
 /// Whether [`HostRequest::SetFullscreen`] does anything on this platform.
@@ -125,6 +153,19 @@ pub trait App {
     fn resize(&mut self, size: PhysicalSize<u32>, scale_factor: f64);
     /// Keyboard / mouse input.
     fn input(&mut self, _event: &InputEvent) {}
+    /// Raw window event, offered before it is translated to an
+    /// [`InputEvent`] (IME, drag and drop, clipboard... which the abstract
+    /// events cannot carry). Never called with `RedrawRequested`. The default
+    /// ignores it, so existing apps are unaffected.
+    fn window_event(&mut self, _event: &WindowEvent) -> EventResponse {
+        EventResponse::default()
+    }
+    /// On-demand mode: the instant at which a frame is due even without any
+    /// event (animations, timers). `None` means sleep until the next event.
+    /// Polled after every frame and event; ignored in continuous mode.
+    fn next_wake(&mut self) -> Option<Instant> {
+        None
+    }
     /// The user asked to close the window. Return `false` to veto (native
     /// only; the browser has no notion of closing the canvas).
     fn close_requested(&mut self) -> bool {
@@ -165,7 +206,10 @@ where
     A: App + 'static,
 {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.set_control_flow(match config.redraw {
+        RedrawMode::Continuous => ControlFlow::Poll,
+        RedrawMode::OnDemand => ControlFlow::Wait,
+    });
 
     let runner = Runner {
         config,
@@ -176,6 +220,7 @@ where
         window: None,
         app: None,
         last_frame: None,
+        redraw_wanted: false,
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -199,6 +244,8 @@ struct Runner {
     window: Option<Arc<Window>>,
     app: Option<Box<dyn App>>,
     last_frame: Option<Instant>,
+    /// On-demand mode: a frame was requested and not drawn yet.
+    redraw_wanted: bool,
 }
 
 /// Web: bind the window to the page's canvas (or append a new one).
@@ -247,6 +294,7 @@ impl Runner {
                     let _ = (on, window);
                 }
                 HostRequest::Quit => event_loop.exit(),
+                HostRequest::RequestRedraw => self.redraw_wanted = true,
             }
         }
     }
@@ -276,6 +324,34 @@ impl Runner {
         }
         self.last_frame = Some(Instant::now());
         self.app = Some(app);
+    }
+
+    /// On-demand mode: turns "a frame is wanted" and the app's wake-up time
+    /// into a redraw request or a sleep deadline. Does nothing in continuous
+    /// mode.
+    fn schedule(&mut self, event_loop: &ActiveEventLoop) {
+        if self.config.redraw != RedrawMode::OnDemand {
+            return;
+        }
+        let (Some(app), Some(window)) = (self.app.as_mut(), self.window.as_ref()) else {
+            return;
+        };
+        let (redraw, flow) = plan(app.next_wake(), Instant::now(), self.redraw_wanted);
+        self.redraw_wanted = false;
+        if redraw {
+            window.request_redraw();
+        }
+        event_loop.set_control_flow(flow);
+    }
+}
+
+/// On-demand scheduling decision: whether to request a redraw now, and how
+/// the loop sleeps until the next event.
+fn plan(wake: Option<Instant>, now: Instant, redraw_wanted: bool) -> (bool, ControlFlow) {
+    match wake {
+        Some(wake) if wake <= now => (true, ControlFlow::Wait),
+        Some(wake) => (redraw_wanted, ControlFlow::WaitUntil(wake)),
+        None => (redraw_wanted, ControlFlow::Wait),
     }
 }
 
@@ -318,6 +394,11 @@ impl ApplicationHandler<UserEvent> for Runner {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         self.handle_window_event(event_loop, id, event);
         self.serve_requests(event_loop);
+        self.schedule(event_loop);
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.schedule(event_loop);
     }
 }
 
@@ -334,18 +415,26 @@ impl Runner {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        match event {
-            WindowEvent::CloseRequested => {
-                if app.close_requested() {
-                    event_loop.exit();
-                }
+        let on_demand = self.config.redraw == RedrawMode::OnDemand;
+        if !matches!(event, WindowEvent::RedrawRequested) {
+            let response = app.window_event(&event);
+            if on_demand && response.repaint {
+                self.redraw_wanted = true;
             }
+            if response.consumed {
+                return;
+            }
+        }
+        match event {
+            WindowEvent::CloseRequested if app.close_requested() => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 app.resize(size, window.scale_factor());
+                self.redraw_wanted |= on_demand;
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 // The following `Resized` carries the new size; refresh the scale.
                 app.resize(window.inner_size(), window.scale_factor());
+                self.redraw_wanted |= on_demand;
             }
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
@@ -356,7 +445,9 @@ impl Runner {
                 self.last_frame = Some(now);
                 app.update(dt);
                 app.render();
-                window.request_redraw();
+                if !on_demand {
+                    window.request_redraw();
+                }
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
@@ -383,5 +474,42 @@ impl Runner {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_app_sleeps_without_drawing() {
+        let now = Instant::now();
+        assert_eq!(plan(None, now, false), (false, ControlFlow::Wait));
+    }
+
+    #[test]
+    fn a_requested_frame_is_drawn_once() {
+        let now = Instant::now();
+        assert_eq!(plan(None, now, true), (true, ControlFlow::Wait));
+    }
+
+    #[test]
+    fn a_future_wake_up_sleeps_until_then() {
+        let now = Instant::now();
+        let later = now + Duration::from_millis(250);
+        assert_eq!(
+            plan(Some(later), now, false),
+            (false, ControlFlow::WaitUntil(later))
+        );
+        // A frame can still be wanted while waiting for the deadline.
+        assert!(plan(Some(later), now, true).0);
+    }
+
+    #[test]
+    fn a_due_wake_up_draws_immediately() {
+        let now = Instant::now();
+        assert_eq!(plan(Some(now), now, false), (true, ControlFlow::Wait));
+        let past = now - Duration::from_millis(5);
+        assert_eq!(plan(Some(past), now, false), (true, ControlFlow::Wait));
     }
 }

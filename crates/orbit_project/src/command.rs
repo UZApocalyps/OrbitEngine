@@ -91,6 +91,16 @@ fn users_of_string(story: &Story, id: StringId) -> Vec<NodeId> {
 }
 
 impl Command {
+    /// Short human label (French, like the editor UI) shown in the undo menu.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Command::InsertNode { .. } => "Insérer un nœud",
+            Command::RemoveNode { .. } => "Supprimer un nœud",
+            Command::SetSay { .. } => "Modifier la réplique",
+            Command::SetString { .. } => "Modifier un texte",
+        }
+    }
+
     /// Node targeted by the optimistic version check, if the command has one.
     pub(crate) fn expected(&self) -> Option<(NodeId, u64)> {
         match self {

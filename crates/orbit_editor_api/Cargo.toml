@@ -1,0 +1,20 @@
+[package]
+name = "orbit_editor_api"
+description = "OrbitEngine plugin API, editor side (egui): panels, actions, menus, inspectors, the editor context. Native only."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_core.workspace = true
+orbit_project.workspace = true
+orbit_plugin_api.workspace = true
+egui.workspace = true
+egui-phosphor.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

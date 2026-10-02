@@ -43,6 +43,7 @@ fn kind_tag(kind: &NodeKind) -> u8 {
         NodeKind::Call { .. } => 14,
         NodeKind::Return => 15,
         NodeKind::End => 16,
+        NodeKind::Custom { .. } => 17,
     }
 }
 

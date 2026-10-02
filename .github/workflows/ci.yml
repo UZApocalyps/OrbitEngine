@@ -19,7 +19,7 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.94
+      - uses: dtolnay/rust-toolchain@1.95
         with:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
@@ -41,12 +41,62 @@ jobs:
       - name: Build
         run: cargo build --workspace
 
+  editor:
+    name: editor ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxkbcommon-dev             libxkbcommon-x11-dev libwayland-dev libvulkan-dev libegl1-mesa-dev             libgl1-mesa-dev pkg-config
+      - name: Clippy (editor and plugin APIs)
+        run: cargo clippy -p orbit_editor -p orbit_editor_api -p orbit_plugin_api --all-targets -- -D warnings
+      - name: "Tests (headless, no window and no GPU)"
+        run: cargo test -p orbit_editor -p orbit_editor_api -p orbit_plugin_api
+      - name: Build (release)
+        run: cargo build --release -p orbit_editor
+      - name: Portable archive
+        shell: bash
+        run: |
+          mkdir -p dist/orbit-editor/assets
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/release/orbit-editor.exe dist/orbit-editor/
+          else
+            cp target/release/orbit-editor dist/orbit-editor/
+          fi
+          cp -r examples dist/orbit-editor/
+          cp -r assets/demo dist/orbit-editor/assets/
+          cp README.md dist/orbit-editor/
+          cd dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a ../orbit-editor-windows.zip orbit-editor
+          else
+            tar czf ../orbit-editor-linux.tar.gz orbit-editor
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbit-editor-${{ runner.os }}
+          path: |
+            orbit-editor-windows.zip
+            orbit-editor-linux.tar.gz
+          if-no-files-found: error
+
   wasm:
     name: wasm32 (WebGL2)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.94
+      - uses: dtolnay/rust-toolchain@1.95
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
@@ -58,7 +108,7 @@ jobs:
           cargo install wasm-bindgen-cli --version "$VERSION" --locked
       - name: Web bundle
         run: cargo xtask web
-      - name: Architecture check (core crates: no GPU/window deps, wasm32 build)
+      - name: "Architecture check (core crates and plugin API without GPU, window or egui; wasm32 build; the player never links the editor)"
         run: cargo xtask check-arch
       - uses: actions/upload-artifact@v4
         with:

@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 orbit_core.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+ron.workspace = true
 
 [lints]
 workspace = true

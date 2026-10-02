@@ -35,8 +35,13 @@ pub struct SubscriptionId(u64);
 type Listener = Box<dyn FnMut(&ChangeEvent) + Send>;
 
 /// One undo/redo entry: commands in the order they were applied. Undoing an
-/// entry applies them in reverse.
-type Entry = Vec<Command>;
+/// entry applies them in reverse. `label` is shown in menus ("Undo: ...").
+struct Entry {
+    label: String,
+    commands: Vec<Command>,
+    /// Set on entries created by [`Project::execute_merged`].
+    merge_key: Option<String>,
+}
 
 pub struct Project {
     story: Story,
@@ -46,6 +51,9 @@ pub struct Project {
     redo: Vec<Entry>,
     listeners: Vec<(SubscriptionId, Listener)>,
     next_sub: u64,
+    revision: u64,
+    /// Key of the merge session in progress (see [`Project::execute_merged`]).
+    merge_key: Option<String>,
 }
 
 impl Project {
@@ -68,7 +76,25 @@ impl Project {
             redo: Vec::new(),
             listeners: Vec::new(),
             next_sub: 0,
+            revision: 0,
+            merge_key: None,
         }
+    }
+
+    /// Counter bumped by every committed change (apply, undo, redo). Lets a
+    /// host cheaply tell whether the story may differ from what it last saw.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Label of the entry `undo` would revert.
+    pub fn undo_label(&self) -> Option<&str> {
+        self.undo.last().map(|e| e.label.as_str())
+    }
+
+    /// Label of the entry `redo` would re-apply.
+    pub fn redo_label(&self) -> Option<&str> {
+        self.redo.last().map(|e| e.label.as_str())
     }
 
     /// Read-only view of the story. There is intentionally no `&mut` access.
@@ -113,9 +139,46 @@ impl Project {
         self.listeners.len() != before
     }
 
-    /// Executes a single command as its own undo entry.
+    /// Executes a single command as its own undo entry, labeled with
+    /// [`Command::label`].
     pub fn execute(&mut self, command: Command) -> Result<(), ProjectError> {
-        self.transaction(|tx| tx.execute(command))
+        let label = command.label();
+        self.transaction_labeled(label, |tx| tx.execute(command))
+    }
+
+    /// Like [`Project::execute`], but consecutive calls with the same `key`
+    /// share **one** undo entry, so that typing in a text field edits the
+    /// story live (every keystroke is a command, visible to previews and
+    /// saves) yet undoes in one step. The session ends with another edit, an
+    /// undo / redo, or [`Project::end_merge`]. The caller should only reuse a
+    /// key for commands whose first inverse restores the whole session
+    /// (setters of one field of one node).
+    pub fn execute_merged(&mut self, command: Command, key: &str) -> Result<(), ProjectError> {
+        let merging = self.merge_key.as_deref() == Some(key)
+            && self
+                .undo
+                .last()
+                .is_some_and(|e| e.merge_key.as_deref() == Some(key));
+        if merging {
+            let mut touched = Vec::new();
+            // The inverse is dropped: the first inverse of the entry already
+            // restores the state from before the session.
+            self.apply_raw(&command, &mut touched)?;
+            self.emit(ChangeKind::Applied, touched);
+            return Ok(());
+        }
+        let label = command.label();
+        self.transaction_labeled(label, |tx| tx.execute(command))?;
+        if let Some(entry) = self.undo.last_mut() {
+            entry.merge_key = Some(key.to_owned());
+            self.merge_key = Some(key.to_owned());
+        }
+        Ok(())
+    }
+
+    /// Ends the merge session: the next edit starts a new undo entry.
+    pub fn end_merge(&mut self) {
+        self.merge_key = None;
     }
 
     /// Runs several commands as **one** undo entry. If the closure (or any
@@ -123,6 +186,15 @@ impl Project {
     /// project is left unchanged (no undo entry, no event).
     pub fn transaction<R>(
         &mut self,
+        f: impl FnOnce(&mut Transaction<'_>) -> Result<R, ProjectError>,
+    ) -> Result<R, ProjectError> {
+        self.transaction_labeled("Modification", f)
+    }
+
+    /// Like [`Project::transaction`], with the label shown for the undo entry.
+    pub fn transaction_labeled<R>(
+        &mut self,
+        label: &str,
         f: impl FnOnce(&mut Transaction<'_>) -> Result<R, ProjectError>,
     ) -> Result<R, ProjectError> {
         let mut tx = Transaction {
@@ -136,8 +208,13 @@ impl Project {
                     inverses, touched, ..
                 } = tx;
                 if !inverses.is_empty() {
-                    self.undo.push(inverses);
+                    self.undo.push(Entry {
+                        label: label.to_owned(),
+                        commands: inverses,
+                        merge_key: None,
+                    });
                     self.redo.clear();
+                    self.merge_key = None;
                     self.emit(ChangeKind::Applied, touched);
                 }
                 Ok(value)
@@ -154,6 +231,7 @@ impl Project {
         let Some(entry) = self.undo.pop() else {
             return Ok(false);
         };
+        self.merge_key = None;
         match self.replay(entry) {
             Ok((reverse, touched)) => {
                 self.redo.push(reverse);
@@ -172,6 +250,7 @@ impl Project {
         let Some(entry) = self.redo.pop() else {
             return Ok(false);
         };
+        self.merge_key = None;
         match self.replay(entry) {
             Ok((reverse, touched)) => {
                 self.undo.push(reverse);
@@ -187,11 +266,11 @@ impl Project {
 
     /// Applies an entry in reverse order. All-or-nothing: on failure the
     /// already-applied part is rolled back and the entry returned intact.
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, clippy::result_large_err)]
     fn replay(&mut self, entry: Entry) -> Result<(Entry, Vec<NodeId>), (Entry, ProjectError)> {
-        let mut reverse = Vec::with_capacity(entry.len());
+        let mut reverse = Vec::with_capacity(entry.commands.len());
         let mut touched = Vec::new();
-        for cmd in entry.iter().rev() {
+        for cmd in entry.commands.iter().rev() {
             match self.apply_raw(cmd, &mut touched) {
                 Ok(inv) => reverse.push(inv),
                 Err(err) => {
@@ -202,7 +281,15 @@ impl Project {
                 }
             }
         }
-        Ok((reverse, touched))
+        let label = entry.label;
+        Ok((
+            Entry {
+                label,
+                commands: reverse,
+                merge_key: None,
+            },
+            touched,
+        ))
     }
 
     /// Applies one command, bumping the version of the touched node.
@@ -242,6 +329,7 @@ impl Project {
     }
 
     fn emit(&mut self, kind: ChangeKind, touched: Vec<NodeId>) {
+        self.revision += 1;
         let event = ChangeEvent { kind, touched };
         for (_, listener) in &mut self.listeners {
             listener(&event);
@@ -602,5 +690,76 @@ mod tests {
             }),
             Err(ProjectError::Command(CommandError::UnknownString(_)))
         ));
+    }
+
+    #[test]
+    fn undo_labels_and_revision_follow_history() {
+        let (mut p, scene) = project();
+        assert_eq!(p.revision(), 0);
+        assert_eq!(p.undo_label(), None);
+        let (set, node) = say("a");
+        p.transaction_labeled("Ajouter une réplique", |tx| {
+            tx.execute(set)?;
+            tx.execute(insert(scene, 0, node))
+        })
+        .unwrap();
+        assert_eq!(p.revision(), 1);
+        assert_eq!(p.undo_label(), Some("Ajouter une réplique"));
+        assert_eq!(p.redo_label(), None);
+        p.undo().unwrap();
+        assert_eq!(p.revision(), 2);
+        assert_eq!(p.undo_label(), None);
+        assert_eq!(p.redo_label(), Some("Ajouter une réplique"));
+        p.redo().unwrap();
+        assert_eq!(p.undo_label(), Some("Ajouter une réplique"));
+        // A single command is labeled by `Command::label`.
+        let (set2, _) = say("b");
+        p.execute(set2).unwrap();
+        assert_eq!(p.undo_label(), Some("Modifier un texte"));
+    }
+
+    #[test]
+    fn merged_edits_share_one_undo_entry() {
+        let (mut p, scene) = project();
+        let id = insert_say(&mut p, scene, 0, "a");
+        let Some(orbit_core::NodeKind::Say { text_id, .. }) =
+            p.story().node(id).map(|n| n.kind.clone())
+        else {
+            panic!("say expected")
+        };
+        let edit = |p: &mut Project, text: &str| {
+            let version = p.node_version(id);
+            p.execute_merged(
+                Command::SetSay {
+                    id,
+                    speaker: None,
+                    text: text.into(),
+                    expected_version: version,
+                },
+                "say",
+            )
+            .unwrap();
+        };
+        edit(&mut p, "ab");
+        edit(&mut p, "abc");
+        edit(&mut p, "abcd");
+        assert_eq!(p.story().text(text_id), Some("abcd"));
+        assert_eq!(p.undo.len(), 2); // the insertion + one merged entry
+        assert_eq!(p.undo_label(), Some("Modifier la réplique"));
+        // One undo restores the text from before the whole session.
+        p.undo().unwrap();
+        assert_eq!(p.story().text(text_id), Some("a"));
+        p.redo().unwrap();
+        assert_eq!(p.story().text(text_id), Some("abcd"));
+
+        // Ending the session starts a new entry.
+        edit(&mut p, "abcde");
+        p.end_merge();
+        edit(&mut p, "abcdef");
+        assert_eq!(p.undo.len(), 4); // insertion, session 1, "abcde", "abcdef"
+        p.undo().unwrap();
+        assert_eq!(p.story().text(text_id), Some("abcde"));
+        p.undo().unwrap();
+        assert_eq!(p.story().text(text_id), Some("abcd"));
     }
 }

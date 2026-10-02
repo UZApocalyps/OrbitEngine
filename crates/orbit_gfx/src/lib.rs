@@ -130,6 +130,43 @@ impl Gfx {
         self.config.format
     }
 
+    /// Opt-in for renderers that want the surface in gamma space (egui):
+    /// allows [`Gfx::gamma_view`] to view the sRGB surface as its non-sRGB
+    /// twin, so shaders can write sRGB-encoded values and blend in gamma
+    /// space. Native only (WebGL2 has no view formats): a no-op on the web,
+    /// where [`Gfx::gamma_view_format`] stays the surface format.
+    pub fn enable_gamma_view(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let gamma = self.config.format.remove_srgb_suffix();
+            if gamma != self.config.format {
+                self.config.view_formats = vec![gamma];
+                self.surface.configure(&self.device, &self.config);
+            }
+        }
+    }
+
+    /// Format of [`Gfx::gamma_view`]: the non-sRGB twin of the surface format
+    /// once [`Gfx::enable_gamma_view`] was called, else the surface format.
+    pub fn gamma_view_format(&self) -> wgpu::TextureFormat {
+        if self.config.view_formats.is_empty() {
+            self.config.format
+        } else {
+            self.config.format.remove_srgb_suffix()
+        }
+    }
+
+    /// A view of `frame` in [`Gfx::gamma_view_format`].
+    pub fn gamma_view(&self, frame: &SurfaceFrame) -> wgpu::TextureView {
+        frame
+            .texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                format: Some(self.gamma_view_format()),
+                ..Default::default()
+            })
+    }
+
     /// Reconfigures the surface. A zero dimension (minimized window) is
     /// ignored: rendering is skipped until a valid size arrives.
     pub fn resize(&mut self, width: u32, height: u32) {

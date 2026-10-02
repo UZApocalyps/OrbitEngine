@@ -1385,3 +1385,31 @@ fn random_action_sequences_keep_invariants() {
         }
     }
 }
+
+#[test]
+fn custom_node_emits_a_generic_event_and_falls_through() {
+    use orbit_core::CustomData;
+
+    let mut b = B::new();
+    b.push(NodeKind::Custom {
+        plugin_id: "acme.anim".into(),
+        kind: "play_clip".into(),
+        version: 1,
+        data: CustomData::Str("walk".into()),
+    });
+    b.say(None, "after");
+    let mut vm = vm_for(b.build());
+
+    let StepResult::Say { string_id, .. } = vm.step() else {
+        panic!("expected Say");
+    };
+    assert_eq!(vm.text(string_id), Some("after"));
+    assert_eq!(
+        vm.take_events(),
+        vec![PresentationEvent::Custom {
+            plugin_id: "acme.anim".into(),
+            kind: "play_clip".into(),
+            data: CustomData::Str("walk".into()),
+        }]
+    );
+}

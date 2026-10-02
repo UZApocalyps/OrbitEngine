@@ -1,9 +1,10 @@
 //! `cargo xtask check-arch`: architecture rules from ROADMAP 1.5 / 1.6.
 //!
-//! * `orbit_core`, `orbit_project`, `orbit_vm`, `orbit_save` and `orbit_i18n` must not depend (even transitively, on
-//!   any target) on wgpu, winit, egui or our own gfx/platform crates.
+//! * `orbit_core`, `orbit_project`, `orbit_vm`, `orbit_save`, `orbit_i18n` and `orbit_plugin_api` must not depend
+//!   (even transitively, on any target) on wgpu, winit, egui or our own gfx/platform/editor crates.
 //! * They must compile for `wasm32-unknown-unknown`.
-//! * `orbit_player` must never depend on the editor, egui or the MCP server.
+//! * `orbit_player` must never depend on the editor (`orbit_editor`, `orbit_editor_api`), egui, the native file
+//!   dialog crate or the MCP server.
 
 use std::collections::BTreeSet;
 
@@ -15,6 +16,7 @@ const CORE_CRATES: &[&str] = &[
     "orbit_vm",
     "orbit_save",
     "orbit_i18n",
+    "orbit_plugin_api",
 ];
 
 /// Package names (or prefixes ending with `*`) forbidden for core crates.
@@ -34,7 +36,8 @@ const CORE_FORBIDDEN: &[&str] = &[
     "orbit_text",
     "orbit_audio",
     "orbit_player",
-    "orbit_editor",
+    "orbit_editor*",
+    "rfd",
 ];
 
 const PLAYER_FORBIDDEN: &[&str] = &[
@@ -42,8 +45,9 @@ const PLAYER_FORBIDDEN: &[&str] = &[
     "egui-*",
     "egui_*",
     "eframe",
-    "orbit_editor",
+    "orbit_editor*",
     "orbit_mcp",
+    "rfd",
     "rmcp",
     "rmcp-*",
 ];
@@ -147,6 +151,27 @@ mod tests {
         assert!(!matches("wgpu-*", "wgpu"));
         assert!(matches("winit", "winit"));
         assert!(!matches("winit", "winit-x11"));
+    }
+
+    #[test]
+    fn editor_crates_are_forbidden_by_prefix() {
+        let deps: BTreeSet<String> = ["orbit_core", "orbit_editor_api", "egui_dock"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(
+            forbidden_found(&deps, CORE_FORBIDDEN),
+            ["egui_dock", "orbit_editor_api"]
+        );
+        assert_eq!(
+            forbidden_found(&deps, PLAYER_FORBIDDEN),
+            ["egui_dock", "orbit_editor_api"]
+        );
+    }
+
+    #[test]
+    fn plugin_api_is_a_core_crate() {
+        assert!(CORE_CRATES.contains(&"orbit_plugin_api"));
     }
 
     #[test]

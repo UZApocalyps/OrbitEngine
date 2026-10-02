@@ -1,8 +1,8 @@
-// Demo story for OrbitEngine (schema version 3), played by `orbit run-text` and the player.
+// Demo story for OrbitEngine (schema version 4), played by `orbit run-text` and the player.
 // Everything is referenced by stable ids: nodes (N), strings (T), characters (C), assets (A).
 // Assets are declared once in the manifest below (id -> relative path); nodes never hold a path.
 (
-    schema_version: 3,
+    schema_version: 4,
     title: "Demo",
     strings: (
         source_lang: "en",

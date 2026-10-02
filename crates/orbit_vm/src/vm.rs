@@ -435,6 +435,19 @@ impl Vm {
                     self.state.pc = back;
                 }
                 NodeKind::End => self.state.pc = None,
+                NodeKind::Custom {
+                    plugin_id,
+                    kind,
+                    data,
+                    ..
+                } => {
+                    self.state.pc = next;
+                    self.events.push(PresentationEvent::Custom {
+                        plugin_id: plugin_id.clone(),
+                        kind: kind.clone(),
+                        data: data.clone(),
+                    });
+                }
             }
         }
         Err(VmError::StepLimit(MAX_NODES_PER_STEP))

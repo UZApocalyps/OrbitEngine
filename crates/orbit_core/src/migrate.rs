@@ -8,6 +8,8 @@
 //!   characters, conditions and `SetVar` values become expressions.
 //! * v2 -> v3 (M2): variable declarations gain a `scope` (`Game` default,
 //!   `Persistent`). Existing variables become `Game` variables.
+//! * v3 -> v4 (M3a): `NodeKind::Custom` (plugin nodes) is added. Purely
+//!   additive: a v3 document is a valid v4 document.
 
 use std::borrow::Cow;
 
@@ -31,7 +33,7 @@ pub fn read_version(source: &str) -> Result<u32, CoreError> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -251,6 +253,14 @@ fn v2_to_v3(source: &str) -> Result<String, CoreError> {
     story.to_ron()
 }
 
+fn v3_to_v4(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 4;
+    story.to_ron()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,19 +354,29 @@ mod tests {
 )"#;
 
     #[test]
-    fn v2_story_migrates_to_v3_with_game_scope() {
+    fn v2_story_migrates_with_game_scope() {
         use crate::defs::VarScope;
         use crate::story::Story;
 
         assert_eq!(read_version(V2_STORY).unwrap(), 2);
         let story = Story::from_ron(V2_STORY).expect("migrated story must validate");
-        assert_eq!(story.schema_version, 3);
+        assert_eq!(story.schema_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(story.variables.len(), 1);
         assert_eq!(story.variables[0].scope, VarScope::Game);
         assert_eq!(story.scenes[0].nodes.len(), 2);
         // A v1 document goes through both steps.
         let from_v1 = Story::from_ron(V1_STORY).unwrap();
-        assert_eq!(from_v1.schema_version, 3);
+        assert_eq!(from_v1.schema_version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn v3_story_migrates_to_v4_unchanged() {
+        use crate::story::Story;
+
+        let v3 = V2_STORY.replace("schema_version: 2", "schema_version: 3");
+        let story = Story::from_ron(&v3).unwrap();
+        assert_eq!(story.schema_version, 4);
+        assert_eq!(story.scenes[0].nodes.len(), 2);
     }
 
     #[test]
