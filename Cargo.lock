@@ -2505,6 +2505,7 @@ version = "0.1.0"
 dependencies = [
  "orbit_core",
  "orbit_export",
+ "orbit_i18n",
  "orbit_mcp",
  "orbit_project",
  "orbit_save",
@@ -2545,6 +2546,7 @@ dependencies = [
  "orbit_editor_api",
  "orbit_export",
  "orbit_gfx",
+ "orbit_i18n",
  "orbit_mcp",
  "orbit_platform",
  "orbit_plugin_api",
@@ -2625,6 +2627,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "orbit_core",
+ "orbit_i18n",
  "orbit_plugin_api",
  "orbit_project",
  "orbit_vm",
