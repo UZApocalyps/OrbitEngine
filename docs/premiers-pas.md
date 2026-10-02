@@ -38,7 +38,7 @@ Les installeurs sont écrits dans `target/packager/`. WiX et NSIS sont télécha
 
 ## Créer un projet
 
-1. Lancez l'éditeur : l'écran d'accueil propose **Nouveau projet…** (Ctrl+N). Choisissez un dossier et un nom : l'éditeur crée `orbit.project.ron` (le manifeste : nom, histoire, profils d'export), `story.ron` (l'histoire) et le dossier des assets.
+1. Lancez l'éditeur : l'écran d'accueil propose **Nouveau projet…** (Ctrl+N). Choisissez un dossier et un nom : l'éditeur crée `orbit.project.ron` (le manifeste : nom, histoire, profils d'export), `story.orbit` (l'histoire ; l'ancienne extension `.ron` reste lue et l'éditeur propose de convertir) et le dossier des assets.
 2. Pour essayer d'abord, ouvrez le projet de démonstration livré avec l'éditeur (`examples/stories/demo.ron`).
 
 Un projet est un dossier ; tous les chemins d'assets de l'histoire sont relatifs à lui :
@@ -46,7 +46,7 @@ Un projet est un dossier ; tous les chemins d'assets de l'histoire sont relatifs
 ```text
 mon_jeu/
   orbit.project.ron   manifeste (nom, histoire, profils d'export)
-  story.ron           l'histoire
+  story.orbit         l'histoire
   i18n/               traductions : story.<langue>.ron
   assets/             images, musiques, sons
 ```

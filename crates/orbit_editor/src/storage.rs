@@ -13,7 +13,8 @@ use std::path::{Component, Path, PathBuf};
 use orbit_core::{Node, NodeId, NodeKind, Scene, SceneId, Story};
 use orbit_editor_api::Translator;
 use orbit_project::{
-    DEFAULT_STORY_FILE, MANIFEST_FILE, ProjectManifest, ProjectStorage, STATE_DIR, load_manifest,
+    DEFAULT_STORY_FILE, MANIFEST_FILE, ProjectManifest, ProjectStorage, STATE_DIR,
+    default_story_in, load_manifest, orbit_story_name, save_manifest,
 };
 use serde::{Deserialize, Serialize};
 
@@ -112,7 +113,7 @@ impl ProjectLocation {
     }
 
     /// Opens a project folder, its `orbit.project.ron`, a folder holding a
-    /// `story.ron`, or a bare story `.ron` file.
+    /// `story.orbit` (or legacy `story.ron`), or a bare story `.orbit` or `.ron` file.
     pub fn resolve(path: &Path, texts: &Translator) -> Result<Self, String> {
         let from_manifest = |root: &Path| -> Result<Self, String> {
             let storage = FsStorage::new(root);
@@ -127,10 +128,10 @@ impl ProjectLocation {
             if path.join(MANIFEST_FILE).is_file() {
                 return from_manifest(path);
             }
-            if path.join(DEFAULT_STORY_FILE).is_file() {
+            if let Some(default) = default_story_in(|f| path.join(f).is_file()) {
                 return Ok(Self {
                     root: path.to_owned(),
-                    story_file: DEFAULT_STORY_FILE.to_owned(),
+                    story_file: default.to_owned(),
                     manifest: None,
                 });
             }
@@ -169,6 +170,38 @@ impl ProjectLocation {
             story_file: file_name,
             manifest: None,
         })
+    }
+
+    /// Whether the story is a legacy `.ron` file (the editor offers to
+    /// convert it).
+    pub fn is_legacy_story(&self) -> bool {
+        orbit_story_name(&self.story_file).is_some()
+    }
+
+    /// Renames the legacy `.ron` story to `.orbit` (content unchanged) and
+    /// updates the manifest's reference. The layout sidecar and the
+    /// translations are named after the stem, so they stay valid. Returns the
+    /// path to open again (the project folder, or the new story file).
+    /// Nothing is changed when it fails.
+    pub fn convert_to_orbit(&self) -> Result<PathBuf, String> {
+        let new_name = orbit_story_name(&self.story_file)
+            .ok_or_else(|| format!("{} is not a .ron story", self.story_file))?;
+        let from = self.root.join(&self.story_file);
+        let to = self.root.join(&new_name);
+        if to.exists() {
+            return Err(format!("{} already exists", to.display()));
+        }
+        fs::rename(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+        if let Some(manifest) = &self.manifest {
+            let mut manifest = manifest.clone();
+            manifest.story = new_name;
+            if let Err(e) = save_manifest(&self.storage(), &manifest) {
+                let _ = fs::rename(&to, &from);
+                return Err(e.to_string());
+            }
+            return Ok(self.root.clone());
+        }
+        Ok(to)
     }
 
     /// Folder for recovery files: inside the project when it has a manifest
@@ -390,7 +423,7 @@ mod tests {
         assert_eq!(root.file_name().unwrap(), "Mon jeu- v1");
 
         let location = ProjectLocation::resolve(&root, &texts()).unwrap();
-        assert_eq!(location.story_file, "story.ron");
+        assert_eq!(location.story_file, "story.orbit");
         assert_eq!(location.manifest.as_ref().unwrap().name, "Mon jeu: v1");
         // Same project whichever path is given.
         assert_eq!(
@@ -398,7 +431,7 @@ mod tests {
             location
         );
         assert_eq!(
-            ProjectLocation::resolve(&root.join("story.ron"), &texts()).unwrap(),
+            ProjectLocation::resolve(&root.join("story.orbit"), &texts()).unwrap(),
             location
         );
 

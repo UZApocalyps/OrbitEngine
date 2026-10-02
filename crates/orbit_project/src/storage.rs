@@ -5,7 +5,7 @@
 //! ```text
 //! my_game/
 //!   orbit.project.ron   manifest (this module): name, story file, plugins
-//!   story.ron           the story IR (orbit_core), canonical RON
+//!   story.orbit (or legacy story.ron) the story IR (orbit_core), canonical RON
 //!   assets/ ...         files referenced by the story's asset manifest
 //!   .orbit/             tool state, never part of the game (recovery files...)
 //! ```
@@ -24,9 +24,39 @@ use crate::export::ExportProfile;
 
 /// File name of the manifest at the project root.
 pub const MANIFEST_FILE: &str = "orbit.project.ron";
+/// Extension of story files (the content is RON, unchanged).
+pub const STORY_EXT: &str = "orbit";
+/// Former extension of story files: still read everywhere (ADR 0004,
+/// addendum TL-02), and offered for conversion by the editor.
+pub const LEGACY_STORY_EXT: &str = "ron";
 /// Default story file of a new project (also what the player and
 /// `orbit validate` look for in a project folder).
-pub const DEFAULT_STORY_FILE: &str = "story.ron";
+pub const DEFAULT_STORY_FILE: &str = "story.orbit";
+/// Default story file of projects created before the `.orbit` extension.
+pub const LEGACY_STORY_FILE: &str = "story.ron";
+
+/// Whether `name` looks like a story file (`.orbit`, or legacy `.ron`).
+pub fn is_story_file_name(name: &str) -> bool {
+    name.rsplit_once('.').is_some_and(|(stem, ext)| {
+        !stem.is_empty() && (ext == STORY_EXT || ext == LEGACY_STORY_EXT)
+    })
+}
+
+/// Default story of a folder with no manifest: `story.orbit`, else the
+/// legacy `story.ron`. `exists` tells whether a file is in the folder.
+pub fn default_story_in(exists: impl Fn(&str) -> bool) -> Option<&'static str> {
+    [DEFAULT_STORY_FILE, LEGACY_STORY_FILE]
+        .into_iter()
+        .find(|f| exists(f))
+}
+
+/// The `.orbit` name of a legacy `.ron` story file (`a/b.ron` -> `a/b.orbit`);
+/// `None` when the file is not a `.ron` file.
+pub fn orbit_story_name(file: &str) -> Option<String> {
+    let (stem, ext) = file.rsplit_once('.')?;
+    (ext == LEGACY_STORY_EXT && !stem.is_empty() && !stem.ends_with('/'))
+        .then(|| format!("{stem}.{STORY_EXT}"))
+}
 /// Folder (relative to the root) for tool state that is not game content.
 pub const STATE_DIR: &str = ".orbit";
 /// Current manifest format.

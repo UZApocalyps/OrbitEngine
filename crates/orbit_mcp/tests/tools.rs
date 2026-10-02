@@ -57,7 +57,7 @@ impl Fixture {
     }
 
     fn on_disk(&self) -> Story {
-        let text = fs::read_to_string(self.dir.join("story.ron")).unwrap();
+        let text = fs::read_to_string(self.dir.join("story.orbit")).unwrap();
         Story::from_ron_unchecked(&text).unwrap()
     }
 
@@ -86,7 +86,7 @@ fn id_of(value: &Value, pointer: &str) -> String {
 fn an_empty_folder_becomes_a_project() {
     let f = Fixture::new("new");
     assert!(f.dir.join("orbit.project.ron").is_file());
-    assert!(f.dir.join("story.ron").is_file());
+    assert!(f.dir.join("story.orbit").is_file());
     assert!(f.story().scenes.is_empty());
 }
 
@@ -244,7 +244,7 @@ fn building_a_story_keeps_it_valid_and_saved() {
     assert_eq!(report["ok"], true, "{report}");
     // Saved after every call: the file on disk is the in-memory story.
     assert_eq!(&f.on_disk(), f.story());
-    Story::from_ron(&fs::read_to_string(f.dir.join("story.ron")).unwrap()).unwrap();
+    Story::from_ron(&fs::read_to_string(f.dir.join("story.orbit")).unwrap()).unwrap();
 
     // The scene reads back with ids and versions.
     let text = f.call("read_scene", json!({"scene": "intro"})).unwrap();

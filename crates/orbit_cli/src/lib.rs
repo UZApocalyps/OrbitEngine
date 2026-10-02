@@ -2,7 +2,7 @@
 //!
 //! * `orbit validate <project|file> [--check-files] [--root <dir>]`
 //! * `orbit run-text <file> [--step] [--save-dir <dir>]`
-//! * `orbit mcp --project <dir|file.ron>` (MCP server over stdio, see `orbit_mcp`; `--force` takes a project the editor holds)
+//! * `orbit mcp --project <dir|file.orbit>` (MCP server over stdio, see `orbit_mcp`; `--force` takes a project the editor holds)
 //! * `orbit build` and `orbit export <target>` (see `orbit_export`)
 //!
 //! The logic lives in [`run`], which takes its streams as parameters so it can
@@ -26,8 +26,8 @@ orbit - OrbitEngine command line
 
 USAGE:
     orbit validate <project|file> [--check-files] [--root <dir>]
-        Validate a story (a .ron file, or a project directory containing
-        story.ron). Exit code is non-zero when errors are found.
+        Validate a story (a .orbit or .ron file, or a project directory containing
+        story.orbit or story.ron). Exit code is non-zero when errors are found.
         --check-files   also check that every manifest asset exists on disk
         --root <dir>    directory the manifest paths are relative to
                         (default: the project directory, else the current one)
@@ -39,7 +39,7 @@ USAGE:
           b [n]   roll back n steps (default 1)     f [n]  roll forward
           s <slot>  save      l <slot>  load        h      show the history
         <slot> is a number (manual slot), q (quicksave) or a (last autosave).
-    orbit mcp --project <dir|file.ron> [--force]
+    orbit mcp --project <dir|file.orbit> [--force]
         Serve the project to an AI client over the Model Context Protocol
         (stdio, no GPU). Every edit goes through the project command API, is
         saved atomically and is one undo entry; file access is limited to
@@ -90,23 +90,32 @@ fn resolve_story_path(path: &Path) -> Result<PathBuf, String> {
     if !path.is_dir() {
         return Ok(path.to_owned());
     }
-    let default = path.join("story.ron");
-    if default.is_file() {
-        return Ok(default);
+    if let Some(default) = orbit_project::default_story_in(|f| path.join(f).is_file()) {
+        return Ok(path.join(default));
     }
-    let mut ron_files: Vec<PathBuf> = std::fs::read_dir(path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "ron"))
-        .collect();
-    match ron_files.len() {
-        1 => Ok(ron_files.remove(0)),
-        0 => Err(format!("no story.ron found in {}", path.display())),
-        _ => Err(format!(
-            "several .ron files in {}: pass the story file explicitly",
-            path.display()
-        )),
+    // `.orbit` files take precedence over legacy `.ron` ones (themes, i18n
+    // tables... are `.ron` too).
+    let files_with = |ext: &str| -> Result<Vec<PathBuf>, String> {
+        Ok(std::fs::read_dir(path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == ext))
+            .collect())
+    };
+    for ext in [orbit_project::STORY_EXT, orbit_project::LEGACY_STORY_EXT] {
+        let mut found = files_with(ext)?;
+        match found.len() {
+            0 => {}
+            1 => return Ok(found.remove(0)),
+            _ => {
+                return Err(format!(
+                    "several .{ext} files in {}: pass the story file explicitly",
+                    path.display()
+                ));
+            }
+        }
     }
+    Err(format!("no story.orbit found in {}", path.display()))
 }
 
 fn read_story_source(path: &Path) -> Result<String, String> {
@@ -147,10 +156,10 @@ fn mcp_cmd(args: &[String], err: &mut dyn Write) -> Result<u8, String> {
             }
             "--force" => force = true,
             flag if flag.starts_with("--") => return Err(format!("unknown option `{flag}`")),
-            _ => return Err("usage: orbit mcp --project <dir|file.ron> [--force]".into()),
+            _ => return Err("usage: orbit mcp --project <dir|file.orbit> [--force]".into()),
         }
     }
-    let project = project.ok_or("usage: orbit mcp --project <dir|file.ron> [--force]")?;
+    let project = project.ok_or("usage: orbit mcp --project <dir|file.orbit> [--force]")?;
     let _ = writeln!(err, "orbit mcp: serving {} on stdio", project.display());
     orbit_mcp::serve_stdio_with(&project, force)?;
     Ok(0)

@@ -29,7 +29,8 @@ pub use project::{
     ChangeEvent, ChangeKind, Project, ProjectError, Rejection, SubscriptionId, Transaction,
 };
 pub use storage::{
-    DEFAULT_STORY_FILE, MANIFEST_FILE, MANIFEST_FORMAT, PluginRequirement, ProjectFileError,
-    ProjectManifest, ProjectStorage, STATE_DIR, load_manifest, load_story, save_manifest,
-    save_story,
+    DEFAULT_STORY_FILE, LEGACY_STORY_EXT, LEGACY_STORY_FILE, MANIFEST_FILE, MANIFEST_FORMAT,
+    PluginRequirement, ProjectFileError, ProjectManifest, ProjectStorage, STATE_DIR, STORY_EXT,
+    default_story_in, is_story_file_name, load_manifest, load_story, orbit_story_name,
+    save_manifest, save_story,
 };

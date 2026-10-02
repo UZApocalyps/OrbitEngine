@@ -219,7 +219,7 @@ fn page_pak() -> Option<String> {
 /// workspace root (default story, fonts) is two levels up.
 ///
 /// Asset root, in order: `--root`; the directory itself when the story
-/// argument is a directory (a project holding `story.ron`); the workspace for
+/// argument is a directory (a project holding `story.orbit` or legacy `story.ron`); the workspace for
 /// the default story; else the current directory (the same rule as
 /// `orbit validate --check-files`).
 #[cfg(not(target_arch = "wasm32"))]
@@ -232,7 +232,14 @@ pub(crate) fn native_config(launch: &Launch, manifest_dir: &std::path::Path) -> 
         Some(arg) => {
             let path = Path::new(arg);
             if path.is_dir() {
-                (path.join("story.ron"), path.to_path_buf())
+                // `story.orbit`, else the legacy `story.ron`.
+                let name =
+                    if path.join("story.orbit").is_file() || !path.join("story.ron").is_file() {
+                        "story.orbit"
+                    } else {
+                        "story.ron"
+                    };
+                (path.join(name), path.to_path_buf())
             } else {
                 (path.to_path_buf(), PathBuf::from("."))
             }
@@ -244,7 +251,7 @@ pub(crate) fn native_config(launch: &Launch, manifest_dir: &std::path::Path) -> 
         _ => PathBuf::from("."),
     };
     let file_name = story_file.file_name().map_or_else(
-        || "story.ron".to_owned(),
+        || "story.orbit".to_owned(),
         |n| n.to_string_lossy().into_owned(),
     );
     let mut config = RuntimeConfig::new(

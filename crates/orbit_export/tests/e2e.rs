@@ -61,12 +61,21 @@ fn check_pak(pak: &[u8], version: &str) {
     }
     assert!(index.contains("engine/assets/fonts/Inter-Regular.ttf"));
     // Unreferenced files of the demo folder are not shipped.
-    let referenced: Vec<&str> = pack.story.assets.assets.iter().map(|a| a.path.as_str()).collect();
+    let referenced: Vec<&str> = pack
+        .story
+        .assets
+        .assets
+        .iter()
+        .map(|a| a.path.as_str())
+        .collect();
     for entry in index.entries() {
         if entry.path.starts_with("assets/") {
-            assert!(referenced.contains(&entry.path.as_str()), "{} is not referenced", entry.path);
+            assert!(
+                referenced.contains(&entry.path.as_str()),
+                "{} is not referenced",
+                entry.path
+            );
         }
-
     }
 }
 #[test]
@@ -235,9 +244,9 @@ fn a_broken_project_fails_before_writing_anything() {
     let templates_dir = TempDir::new("e2e_broken_templates");
     let out = TempDir::new("e2e_broken_out");
     demo_project(project_dir.path());
-    let story = std::fs::read_to_string(project_dir.path().join("story.ron")).unwrap();
+    let story = std::fs::read_to_string(project_dir.path().join("story.orbit")).unwrap();
     std::fs::write(
-        project_dir.path().join("story.ron"),
+        project_dir.path().join("story.orbit"),
         story.replace(
             "\"01JBX0T0000000000000000004\": \"Neo-Kyoto, 2087. Rain hammers the megatower blocks while neon bleeds across every wet window.\",",
             "",

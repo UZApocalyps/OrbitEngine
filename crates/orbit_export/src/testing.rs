@@ -43,10 +43,10 @@ pub fn restore_demo_assets(dir: &Path) {
 }
 
 /// Builds a project of the demo story in `dir`: `orbit.project.ron`,
-/// `story.ron`, its French translation and its assets.
+/// `story.orbit`, its French translation and its assets.
 pub fn demo_project(dir: &Path) -> ExportProject {
     let stories = repo_root().join("examples/stories");
-    std::fs::copy(stories.join("demo.ron"), dir.join("story.ron")).expect("copy story");
+    std::fs::copy(stories.join("demo.ron"), dir.join("story.orbit")).expect("copy story");
     std::fs::create_dir_all(dir.join("i18n")).expect("i18n dir");
     std::fs::copy(
         stories.join("i18n/demo.fr.ron"),
@@ -67,7 +67,7 @@ pub fn demo_project(dir: &Path) -> ExportProject {
 /// (`examples/stories/test_minimal.ron`), which does not change when the demo does.
 pub fn fixture_project(dir: &Path) -> ExportProject {
     let stories = repo_root().join("examples/stories");
-    std::fs::copy(stories.join("test_minimal.ron"), dir.join("story.ron")).expect("copy story");
+    std::fs::copy(stories.join("test_minimal.ron"), dir.join("story.orbit")).expect("copy story");
     std::fs::create_dir_all(dir.join("i18n")).expect("i18n dir");
     std::fs::copy(
         stories.join("i18n/test_minimal.fr.ron"),

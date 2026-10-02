@@ -1,7 +1,7 @@
 //! OrbitEngine player.
 //!
 //! * default: plays a story RON file with [`orbit_runtime`]. Natively
-//!   `orbit_player [story.ron | project-dir] [--root <dir>] [--no-watch]`
+//!   `orbit_player [story.orbit | story.ron | project-dir] [--root <dir>] [--no-watch]`
 //!   (default `examples/stories/demo.ron`); on the web `?story=<path>` (default
 //!   `examples/stories/demo.ron`, relative to the page);
 //! * demo: `--demo` natively, `?demo` on the web: the hard-coded visual demo

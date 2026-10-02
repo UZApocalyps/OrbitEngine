@@ -111,7 +111,9 @@ fn load_ui(
         if let SplashContent::Image(path) = &splash.content {
             let source = project.root.join(path);
             if !source.is_file() {
-                warnings.push(format!("the splash image `{path}` is missing: the splash will be empty"));
+                warnings.push(format!(
+                    "the splash image `{path}` is missing: the splash will be empty"
+                ));
             } else if !assets.iter().any(|a| &a.path == path) {
                 assets.push(AssetFile {
                     path: path.clone(),
@@ -378,11 +380,23 @@ mod tests {
         .unwrap();
         assert_eq!(bundle.screens.len(), 1);
         assert_eq!(bundle.splashes.len(), 1);
-        assert!(compiled.assets.iter().any(|a| a.path == "splash/studio.png"));
+        assert!(
+            compiled
+                .assets
+                .iter()
+                .any(|a| a.path == "splash/studio.png")
+        );
 
         // A broken screen blocks the export.
-        std::fs::write(ui.join("pause.screen.ron"), "(id: \"pause\", root: (kind: Grid(columns: 0)))").unwrap();
-        assert!(matches!(compile(&project, &profile), Err(ExportError::Ui(_))));
+        std::fs::write(
+            ui.join("pause.screen.ron"),
+            "(id: \"pause\", root: (kind: Grid(columns: 0)))",
+        )
+        .unwrap();
+        assert!(matches!(
+            compile(&project, &profile),
+            Err(ExportError::Ui(_))
+        ));
     }
 
     // Fixture: exact title, asset count and unreferenced list come from test_minimal.ron.
@@ -409,7 +423,11 @@ mod tests {
         let compiled = compile(&project, &profile).unwrap();
         assert!(!compiled.assets.is_empty());
         assert!(compiled.pack.translations.iter().any(|t| t.lang == "fr"));
-        assert!(compiled.unreferenced.is_empty(), "{:?}", compiled.unreferenced);
+        assert!(
+            compiled.unreferenced.is_empty(),
+            "{:?}",
+            compiled.unreferenced
+        );
     }
 
     #[test]
@@ -428,9 +446,11 @@ mod tests {
         crate::testing::restore_fixture_assets(dir.path());
 
         // A broken story blocks it too.
-        let story = std::fs::read_to_string(dir.path().join("story.ron")).unwrap();
+        let story = std::fs::read_to_string(dir.path().join("story.orbit"))
+            .unwrap()
+            .replace("\r\n", "\n");
         std::fs::write(
-            dir.path().join("story.ron"),
+            dir.path().join("story.orbit"),
             story.replace(
                 "\"01JBX0T0000000000000000003\": \"Neo-Kyoto, 2087. Rain falls on the megatowers.\",",
                 "",
@@ -441,11 +461,11 @@ mod tests {
             compile(&project, &profile),
             Err(ExportError::Invalid(_))
         ));
-        std::fs::write(dir.path().join("story.ron"), &story).unwrap();
+        std::fs::write(dir.path().join("story.orbit"), &story).unwrap();
 
         // An asset nothing uses is warned about and left out.
         std::fs::write(
-            dir.path().join("story.ron"),
+            dir.path().join("story.orbit"),
             story.replace(
                 "assets: [\n",
                 "assets: [\n            (id: \"01JBX0A0000000000000000099\", kind: Image, path: \"fixtures/assets/bg_street.png\"),\n",
