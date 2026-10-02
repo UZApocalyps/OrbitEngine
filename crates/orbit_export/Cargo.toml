@@ -12,7 +12,7 @@ orbit_core.workspace = true
 orbit_project.workspace = true
 orbit_i18n.workspace = true
 orbit_pak.workspace = true
-orbit_ui.workspace = true
+orbit_ui_data.workspace = true
 thiserror.workspace = true
 log.workspace = true
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

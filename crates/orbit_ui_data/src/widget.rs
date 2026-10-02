@@ -3,10 +3,10 @@
 use orbit_core::Condition;
 use serde::{Deserialize, Serialize};
 
-use super::action::{BindPath, UiAction};
-use super::migrate;
+use crate::action::{BindPath, UiAction};
+use crate::migrate;
 use crate::theme::Style;
-use crate::widgets::{Align, Anchor, Dir, PanelKind, Size};
+use crate::layout::{Align, Anchor, Dir, PanelKind, Size};
 
 /// Current version of the screen document format.
 pub const UI_VERSION: u32 = 1;
@@ -45,7 +45,7 @@ pub enum TextRef {
     Bind(BindPath),
 }
 
-/// A condition on the state the shell exposes ([`super::DataContext`]).
+/// A condition on the state the shell exposes (`DataContext`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Cond {
     #[default]

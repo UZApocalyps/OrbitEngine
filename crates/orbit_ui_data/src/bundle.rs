@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::validate::{Issue, Severity, validate};
-use super::widget::{ScreenAsset, from_ron};
+use crate::validate::{Issue, Severity, validate};
+use crate::widget::{ScreenAsset, from_ron};
 use crate::theme::Theme;
 
 /// What a project splash shows.
@@ -98,13 +98,13 @@ impl UiBundle {
     /// what a project starts from when it opts into data-driven screens.
     pub fn builtin() -> Self {
         Self::from_parts(
-            Some(include_str!("../../../../assets/ui/default/theme.ron")),
+            Some(include_str!("../../../assets/ui/default/theme.ron")),
             &[
-                include_str!("../../../../assets/ui/default/main_menu.screen.ron"),
-                include_str!("../../../../assets/ui/default/pause.screen.ron"),
-                include_str!("../../../../assets/ui/default/preferences.screen.ron"),
-                include_str!("../../../../assets/ui/default/save.screen.ron"),
-                include_str!("../../../../assets/ui/default/load.screen.ron"),
+                include_str!("../../../assets/ui/default/main_menu.screen.ron"),
+                include_str!("../../../assets/ui/default/pause.screen.ron"),
+                include_str!("../../../assets/ui/default/preferences.screen.ron"),
+                include_str!("../../../assets/ui/default/save.screen.ron"),
+                include_str!("../../../assets/ui/default/load.screen.ron"),
             ],
         )
         .expect("the built-in UI assets are valid")
@@ -166,7 +166,7 @@ impl UiBundle {
     ) -> Vec<Issue> {
         self.screens
             .iter()
-            .flat_map(|s| super::validate::variable_issues(s, ty_of))
+            .flat_map(|s| crate::validate::variable_issues(s, ty_of))
             .collect()
     }
 
@@ -249,17 +249,6 @@ mod tests {
             assert!(b.system_screen(name).is_some(), "{name}");
         }
         assert!(b.splashes.is_empty());
-        // Every stock screen builds into widgets.
-        let ctx = crate::DataContext { show_quit: true, ..Default::default() };
-        for s in &b.screens {
-            let mut screen = crate::DataScreen::new(
-                s.clone(),
-                b.theme.as_ref().unwrap(),
-                &crate::Texts::builtin("en"),
-                ctx.clone(),
-            );
-            assert!(screen.ui().focused().is_some(), "{} has a focusable widget", s.id);
-        }
     }
 
     #[test]

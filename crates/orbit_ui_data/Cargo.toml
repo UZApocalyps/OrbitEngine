@@ -1,0 +1,16 @@
+[package]
+name = "orbit_ui_data"
+description = "OrbitEngine UI data model: screen assets, widget definitions, actions, bindings, theme data, UiBundle, validation and migration. No GPU or font dependency; compiles to wasm."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_core.workspace = true
+serde.workspace = true
+ron.workspace = true
+
+[lints]
+workspace = true

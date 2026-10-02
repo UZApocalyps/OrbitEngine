@@ -2,12 +2,12 @@
 
 use std::collections::HashSet;
 
-use super::action::{BindPath, SettingKey, UiAction};
+use crate::action::{BindPath, SettingKey, UiAction};
 use orbit_core::ValueType;
 
-use super::widget::{Cond, ScreenAsset, TextRef, WidgetDef, WidgetKind};
+use crate::widget::{Cond, ScreenAsset, TextRef, WidgetDef, WidgetKind};
 use crate::theme::Theme;
-use crate::widgets::Dir;
+use crate::layout::Dir;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
@@ -284,7 +284,7 @@ fn check_widget(sid: &str, w: &WidgetDef, theme: Option<&Theme>, out: &mut Vec<I
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::from_ron;
+    use crate::widget::from_ron;
 
     fn issues(root: &str) -> Vec<Issue> {
         let src = format!("(id: \"s\", root: {root})");
