@@ -15,6 +15,12 @@ Idées validées mais hors des jalons en cours. À replanifier dans la roadmap l
 - Courbes nommées réutilisables stockées dans le projet ; sérialisées dans l'IR, exécutées à l'identique en natif et web.
 - Exposé au MCP (création/assignation de courbes).
 
+## Extension de fichier dédiée aux histoires (`.orbit`)
+- Remplacer `.ron` par `.orbit` pour les fichiers d'histoire (le contenu reste du RON) ; `.ron` toujours accepté pour la compatibilité.
+- Manifeste, traductions, thèmes et préférences restent en `.ron` (ou `.orbitproj` pour le manifeste, à décider).
+- Association de fichier Windows/Linux dans les installeurs (double-clic → éditeur, icône dédiée).
+- Décision : reporté, on reste en `.ron` pour l'instant.
+
 ## Optimisations
 - Taille du bundle web : fait au M4 (10,2 → 4,4 Mo, budget en CI). Pistes restantes : décodage JPEG / polices chargés à la demande, `cosmic-text` sans `swash` inutile, binaryen récent, `twiggy` pour chercher les gros morceaux.
 - Profilage CPU/GPU du runtime et de l'éditeur.

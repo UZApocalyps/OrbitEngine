@@ -1,0 +1,12 @@
+{
+    "orbit.sample.title": "Plugin d'essai",
+    "orbit.sample.intro": "Ce panneau, l'action de la palette et le type de nœud « note » viennent d'un plugin enregistré par l'API publique.",
+    "orbit.sample.changes": "Modifications du projet vues par le hook : {count}",
+    "orbit.sample.insert_button": "Insérer un nœud « note »",
+    "orbit.sample.hello": "Plugin d'essai : dire bonjour",
+    "orbit.sample.hello_toast": "Bonjour depuis le plugin d'essai !",
+    "orbit.sample.insert_note": "Plugin d'essai : insérer une note",
+    "orbit.sample.note": "Note",
+    "orbit.sample.note_default": "Une note",
+    "orbit.sample.note_no_text": "la note n'a pas de champ `text`",
+}

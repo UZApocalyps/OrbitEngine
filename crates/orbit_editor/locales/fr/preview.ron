@@ -1,0 +1,55 @@
+{
+    "preview.title": "Preview",
+
+    // ---- palette / menu actions
+    "preview.action.play_pause": "Lecture / pause",
+    "preview.action.pause": "Preview : pause",
+    "preview.action.play": "Preview : lecture",
+    "preview.action.stop": "Preview : arrêter",
+    "preview.action.restart": "Preview : recommencer",
+    "preview.action.play_from_here": "Preview : jouer depuis ici",
+    "preview.action.mute": "Preview : couper le son",
+    "preview.action.follow": "Preview : suivre la lecture",
+    "preview.action.fullscreen": "Preview : plein panneau",
+
+    // ---- status line
+    "preview.status.stopped": "Arrêtée",
+    "preview.status.playing": "Lecture",
+    "preview.status.paused": "En pause",
+    "preview.flow.say": "réplique",
+    "preview.flow.choice": "choix",
+    "preview.flow.waiting": "pause",
+    "preview.flow.transition": "transition",
+    "preview.flow.ended": "fin de l'histoire",
+    "preview.flow.failed": "erreur",
+    "preview.input_sent": "clavier et souris envoyés au jeu",
+    "preview.click_to_play": "cliquez dans l'image pour jouer",
+
+    // ---- control bar
+    "preview.here": "Ici",
+    "preview.tip.pause": "Pause (F6)",
+    "preview.tip.play": "Lecture (F6)",
+    "preview.tip.stop": "Arrêter (Maj+F6)",
+    "preview.tip.restart": "Recommencer (Ctrl+F6)",
+    "preview.tip.here": "Jouer depuis le nœud sélectionné (F7)",
+    "preview.tip.speed_normal": "Vitesse normale",
+    "preview.tip.speed_double": "Vitesse double",
+    "preview.tip.skip": "Passer les répliques (s'arrête aux choix)",
+    "preview.tip.unmute": "Réactiver le son",
+    "preview.tip.mute": "Couper le son",
+    "preview.tip.follow": "Suivre la lecture dans l'explorateur",
+    "preview.tip.restore": "Revenir à la disposition",
+    "preview.tip.maximize": "Plein panneau",
+
+    // ---- picture area
+    "preview.unavailable": "Preview indisponible",
+    "preview.unavailable_hint": "Aucun GPU n'a pu être initialisé pour la preview.",
+    "preview.no_project": "Aucun projet ouvert",
+    "preview.no_project_hint": "Ouvrez un projet pour le jouer ici.",
+    "preview.press_play": "Appuyez sur Lecture (F6)",
+    "preview.select_node_hint": "Sélectionnez un nœud puis « Ici » pour jouer depuis là.",
+    "preview.story_error": "Erreur dans l'histoire : la preview garde la dernière version valide",
+
+    // ---- console line
+    "preview.console": "Preview : {text}",
+}

@@ -1,0 +1,55 @@
+{
+    "preview.title": "Preview",
+
+    // ---- palette / menu actions
+    "preview.action.play_pause": "Play / Pause",
+    "preview.action.pause": "Preview: pause",
+    "preview.action.play": "Preview: play",
+    "preview.action.stop": "Preview: stop",
+    "preview.action.restart": "Preview: restart",
+    "preview.action.play_from_here": "Preview: play from here",
+    "preview.action.mute": "Preview: mute",
+    "preview.action.follow": "Preview: follow playback",
+    "preview.action.fullscreen": "Preview: maximize panel",
+
+    // ---- status line
+    "preview.status.stopped": "Stopped",
+    "preview.status.playing": "Playing",
+    "preview.status.paused": "Paused",
+    "preview.flow.say": "line",
+    "preview.flow.choice": "choice",
+    "preview.flow.waiting": "wait",
+    "preview.flow.transition": "transition",
+    "preview.flow.ended": "end of story",
+    "preview.flow.failed": "error",
+    "preview.input_sent": "keyboard and mouse sent to the game",
+    "preview.click_to_play": "click the picture to play",
+
+    // ---- control bar
+    "preview.here": "Here",
+    "preview.tip.pause": "Pause (F6)",
+    "preview.tip.play": "Play (F6)",
+    "preview.tip.stop": "Stop (Shift+F6)",
+    "preview.tip.restart": "Restart (Ctrl+F6)",
+    "preview.tip.here": "Play from the selected node (F7)",
+    "preview.tip.speed_normal": "Normal speed",
+    "preview.tip.speed_double": "Double speed",
+    "preview.tip.skip": "Skip lines (stops at choices)",
+    "preview.tip.unmute": "Unmute",
+    "preview.tip.mute": "Mute",
+    "preview.tip.follow": "Follow playback in the explorer",
+    "preview.tip.restore": "Restore the layout",
+    "preview.tip.maximize": "Maximize panel",
+
+    // ---- picture area
+    "preview.unavailable": "Preview unavailable",
+    "preview.unavailable_hint": "No GPU could be initialized for the preview.",
+    "preview.no_project": "No project open",
+    "preview.no_project_hint": "Open a project to play it here.",
+    "preview.press_play": "Press Play (F6)",
+    "preview.select_node_hint": "Select a node, then “Here” to play from there.",
+    "preview.story_error": "Error in the story: the preview keeps the last valid version",
+
+    // ---- console line
+    "preview.console": "Preview: {text}",
+}

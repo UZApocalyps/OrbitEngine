@@ -1,0 +1,12 @@
+{
+    "orbit.sample.title": "Sample plugin",
+    "orbit.sample.intro": "This panel, the palette action and the \"note\" node type come from a plugin registered through the public API.",
+    "orbit.sample.changes": "Project changes seen by the hook: {count}",
+    "orbit.sample.insert_button": "Insert a \"note\" node",
+    "orbit.sample.hello": "Sample plugin: say hello",
+    "orbit.sample.hello_toast": "Hello from the sample plugin!",
+    "orbit.sample.insert_note": "Sample plugin: insert a note",
+    "orbit.sample.note": "Note",
+    "orbit.sample.note_default": "A note",
+    "orbit.sample.note_no_text": "the note has no `text` field",
+}

@@ -8,3 +8,7 @@ Cargo.lock.bak
 
 # Claude Code agent worktrees
 /.claude/
+
+# Player templates copied locally before packaging (built by cargo xtask templates)
+/packaging/templates/*
+!/packaging/templates/README.txt
