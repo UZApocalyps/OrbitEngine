@@ -24,8 +24,13 @@
 //! The host drives it: `localizer.set_language("fr")`, then shows
 //! `localizer.text(string_id)` instead of `Vm::text(string_id)`.
 
+mod exchange;
+pub mod files;
+
 use std::collections::BTreeMap;
 use std::fmt;
+
+pub use exchange::{ExchangeFormat, StaleEntry, source_hash, stale_entries};
 
 use orbit_core::{Story, StringId, StringTable};
 use serde::{Deserialize, Serialize};
@@ -51,6 +56,25 @@ pub struct Translation {
     pub name: String,
     #[serde(default)]
     pub entries: BTreeMap<StringId, String>,
+    /// Hash of the source text each entry was translated from (see
+    /// [`source_hash`]), used to detect translations made stale by a source
+    /// edit. Optional: files without it keep working (no entry is stale).
+    /// Kept in the RON file only (`from_ron`/`to_ron`): the game pack, which
+    /// is a positional binary format, does not carry it.
+    #[serde(skip)]
+    pub source_hashes: BTreeMap<StringId, u64>,
+}
+
+/// The RON file layout: [`Translation`] plus the optional source hashes.
+#[derive(Serialize, Deserialize)]
+struct TranslationFile {
+    lang: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    entries: BTreeMap<StringId, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    source_hashes: BTreeMap<StringId, u64>,
 }
 
 impl Translation {
@@ -59,16 +83,30 @@ impl Translation {
             lang: lang.into(),
             name: name.into(),
             entries: BTreeMap::new(),
+            source_hashes: BTreeMap::new(),
         }
     }
 
     pub fn from_ron(source: &str) -> Result<Self, I18nError> {
-        ron::from_str(source).map_err(|e| I18nError::Parse(e.to_string()))
+        let f: TranslationFile =
+            ron::from_str(source).map_err(|e| I18nError::Parse(e.to_string()))?;
+        Ok(Self {
+            lang: f.lang,
+            name: f.name,
+            entries: f.entries,
+            source_hashes: f.source_hashes,
+        })
     }
 
     pub fn to_ron(&self) -> Result<String, I18nError> {
         let cfg = ron::ser::PrettyConfig::new().indentor("    ".to_owned());
-        ron::ser::to_string_pretty(self, cfg).map_err(|e| I18nError::Parse(e.to_string()))
+        let f = TranslationFile {
+            lang: self.lang.clone(),
+            name: self.name.clone(),
+            entries: self.entries.clone(),
+            source_hashes: self.source_hashes.clone(),
+        };
+        ron::ser::to_string_pretty(&f, cfg).map_err(|e| I18nError::Parse(e.to_string()))
     }
 
     /// A template for translators: every source string, with an empty text.

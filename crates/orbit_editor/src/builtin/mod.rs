@@ -23,6 +23,7 @@ pub mod reveal;
 pub mod sample;
 mod scene;
 mod sceneview;
+mod translations;
 mod search;
 pub mod thumbs;
 mod ui_util;
@@ -61,6 +62,7 @@ pub mod ids {
     pub const SEARCH: &str = "orbit.search";
     pub const SCENEVIEW: &str = "orbit.sceneview";
     pub const EXPORT: &str = "orbit.export";
+    pub const TRANSLATIONS: &str = "orbit.translations";
     pub const ASSISTANT: &str = "orbit.assistant";
     pub const UI_EDITOR: &str = "orbit.ui";
 }
@@ -82,6 +84,7 @@ pub mod panels {
     pub const SEARCH: &str = "orbit.search.search";
     pub const SCENEVIEW: &str = "orbit.sceneview.sceneview";
     pub const EXPORT: &str = "orbit.export.export";
+    pub const TRANSLATIONS: &str = "orbit.translations.translations";
     pub const ASSISTANT: &str = "orbit.assistant.assistant";
     pub const UI_EDITOR: &str = "orbit.ui.editor";
 }
@@ -121,6 +124,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(problems::ProblemsPlugin),
         Box::new(search::SearchPlugin::new(shared.search.clone())),
         Box::new(export::ExportPlugin),
+        Box::new(translations::TranslationsPlugin),
         Box::new(assistant::AssistantPlugin),
         Box::new(uied::UiEditorPlugin::default()),
         Box::new(SamplePlugin::default()),

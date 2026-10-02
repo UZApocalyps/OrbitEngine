@@ -3,12 +3,14 @@
 //! * `orbit validate <project|file> [--check-files] [--root <dir>]`
 //! * `orbit run-text <file> [--step] [--save-dir <dir>]`
 //! * `orbit mcp --project <dir|file.orbit>` (MCP server over stdio, see `orbit_mcp`; `--force` takes a project the editor holds)
+//! * `orbit i18n export|import|stale|accept|stamp` (PO/CSV, stale translations)
 //! * `orbit build` and `orbit export <target>` (see `orbit_export`)
 //!
 //! The logic lives in [`run`], which takes its streams as parameters so it can
 //! be tested without spawning a process.
 
 mod export_cmd;
+mod i18n_cmd;
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -47,12 +49,14 @@ USAGE:
         Protocol on stdout: nothing else is printed there.
         Refused while the editor (or another `orbit mcp`) holds the project
         (.orbit/lock): use the editor's live MCP instead, or --force.
-{export_usage}    orbit help
+{export_usage}{i18n_usage}    orbit help
 ";
 
 /// The help text (the export commands are documented next to their code).
 fn usage() -> String {
-    USAGE.replace("{export_usage}", export_cmd::USAGE)
+    USAGE
+        .replace("{export_usage}", export_cmd::USAGE)
+        .replace("{i18n_usage}", i18n_cmd::USAGE)
 }
 
 /// Runs the CLI and returns the process exit code.
@@ -68,6 +72,7 @@ pub fn run(
         Some("mcp") => mcp_cmd(&args[1..], err),
         Some("build") => export_cmd::build_cmd(&args[1..], out, err),
         Some("export") => export_cmd::export_cmd(&args[1..], out, err),
+        Some("i18n") => i18n_cmd::i18n_cmd(&args[1..], out, err),
         Some("help" | "--help" | "-h") | None => {
             let _ = write!(out, "{}", usage());
             Ok(0)

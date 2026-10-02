@@ -1386,6 +1386,47 @@ fn list_assets(cx: &mut ToolCx<'_>, a: ListAssetsArgs) -> Result<String, ToolErr
     )))
 }
 
+/// Per-language coverage and stale translations (`i18n/<story>.<lang>.ron`).
+fn translation_status(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
+    const MAX_STALE: usize = 50;
+    let story_path = cx.sandbox.root().join(&cx.manifest.story);
+    let story = cx.project.story();
+    let mut languages = Vec::new();
+    for lang in orbit_i18n::files::list_languages(&story_path) {
+        let path = orbit_i18n::files::translation_path(&story_path, &lang);
+        let t = match orbit_i18n::files::load(&path) {
+            Ok(Some(t)) => t,
+            Ok(None) => continue,
+            Err(e) => {
+                languages.push(json!({"language": lang, "error": e}));
+                continue;
+            }
+        };
+        let report = orbit_i18n::coverage(story, &t);
+        let stale = orbit_i18n::stale_entries(&story.strings, &t);
+        let listed: Vec<Json> = stale
+            .iter()
+            .take(MAX_STALE)
+            .map(|s| {
+                json!({"id": s.id.to_string(), "source": s.source, "translation": s.translation})
+            })
+            .collect();
+        languages.push(json!({
+            "language": t.lang,
+            "translated": report.translated,
+            "total": report.total,
+            "missing": report.missing.len(),
+            "orphans": report.orphans.len(),
+            "stale_count": stale.len(),
+            "stale": listed,
+        }));
+    }
+    Ok(pretty(&json!({
+        "source_language": story.strings.source_lang,
+        "languages": languages,
+    })))
+}
+
 const MAX_IMPORT_BYTES: u64 = 256 * 1024 * 1024;
 
 fn sanitize_file_name(name: &str) -> String {
@@ -1796,6 +1837,13 @@ pub fn builtin_tools() -> Vec<ToolDef> {
             "List the assets of the manifest (id, kind, path relative to the project).",
             Kind::Read,
             list_assets,
+        ),
+        def::<NoArgs>(
+            "translation_status",
+            "Translation status",
+            "Report, for each translation file (i18n/<story>.<lang>.ron), the coverage (translated, missing, orphaned strings) and the stale translations: those whose source text was edited since they were translated.",
+            Kind::Read,
+            translation_status,
         ),
         def::<ImportAssetArgs>(
             "import_asset",

@@ -111,6 +111,7 @@ fn tools_advertise_schemas_and_hints() {
         "edit_character",
         "declare_variable",
         "list_assets",
+        "translation_status",
         "import_asset",
         "validate",
         "simulate",
