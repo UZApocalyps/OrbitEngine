@@ -569,7 +569,7 @@ pub fn read_resource(cx: &ResourceCx<'_>, uri: &str) -> Result<(&'static str, St
         "orbit://project/validation" => {
             let sandbox = cx.sandbox.clone();
             let exists = move |p: &str| sandbox.resolve(p).is_ok_and(|f| f.is_file());
-            json(views::validate_project(story, &cx.registry, Some(&exists)).to_json())
+            json(views::validate_project(story, cx.registry, Some(&exists)).to_json())
         }
         "orbit://schema/ir" => Ok((
             "application/schema+json",
@@ -578,7 +578,7 @@ pub fn read_resource(cx: &ResourceCx<'_>, uri: &str) -> Result<(&'static str, St
         other => {
             if let Some(id) = other.strip_prefix("orbit://scene/") {
                 let scene = crate::convert::find_scene(story, id)?;
-                return Ok(("text/plain", views::render_scene(&cx.project, scene)));
+                return Ok(("text/plain", views::render_scene(cx.project, scene)));
             }
             Err(ToolError::not_found(format!("unknown resource `{other}`")))
         }

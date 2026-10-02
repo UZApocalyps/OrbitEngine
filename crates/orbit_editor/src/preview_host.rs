@@ -981,6 +981,28 @@ mod tests {
     }
 
     #[test]
+    fn a_choice_is_picked_by_index_exact_text_or_a_unique_beginning() {
+        let options: Vec<String> = ["Go left", "Go right", "Stay"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        let pick = |s: ChoiceSelector| resolve_option(&options, &s);
+        assert_eq!(pick(ChoiceSelector::Index(2)).unwrap(), 2);
+        assert_eq!(pick(ChoiceSelector::Text("stay".into())).unwrap(), 2);
+        assert_eq!(pick(ChoiceSelector::Text("Go r".into())).unwrap(), 1);
+        // Ambiguous, unknown and out of range: the error lists the options.
+        for bad in [
+            ChoiceSelector::Text("Go".into()),
+            ChoiceSelector::Text("nope".into()),
+            ChoiceSelector::Text(String::new()),
+            ChoiceSelector::Index(3),
+        ] {
+            let err = pick(bad).unwrap_err();
+            assert!(err.message.contains("0: Go left"), "{}", err.message);
+        }
+    }
+
+    #[test]
     fn a_burst_of_edits_reloads_once_after_a_quiet_moment() {
         let mut d = Debounce::new(Duration::from_millis(100), Duration::from_millis(250));
         assert!(!d.pending());

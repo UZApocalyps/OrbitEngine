@@ -67,35 +67,54 @@ fn age(ms_ago: u64) -> String {
     }
 }
 
-fn status_line(status: &AiServerStatus, url: Option<&str>) -> (Color32, String) {
+fn status_line(status: &AiServerStatus) -> (Color32, String) {
     match status {
         AiServerStatus::Stopped => (Color32::from_gray(140), "Arrêté".to_owned()),
-        AiServerStatus::Listening => (
-            success(),
-            format!("À l'écoute · {}", url.unwrap_or("127.0.0.1")),
-        ),
+        AiServerStatus::Listening => (success(), "À l'écoute".to_owned()),
         AiServerStatus::Connected { clients } => (
             success(),
             format!(
-                "{} client{} connecté{} · {}",
+                "{} client{} connecté{}",
                 clients,
                 if *clients > 1 { "s" } else { "" },
                 if *clients > 1 { "s" } else { "" },
-                url.unwrap_or("127.0.0.1")
             ),
         ),
         AiServerStatus::Failed(message) => (Color32::from_rgb(220, 90, 90), message.clone()),
     }
 }
 
+/// Width from which the panel puts the server card and the journal side by
+/// side (a bottom dock is wide and short).
+const WIDE: f32 = 600.0;
+
 fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
-    egui::ScrollArea::vertical()
-        .id_salt("orbit_assistant_scroll")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            server_card(ui, ctx);
-            journal(ui, ctx);
+    if ui.available_width() >= WIDE {
+        let left = (ui.available_width() * 0.4).clamp(340.0, 440.0);
+        let height = ui.available_height();
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(vec2(left, height), Layout::top_down(Align::Min), |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("orbit_assistant_card")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| server_card(ui, ctx));
+            });
+            ui.separator();
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), height),
+                Layout::top_down(Align::Min),
+                |ui| journal(ui, ctx, true),
+            );
         });
+    } else {
+        egui::ScrollArea::vertical()
+            .id_salt("orbit_assistant_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                server_card(ui, ctx);
+                journal(ui, ctx, false);
+            });
+    }
     // The "AI is editing" light goes out by itself.
     if ctx.state().ai.edited_within(ACTIVITY_SECONDS) {
         ui.ctx().request_repaint_after(Duration::from_millis(400));
@@ -104,7 +123,8 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
 
 fn server_card(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let running = ctx.state().ai.status.is_running();
-    let (dot, text) = status_line(&ctx.state().ai.status, ctx.state().ai.url.as_deref());
+    let (dot, text) = status_line(&ctx.state().ai.status);
+    let url = ctx.state().ai.url.clone();
     let editing = ctx.state().ai.edited_within(ACTIVITY_SECONDS);
     let lock_warning = ctx.state().ai.lock_warning.clone();
     card(ui, |ui| {
@@ -131,6 +151,9 @@ fn server_card(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                 }
             });
         });
+        if let Some(url) = url.as_deref().filter(|_| running) {
+            ui.label(RichText::new(url).monospace().size(11.5).color(weak(ui)));
+        }
         if let Some(message) = &lock_warning {
             ui.add_space(6.0);
             ui.label(RichText::new(format!("{}  {message}", icons::WARNING)).color(warning(ui)));
@@ -246,35 +269,36 @@ fn settings_grid(ui: &mut Ui, ctx: &mut EditorContext<'_>, running: bool) {
     }
 }
 
-fn journal(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
+/// `fill`: the rows scroll inside the space left; otherwise they are all
+/// drawn (the caller scrolls).
+fn journal(ui: &mut Ui, ctx: &mut EditorContext<'_>, fill: bool) {
     ui.add_space(6.0);
     let can_undo = ctx.state().ai.can_undo_last;
     let count = ctx.state().ai.log.len();
+    section_title(ui, &format!("Journal de l'IA ({count})"));
     ui.horizontal(|ui| {
-        section_title(ui, &format!("Journal de l'IA ({count})"));
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if icon_button(ui, icons::TRASH, "Vider le journal").clicked() {
-                ctx.state_mut().ai.command(AiCommand::ClearLog);
-            }
-            let undo = ui
-                .add_enabled(
-                    can_undo,
-                    egui::Button::new(format!(
-                        "{}  Annuler la dernière action de l'IA",
-                        icons::ARROW_COUNTER_CLOCKWISE
-                    ))
-                    .min_size(vec2(0.0, 26.0)),
-                )
-                .on_hover_text(if can_undo {
-                    "Annule l'entrée d'historique créée par le dernier appel de l'IA."
-                } else {
-                    "Disponible tant que la dernière modification de l'historique est celle de l'IA."
-                });
-            if undo.clicked() {
-                ctx.state_mut().ai.command(AiCommand::UndoLast);
-            }
-        });
+        let undo = ui
+            .add_enabled(
+                can_undo,
+                egui::Button::new(format!(
+                    "{}  Annuler la dernière action de l'IA",
+                    icons::ARROW_COUNTER_CLOCKWISE
+                ))
+                .min_size(vec2(0.0, 26.0)),
+            )
+            .on_hover_text(if can_undo {
+                "Annule l'entrée d'historique créée par le dernier appel de l'IA."
+            } else {
+                "Disponible tant que la dernière modification de l'historique est celle de l'IA."
+            });
+        if undo.clicked() {
+            ctx.state_mut().ai.command(AiCommand::UndoLast);
+        }
+        if icon_button(ui, icons::TRASH, "Vider le journal").clicked() {
+            ctx.state_mut().ai.command(AiCommand::ClearLog);
+        }
     });
+    ui.add_space(4.0);
 
     if count == 0 {
         ui.add_space(14.0);
@@ -290,7 +314,7 @@ fn journal(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let entries: Vec<AiLogEntry> = ctx.state().ai.log.iter().rev().cloned().collect();
     let mut to_reveal: Option<Location> = None;
     ui.spacing_mut().item_spacing.y = 0.0;
-    for entry in &entries {
+    let mut draw = |ui: &mut Ui, entry: &AiLogEntry| {
         let (rect, response) = list_row(ui, ROW_HEIGHT, false);
         let painter = ui.painter_at(rect);
         let (icon, color) = if entry.ok {
@@ -383,6 +407,20 @@ fn journal(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             }
         }
         response.on_hover_text(format!("{}\n{}\n{}", entry.tool, entry.args, entry.result));
+    };
+    if fill {
+        egui::ScrollArea::vertical()
+            .id_salt("orbit_assistant_journal")
+            .auto_shrink([false, false])
+            .show_rows(ui, ROW_HEIGHT, entries.len(), |ui, range| {
+                for entry in &entries[range] {
+                    draw(ui, entry);
+                }
+            });
+    } else {
+        for entry in &entries {
+            draw(ui, entry);
+        }
     }
     if let Some(location) = to_reveal {
         reveal(ctx, location);

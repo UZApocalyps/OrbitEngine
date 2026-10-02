@@ -121,10 +121,7 @@ impl Reply {
 fn dechunk(raw: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut rest = raw;
-    loop {
-        let Some(pos) = rest.windows(2).position(|w| w == b"\r\n") else {
-            break;
-        };
+    while let Some(pos) = rest.windows(2).position(|w| w == b"\r\n") {
         let size = usize::from_str_radix(std::str::from_utf8(&rest[..pos]).unwrap().trim(), 16)
             .unwrap_or(0);
         rest = &rest[pos + 2..];

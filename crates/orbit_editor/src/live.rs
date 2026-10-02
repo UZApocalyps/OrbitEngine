@@ -16,7 +16,6 @@
 //! Nothing in this module needs a window or a GPU: the whole path is tested
 //! with a bare [`crate::core::EditorCore`].
 
-use std::path::Path;
 use std::time::Instant;
 
 use orbit_core::{NodeId, Story, Value};
@@ -39,6 +38,9 @@ use crate::core::EditorCore;
 
 /// Plugin id under which the settings are saved in the user config.
 pub const PREFS_ID: &str = "orbit.ai";
+
+/// A client silent for this long is shown as disconnected.
+const CLIENT_IDLE_MS: u64 = 90_000;
 
 /// What a preview tool produced.
 pub struct PreviewOutput {
@@ -223,6 +225,11 @@ pub fn on_project_opened(core: &mut EditorCore) {
         core.state.ai.lock_warning = Some(message);
         return; // the other side keeps the lock
     }
+    // A bare story file has no project folder of its own: no `.orbit` folder
+    // is created next to it just to hold a lock.
+    if session.location.manifest.is_none() {
+        return;
+    }
     match ProjectLock::acquire(&root, "editor") {
         Ok(lock) => core.mcp.lock = Some(lock),
         Err(e) => log::debug!("cannot write the project lock: {e}"),
@@ -278,7 +285,15 @@ fn publish_status(core: &mut EditorCore) {
     if let Some(server) = &core.mcp.server {
         use std::sync::atomic::Ordering;
         let status = server.status();
-        let clients = status.sessions.load(Ordering::Relaxed);
+        // A session outlives its client (HTTP has no hang-up): one that has
+        // been silent for a while no longer counts as a connected client.
+        let idle_ms = orbit_platform::unix_time_ms()
+            .saturating_sub(status.last_request_ms.load(Ordering::Relaxed));
+        let clients = if idle_ms < CLIENT_IDLE_MS {
+            status.sessions.load(Ordering::Relaxed)
+        } else {
+            0
+        };
         core.state.ai.rejected = status.rejected.load(Ordering::Relaxed);
         core.state.ai.status = if clients > 0 {
             AiServerStatus::Connected { clients }
@@ -690,7 +705,53 @@ pub fn preview_state_json(story: &Story, status: &str, snapshot: Option<&Preview
     })
 }
 
-/// Used by the window app: opens the lock root for a path (tests).
-pub fn lock_holder(root: &Path) -> Option<lock::LockInfo> {
-    lock::inspect(root)
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use orbit_runtime::Line;
+    use orbit_vm::SceneState;
+
+    use super::*;
+
+    #[test]
+    fn the_preview_state_is_readable_json() {
+        let story = Story::new("T");
+        let snapshot = PreviewSnapshot {
+            flow: Flow::Choice(vec!["Left".into(), "Right".into()]),
+            node: None,
+            variables: BTreeMap::from([("trust".to_owned(), Value::Int(2))]),
+            scene: SceneState::default(),
+        };
+        let json = preview_state_json(&story, "playing", Some(&snapshot));
+        assert_eq!(json["status"], "playing");
+        assert_eq!(json["running"], true);
+        assert_eq!(json["flow"]["kind"], "choice");
+        assert_eq!(json["flow"]["options"][1]["text"], "Right");
+        assert_eq!(json["variables"]["trust"], 2);
+        assert!(json["scene"]["background"].is_null());
+
+        let say = PreviewSnapshot {
+            flow: Flow::Say(Line {
+                speaker: Some(("Alice".into(), [1, 2, 3])),
+                text: "Hi".into(),
+                already_read: false,
+            }),
+            ..snapshot
+        };
+        let json = preview_state_json(&story, "playing", Some(&say));
+        assert_eq!(json["flow"]["speaker"], "Alice");
+        assert_eq!(json["flow"]["text"], "Hi");
+
+        let stopped = preview_state_json(&story, "stopped", None);
+        assert_eq!(stopped["running"], false);
+    }
+
+    #[test]
+    fn journal_text_is_one_short_line() {
+        assert_eq!(shorten("a\n  b\tc", 10), "a b c");
+        let long = "x".repeat(50);
+        let cut = shorten(&long, 10);
+        assert_eq!(cut, format!("{}...", "x".repeat(10)));
+    }
 }
