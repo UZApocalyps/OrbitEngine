@@ -54,7 +54,7 @@ pub fn asset_users(story: &Story, id: AssetId) -> Vec<AssetUser> {
     let characters = story
         .characters
         .iter()
-        .filter(|c| c.expressions.iter().any(|e| e.image == id))
+        .filter(|c| c.expressions.iter().any(|e| e.assets().contains(&id)))
         .map(|c| AssetUser::Character(c.id));
     nodes.chain(characters).collect()
 }
@@ -656,5 +656,37 @@ mod tests {
             )))
         });
         assert!(p2.can_redo());
+    }
+
+    #[test]
+    fn animation_frames_count_as_asset_users() {
+        use crate::AssetUser;
+        use orbit_core::{AnimFrames, Animation, AssetId, Expression, LoopMode, Motion};
+        let mut story = Story::new("t");
+        let (poster, f1, f2) = (AssetId::new(), AssetId::new(), AssetId::new());
+        let id = orbit_core::CharacterId::new();
+        story.characters.push(Character {
+            default_scale: 1.0,
+            id,
+            name_id: StringId::new(),
+            color: Color::WHITE,
+            expressions: vec![Expression {
+                name: "wave".into(),
+                image: poster,
+                motion: Some(Motion::Animation(Animation {
+                    frames: AnimFrames::Sequence(vec![poster, f1, f2]),
+                    fps: 8.0,
+                    loop_mode: LoopMode::Once,
+                })),
+            }],
+            default_position: None,
+        });
+        // Export keeps an asset only when it has a user: every frame must.
+        for a in [poster, f1, f2] {
+            assert_eq!(super::asset_users(&story, a), vec![AssetUser::Character(id)]);
+        }
+        assert!(super::asset_users(&story, AssetId::new()).is_empty());
+        let e = &story.characters[0].expressions[0];
+        assert_eq!(e.assets(), vec![poster, f1, f2]);
     }
 }

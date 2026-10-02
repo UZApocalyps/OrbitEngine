@@ -244,17 +244,22 @@ mod tests {
     use super::*;
     use orbit_core::{ChoiceOption, Expr, Node, NodeKind, Scene, SceneId};
 
-    const DEMO: &str = include_str!("../../../examples/stories/demo.ron");
+    const MINIMAL: &str = include_str!("../../../examples/stories/test_minimal.ron");
+    const FEATURES: &str = include_str!("../../../examples/stories/test_features.ron");
 
-    fn demo() -> Arc<Story> {
-        Arc::new(Story::from_ron_unchecked(DEMO).expect("demo parses"))
+    fn fixture() -> Arc<Story> {
+        Arc::new(Story::from_ron_unchecked(MINIMAL).expect("fixture parses"))
+    }
+
+    fn features() -> Arc<Story> {
+        Arc::new(Story::from_ron_unchecked(FEATURES).expect("fixture parses"))
     }
 
     fn node(id: &str) -> NodeId {
         id.parse().expect("valid node id")
     }
 
-    /// Plays the demo like a person who answers every choice with `picks`
+    /// Plays the fixture like a person who answers every choice with `picks`
     /// (in order), stopping right before `target` runs. Uses only the
     /// stepping API, independently of the search.
     fn played_to(story: &Arc<Story>, target: NodeId, picks: &[usize]) -> Vm {
@@ -274,11 +279,12 @@ mod tests {
         panic!("too many steps");
     }
 
+    // Fixture: needs the exact node ids and the choice position of test_minimal.ron.
     #[test]
     fn a_node_in_a_branch_has_the_state_of_a_full_reading() {
-        let story = demo();
-        // "take_job" branch: SetVar(credits) right after the first choice.
-        let target = node("01JBX0N0000000000000000025");
+        let story = fixture();
+        // "take" branch: SetVar(credits) right after the first choice.
+        let target = node("01JBX0N0000000000000000011");
         let SeekOutcome::Found(path) = seek(&story, target, SeekLimits::default()) else {
             panic!("reachable");
         };
@@ -301,43 +307,43 @@ mod tests {
         assert_eq!(vm.variable("credits"), Some(&Value::Int(100)));
     }
 
+    // Fixture: needs the exact node ids and the `gold` branches of test_features.ron.
     #[test]
     fn choices_and_variables_decide_which_path_is_taken() {
-        let story = demo();
-        // "haggle_ok" only runs with reputation >= 1, which "ask about the AI"
-        // (option 2, then back to the same choice) grants: two choices.
-        let ok = node("01JBX0N0000000000000000034");
-        let SeekOutcome::Found(path) = seek(&story, ok, SeekLimits::default()) else {
+        let story = features();
+        // "rich" only runs after "Yes." (option 0, gold 10).
+        let rich = node("01JBX0N1000000000000000063");
+        let SeekOutcome::Found(path) = seek(&story, rich, SeekLimits::default()) else {
             panic!("reachable");
         };
-        assert_eq!(path.choices.len(), 2);
-        assert_eq!(path.choices[0].index, 2);
-        assert_eq!(path.choices[1].index, 1);
+        assert_eq!(path.choices.len(), 1);
+        assert_eq!(path.choices[0].index, 0);
         let vm = path.into_vm(&story).unwrap();
-        assert_eq!(vm.variable("rep"), Some(&Value::Int(1)));
-        assert_eq!(vm.snapshot(), played_to(&story, ok, &[2, 1]).snapshot());
+        assert_eq!(vm.variable("gold"), Some(&Value::Int(10)));
+        assert_eq!(vm.snapshot(), played_to(&story, rich, &[0]).snapshot());
 
-        // "haggle_fail" runs with no reputation: haggle straight away.
-        let fail = node("01JBX0N0000000000000000037");
-        let SeekOutcome::Found(path) = seek(&story, fail, SeekLimits::default()) else {
+        // "poor" runs with no gold: answer "No." (option 1).
+        let poor = node("01JBX0N1000000000000000064");
+        let SeekOutcome::Found(path) = seek(&story, poor, SeekLimits::default()) else {
             panic!("reachable");
         };
         assert_eq!(path.choices.len(), 1);
         assert_eq!(path.choices[0].index, 1);
         let vm = path.into_vm(&story).unwrap();
-        assert_eq!(vm.variable("rep"), Some(&Value::Int(0)));
-        assert_eq!(vm.snapshot(), played_to(&story, fail, &[1]).snapshot());
+        assert_eq!(vm.variable("gold"), Some(&Value::Int(0)));
+        assert_eq!(vm.snapshot(), played_to(&story, poor, &[1]).snapshot());
     }
 
+    // Fixture: needs a node before the first choice in test_minimal.ron.
     #[test]
     fn the_start_and_a_straight_line_need_no_choice() {
-        let story = demo();
+        let story = fixture();
         let first = story.entry().unwrap();
         let SeekOutcome::Found(path) = seek(&story, first, SeekLimits::default()) else {
             panic!("reachable");
         };
         assert!(path.choices.is_empty());
-        let target = node("01JBX0N0000000000000000015");
+        let target = node("01JBX0N0000000000000000009");
         let SeekOutcome::Found(path) = seek(&story, target, SeekLimits::default()) else {
             panic!("reachable");
         };
@@ -486,8 +492,8 @@ mod tests {
 
     #[test]
     fn the_result_is_deterministic() {
-        let story = demo();
-        let target = node("01JBX0N0000000000000000034");
+        let story = features();
+        let target = node("01JBX0N1000000000000000063");
         let run = || match seek(&story, target, SeekLimits::default()) {
             SeekOutcome::Found(p) => (p.choices, p.state),
             other => panic!("{other:?}"),

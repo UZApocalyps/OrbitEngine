@@ -150,6 +150,21 @@ pub fn describe_error(
                 ],
             ),
         ),
+        E::InvalidAnimation {
+            character,
+            expression,
+            issue,
+        } => (
+            None,
+            texts.format(
+                "problem.invalid_animation",
+                &[
+                    ("character", &character_of(texts, story, *character)),
+                    ("expression", expression),
+                    ("issue", &issue.to_string()),
+                ],
+            ),
+        ),
         E::DuplicateVariable(name) => (
             None,
             texts.format("problem.duplicate_variable", &[("name", name)]),
@@ -176,6 +191,7 @@ fn error_location(error: &ValidationError) -> Option<Location> {
         | E::MissingAssetFile { asset, .. } => Some(Location::Asset(*asset)),
         E::DuplicateCharacterId(c) => Some(Location::Character(*c)),
         E::DuplicateExpression { character, .. } => Some(Location::Character(*character)),
+        E::InvalidAnimation { character, .. } => Some(Location::Character(*character)),
         E::DuplicateVariable(name) => Some(Location::Variable(name.clone())),
         E::DuplicateSceneId(scene) => Some(Location::Scene(*scene)),
         _ => None,
@@ -189,6 +205,9 @@ fn warning_location(warning: &ValidationWarning) -> Option<Location> {
         ValidationWarning::SceneEndsGame {
             scene, node: None, ..
         } => Some(Location::Scene(*scene)),
+        ValidationWarning::RiggedUnsupported { character, .. } => {
+            Some(Location::Character(*character))
+        }
         _ => None,
     }
 }
@@ -206,6 +225,13 @@ pub fn describe_warning(
         W::UnreachableNode(n) => (Some(*n), texts.get("problem.unreachable_node")),
         W::PossibleInfiniteLoop(n) => (Some(*n), texts.get("problem.infinite_loop")),
         W::SceneEndsGame { node, .. } => (*node, texts.get("problem.scene_ends_game")),
+        W::RiggedUnsupported { expression, .. } => (
+            None,
+            texts.format(
+                "problem.rigged_unsupported",
+                &[("expression", expression)],
+            ),
+        ),
         W::AllOptionsConditional(n) => (Some(*n), texts.get("problem.all_options_conditional")),
     }
 }

@@ -57,6 +57,7 @@ fn asset_removal_is_refused_while_a_node_or_a_character_expression_uses_it() {
     def.expressions.push(orbit_core::Expression {
         name: "happy".into(),
         image: sprite,
+        motion: None,
     });
     p.execute(Command::SetCharacter {
         id: ana,

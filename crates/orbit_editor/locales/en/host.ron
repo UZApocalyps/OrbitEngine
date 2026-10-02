@@ -162,6 +162,8 @@
     "problem.duplicate_asset": "Duplicate asset ID",
     "problem.duplicate_character": "Duplicate character ID ({character})",
     "problem.duplicate_expression": "{character} defines the expression “{name}” twice",
+    "problem.invalid_animation": "{character}, expression “{expression}”: invalid animation ({issue})",
+    "problem.rigged_unsupported": "Expression “{expression}”: rigged animation is not supported yet, the still image is used",
     "problem.duplicate_variable": "Variable “{name}” declared twice",
     "problem.duplicate_position": "Duplicate or reserved position name: “{name}”",
     "problem.invalid_position_coords": "Position “{name}” is off screen (0 to 1 expected)",

@@ -1,0 +1,13 @@
+// Project splash screens, shown after the (mandatory) OrbitEngine splash.
+(
+    splashes: [
+        (
+            content: Text("NEO-KYOTO 2087"),
+            duration: 3.0,
+            fade_in: 0.8,
+            fade_out: 0.8,
+            skippable: true,
+            background: (4, 6, 18, 255),
+        ),
+    ],
+)

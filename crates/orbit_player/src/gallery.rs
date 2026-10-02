@@ -406,7 +406,8 @@ impl Ready {
                 UiEvent::OpenScreen(_)
                 | UiEvent::ReplaceScreen(_)
                 | UiEvent::PlaySound(_)
-                | UiEvent::Custom { .. } => {}
+                | UiEvent::Custom { .. }
+                | UiEvent::VarOp(_) => {}
                 UiEvent::Back => self.pop(),
                 UiEvent::ReturnToMainMenu => self.jump(Which::Main),
                 UiEvent::Quit => self.toasts.push("Quit requested (ignored in the gallery)"),

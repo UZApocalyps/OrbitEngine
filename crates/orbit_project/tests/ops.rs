@@ -357,6 +357,7 @@ fn characters_and_expressions() {
     def.expressions.push(orbit_core::Expression {
         name: "happy".into(),
         image: img,
+        motion: None,
     });
     def.default_position = Some(Position::Right);
     p.execute(Command::SetCharacter {
@@ -497,6 +498,7 @@ fn show_node(p: &mut Project, scene: orbit_core::SceneId) -> (orbit_core::Charac
     def.expressions.push(orbit_core::Expression {
         name: "happy".into(),
         image: img,
+        motion: None,
     });
     p.execute(Command::SetCharacter {
         id: ana,

@@ -2,6 +2,10 @@
 //! screens, the mock settings and saves, and the feedback shown for actions
 //! that would act on the game. No GPU: the runtime owns the drawing.
 
+use std::collections::BTreeMap;
+
+use orbit_core::Value;
+
 use super::action::UiAction;
 use super::screen::DataContext;
 use crate::view::{
@@ -29,6 +33,9 @@ pub struct PreviewNav {
     pub prefs: PrefsView,
     /// Sample saves, changed by saving into / deleting a slot.
     pub saves: Vec<CategoryView>,
+    /// Mock story variables (declared initial values, set by the editor);
+    /// variable operations change them.
+    pub vars: BTreeMap<String, Value>,
 }
 
 fn slot(category: SlotCategory, index: u32, state: SlotState) -> SlotView {
@@ -97,7 +104,24 @@ impl PreviewNav {
             stack: vec![root.to_owned()],
             prefs: sample_prefs(),
             saves: sample_saves(),
+            vars: BTreeMap::new(),
         }
+    }
+
+    /// Declares the story variables (name to initial value): the mock keeps
+    /// the current value of those it already has with the same type, adds
+    /// new ones and drops the ones no longer declared.
+    pub fn set_declared(&mut self, declared: &BTreeMap<String, Value>) {
+        let mut vars = BTreeMap::new();
+        for (name, initial) in declared {
+            let value = self
+                .vars
+                .get(name)
+                .filter(|v| v.value_type() == initial.value_type())
+                .unwrap_or(initial);
+            vars.insert(name.clone(), value.clone());
+        }
+        self.vars = vars;
     }
 
     /// Id of the screen shown.
@@ -124,6 +148,7 @@ impl PreviewNav {
             show_quit: true,
             title: title.to_owned(),
             saves: self.saves.clone(),
+            vars: self.vars.clone(),
             ..DataContext::default()
         }
     }
@@ -209,6 +234,13 @@ impl PreviewNav {
                 }
             }
             UiEvent::Toast(text) => step.feedback.push(text.clone()),
+            UiEvent::VarOp(op) => match op.apply(&|n| self.vars.get(n).cloned()) {
+                Ok(value) => {
+                    step.feedback.push(format!("Variable: {} -> {value}", op.var));
+                    self.vars.insert(op.var.clone(), value);
+                }
+                Err(e) => step.feedback.push(format!("Variable `{}` unchanged: {e}", op.var)),
+            },
             UiEvent::SetVolume(bus, v) => {
                 use crate::view::AudioBus::*;
                 match bus {
@@ -373,4 +405,19 @@ mod tests {
         nav.reset("pause");
         assert_eq!((nav.top(), nav.depth()), ("pause", 1));
     }
+    #[test]
+    fn variable_operations_change_the_mock_variables() {
+        use orbit_core::{OpKind, Operand, VarOp};
+        let mut nav = PreviewNav::new("main");
+        nav.vars.insert("gold".into(), Value::Int(10));
+        let add = VarOp::new("gold", OpKind::Add, Operand::Lit(Value::Int(5)));
+        let step = nav.apply(UiEvent::VarOp(add), &known);
+        assert_eq!(step.feedback, vec!["Variable: gold -> 15"]);
+        assert_eq!(nav.context("T").vars.get("gold"), Some(&Value::Int(15)));
+        let div0 = VarOp::new("gold", OpKind::Div, Operand::Lit(Value::Int(0)));
+        let step = nav.apply(UiEvent::VarOp(div0), &known);
+        assert!(step.feedback[0].contains("unchanged"));
+        assert_eq!(nav.vars.get("gold"), Some(&Value::Int(15)));
+    }
+
 }

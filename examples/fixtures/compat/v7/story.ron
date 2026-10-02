@@ -1,0 +1,44 @@
+(
+    schema_version: 7,
+    title: "V7 frozen",
+    strings: (
+        source_lang: "en",
+        entries: {
+            "01JBX0T0000000000000000001": "Ana",
+            "01JBX0T0000000000000000002": "Hello.",
+            "01JBX0T0000000000000000003": "Rich.",
+            "01JBX0T0000000000000000004": "Poor.",
+        },
+    ),
+    assets: (
+        assets: [
+            (id: "01JBX0A0000000000000000001", kind: Image, path: "fixtures/assets/alice_happy.png"),
+        ],
+    ),
+    characters: [
+        (
+            id: "01JBX0C0000000000000000001",
+            name_id: "01JBX0T0000000000000000001",
+            color: (r: 232, g: 120, b: 160),
+            expressions: [(name: "happy", image: "01JBX0A0000000000000000001")],
+        ),
+    ],
+    positions: [],
+    variables: [(name: "gold", initial: Int(5), scope: Game)],
+    scenes: [(
+        id: "01JBX0S0000000000000000001",
+        name: "main",
+        nodes: [
+            (id: "01JBX0N0000000000000000001", kind: Show(character: "01JBX0C0000000000000000001", expression: "happy", position: Free(x: 0.5, y: 1.0), flip_x: true)),
+            (id: "01JBX0N0000000000000000002", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000002")),
+            (id: "01JBX0N0000000000000000003", kind: SetVar(var: "gold", value: Binary(Add, Var("gold"), Lit(Int(5))))),
+            (id: "01JBX0N0000000000000000004", kind: If(condition: Binary(Ge, Var("gold"), Lit(Int(10))), then_target: "01JBX0N0000000000000000005", else_target: Some("01JBX0N0000000000000000006"))),
+            (id: "01JBX0N0000000000000000005", kind: Label(name: "rich")),
+            (id: "01JBX0N0000000000000000009", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000003")),
+            (id: "01JBX0N0000000000000000007", kind: End),
+            (id: "01JBX0N0000000000000000006", kind: Label(name: "poor")),
+            (id: "01JBX0N0000000000000000010", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000004")),
+            (id: "01JBX0N0000000000000000008", kind: End),
+        ],
+    )],
+)

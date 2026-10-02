@@ -1,16 +1,16 @@
-//! Plays the demo story shipped in `examples/stories/demo.ron` end to end.
+//! Plays the feature fixture `test_features.ron` end to end (structure-dependent assertions).
 
 use orbit_core::{Story, Value};
 use orbit_vm::{PresentationEvent, StepResult, Vm};
 
-const DEMO: &str = include_str!("../../../examples/stories/demo.ron");
+const FIXTURE: &str = include_str!("../../../examples/stories/test_features.ron");
 
 struct Run {
     lines: Vec<String>,
     events: Vec<PresentationEvent>,
 }
 
-/// Plays the demo, answering each choice with the option whose text starts
+/// Plays the fixture, answering each choice with the option whose text starts
 /// with the next prefix of `script`. Returns the run and the finished VM.
 fn play_from(mut vm: Vm, script: &[&str]) -> (Run, Vm) {
     let mut run = Run {
@@ -43,123 +43,66 @@ fn play_from(mut vm: Vm, script: &[&str]) -> (Run, Vm) {
             StepResult::Error(e) => panic!("VM error: {e}"),
         }
     }
-    panic!("demo did not finish");
+    panic!("fixture did not finish");
 }
 
 fn play(script: &[&str]) -> (Run, Vm) {
-    let story = Story::from_ron(DEMO).unwrap();
+    let story = Story::from_ron(FIXTURE).unwrap();
     play_from(Vm::from_start(story).unwrap(), script)
 }
 
-/// Take the job, buy the chip at the market, hack the terminal by listening to
-/// the AI, then give the chip to Helix.
-const CORP: &[&str] = &[
-    "Take the job",
-    "Visit the black market",
-    "Buy the access chip",
-    "Leave the market",
-    "Break into",
-    "Hack the terminal",
-    "Listen to what",
-    "Give the chip to Helix",
-];
-const GHOST: &[&str] = &[
-    "Take the job",
-    "Visit the black market",
-    "Buy the access chip",
-    "Leave the market",
-    "Break into",
-    "Hack the terminal",
-    "Listen to what",
-    "Free the AI",
-];
-const LOUD: &[&str] = &[
-    "Take the job",
-    "Visit the black market",
-    "Buy the access chip",
-    "Leave the market",
-    "Break into",
-    "Force the lock",
-    "Run with Bob",
-];
+const YES: &[&str] = &["Yes."];
+const NO: &[&str] = &["No."];
 
 fn has_line(run: &Run, start: &str) -> bool {
     run.lines.iter().any(|l| l.starts_with(start))
 }
 
+// Fixture: depends on the exact branch structure (yes/no -> join -> end).
 #[test]
-fn every_ending_is_reachable_and_the_story_finishes_cleanly() {
-    let destroy: Vec<&str> = GHOST[..7]
-        .iter()
-        .copied()
-        .chain(["Destroy the chip"])
-        .collect();
-    let endings: [(&[&str], &str); 5] = [
-        (&["Refuse"], "ENDING 1"),
-        (CORP, "ENDING 2"),
-        (GHOST, "ENDING 3"),
-        (&destroy, "ENDING 4"),
-        (LOUD, "ENDING 5"),
-    ];
-    for (script, ending) in endings {
+fn every_branch_reaches_the_end_cleanly() {
+    for (script, line) in [(YES, "Rich now."), (NO, "Still poor.")] {
         let (run, vm) = play(script);
-        assert!(has_line(&run, ending), "{ending}: {:#?}", run.lines);
-        assert!(run.lines.last().unwrap().contains("OrbitEngine demo"));
+        assert!(has_line(&run, line), "{:#?}", run.lines);
+        assert!(run.lines.last().unwrap().starts_with("The end."));
         assert!(vm.is_finished());
         assert_eq!(vm.call_depth(), 0);
-        // Music is stopped at the end.
         assert!(vm.scene().music.is_none());
         assert!(vm.scene().background.is_some());
     }
 }
 
+// Fixture: exact variable values and the condition hiding the third option.
 #[test]
-fn the_story_is_long_and_variables_drive_the_branches() {
-    let (corp, vm) = play(CORP);
-    assert!(corp.lines.len() >= 30, "{}", corp.lines.len());
-    // 100 + 50 advance - 60 chip + 200 from Helix.
-    assert_eq!(vm.variable("credits"), Some(&Value::Int(290)));
-    assert_eq!(vm.variable("has_chip"), Some(&Value::Bool(true)));
-    assert_eq!(vm.variable("alarm"), Some(&Value::Bool(false)));
-    assert!(has_line(&corp, "Clean work, Alice"));
+fn variables_drive_the_branches_and_conditions_hide_options() {
+    let (yes, vm) = play(YES);
+    assert_eq!(vm.variable("gold"), Some(&Value::Int(10)));
+    assert!(has_line(&yes, "Rich now."));
+    assert!(!has_line(&yes, "Still poor."));
 
-    // Forcing the lock trips the alarm, which changes Bob's reaction.
-    let (loud, vm) = play(LOUD);
-    assert_eq!(vm.variable("alarm"), Some(&Value::Bool(true)));
-    assert!(has_line(&loud, "You tripped every alarm"));
-    assert!(!has_line(&loud, "Clean work, Alice"));
-    // Float variable: the heat accumulated during the run.
-    assert!(matches!(vm.variable("heat"), Some(Value::Float(h)) if *h > 1.0));
+    let (no, vm) = play(NO);
+    assert_eq!(vm.variable("gold"), Some(&Value::Int(0)));
+    assert!(has_line(&no, "Still poor."));
+
+    // At gold = 0 the conditional "gift" option is not offered.
+    let story = Story::from_ron(FIXTURE).unwrap();
+    let mut vm = Vm::from_start(story).unwrap();
+    loop {
+        match vm.step() {
+            StepResult::Choice { options, .. } => {
+                assert_eq!(options.len(), 2);
+                break;
+            }
+            StepResult::End | StepResult::Error(_) => panic!("no choice reached"),
+            _ => {}
+        }
+    }
 }
 
+// Fixture: relies on the precise presentation nodes (fade, dissolve, music, sound).
 #[test]
-fn choices_loop_back_to_the_hub_and_the_hacking_loop_can_fail() {
-    // Rest twice at the hub (a loop), then walk the tower and fail the hack.
-    let (run, vm) = play(&[
-        "Take the job",
-        "Visit the black market",
-        "Buy the access chip",
-        "Leave the market",
-        "Take a moment to rest",
-        "Take a moment to rest",
-        "Break into",
-        "Hack the terminal",
-        "Brute-force",
-        "Brute-force",
-        "Brute-force",
-        "Run with Bob",
-    ]);
-    assert!(has_line(&run, "Access denied"));
-    assert!(has_line(&run, "The terminal locks"));
-    assert_eq!(vm.variable("alarm"), Some(&Value::Bool(true)));
-    assert_eq!(vm.variable("tries"), Some(&Value::Int(0)));
-    // Call/Return: the status routine ran at each visit of the hub.
-    assert!(has_line(&run, "My wallet") || has_line(&run, "At least my wallet"));
-}
-
-#[test]
-fn demo_emits_music_sound_fade_and_dissolve() {
-    let (run, _) = play(CORP);
+fn fixture_emits_music_sound_fade_and_dissolve() {
+    let (run, _) = play(YES);
     let has = |f: fn(&PresentationEvent) -> bool| run.events.iter().any(f);
     assert!(has(|e| matches!(
         e,
@@ -183,22 +126,17 @@ fn demo_emits_music_sound_fade_and_dissolve() {
     )));
 }
 
+// Fixture: the persistent variable `visits` is only incremented in the fixture's last scene.
 #[test]
 fn persistent_counters_survive_into_the_next_playthrough() {
-    let (_, first) = play(GHOST);
-    // The counters live in the persistent store, not in the saved state.
-    assert_eq!(first.variable("plays"), Some(&Value::Int(1)));
-    assert_eq!(first.variable("ghosts"), Some(&Value::Int(1)));
-    assert!(!first.snapshot().vars.contains_key("plays"));
+    let (_, first) = play(YES);
+    assert_eq!(first.variable("visits"), Some(&Value::Int(1)));
+    // The counter lives in the persistent store, not in the saved state.
+    assert!(!first.snapshot().vars.contains_key("visits"));
 
-    // The host carries them to a new game: the story greets a returning
-    // player, and a hidden option opens up at the first choice.
-    let story = Story::from_ron(DEMO).unwrap();
+    let story = Story::from_ron(FIXTURE).unwrap();
     let mut second = Vm::from_start(story).unwrap();
     second.set_persistent_vars(first.persistent_vars());
-    let mut script = vec!["\"I heard the chip"];
-    script.extend(&GHOST[1..]);
-    let (run, _) = play_from(second, &script);
-    assert!(has_line(&run, "Welcome back"), "{:?}", run.lines);
-    assert!(has_line(&run, "Where did you hear that name"));
+    let (_, second) = play_from(second, NO);
+    assert_eq!(second.variable("visits"), Some(&Value::Int(2)));
 }

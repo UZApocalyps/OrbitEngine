@@ -3,6 +3,8 @@
 //! the caller compares it with the original to know whether something changed.
 
 use egui::{ComboBox, DragValue, RichText, Ui};
+use orbit_core::{Condition, Expr};
+use orbit_editor_api::varwidgets::{self, VarInfo};
 use orbit_editor_api::{Translator, icons};
 use orbit_ui::{
     Align, Anchor, BindPath, Border, Cond, Dir, Fill, LayoutDef, PanelKind, SettingKey, Size,
@@ -21,6 +23,8 @@ pub struct Env<'a> {
     pub styles: &'a [String],
     /// Image assets of the project (paths).
     pub images: &'a [String],
+    /// Variables declared by the story (for conditions, operations, bindings).
+    pub vars: &'a [VarInfo],
 }
 
 impl Env<'_> {
@@ -198,17 +202,94 @@ fn cond_editor(ui: &mut Ui, env: &Env, salt: &str, cond: &mut Cond) {
         (Cond::ShowQuit, "show_quit"),
         (Cond::InGame, "in_game"),
     ];
-    let mut index = names.iter().position(|(c, _)| *c == base).unwrap_or(0);
+    let vars_index = names.len();
+    let mut index = match &base {
+        Cond::Vars(_) => vars_index,
+        other => names.iter().position(|(c, _)| c == other).unwrap_or(0),
+    };
     let mut neg = negated;
-    let options: Vec<(usize, String)> = names
+    let mut options: Vec<(usize, String)> = names
         .iter()
         .enumerate()
         .map(|(i, (_, n))| (i, env.v(n)))
         .collect();
+    options.push((vars_index, env.v("vars")));
     pick(ui, salt, &mut index, &options);
     ui.checkbox(&mut neg, env.t("uied.not"));
-    let base = names[index].0.clone();
+    let mut base = if index == vars_index {
+        match base {
+            Cond::Vars(c) => Cond::Vars(c),
+            _ => Cond::Vars(varwidgets::blank_row(env.vars)),
+        }
+    } else {
+        names[index].0.clone()
+    };
+    if let Cond::Vars(c) = &mut base {
+        ui.vertical(|ui| vars_condition_editor(ui, env, salt, c));
+    }
     *cond = if neg { Cond::Not(Box::new(base)) } else { base };
+}
+
+/// The no-code condition builder of a `Cond::Vars`, with an "expression
+/// mode" for the advanced.
+fn vars_condition_editor(ui: &mut Ui, env: &Env, salt: &str, cond: &mut Condition) {
+    if let Condition::Expr(e) = cond {
+        if let Some(parsed) = expr_text(ui, (salt, "expr"), e) {
+            *e = parsed;
+        }
+        if let Some(structured) = Some(Condition::from_expr(e)).filter(Condition::is_structured)
+            && ui.small_button(env.t("varop.visual_mode")).clicked()
+        {
+            *cond = structured;
+        }
+    } else {
+        if let Some(new) = varwidgets::condition_editor(ui, (salt, "vars"), env.vars, cond) {
+            *cond = new;
+        }
+        if ui.small_button(env.t("varop.expr_mode")).clicked() {
+            *cond = Condition::Expr(cond.to_expr());
+        }
+    }
+    let ty_of = |n: &str| varwidgets::type_of(env.vars, n);
+    if !env.vars.is_empty()
+        && let Some(issue) = cond.issues(&ty_of).first()
+    {
+        ui.label(
+            RichText::new(env.tr.format("varop.issue", &[("message", issue)]))
+                .small()
+                .color(ui.visuals().warn_fg_color),
+        );
+    }
+}
+
+/// An expression as text: returns the parsed expression after an edit that
+/// parses (a text with an error is flagged and not applied).
+fn expr_text(ui: &mut Ui, salt: impl std::hash::Hash + std::fmt::Debug, e: &Expr) -> Option<Expr> {
+    let id = ui.make_persistent_id(("ui_expr_text", salt));
+    let mut text = ui
+        .data(|d| d.get_temp::<(String, Expr)>(id))
+        .filter(|(_, source)| source == e)
+        .map_or_else(|| e.to_string(), |(t, _)| t);
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut text)
+            .font(egui::TextStyle::Monospace)
+            .desired_width(180.0),
+    );
+    let mut out = None;
+    let mut source = e.clone();
+    if response.changed() {
+        match Expr::parse(&text) {
+            Ok(parsed) => {
+                source = parsed.clone();
+                out = Some(parsed);
+            }
+            Err(err) => {
+                ui.label(RichText::new(err.to_string()).small().color(ui.visuals().error_fg_color));
+            }
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(id, (text, source)));
+    out
 }
 
 fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath) {
@@ -237,7 +318,18 @@ fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath) {
             pick(ui, (salt, "key"), key, &options);
         }
         BindPath::Var(name) => {
-            ui.add(egui::TextEdit::singleline(name).desired_width(120.0));
+            if env.vars.is_empty() {
+                ui.add(egui::TextEdit::singleline(name).desired_width(120.0));
+            } else {
+                let text = if name.is_empty() { env.t("varop.choose_var") } else { name.clone() };
+                ComboBox::from_id_salt((salt, "var"))
+                    .selected_text(text)
+                    .show_ui(ui, |ui| {
+                        for v in env.vars {
+                            ui.selectable_value(name, v.name.clone(), &v.name);
+                        }
+                    });
+            }
         }
     }
 }
@@ -333,11 +425,11 @@ fn action_index(a: &UiAction) -> usize {
         UiAction::PlaySound(_) => 13,
         UiAction::Custom { .. } => 14,
         UiAction::SceneGoto(_) => 15,
-        UiAction::VarSet { .. } => 16,
+        UiAction::VarSet(_) => 16,
     }
 }
 
-fn action_from_index(i: usize) -> UiAction {
+fn action_from_index(i: usize, vars: &[VarInfo]) -> UiAction {
     match i {
         0 => UiAction::GameNew,
         1 => UiAction::GameContinue,
@@ -358,10 +450,7 @@ fn action_from_index(i: usize) -> UiAction {
             args: Vec::new(),
         },
         15 => UiAction::SceneGoto(String::new()),
-        _ => UiAction::VarSet {
-            name: String::new(),
-            value: String::new(),
-        },
+        _ => UiAction::VarSet(varwidgets::blank_op(vars)),
     }
 }
 
@@ -375,7 +464,7 @@ fn action_editor(ui: &mut Ui, env: &Env, salt: &str, action: &mut UiAction) {
         .collect();
     pick(ui, (salt, "kind"), &mut new, &options);
     if new != index {
-        *action = action_from_index(new);
+        *action = action_from_index(new, env.vars);
     }
     match action {
         UiAction::Open(id) | UiAction::Replace(id) => id_editor(ui, env, salt, id, true),
@@ -400,9 +489,12 @@ fn action_editor(ui: &mut Ui, env: &Env, salt: &str, action: &mut UiAction) {
                     .collect();
             }
         }
-        UiAction::VarSet { name, value } => {
-            ui.add(egui::TextEdit::singleline(name).desired_width(80.0));
-            ui.add(egui::TextEdit::singleline(value).desired_width(80.0));
+        UiAction::VarSet(op) => {
+            ui.vertical(|ui| {
+                if let Some(new) = varwidgets::varop_editor(ui, (salt, "op"), env.vars, op, true) {
+                    *op = new;
+                }
+            });
         }
         _ => {}
     }
@@ -799,7 +891,7 @@ mod tests {
     #[test]
     fn action_indices_round_trip_for_every_variant() {
         for i in 0..ACTION_NAMES.len() {
-            assert_eq!(action_index(&action_from_index(i)), i);
+            assert_eq!(action_index(&action_from_index(i, &[])), i);
         }
         assert_eq!(ACTION_NAMES.len(), 17);
         for (key, name) in SETTINGS {

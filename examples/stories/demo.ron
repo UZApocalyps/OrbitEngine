@@ -1,11 +1,5 @@
-// Demo story for OrbitEngine (schema version 6): "Neon Static", a cyberpunk heist.
-// It exercises every node kind of the engine: dialogue, choices (some conditional), variables
-// (game and persistent; Bool, Int and Float), If, labels, Jump, JumpScene (with and without a label),
-// Call/Return, backgrounds, sprites and expressions, fade and dissolve transitions, music, sound, waits.
-// Everything is referenced by stable ids: nodes (N), strings (T), characters (C), assets (A), scenes (S).
-// Bob is drawn mirrored (flip_x), slightly smaller (scale) and at a free position, to show the v6 sprite options.
 (
-    schema_version: 6,
+    schema_version: 8,
     title: "Demo",
     strings: (
         source_lang: "en",
@@ -16,7 +10,7 @@
             "01JBX0T0000000000000000004": "Neo-Kyoto, 2087. Rain hammers the megatower blocks while neon bleeds across every wet window.",
             "01JBX0T0000000000000000005": "In a cramped capsule above the Sprawl, a hacker is wide awake.",
             "01JBX0T0000000000000000006": "Another night, another contract. Tonight I want something that pays well and bites back.",
-            "01JBX0T0000000000000000007": "Someone knocks at the door. Twice, then once: the fixer's signal.",
+            "01JBX0T0000000000000000007": "Someone knocks at the door. Twice, then once: the fixer\'s signal.",
             "01JBX0T0000000000000000008": "Sorry to wake you, Alice. A corp called Helix just lost something, and they want it back, quietly.",
             "01JBX0T0000000000000000009": "Define \"something\".",
             "01JBX0T0000000000000000010": "A neural chip, prototype. Rumour says it holds an AI that woke up. Interested?",
@@ -53,7 +47,7 @@
             "01JBX0T0000000000000000041": "Sell some stolen data (+40 credits, more heat).",
             "01JBX0T0000000000000000042": "Pleasure doing business. Do not lose it.",
             "01JBX0T0000000000000000043": "Stolen data attracts attention. Be careful.",
-            "01JBX0T0000000000000000044": "The ripperdoc's clinic smells of ozone and antiseptic. Chrome gleams on every shelf.",
+            "01JBX0T0000000000000000044": "The ripperdoc\'s clinic smells of ozone and antiseptic. Chrome gleams on every shelf.",
             "01JBX0T0000000000000000045": "One implant, please. Something to help me sneak into a corporate tower.",
             "01JBX0T0000000000000000046": "Install a neural booster (50 credits).",
             "01JBX0T0000000000000000047": "Get a free checkup (+1 reputation).",
@@ -63,7 +57,7 @@
             "01JBX0T0000000000000000051": "The doc hums and writes a scrawl. Word spreads that you are a regular.",
             "01JBX0T0000000000000000052": "The Helix tower rises like a blade. Its lobby is a cathedral of glass and light.",
             "01JBX0T0000000000000000053": "The chip works. The doors recognise me as staff.",
-            "01JBX0T0000000000000000054": "With the booster, you read the guards' patrol patterns like an open book.",
+            "01JBX0T0000000000000000054": "With the booster, you read the guards\' patrol patterns like an open book.",
             "01JBX0T0000000000000000055": "A guard glances your way. Your heartbeat is deafening.",
             "01JBX0T0000000000000000056": "You reach the server room. A terminal blinks with a single prompt.",
             "01JBX0T0000000000000000057": "Hack the terminal.",
@@ -99,380 +93,2201 @@
             "01JBX0T0000000000000000087": "Thank you for playing the OrbitEngine demo!",
         },
     ),
-    assets: (assets: [
-        (id: "01JBX0A0000000000000000001", kind: Image, path: "assets/demo/bg_room.png"), // bg_room
-        (id: "01JBX0A0000000000000000002", kind: Image, path: "assets/demo/bg_street.png"), // bg_street
-        (id: "01JBX0A0000000000000000003", kind: Image, path: "assets/demo/alice_happy.png"), // alice_happy
-        (id: "01JBX0A0000000000000000004", kind: Image, path: "assets/demo/alice_mad.png"), // alice_mad
-        (id: "01JBX0A0000000000000000005", kind: Image, path: "assets/demo/alice_sad.png"), // alice_sad
-        (id: "01JBX0A0000000000000000006", kind: Image, path: "assets/demo/bob_happy.png"), // bob_happy
-        (id: "01JBX0A0000000000000000007", kind: Music, path: "assets/demo/music_theme.wav"), // music_theme
-        (id: "01JBX0A0000000000000000008", kind: Sound, path: "assets/demo/sfx_door.wav"), // sfx_door
-        (id: "01JBX0A0000000000000000009", kind: Image, path: "assets/demo/bob_mad.png"), // bob_mad
-        (id: "01JBX0A0000000000000000010", kind: Image, path: "assets/demo/bob_sad.png"), // bob_sad
-    ]),
+    assets: (
+        assets: [
+            (
+                id: "01JBX0A0000000000000000001",
+                kind: Image,
+                path: "assets/demo/bg_room.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000002",
+                kind: Image,
+                path: "assets/demo/bg_street.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000003",
+                kind: Image,
+                path: "assets/demo/alice_happy.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000004",
+                kind: Image,
+                path: "assets/demo/alice_mad.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000005",
+                kind: Image,
+                path: "assets/demo/alice_sad.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000006",
+                kind: Image,
+                path: "assets/demo/bob_happy.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000007",
+                kind: Music,
+                path: "assets/demo/music_theme.wav",
+            ),
+            (
+                id: "01JBX0A0000000000000000008",
+                kind: Sound,
+                path: "assets/demo/sfx_door.wav",
+            ),
+            (
+                id: "01JBX0A0000000000000000009",
+                kind: Image,
+                path: "assets/demo/bob_mad.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000010",
+                kind: Image,
+                path: "assets/demo/bob_sad.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000011",
+                kind: Image,
+                path: "assets/demo/alice_happy_sheet.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000012",
+                kind: Image,
+                path: "assets/demo/bob_mad_1.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000013",
+                kind: Image,
+                path: "assets/demo/bob_mad_2.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000014",
+                kind: Image,
+                path: "assets/demo/bob_mad_3.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000015",
+                kind: Image,
+                path: "assets/demo/bob_mad_4.png",
+            ),
+        ],
+    ),
     characters: [
         (
             id: "01JBX0C0000000000000000001",
             name_id: "01JBX0T0000000000000000001",
-            color: (r: 232, g: 120, b: 160),
+            color: (
+                r: 232,
+                g: 120,
+                b: 160,
+            ),
             expressions: [
-                (name: "happy", image: "01JBX0A0000000000000000003"),
-                (name: "mad", image: "01JBX0A0000000000000000004"),
-                (name: "sad", image: "01JBX0A0000000000000000005"),
+                (
+                    name: "happy",
+                    image: "01JBX0A0000000000000000003",
+                    motion: Some(Animation((
+                        frames: SpriteSheet(
+                            asset: "01JBX0A0000000000000000011",
+                            cols: 2,
+                            rows: 2,
+                            frame_count: 4,
+                            frame_size: None,
+                        ),
+                        fps: 3.0,
+                        loop_mode: Loop,
+                    ))),
+                ),
+                (
+                    name: "mad",
+                    image: "01JBX0A0000000000000000004",
+                ),
+                (
+                    name: "sad",
+                    image: "01JBX0A0000000000000000005",
+                ),
             ],
         ),
         (
             id: "01JBX0C0000000000000000002",
             name_id: "01JBX0T0000000000000000002",
-            color: (r: 90, g: 150, b: 230),
+            color: (
+                r: 90,
+                g: 150,
+                b: 230,
+            ),
             expressions: [
-                (name: "happy", image: "01JBX0A0000000000000000006"),
-                (name: "mad", image: "01JBX0A0000000000000000009"),
-                (name: "sad", image: "01JBX0A0000000000000000010"),
+                (
+                    name: "happy",
+                    image: "01JBX0A0000000000000000006",
+                ),
+                (
+                    name: "mad",
+                    image: "01JBX0A0000000000000000009",
+                    motion: Some(Animation((
+                        frames: Sequence([
+                            "01JBX0A0000000000000000012",
+                            "01JBX0A0000000000000000013",
+                            "01JBX0A0000000000000000014",
+                            "01JBX0A0000000000000000015",
+                        ]),
+                        fps: 10.0,
+                        loop_mode: Loop,
+                    ))),
+                ),
+                (
+                    name: "sad",
+                    image: "01JBX0A0000000000000000010",
+                ),
             ],
         ),
     ],
     positions: [],
-    // Game variables belong to one playthrough (saved with the game). `plays` and `ghosts` are
-    // Persistent: they survive across games (stored apart from saves) and unlock content.
     variables: [
-        (name: "credits", initial: Int(100)),
-        (name: "rep", initial: Int(0)),
-        (name: "heat", initial: Float(0.0)),
-        (name: "tries", initial: Int(0)),
-        (name: "alarm", initial: Bool(false)),
-        (name: "has_chip", initial: Bool(false)),
-        (name: "boosted", initial: Bool(false)),
-        (name: "ghost_met", initial: Bool(false)),
-        (name: "plays", initial: Int(0), scope: Persistent),
-        (name: "ghosts", initial: Int(0), scope: Persistent),
+        (
+            name: "credits",
+            initial: Int(100),
+            scope: Game,
+        ),
+        (
+            name: "rep",
+            initial: Int(0),
+            scope: Game,
+        ),
+        (
+            name: "heat",
+            initial: Float(0.0),
+            scope: Game,
+        ),
+        (
+            name: "tries",
+            initial: Int(0),
+            scope: Game,
+        ),
+        (
+            name: "alarm",
+            initial: Bool(false),
+            scope: Game,
+        ),
+        (
+            name: "has_chip",
+            initial: Bool(false),
+            scope: Game,
+        ),
+        (
+            name: "boosted",
+            initial: Bool(false),
+            scope: Game,
+        ),
+        (
+            name: "ghost_met",
+            initial: Bool(false),
+            scope: Game,
+        ),
+        (
+            name: "plays",
+            initial: Int(0),
+            scope: Persistent,
+        ),
+        (
+            name: "ghosts",
+            initial: Int(0),
+            scope: Persistent,
+        ),
     ],
     scenes: [
         (
             id: "01JBX0S0000000000000000001",
             name: "prologue",
             nodes: [
-                (id: "01JBX0N0000000000000000001", kind: Label(name: "start")),
-                (id: "01JBX0N0000000000000000002", kind: Background(asset: "01JBX0A0000000000000000001", transition: Some((kind: Fade((r: 0, g: 0, b: 0)), duration: 1.0)))),
-                (id: "01JBX0N0000000000000000003", kind: PlayMusic(asset: "01JBX0A0000000000000000007", fade_in: 2.0, looping: true)),
-                (id: "01JBX0N0000000000000000006", kind: If(condition: Binary(Gt, Var("plays"), Lit(Int(0))), then_target: "01JBX0N0000000000000000004", else_target: Some("01JBX0N0000000000000000005"))),
-                (id: "01JBX0N0000000000000000004", kind: Label(name: "welcome_back")),
-                (id: "01JBX0N0000000000000000007", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000003")),
-                (id: "01JBX0N0000000000000000005", kind: Label(name: "first_time")),
-                (id: "01JBX0N0000000000000000008", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000004")),
-                (id: "01JBX0N0000000000000000009", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000005")),
-                (id: "01JBX0N0000000000000000010", kind: Show(character: "01JBX0C0000000000000000001", expression: "happy", position: Left, transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000011", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000006")),
-                (id: "01JBX0N0000000000000000012", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000007")),
-                (id: "01JBX0N0000000000000000013", kind: PlaySound(asset: "01JBX0A0000000000000000008")),
-                (id: "01JBX0N0000000000000000014", kind: Show(character: "01JBX0C0000000000000000002", expression: "sad", position: Free(x: 0.72, y: 1.0), transition: Some((kind: Dissolve, duration: 0.5)), scale: Some(0.92), flip_x: true)),
-                (id: "01JBX0N0000000000000000015", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000008")),
-                (id: "01JBX0N0000000000000000016", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000009")),
-                (id: "01JBX0N0000000000000000017", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000010")),
-                (id: "01JBX0N0000000000000000018", kind: Label(name: "offer")),
-                (id: "01JBX0N0000000000000000024", kind: Choice(options: [
-                (text_id: "01JBX0T0000000000000000011", target: "01JBX0N0000000000000000019"),
-                (text_id: "01JBX0T0000000000000000012", target: "01JBX0N0000000000000000020"),
-                (text_id: "01JBX0T0000000000000000013", target: "01JBX0N0000000000000000021"),
-                (text_id: "01JBX0T0000000000000000014", target: "01JBX0N0000000000000000022"),
-                (text_id: "01JBX0T0000000000000000015", target: "01JBX0N0000000000000000023", condition: Some(Binary(Gt, Var("ghosts"), Lit(Int(0))))),
-            ])),
-                (id: "01JBX0N0000000000000000019", kind: Label(name: "take_job")),
-                (id: "01JBX0N0000000000000000025", kind: SetVar(var: "credits", value: Binary(Add, Var("credits"), Lit(Int(50))))),
-                (id: "01JBX0N0000000000000000026", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000016")),
-                (id: "01JBX0N0000000000000000028", kind: Jump(target: "01JBX0N0000000000000000027")),
-                (id: "01JBX0N0000000000000000020", kind: Label(name: "haggle")),
-                (id: "01JBX0N0000000000000000029", kind: Show(character: "01JBX0C0000000000000000002", expression: "mad", position: Free(x: 0.72, y: 1.0), transition: None, scale: Some(0.92), flip_x: true)),
-                (id: "01JBX0N0000000000000000030", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000017")),
-                (id: "01JBX0N0000000000000000033", kind: If(condition: Binary(Ge, Var("rep"), Lit(Int(1))), then_target: "01JBX0N0000000000000000031", else_target: Some("01JBX0N0000000000000000032"))),
-                (id: "01JBX0N0000000000000000031", kind: Label(name: "haggle_ok")),
-                (id: "01JBX0N0000000000000000034", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000018")),
-                (id: "01JBX0N0000000000000000035", kind: SetVar(var: "credits", value: Binary(Add, Var("credits"), Lit(Int(100))))),
-                (id: "01JBX0N0000000000000000036", kind: Jump(target: "01JBX0N0000000000000000027")),
-                (id: "01JBX0N0000000000000000032", kind: Label(name: "haggle_fail")),
-                (id: "01JBX0N0000000000000000037", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000019")),
-                (id: "01JBX0N0000000000000000038", kind: SetVar(var: "credits", value: Binary(Add, Var("credits"), Lit(Int(30))))),
-                (id: "01JBX0N0000000000000000039", kind: Jump(target: "01JBX0N0000000000000000027")),
-                (id: "01JBX0N0000000000000000021", kind: Label(name: "ask_ai")),
-                (id: "01JBX0N0000000000000000040", kind: Show(character: "01JBX0C0000000000000000002", expression: "sad", position: Free(x: 0.72, y: 1.0), transition: None, scale: Some(0.92), flip_x: true)),
-                (id: "01JBX0N0000000000000000041", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000020")),
-                (id: "01JBX0N0000000000000000042", kind: SetVar(var: "rep", value: Binary(Add, Var("rep"), Lit(Int(1))))),
-                (id: "01JBX0N0000000000000000043", kind: Jump(target: "01JBX0N0000000000000000018")),
-                (id: "01JBX0N0000000000000000023", kind: Label(name: "secret")),
-                (id: "01JBX0N0000000000000000044", kind: Show(character: "01JBX0C0000000000000000002", expression: "mad", position: Free(x: 0.72, y: 1.0), transition: None, scale: Some(0.92), flip_x: true)),
-                (id: "01JBX0N0000000000000000045", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000021")),
-                (id: "01JBX0N0000000000000000046", kind: SetVar(var: "credits", value: Binary(Add, Var("credits"), Lit(Int(80))))),
-                (id: "01JBX0N0000000000000000047", kind: SetVar(var: "rep", value: Binary(Add, Var("rep"), Lit(Int(1))))),
-                (id: "01JBX0N0000000000000000048", kind: Jump(target: "01JBX0N0000000000000000027")),
-                (id: "01JBX0N0000000000000000022", kind: Label(name: "refuse")),
-                (id: "01JBX0N0000000000000000049", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000022")),
-                (id: "01JBX0N0000000000000000050", kind: Show(character: "01JBX0C0000000000000000002", expression: "mad", position: Free(x: 0.72, y: 1.0), transition: None, scale: Some(0.92), flip_x: true)),
-                (id: "01JBX0N0000000000000000051", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000023")),
-                (id: "01JBX0N0000000000000000052", kind: PlaySound(asset: "01JBX0A0000000000000000008")),
-                (id: "01JBX0N0000000000000000053", kind: Hide(character: "01JBX0C0000000000000000002", transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000054", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000024")),
-                (id: "01JBX0N0000000000000000056", kind: JumpScene(scene: "01JBX0S0000000000000000008", label: Some("01JBX0N0000000000000000055"))),
-                (id: "01JBX0N0000000000000000027", kind: Label(name: "go")),
-                (id: "01JBX0N0000000000000000057", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000025")),
-                (id: "01JBX0N0000000000000000058", kind: Hide(character: "01JBX0C0000000000000000002", transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000059", kind: Hide(character: "01JBX0C0000000000000000001", transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000060", kind: JumpScene(scene: "01JBX0S0000000000000000002", label: None)),
+                (
+                    id: "01JBX0N0000000000000000001",
+                    kind: Label(
+                        name: "start",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000002",
+                    kind: Background(
+                        asset: "01JBX0A0000000000000000001",
+                        transition: Some((
+                            kind: Fade((
+                                r: 0,
+                                g: 0,
+                                b: 0,
+                            )),
+                            duration: 1.0,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000003",
+                    kind: PlayMusic(
+                        asset: "01JBX0A0000000000000000007",
+                        fade_in: 2.0,
+                        looping: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000006",
+                    kind: If(
+                        condition: Binary(Gt, Var("plays"), Lit(Int(0))),
+                        then_target: "01JBX0N0000000000000000004",
+                        else_target: Some("01JBX0N0000000000000000005"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000004",
+                    kind: Label(
+                        name: "welcome_back",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000007",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000003",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000005",
+                    kind: Label(
+                        name: "first_time",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000008",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000004",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000009",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000005",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000010",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000001",
+                        expression: "happy",
+                        position: Free(
+                            x: 0.25,
+                            y: 1.0,
+                        ),
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000011",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000006",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000012",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000007",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000013",
+                    kind: PlaySound(
+                        asset: "01JBX0A0000000000000000008",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000014",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000002",
+                        expression: "sad",
+                        position: Free(
+                            x: 0.72,
+                            y: 1.0,
+                        ),
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                        scale: Some(0.92),
+                        flip_x: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000015",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000008",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000016",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000009",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000017",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000010",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000018",
+                    kind: Label(
+                        name: "offer",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000024",
+                    kind: Choice(
+                        options: [
+                            (
+                                text_id: "01JBX0T0000000000000000011",
+                                target: "01JBX0N0000000000000000019",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000012",
+                                target: "01JBX0N0000000000000000020",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000013",
+                                target: "01JBX0N0000000000000000021",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000014",
+                                target: "01JBX0N0000000000000000022",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000015",
+                                target: "01JBX0N0000000000000000023",
+                                condition: Some(Binary(Gt, Var("ghosts"), Lit(Int(0)))),
+                            ),
+                        ],
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000019",
+                    kind: Label(
+                        name: "take_job",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000025",
+                    kind: SetVar(
+                        var: "credits",
+                        value: Binary(Add, Var("credits"), Lit(Int(50))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000026",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000016",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000028",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000027",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000020",
+                    kind: Label(
+                        name: "haggle",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000029",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000002",
+                        expression: "mad",
+                        position: Free(
+                            x: 0.72,
+                            y: 1.0,
+                        ),
+                        transition: None,
+                        scale: Some(0.92),
+                        flip_x: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000030",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000017",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000033",
+                    kind: If(
+                        condition: Binary(Ge, Var("rep"), Lit(Int(1))),
+                        then_target: "01JBX0N0000000000000000031",
+                        else_target: Some("01JBX0N0000000000000000032"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000031",
+                    kind: Label(
+                        name: "haggle_ok",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000034",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000018",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000035",
+                    kind: SetVar(
+                        var: "credits",
+                        value: Binary(Add, Var("credits"), Lit(Int(100))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000036",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000027",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000032",
+                    kind: Label(
+                        name: "haggle_fail",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000037",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000019",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000038",
+                    kind: SetVar(
+                        var: "credits",
+                        value: Binary(Add, Var("credits"), Lit(Int(30))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000039",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000027",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000021",
+                    kind: Label(
+                        name: "ask_ai",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000040",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000002",
+                        expression: "sad",
+                        position: Free(
+                            x: 0.72,
+                            y: 1.0,
+                        ),
+                        transition: None,
+                        scale: Some(0.92),
+                        flip_x: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000041",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000020",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000042",
+                    kind: SetVar(
+                        var: "rep",
+                        value: Binary(Add, Var("rep"), Lit(Int(1))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000043",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000018",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000023",
+                    kind: Label(
+                        name: "secret",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000044",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000002",
+                        expression: "mad",
+                        position: Free(
+                            x: 0.72,
+                            y: 1.0,
+                        ),
+                        transition: None,
+                        scale: Some(0.92),
+                        flip_x: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000045",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000021",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000046",
+                    kind: SetVar(
+                        var: "credits",
+                        value: Binary(Add, Var("credits"), Lit(Int(80))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000047",
+                    kind: SetVar(
+                        var: "rep",
+                        value: Binary(Add, Var("rep"), Lit(Int(1))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000048",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000027",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000022",
+                    kind: Label(
+                        name: "refuse",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000049",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000022",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000050",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000002",
+                        expression: "mad",
+                        position: Free(
+                            x: 0.72,
+                            y: 1.0,
+                        ),
+                        transition: None,
+                        scale: Some(0.92),
+                        flip_x: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000051",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000023",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000052",
+                    kind: PlaySound(
+                        asset: "01JBX0A0000000000000000008",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000053",
+                    kind: Hide(
+                        character: "01JBX0C0000000000000000002",
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000054",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000024",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000056",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000008",
+                        label: Some("01JBX0N0000000000000000055"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000027",
+                    kind: Label(
+                        name: "go",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000057",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000025",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000058",
+                    kind: Hide(
+                        character: "01JBX0C0000000000000000002",
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000059",
+                    kind: Hide(
+                        character: "01JBX0C0000000000000000001",
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000060",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000002",
+                        label: None,
+                    ),
+                ),
             ],
         ),
         (
             id: "01JBX0S0000000000000000002",
             name: "hub",
             nodes: [
-                (id: "01JBX0N0000000000000000061", kind: Background(asset: "01JBX0A0000000000000000002", transition: Some((kind: Fade((r: 255, g: 40, b: 200)), duration: 0.8)))),
-                (id: "01JBX0N0000000000000000062", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000026")),
-                (id: "01JBX0N0000000000000000063", kind: Show(character: "01JBX0C0000000000000000001", expression: "happy", position: Center, transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000064", kind: Label(name: "hub")),
-                (id: "01JBX0N0000000000000000067", kind: If(condition: Var("alarm"), then_target: "01JBX0N0000000000000000065", else_target: Some("01JBX0N0000000000000000066"))),
-                (id: "01JBX0N0000000000000000065", kind: Label(name: "hub_alarm")),
-                (id: "01JBX0N0000000000000000068", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000027")),
-                (id: "01JBX0N0000000000000000066", kind: Label(name: "hub_menu")),
-                (id: "01JBX0N0000000000000000070", kind: Call(label: "01JBX0N0000000000000000069")),
-                (id: "01JBX0N0000000000000000071", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000028")),
-                (id: "01JBX0N0000000000000000077", kind: Choice(options: [
-                (text_id: "01JBX0T0000000000000000029", target: "01JBX0N0000000000000000072", condition: Some(Var("has_chip"))),
-                (text_id: "01JBX0T0000000000000000030", target: "01JBX0N0000000000000000073"),
-                (text_id: "01JBX0T0000000000000000031", target: "01JBX0N0000000000000000074"),
-                (text_id: "01JBX0T0000000000000000032", target: "01JBX0N0000000000000000075"),
-                (text_id: "01JBX0T0000000000000000033", target: "01JBX0N0000000000000000076", condition: Some(Binary(Ge, Var("rep"), Lit(Int(2))))),
-            ])),
-                (id: "01JBX0N0000000000000000073", kind: Label(name: "go_market")),
-                (id: "01JBX0N0000000000000000078", kind: JumpScene(scene: "01JBX0S0000000000000000003", label: None)),
-                (id: "01JBX0N0000000000000000074", kind: Label(name: "go_clinic")),
-                (id: "01JBX0N0000000000000000079", kind: JumpScene(scene: "01JBX0S0000000000000000004", label: None)),
-                (id: "01JBX0N0000000000000000072", kind: Label(name: "go_tower")),
-                (id: "01JBX0N0000000000000000080", kind: JumpScene(scene: "01JBX0S0000000000000000005", label: None)),
-                (id: "01JBX0N0000000000000000076", kind: Label(name: "go_rooftop")),
-                (id: "01JBX0N0000000000000000081", kind: JumpScene(scene: "01JBX0S0000000000000000007", label: None)),
-                (id: "01JBX0N0000000000000000075", kind: Label(name: "rest")),
-                (id: "01JBX0N0000000000000000082", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000034")),
-                (id: "01JBX0N0000000000000000083", kind: SetVar(var: "heat", value: Binary(Sub, Var("heat"), Lit(Float(0.5))))),
-                (id: "01JBX0N0000000000000000084", kind: SetVar(var: "credits", value: Binary(Sub, Var("credits"), Lit(Int(5))))),
-                (id: "01JBX0N0000000000000000085", kind: Jump(target: "01JBX0N0000000000000000064")),
-                (id: "01JBX0N0000000000000000069", kind: Label(name: "status")),
-                (id: "01JBX0N0000000000000000088", kind: If(condition: Binary(Ge, Var("credits"), Lit(Int(100))), then_target: "01JBX0N0000000000000000086", else_target: Some("01JBX0N0000000000000000087"))),
-                (id: "01JBX0N0000000000000000086", kind: Label(name: "rich")),
-                (id: "01JBX0N0000000000000000089", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000035")),
-                (id: "01JBX0N0000000000000000090", kind: Return),
-                (id: "01JBX0N0000000000000000087", kind: Label(name: "poor")),
-                (id: "01JBX0N0000000000000000091", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000036")),
-                (id: "01JBX0N0000000000000000092", kind: Return),
+                (
+                    id: "01JBX0N0000000000000000061",
+                    kind: Background(
+                        asset: "01JBX0A0000000000000000002",
+                        transition: Some((
+                            kind: Fade((
+                                r: 255,
+                                g: 40,
+                                b: 200,
+                            )),
+                            duration: 0.8,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000062",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000026",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000063",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000001",
+                        expression: "happy",
+                        position: Center,
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000064",
+                    kind: Label(
+                        name: "hub",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000067",
+                    kind: If(
+                        condition: Var("alarm"),
+                        then_target: "01JBX0N0000000000000000065",
+                        else_target: Some("01JBX0N0000000000000000066"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000065",
+                    kind: Label(
+                        name: "hub_alarm",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000068",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000027",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000066",
+                    kind: Label(
+                        name: "hub_menu",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000070",
+                    kind: Call(
+                        label: "01JBX0N0000000000000000069",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000071",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000028",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000077",
+                    kind: Choice(
+                        options: [
+                            (
+                                text_id: "01JBX0T0000000000000000029",
+                                target: "01JBX0N0000000000000000072",
+                                condition: Some(Var("has_chip")),
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000030",
+                                target: "01JBX0N0000000000000000073",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000031",
+                                target: "01JBX0N0000000000000000074",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000032",
+                                target: "01JBX0N0000000000000000075",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000033",
+                                target: "01JBX0N0000000000000000076",
+                                condition: Some(Binary(Ge, Var("rep"), Lit(Int(2)))),
+                            ),
+                        ],
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000073",
+                    kind: Label(
+                        name: "go_market",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000078",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000003",
+                        label: None,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000074",
+                    kind: Label(
+                        name: "go_clinic",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000079",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000004",
+                        label: None,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000072",
+                    kind: Label(
+                        name: "go_tower",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000080",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000005",
+                        label: None,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000076",
+                    kind: Label(
+                        name: "go_rooftop",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000081",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000007",
+                        label: None,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000075",
+                    kind: Label(
+                        name: "rest",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000082",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000034",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000083",
+                    kind: SetVar(
+                        var: "heat",
+                        value: Binary(Sub, Var("heat"), Lit(Float(0.5))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000084",
+                    kind: SetVar(
+                        var: "credits",
+                        value: Binary(Sub, Var("credits"), Lit(Int(5))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000085",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000064",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000069",
+                    kind: Label(
+                        name: "status",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000088",
+                    kind: If(
+                        condition: Binary(Ge, Var("credits"), Lit(Int(100))),
+                        then_target: "01JBX0N0000000000000000086",
+                        else_target: Some("01JBX0N0000000000000000087"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000086",
+                    kind: Label(
+                        name: "rich",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000089",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000035",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000090",
+                    kind: Return,
+                ),
+                (
+                    id: "01JBX0N0000000000000000087",
+                    kind: Label(
+                        name: "poor",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000091",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000036",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000092",
+                    kind: Return,
+                ),
             ],
         ),
         (
             id: "01JBX0S0000000000000000003",
             name: "market",
             nodes: [
-                (id: "01JBX0N0000000000000000093", kind: Background(asset: "01JBX0A0000000000000000002", transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000094", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000037")),
-                (id: "01JBX0N0000000000000000095", kind: Show(character: "01JBX0C0000000000000000002", expression: "happy", position: Free(x: 0.72, y: 1.0), transition: Some((kind: Dissolve, duration: 0.5)), scale: Some(0.92), flip_x: true)),
-                (id: "01JBX0N0000000000000000096", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000038")),
-                (id: "01JBX0N0000000000000000097", kind: Label(name: "shop")),
-                (id: "01JBX0N0000000000000000101", kind: Choice(options: [
-                (text_id: "01JBX0T0000000000000000039", target: "01JBX0N0000000000000000098", condition: Some(Binary(And, Binary(Ge, Var("credits"), Lit(Int(60))), Unary(Not, Var("has_chip"))))),
-                (text_id: "01JBX0T0000000000000000040", target: "01JBX0N0000000000000000099"),
-                (text_id: "01JBX0T0000000000000000041", target: "01JBX0N0000000000000000100"),
-            ])),
-                (id: "01JBX0N0000000000000000098", kind: Label(name: "buy")),
-                (id: "01JBX0N0000000000000000102", kind: SetVar(var: "credits", value: Binary(Sub, Var("credits"), Lit(Int(60))))),
-                (id: "01JBX0N0000000000000000103", kind: SetVar(var: "has_chip", value: Lit(Bool(true)))),
-                (id: "01JBX0N0000000000000000104", kind: PlaySound(asset: "01JBX0A0000000000000000008")),
-                (id: "01JBX0N0000000000000000105", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000042")),
-                (id: "01JBX0N0000000000000000106", kind: Jump(target: "01JBX0N0000000000000000097")),
-                (id: "01JBX0N0000000000000000100", kind: Label(name: "sell")),
-                (id: "01JBX0N0000000000000000107", kind: SetVar(var: "credits", value: Binary(Add, Var("credits"), Lit(Int(40))))),
-                (id: "01JBX0N0000000000000000108", kind: SetVar(var: "heat", value: Binary(Add, Var("heat"), Lit(Float(1.0))))),
-                (id: "01JBX0N0000000000000000109", kind: Show(character: "01JBX0C0000000000000000002", expression: "mad", position: Free(x: 0.72, y: 1.0), transition: None, scale: Some(0.92), flip_x: true)),
-                (id: "01JBX0N0000000000000000110", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000043")),
-                (id: "01JBX0N0000000000000000111", kind: Jump(target: "01JBX0N0000000000000000097")),
-                (id: "01JBX0N0000000000000000099", kind: Label(name: "leave")),
-                (id: "01JBX0N0000000000000000112", kind: Hide(character: "01JBX0C0000000000000000002", transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000113", kind: JumpScene(scene: "01JBX0S0000000000000000002", label: Some("01JBX0N0000000000000000064"))),
+                (
+                    id: "01JBX0N0000000000000000093",
+                    kind: Background(
+                        asset: "01JBX0A0000000000000000002",
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000094",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000037",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000095",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000002",
+                        expression: "happy",
+                        position: Free(
+                            x: 0.72,
+                            y: 1.0,
+                        ),
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                        scale: Some(0.92),
+                        flip_x: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000096",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000038",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000097",
+                    kind: Label(
+                        name: "shop",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000101",
+                    kind: Choice(
+                        options: [
+                            (
+                                text_id: "01JBX0T0000000000000000039",
+                                target: "01JBX0N0000000000000000098",
+                                condition: Some(Binary(Eq, Var("credits"), Lit(Int(0)))),
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000040",
+                                target: "01JBX0N0000000000000000099",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000041",
+                                target: "01JBX0N0000000000000000100",
+                                condition: None,
+                            ),
+                        ],
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000098",
+                    kind: Label(
+                        name: "buy",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000102",
+                    kind: SetVar(
+                        var: "credits",
+                        value: Binary(Sub, Var("credits"), Lit(Int(60))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000103",
+                    kind: SetVar(
+                        var: "has_chip",
+                        value: Lit(Bool(true)),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000104",
+                    kind: PlaySound(
+                        asset: "01JBX0A0000000000000000008",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000105",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000042",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000106",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000097",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000100",
+                    kind: Label(
+                        name: "sell",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000107",
+                    kind: SetVar(
+                        var: "credits",
+                        value: Binary(Add, Var("credits"), Lit(Int(40))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000108",
+                    kind: SetVar(
+                        var: "heat",
+                        value: Binary(Add, Var("heat"), Lit(Float(1.0))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000109",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000002",
+                        expression: "mad",
+                        position: Free(
+                            x: 0.72,
+                            y: 1.0,
+                        ),
+                        transition: None,
+                        scale: Some(0.92),
+                        flip_x: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000110",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000043",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000111",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000097",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000099",
+                    kind: Label(
+                        name: "leave",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000112",
+                    kind: Hide(
+                        character: "01JBX0C0000000000000000002",
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000113",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000002",
+                        label: Some("01JBX0N0000000000000000064"),
+                    ),
+                ),
             ],
         ),
         (
             id: "01JBX0S0000000000000000004",
             name: "clinic",
             nodes: [
-                (id: "01JBX0N0000000000000000114", kind: Background(asset: "01JBX0A0000000000000000001", transition: Some((kind: Fade((r: 255, g: 40, b: 200)), duration: 0.8)))),
-                (id: "01JBX0N0000000000000000115", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000044")),
-                (id: "01JBX0N0000000000000000116", kind: Show(character: "01JBX0C0000000000000000001", expression: "sad", position: Left, transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000117", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000045")),
-                (id: "01JBX0N0000000000000000118", kind: Label(name: "clinic_menu")),
-                (id: "01JBX0N0000000000000000122", kind: Choice(options: [
-                (text_id: "01JBX0T0000000000000000046", target: "01JBX0N0000000000000000119", condition: Some(Binary(And, Binary(Ge, Var("credits"), Lit(Int(50))), Unary(Not, Var("boosted"))))),
-                (text_id: "01JBX0T0000000000000000047", target: "01JBX0N0000000000000000120"),
-                (text_id: "01JBX0T0000000000000000048", target: "01JBX0N0000000000000000121"),
-            ])),
-                (id: "01JBX0N0000000000000000119", kind: Label(name: "boost")),
-                (id: "01JBX0N0000000000000000123", kind: SetVar(var: "credits", value: Binary(Sub, Var("credits"), Lit(Int(50))))),
-                (id: "01JBX0N0000000000000000124", kind: SetVar(var: "boosted", value: Lit(Bool(true)))),
-                (id: "01JBX0N0000000000000000125", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000049")),
-                (id: "01JBX0N0000000000000000126", kind: Wait(seconds: 1.5)),
-                (id: "01JBX0N0000000000000000127", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000050")),
-                (id: "01JBX0N0000000000000000128", kind: Jump(target: "01JBX0N0000000000000000118")),
-                (id: "01JBX0N0000000000000000120", kind: Label(name: "checkup")),
-                (id: "01JBX0N0000000000000000129", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000051")),
-                (id: "01JBX0N0000000000000000130", kind: SetVar(var: "rep", value: Binary(Add, Var("rep"), Lit(Int(1))))),
-                (id: "01JBX0N0000000000000000131", kind: Jump(target: "01JBX0N0000000000000000118")),
-                (id: "01JBX0N0000000000000000121", kind: Label(name: "clinic_leave")),
-                (id: "01JBX0N0000000000000000132", kind: Hide(character: "01JBX0C0000000000000000001", transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000133", kind: JumpScene(scene: "01JBX0S0000000000000000002", label: Some("01JBX0N0000000000000000064"))),
+                (
+                    id: "01JBX0N0000000000000000114",
+                    kind: Background(
+                        asset: "01JBX0A0000000000000000001",
+                        transition: Some((
+                            kind: Fade((
+                                r: 255,
+                                g: 40,
+                                b: 200,
+                            )),
+                            duration: 0.8,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000115",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000044",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000116",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000001",
+                        expression: "sad",
+                        position: Left,
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000117",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000045",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000118",
+                    kind: Label(
+                        name: "clinic_menu",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000122",
+                    kind: Choice(
+                        options: [
+                            (
+                                text_id: "01JBX0T0000000000000000046",
+                                target: "01JBX0N0000000000000000119",
+                                condition: Some(Binary(And, Binary(Ge, Var("credits"), Lit(Int(50))), Unary(Not, Var("boosted")))),
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000047",
+                                target: "01JBX0N0000000000000000120",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000048",
+                                target: "01JBX0N0000000000000000121",
+                                condition: None,
+                            ),
+                        ],
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000119",
+                    kind: Label(
+                        name: "boost",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000123",
+                    kind: SetVar(
+                        var: "credits",
+                        value: Binary(Sub, Var("credits"), Lit(Int(50))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000124",
+                    kind: SetVar(
+                        var: "boosted",
+                        value: Lit(Bool(true)),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000125",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000049",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000126",
+                    kind: Wait(
+                        seconds: 1.5,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000127",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000050",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000128",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000118",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000120",
+                    kind: Label(
+                        name: "checkup",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000129",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000051",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000130",
+                    kind: SetVar(
+                        var: "rep",
+                        value: Binary(Add, Var("rep"), Lit(Int(1))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000131",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000118",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000121",
+                    kind: Label(
+                        name: "clinic_leave",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000132",
+                    kind: Hide(
+                        character: "01JBX0C0000000000000000001",
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000133",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000002",
+                        label: Some("01JBX0N0000000000000000064"),
+                    ),
+                ),
             ],
         ),
         (
             id: "01JBX0S0000000000000000005",
             name: "tower",
             nodes: [
-                (id: "01JBX0N0000000000000000134", kind: Background(asset: "01JBX0A0000000000000000002", transition: Some((kind: Fade((r: 255, g: 255, b: 255)), duration: 0.4)))),
-                (id: "01JBX0N0000000000000000135", kind: StopMusic(fade_out: 1.0)),
-                (id: "01JBX0N0000000000000000136", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000052")),
-                (id: "01JBX0N0000000000000000137", kind: Show(character: "01JBX0C0000000000000000001", expression: "happy", position: Left, transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000138", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000053")),
-                (id: "01JBX0N0000000000000000141", kind: If(condition: Var("boosted"), then_target: "01JBX0N0000000000000000139", else_target: Some("01JBX0N0000000000000000140"))),
-                (id: "01JBX0N0000000000000000139", kind: Label(name: "sneak")),
-                (id: "01JBX0N0000000000000000142", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000054")),
-                (id: "01JBX0N0000000000000000144", kind: Jump(target: "01JBX0N0000000000000000143")),
-                (id: "01JBX0N0000000000000000140", kind: Label(name: "noisy")),
-                (id: "01JBX0N0000000000000000145", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000055")),
-                (id: "01JBX0N0000000000000000146", kind: SetVar(var: "heat", value: Binary(Add, Var("heat"), Lit(Float(1.5))))),
-                (id: "01JBX0N0000000000000000143", kind: Label(name: "server")),
-                (id: "01JBX0N0000000000000000147", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000056")),
-                (id: "01JBX0N0000000000000000150", kind: Choice(options: [
-                (text_id: "01JBX0T0000000000000000057", target: "01JBX0N0000000000000000148"),
-                (text_id: "01JBX0T0000000000000000058", target: "01JBX0N0000000000000000149"),
-            ])),
-                (id: "01JBX0N0000000000000000148", kind: Label(name: "go_hack")),
-                (id: "01JBX0N0000000000000000151", kind: JumpScene(scene: "01JBX0S0000000000000000006", label: None)),
-                (id: "01JBX0N0000000000000000149", kind: Label(name: "force")),
-                (id: "01JBX0N0000000000000000152", kind: PlaySound(asset: "01JBX0A0000000000000000008")),
-                (id: "01JBX0N0000000000000000153", kind: SetVar(var: "alarm", value: Lit(Bool(true)))),
-                (id: "01JBX0N0000000000000000154", kind: SetVar(var: "heat", value: Binary(Add, Var("heat"), Lit(Float(2.0))))),
-                (id: "01JBX0N0000000000000000155", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000059")),
-                (id: "01JBX0N0000000000000000156", kind: JumpScene(scene: "01JBX0S0000000000000000007", label: None)),
+                (
+                    id: "01JBX0N0000000000000000134",
+                    kind: Background(
+                        asset: "01JBX0A0000000000000000002",
+                        transition: Some((
+                            kind: Fade((
+                                r: 255,
+                                g: 255,
+                                b: 255,
+                            )),
+                            duration: 0.4,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000135",
+                    kind: StopMusic(
+                        fade_out: 1.0,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000136",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000052",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000137",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000001",
+                        expression: "happy",
+                        position: Left,
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000138",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000053",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000141",
+                    kind: If(
+                        condition: Var("boosted"),
+                        then_target: "01JBX0N0000000000000000139",
+                        else_target: Some("01JBX0N0000000000000000140"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000139",
+                    kind: Label(
+                        name: "sneak",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000142",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000054",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000144",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000143",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000140",
+                    kind: Label(
+                        name: "noisy",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000145",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000055",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000146",
+                    kind: SetVar(
+                        var: "heat",
+                        value: Binary(Add, Var("heat"), Lit(Float(1.5))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000143",
+                    kind: Label(
+                        name: "server",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000147",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000056",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000150",
+                    kind: Choice(
+                        options: [
+                            (
+                                text_id: "01JBX0T0000000000000000057",
+                                target: "01JBX0N0000000000000000148",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000058",
+                                target: "01JBX0N0000000000000000149",
+                                condition: None,
+                            ),
+                        ],
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000148",
+                    kind: Label(
+                        name: "go_hack",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000151",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000006",
+                        label: None,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000149",
+                    kind: Label(
+                        name: "force",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000152",
+                    kind: PlaySound(
+                        asset: "01JBX0A0000000000000000008",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000153",
+                    kind: SetVar(
+                        var: "alarm",
+                        value: Lit(Bool(true)),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000154",
+                    kind: SetVar(
+                        var: "heat",
+                        value: Binary(Add, Var("heat"), Lit(Float(2.0))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000155",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000059",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000156",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000007",
+                        label: None,
+                    ),
+                ),
             ],
         ),
         (
             id: "01JBX0S0000000000000000006",
             name: "hack",
             nodes: [
-                (id: "01JBX0N0000000000000000157", kind: Background(asset: "01JBX0A0000000000000000001", transition: Some((kind: Fade((r: 255, g: 40, b: 200)), duration: 0.8)))),
-                (id: "01JBX0N0000000000000000158", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000060")),
-                (id: "01JBX0N0000000000000000159", kind: SetVar(var: "tries", value: Lit(Int(3)))),
-                (id: "01JBX0N0000000000000000160", kind: Label(name: "hack_loop")),
-                (id: "01JBX0N0000000000000000163", kind: If(condition: Binary(Le, Var("tries"), Lit(Int(0))), then_target: "01JBX0N0000000000000000161", else_target: Some("01JBX0N0000000000000000162"))),
-                (id: "01JBX0N0000000000000000162", kind: Label(name: "hack_prompt")),
-                (id: "01JBX0N0000000000000000167", kind: Choice(options: [
-                (text_id: "01JBX0T0000000000000000061", target: "01JBX0N0000000000000000164"),
-                (text_id: "01JBX0T0000000000000000062", target: "01JBX0N0000000000000000165"),
-                (text_id: "01JBX0T0000000000000000063", target: "01JBX0N0000000000000000166"),
-            ])),
-                (id: "01JBX0N0000000000000000164", kind: Label(name: "inject")),
-                (id: "01JBX0N0000000000000000168", kind: SetVar(var: "tries", value: Binary(Sub, Var("tries"), Lit(Int(1))))),
-                (id: "01JBX0N0000000000000000171", kind: If(condition: Binary(Ge, Var("rep"), Lit(Int(2))), then_target: "01JBX0N0000000000000000169", else_target: Some("01JBX0N0000000000000000170"))),
-                (id: "01JBX0N0000000000000000165", kind: Label(name: "brute")),
-                (id: "01JBX0N0000000000000000172", kind: SetVar(var: "tries", value: Binary(Sub, Var("tries"), Lit(Int(1))))),
-                (id: "01JBX0N0000000000000000173", kind: If(condition: Var("boosted"), then_target: "01JBX0N0000000000000000169", else_target: Some("01JBX0N0000000000000000170"))),
-                (id: "01JBX0N0000000000000000166", kind: Label(name: "listen")),
-                (id: "01JBX0N0000000000000000174", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000064")),
-                (id: "01JBX0N0000000000000000175", kind: SetVar(var: "rep", value: Binary(Add, Var("rep"), Lit(Int(1))))),
-                (id: "01JBX0N0000000000000000176", kind: Jump(target: "01JBX0N0000000000000000169")),
-                (id: "01JBX0N0000000000000000170", kind: Label(name: "hack_wrong")),
-                (id: "01JBX0N0000000000000000177", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000065")),
-                (id: "01JBX0N0000000000000000178", kind: SetVar(var: "heat", value: Binary(Add, Var("heat"), Lit(Float(0.5))))),
-                (id: "01JBX0N0000000000000000179", kind: Jump(target: "01JBX0N0000000000000000160")),
-                (id: "01JBX0N0000000000000000161", kind: Label(name: "hack_failed")),
-                (id: "01JBX0N0000000000000000180", kind: SetVar(var: "alarm", value: Lit(Bool(true)))),
-                (id: "01JBX0N0000000000000000181", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000066")),
-                (id: "01JBX0N0000000000000000182", kind: JumpScene(scene: "01JBX0S0000000000000000007", label: None)),
-                (id: "01JBX0N0000000000000000169", kind: Label(name: "hack_win")),
-                (id: "01JBX0N0000000000000000183", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000067")),
-                (id: "01JBX0N0000000000000000184", kind: SetVar(var: "ghost_met", value: Lit(Bool(true)))),
-                (id: "01JBX0N0000000000000000185", kind: JumpScene(scene: "01JBX0S0000000000000000007", label: None)),
+                (
+                    id: "01JBX0N0000000000000000157",
+                    kind: Background(
+                        asset: "01JBX0A0000000000000000001",
+                        transition: Some((
+                            kind: Fade((
+                                r: 255,
+                                g: 40,
+                                b: 200,
+                            )),
+                            duration: 0.8,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000158",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000060",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000159",
+                    kind: SetVar(
+                        var: "tries",
+                        value: Lit(Int(3)),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000160",
+                    kind: Label(
+                        name: "hack_loop",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000163",
+                    kind: If(
+                        condition: Binary(Le, Var("tries"), Lit(Int(0))),
+                        then_target: "01JBX0N0000000000000000161",
+                        else_target: Some("01JBX0N0000000000000000162"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000162",
+                    kind: Label(
+                        name: "hack_prompt",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000167",
+                    kind: Choice(
+                        options: [
+                            (
+                                text_id: "01JBX0T0000000000000000061",
+                                target: "01JBX0N0000000000000000164",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000062",
+                                target: "01JBX0N0000000000000000165",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000063",
+                                target: "01JBX0N0000000000000000166",
+                                condition: None,
+                            ),
+                        ],
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000164",
+                    kind: Label(
+                        name: "inject",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000168",
+                    kind: SetVar(
+                        var: "tries",
+                        value: Binary(Sub, Var("tries"), Lit(Int(1))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000171",
+                    kind: If(
+                        condition: Binary(Ge, Var("rep"), Lit(Int(2))),
+                        then_target: "01JBX0N0000000000000000169",
+                        else_target: Some("01JBX0N0000000000000000170"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000165",
+                    kind: Label(
+                        name: "brute",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000172",
+                    kind: SetVar(
+                        var: "tries",
+                        value: Binary(Sub, Var("tries"), Lit(Int(1))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000173",
+                    kind: If(
+                        condition: Var("boosted"),
+                        then_target: "01JBX0N0000000000000000169",
+                        else_target: Some("01JBX0N0000000000000000170"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000166",
+                    kind: Label(
+                        name: "listen",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000174",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000064",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000175",
+                    kind: SetVar(
+                        var: "rep",
+                        value: Binary(Add, Var("rep"), Lit(Int(1))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000176",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000169",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000170",
+                    kind: Label(
+                        name: "hack_wrong",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000177",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000065",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000178",
+                    kind: SetVar(
+                        var: "heat",
+                        value: Binary(Add, Var("heat"), Lit(Float(0.5))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000179",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000160",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000161",
+                    kind: Label(
+                        name: "hack_failed",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000180",
+                    kind: SetVar(
+                        var: "alarm",
+                        value: Lit(Bool(true)),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000181",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000066",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000182",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000007",
+                        label: None,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000169",
+                    kind: Label(
+                        name: "hack_win",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000183",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000067",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000184",
+                    kind: SetVar(
+                        var: "ghost_met",
+                        value: Lit(Bool(true)),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000185",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000007",
+                        label: None,
+                    ),
+                ),
             ],
         ),
         (
             id: "01JBX0S0000000000000000007",
             name: "rooftop",
             nodes: [
-                (id: "01JBX0N0000000000000000186", kind: Background(asset: "01JBX0A0000000000000000002", transition: Some((kind: Dissolve, duration: 1.5)))),
-                (id: "01JBX0N0000000000000000187", kind: PlayMusic(asset: "01JBX0A0000000000000000007", fade_in: 1.0, looping: true)),
-                (id: "01JBX0N0000000000000000188", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000068")),
-                (id: "01JBX0N0000000000000000189", kind: Show(character: "01JBX0C0000000000000000001", expression: "happy", position: Left, transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000190", kind: Show(character: "01JBX0C0000000000000000002", expression: "happy", position: Free(x: 0.72, y: 1.0), transition: Some((kind: Dissolve, duration: 0.5)), scale: Some(0.92), flip_x: true)),
-                (id: "01JBX0N0000000000000000193", kind: If(condition: Var("alarm"), then_target: "01JBX0N0000000000000000191", else_target: Some("01JBX0N0000000000000000192"))),
-                (id: "01JBX0N0000000000000000191", kind: Label(name: "bob_angry")),
-                (id: "01JBX0N0000000000000000194", kind: Show(character: "01JBX0C0000000000000000002", expression: "mad", position: Free(x: 0.72, y: 1.0), transition: None, scale: Some(0.92), flip_x: true)),
-                (id: "01JBX0N0000000000000000195", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000069")),
-                (id: "01JBX0N0000000000000000197", kind: Jump(target: "01JBX0N0000000000000000196")),
-                (id: "01JBX0N0000000000000000192", kind: Label(name: "bob_calm")),
-                (id: "01JBX0N0000000000000000198", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000070")),
-                (id: "01JBX0N0000000000000000196", kind: Label(name: "bob_ask")),
-                (id: "01JBX0N0000000000000000199", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000071")),
-                (id: "01JBX0N0000000000000000204", kind: Choice(options: [
-                (text_id: "01JBX0T0000000000000000072", target: "01JBX0N0000000000000000200"),
-                (text_id: "01JBX0T0000000000000000073", target: "01JBX0N0000000000000000201", condition: Some(Var("ghost_met"))),
-                (text_id: "01JBX0T0000000000000000074", target: "01JBX0N0000000000000000202"),
-                (text_id: "01JBX0T0000000000000000075", target: "01JBX0N0000000000000000203"),
-            ])),
-                (id: "01JBX0N0000000000000000200", kind: Label(name: "to_helix")),
-                (id: "01JBX0N0000000000000000205", kind: SetVar(var: "credits", value: Binary(Add, Var("credits"), Lit(Int(200))))),
-                (id: "01JBX0N0000000000000000206", kind: SetVar(var: "rep", value: Binary(Sub, Var("rep"), Lit(Int(1))))),
-                (id: "01JBX0N0000000000000000207", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000076")),
-                (id: "01JBX0N0000000000000000209", kind: JumpScene(scene: "01JBX0S0000000000000000008", label: Some("01JBX0N0000000000000000208"))),
-                (id: "01JBX0N0000000000000000201", kind: Label(name: "to_net")),
-                (id: "01JBX0N0000000000000000210", kind: SetVar(var: "rep", value: Binary(Add, Var("rep"), Lit(Int(2))))),
-                (id: "01JBX0N0000000000000000211", kind: Show(character: "01JBX0C0000000000000000001", expression: "sad", position: Left, transition: None)),
-                (id: "01JBX0N0000000000000000212", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000077")),
-                (id: "01JBX0N0000000000000000214", kind: JumpScene(scene: "01JBX0S0000000000000000008", label: Some("01JBX0N0000000000000000213"))),
-                (id: "01JBX0N0000000000000000202", kind: Label(name: "destroy")),
-                (id: "01JBX0N0000000000000000215", kind: Show(character: "01JBX0C0000000000000000002", expression: "sad", position: Free(x: 0.72, y: 1.0), transition: None, scale: Some(0.92), flip_x: true)),
-                (id: "01JBX0N0000000000000000216", kind: Say(speaker: Some("01JBX0C0000000000000000002"), text_id: "01JBX0T0000000000000000078")),
-                (id: "01JBX0N0000000000000000217", kind: SetVar(var: "rep", value: Binary(Add, Var("rep"), Lit(Int(1))))),
-                (id: "01JBX0N0000000000000000219", kind: JumpScene(scene: "01JBX0S0000000000000000008", label: Some("01JBX0N0000000000000000218"))),
-                (id: "01JBX0N0000000000000000203", kind: Label(name: "runaway")),
-                (id: "01JBX0N0000000000000000220", kind: Show(character: "01JBX0C0000000000000000001", expression: "mad", position: Left, transition: None)),
-                (id: "01JBX0N0000000000000000221", kind: Say(speaker: Some("01JBX0C0000000000000000001"), text_id: "01JBX0T0000000000000000079")),
-                (id: "01JBX0N0000000000000000223", kind: JumpScene(scene: "01JBX0S0000000000000000008", label: Some("01JBX0N0000000000000000222"))),
+                (
+                    id: "01JBX0N0000000000000000186",
+                    kind: Background(
+                        asset: "01JBX0A0000000000000000002",
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 1.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000187",
+                    kind: PlayMusic(
+                        asset: "01JBX0A0000000000000000007",
+                        fade_in: 1.0,
+                        looping: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000188",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000068",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000189",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000001",
+                        expression: "happy",
+                        position: Left,
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000190",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000002",
+                        expression: "happy",
+                        position: Free(
+                            x: 0.72,
+                            y: 1.0,
+                        ),
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                        scale: Some(0.92),
+                        flip_x: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000193",
+                    kind: If(
+                        condition: Var("alarm"),
+                        then_target: "01JBX0N0000000000000000191",
+                        else_target: Some("01JBX0N0000000000000000192"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000191",
+                    kind: Label(
+                        name: "bob_angry",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000194",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000002",
+                        expression: "mad",
+                        position: Free(
+                            x: 0.72,
+                            y: 1.0,
+                        ),
+                        transition: None,
+                        scale: Some(0.92),
+                        flip_x: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000195",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000069",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000197",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000196",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000192",
+                    kind: Label(
+                        name: "bob_calm",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000198",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000070",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000196",
+                    kind: Label(
+                        name: "bob_ask",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000199",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000071",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000204",
+                    kind: Choice(
+                        options: [
+                            (
+                                text_id: "01JBX0T0000000000000000072",
+                                target: "01JBX0N0000000000000000200",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000073",
+                                target: "01JBX0N0000000000000000201",
+                                condition: Some(Var("ghost_met")),
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000074",
+                                target: "01JBX0N0000000000000000202",
+                                condition: None,
+                            ),
+                            (
+                                text_id: "01JBX0T0000000000000000075",
+                                target: "01JBX0N0000000000000000203",
+                                condition: None,
+                            ),
+                        ],
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000200",
+                    kind: Label(
+                        name: "to_helix",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000205",
+                    kind: SetVar(
+                        var: "credits",
+                        value: Binary(Add, Var("credits"), Lit(Int(200))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000206",
+                    kind: SetVar(
+                        var: "rep",
+                        value: Binary(Sub, Var("rep"), Lit(Int(1))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000207",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000076",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000209",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000008",
+                        label: Some("01JBX0N0000000000000000208"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000201",
+                    kind: Label(
+                        name: "to_net",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000210",
+                    kind: SetVar(
+                        var: "rep",
+                        value: Binary(Add, Var("rep"), Lit(Int(2))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000211",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000001",
+                        expression: "sad",
+                        position: Left,
+                        transition: None,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000212",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000077",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000214",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000008",
+                        label: Some("01JBX0N0000000000000000213"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000202",
+                    kind: Label(
+                        name: "destroy",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000215",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000002",
+                        expression: "sad",
+                        position: Free(
+                            x: 0.72,
+                            y: 1.0,
+                        ),
+                        transition: None,
+                        scale: Some(0.92),
+                        flip_x: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000216",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000002"),
+                        text_id: "01JBX0T0000000000000000078",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000217",
+                    kind: SetVar(
+                        var: "rep",
+                        value: Binary(Add, Var("rep"), Lit(Int(1))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000219",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000008",
+                        label: Some("01JBX0N0000000000000000218"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000203",
+                    kind: Label(
+                        name: "runaway",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000220",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000001",
+                        expression: "mad",
+                        position: Left,
+                        transition: None,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000221",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000079",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000223",
+                    kind: JumpScene(
+                        scene: "01JBX0S0000000000000000008",
+                        label: Some("01JBX0N0000000000000000222"),
+                    ),
+                ),
             ],
         ),
         (
             id: "01JBX0S0000000000000000008",
             name: "endings",
             nodes: [
-                (id: "01JBX0N0000000000000000055", kind: Label(name: "end_quiet")),
-                (id: "01JBX0N0000000000000000224", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000080")),
-                (id: "01JBX0N0000000000000000226", kind: Jump(target: "01JBX0N0000000000000000225")),
-                (id: "01JBX0N0000000000000000208", kind: Label(name: "end_corp")),
-                (id: "01JBX0N0000000000000000227", kind: Show(character: "01JBX0C0000000000000000001", expression: "sad", position: Center, transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000228", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000081")),
-                (id: "01JBX0N0000000000000000229", kind: Jump(target: "01JBX0N0000000000000000225")),
-                (id: "01JBX0N0000000000000000213", kind: Label(name: "end_ghost")),
-                (id: "01JBX0N0000000000000000230", kind: Show(character: "01JBX0C0000000000000000001", expression: "happy", position: Center, transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000231", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000082")),
-                (id: "01JBX0N0000000000000000232", kind: SetVar(var: "ghosts", value: Binary(Add, Var("ghosts"), Lit(Int(1))))),
-                (id: "01JBX0N0000000000000000233", kind: Jump(target: "01JBX0N0000000000000000225")),
-                (id: "01JBX0N0000000000000000218", kind: Label(name: "end_chrome")),
-                (id: "01JBX0N0000000000000000234", kind: Show(character: "01JBX0C0000000000000000001", expression: "mad", position: Center, transition: Some((kind: Dissolve, duration: 0.5)))),
-                (id: "01JBX0N0000000000000000235", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000083")),
-                (id: "01JBX0N0000000000000000236", kind: Jump(target: "01JBX0N0000000000000000225")),
-                (id: "01JBX0N0000000000000000222", kind: Label(name: "end_runaway")),
-                (id: "01JBX0N0000000000000000237", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000084")),
-                (id: "01JBX0N0000000000000000225", kind: Label(name: "fin")),
-                (id: "01JBX0N0000000000000000240", kind: If(condition: Binary(Ge, Var("rep"), Lit(Int(3))), then_target: "01JBX0N0000000000000000238", else_target: Some("01JBX0N0000000000000000239"))),
-                (id: "01JBX0N0000000000000000238", kind: Label(name: "legend")),
-                (id: "01JBX0N0000000000000000241", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000085")),
-                (id: "01JBX0N0000000000000000239", kind: Label(name: "nolegend")),
-                (id: "01JBX0N0000000000000000242", kind: StopMusic(fade_out: 2.0)),
-                (id: "01JBX0N0000000000000000243", kind: SetVar(var: "plays", value: Binary(Add, Var("plays"), Lit(Int(1))))),
-                (id: "01JBX0N0000000000000000244", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000086")),
-                (id: "01JBX0N0000000000000000245", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000087")),
-                (id: "01JBX0N0000000000000000246", kind: End),
+                (
+                    id: "01JBX0N0000000000000000055",
+                    kind: Label(
+                        name: "end_quiet",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000224",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000080",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000226",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000225",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000208",
+                    kind: Label(
+                        name: "end_corp",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000227",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000001",
+                        expression: "sad",
+                        position: Center,
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000228",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000081",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000229",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000225",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000213",
+                    kind: Label(
+                        name: "end_ghost",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000230",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000001",
+                        expression: "happy",
+                        position: Center,
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000231",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000082",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000232",
+                    kind: SetVar(
+                        var: "ghosts",
+                        value: Binary(Add, Var("ghosts"), Lit(Int(1))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000233",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000225",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000218",
+                    kind: Label(
+                        name: "end_chrome",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000234",
+                    kind: Show(
+                        character: "01JBX0C0000000000000000001",
+                        expression: "mad",
+                        position: Center,
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                        )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000235",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000083",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000236",
+                    kind: Jump(
+                        target: "01JBX0N0000000000000000225",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000222",
+                    kind: Label(
+                        name: "end_runaway",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000237",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000084",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000225",
+                    kind: Label(
+                        name: "fin",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000240",
+                    kind: If(
+                        condition: Binary(Ge, Var("rep"), Lit(Int(3))),
+                        then_target: "01JBX0N0000000000000000238",
+                        else_target: Some("01JBX0N0000000000000000239"),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000238",
+                    kind: Label(
+                        name: "legend",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000241",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000085",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000239",
+                    kind: Label(
+                        name: "nolegend",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000242",
+                    kind: StopMusic(
+                        fade_out: 2.0,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000243",
+                    kind: SetVar(
+                        var: "plays",
+                        value: Binary(Add, Var("plays"), Lit(Int(1))),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000244",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000086",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000245",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01JBX0T0000000000000000087",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000246",
+                    kind: End,
+                ),
             ],
         ),
     ],

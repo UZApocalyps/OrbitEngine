@@ -61,6 +61,7 @@ pub struct Vm {
     pub(crate) fault: Option<VmError>,
     persistent: BTreeMap<String, Value>,
     persistent_names: HashSet<String>,
+    pub(crate) warnings: Vec<String>,
     pub(crate) history: History,
 }
 
@@ -109,6 +110,7 @@ impl Vm {
             fault: None,
             persistent,
             persistent_names,
+            warnings: Vec::new(),
             history: History::default(),
         })
     }
@@ -323,11 +325,25 @@ impl Vm {
                     }
                 }
                 NodeKind::SetVar { var, value } => {
-                    let v = self.eval(pc, value)?;
-                    if self.persistent_names.contains(var) {
-                        self.persistent.insert(var.clone(), v);
-                    } else {
-                        self.state.vars.insert(var.clone(), v);
+                    match self.eval(pc, value) {
+                        Ok(v) => {
+                            // Keep the declared type (a float result stored
+                            // in an int variable is rounded).
+                            let v = match self.variable(var) {
+                                Some(cur) => {
+                                    orbit_core::coerce(v.clone(), cur.value_type()).unwrap_or(v)
+                                }
+                                None => v,
+                            };
+                            self.store_var(var, v);
+                        }
+                        Err(VmError::Eval {
+                            source: orbit_core::EvalError::DivisionByZero,
+                            ..
+                        }) => self
+                            .warnings
+                            .push(format!("node {pc}: division by zero, `{var}` unchanged")),
+                        Err(e) => return Err(e),
                     }
                     self.state.pc = next;
                 }
@@ -536,6 +552,64 @@ impl Vm {
             .vars
             .get(name)
             .or_else(|| self.persistent.get(name))
+    }
+
+    fn store_var(&mut self, name: &str, value: Value) {
+        if self.persistent_names.contains(name) {
+            self.persistent.insert(name.to_owned(), value);
+        } else {
+            self.state.vars.insert(name.to_owned(), value);
+        }
+    }
+
+    /// Applies a no-code [`VarOp`] from outside a node (a UI button, a
+    /// host). The variable keeps its declared type; on error (unknown
+    /// variable, type mismatch, division by zero) nothing changes and a
+    /// warning is recorded (see [`Vm::take_warnings`]).
+    ///
+    /// Playthrough variables are part of the saved state and of the rollback
+    /// history: the checkpoint of the screen the player is looking at is
+    /// updated too, so rolling back to it keeps the change, and a known
+    /// future that no longer follows from it is cut (like picking another
+    /// choice). Persistent variables are not rolled back; the host saves
+    /// them (`persistent_vars`).
+    pub fn apply_var_op(&mut self, op: &orbit_core::VarOp) -> Result<(), orbit_core::OpError> {
+        let result = op.apply(&|name| self.variable(name).cloned());
+        let value = match result {
+            Ok(v) => v,
+            Err(e) => {
+                self.warnings
+                    .push(format!("variable operation on `{}` ignored: {e}", op.var));
+                return Err(e);
+            }
+        };
+        if self.variable(&op.var) == Some(&value) {
+            return Ok(());
+        }
+        if !self.persistent_names.contains(&op.var) {
+            self.history.patch_cursor_var(&op.var, &value);
+        }
+        self.store_var(&op.var, value);
+        Ok(())
+    }
+
+    /// Evaluates a no-code condition against the current variables. An
+    /// evaluation error (unknown variable, type mismatch) counts as `false`
+    /// and records a warning.
+    pub fn eval_condition(&mut self, cond: &orbit_core::Condition) -> bool {
+        match cond.eval(&|name| self.variable(name).cloned()) {
+            Ok(b) => b,
+            Err(e) => {
+                self.warnings.push(format!("condition ignored: {e}"));
+                false
+            }
+        }
+    }
+
+    /// Non-fatal problems recorded since the last call (division by zero,
+    /// rejected variable operations).
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
     }
 
     /// Playthrough (`Game`) variables only, as stored in the state.

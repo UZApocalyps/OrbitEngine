@@ -3,7 +3,7 @@
 // file small and stable. Structure: scene 1 (background + music, two actors,
 // one choice with two branches) -> scene 2 (music stop, persistent counter, end).
 (
-    schema_version: 6,
+    schema_version: 8,
     title: "Test Minimal",
     strings: (
         source_lang: "en",
@@ -32,11 +32,11 @@
     ),
     assets: (
         assets: [
-            (id: "01JBX0A0000000000000000001", kind: Image, path: "assets/demo/bg_room.png"),
-            (id: "01JBX0A0000000000000000002", kind: Image, path: "assets/demo/alice_happy.png"),
-            (id: "01JBX0A0000000000000000003", kind: Image, path: "assets/demo/bob_sad.png"),
-            (id: "01JBX0A0000000000000000004", kind: Music, path: "assets/demo/music_theme.wav"),
-            (id: "01JBX0A0000000000000000005", kind: Sound, path: "assets/demo/sfx_door.wav"),
+            (id: "01JBX0A0000000000000000001", kind: Image, path: "fixtures/assets/bg_room.png"),
+            (id: "01JBX0A0000000000000000002", kind: Image, path: "fixtures/assets/alice_happy.png"),
+            (id: "01JBX0A0000000000000000003", kind: Image, path: "fixtures/assets/bob_sad.png"),
+            (id: "01JBX0A0000000000000000004", kind: Music, path: "fixtures/assets/music_loop.wav"),
+            (id: "01JBX0A0000000000000000005", kind: Sound, path: "fixtures/assets/sfx_knock.wav"),
         ],
     ),
     characters: [

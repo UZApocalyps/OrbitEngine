@@ -1,0 +1,17 @@
+(
+    schema_version: 1,
+    title: "Old",
+    scenes: [(
+        id: "01JBX0S0000000000000000001",
+        name: "main",
+        nodes: [
+            (id: "01JBX0N0000000000000000001", kind: Say(speaker: Some("Ana"), text_id: "01JBX0T0000000000000000001", text: "Hi")),
+            (id: "01JBX0N0000000000000000002", kind: Say(speaker: Some("Ana"), text_id: "01JBX0T0000000000000000002", text: "Again")),
+            (id: "01JBX0N0000000000000000003", kind: Say(speaker: None, text_id: "01JBX0T0000000000000000003", text: "Narration")),
+            (id: "01JBX0N0000000000000000004", kind: SetVar(var: "n", value: Int(2))),
+            (id: "01JBX0N0000000000000000005", kind: If(condition: (var: "n", op: Ge, value: Int(2)), then_target: "01JBX0N0000000000000000007", else_target: None)),
+            (id: "01JBX0N0000000000000000006", kind: Choice(options: [(text_id: "01JBX0T0000000000000000004", text: "Go", target: "01JBX0N0000000000000000007")])),
+            (id: "01JBX0N0000000000000000007", kind: Label(name: "end")),
+        ],
+    )],
+)

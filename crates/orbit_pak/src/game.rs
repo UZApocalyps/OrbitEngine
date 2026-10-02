@@ -121,41 +121,42 @@ impl GamePack {
 mod tests {
     use super::*;
 
-    const DEMO: &str = include_str!("../../../examples/stories/demo.ron");
-    const FR: &str = include_str!("../../../examples/stories/i18n/demo.fr.ron");
+    // Fixture: these tests index characters/expressions and compare sizes (test_features.ron).
+    const FIXTURE: &str = include_str!("../../../examples/stories/test_features.ron");
+    const FR: &str = include_str!("../../../examples/stories/i18n/test_minimal.fr.ron");
 
-    fn demo_pack() -> GamePack {
+    fn fixture_pack() -> GamePack {
         GamePack {
             info: GameInfo {
-                name: "Demo".into(),
+                name: "Test Features".into(),
                 id: "demo".into(),
                 version: "1.2.3".into(),
                 default_language: Some("fr".into()),
             },
-            story: Story::from_ron_unchecked(DEMO).unwrap(),
+            story: Story::from_ron_unchecked(FIXTURE).unwrap(),
             translations: vec![Translation::from_ron(FR).unwrap()],
             ui: None,
         }
     }
 
     #[test]
-    fn the_demo_story_survives_postcard() {
-        let pack = demo_pack();
+    fn the_fixture_story_survives_postcard() {
+        let pack = fixture_pack();
         let bytes = pack.to_bytes().unwrap();
         assert!(GamePack::is_pack(&bytes));
         assert_eq!(GamePack::from_bytes(&bytes).unwrap(), pack);
         // Smaller than the RON it comes from.
         assert!(
-            bytes.len() < DEMO.len(),
+            bytes.len() < FIXTURE.len(),
             "{} vs {}",
             bytes.len(),
-            DEMO.len()
+            FIXTURE.len()
         );
     }
 
     #[test]
     fn a_character_default_position_survives_postcard() {
-        let mut pack = demo_pack();
+        let mut pack = fixture_pack();
         pack.story.characters[0].default_position = Some(orbit_core::Position::Right);
         let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
         assert_eq!(
@@ -167,7 +168,7 @@ mod tests {
 
     #[test]
     fn scale_mirror_and_free_positions_survive_postcard() {
-        let mut pack = demo_pack();
+        let mut pack = fixture_pack();
         pack.story.characters[0].default_scale = 0.75;
         let mut styled = 0;
         for node in pack.story.scenes.iter_mut().flat_map(|s| &mut s.nodes) {
@@ -194,8 +195,29 @@ mod tests {
     }
 
     #[test]
+    fn expression_animations_survive_postcard() {
+        use orbit_core::{AnimFrames, Animation, LoopMode, Motion};
+        let mut pack = fixture_pack();
+        let image = pack.story.characters[0].expressions[0].image;
+        pack.story.characters[0].expressions[0].motion = Some(Motion::Animation(Animation {
+            frames: AnimFrames::SpriteSheet {
+                asset: image,
+                cols: 3,
+                rows: 2,
+                frame_count: 5,
+                frame_size: Some([64, 96]),
+            },
+            fps: 10.0,
+            loop_mode: LoopMode::PingPong,
+        }));
+        pack.story.characters[0].expressions[1].motion = Some(Motion::Rigged);
+        let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
+        assert_eq!(back, pack);
+    }
+
+    #[test]
     fn the_ui_bundle_survives_postcard() {
-        let mut pack = demo_pack();
+        let mut pack = fixture_pack();
         pack.ui = Some(b"(screens: [])".to_vec());
         let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
         assert_eq!(back.ui, pack.ui);
@@ -203,7 +225,7 @@ mod tests {
 
     #[test]
     fn a_version_1_pack_still_loads_without_ui() {
-        let pack = demo_pack();
+        let pack = fixture_pack();
         let v1 = GamePackV1Out {
             info: &pack.info,
             story: &pack.story,
@@ -231,7 +253,7 @@ mod tests {
             GamePack::from_bytes(b"(schema_version: 5)").unwrap_err(),
             PackError::BadMagic
         );
-        let mut bytes = demo_pack().to_bytes().unwrap();
+        let mut bytes = fixture_pack().to_bytes().unwrap();
         assert!(matches!(
             GamePack::from_bytes(&bytes[..20]),
             Err(PackError::Corrupt(_))

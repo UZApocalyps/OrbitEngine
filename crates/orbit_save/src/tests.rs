@@ -1,3 +1,5 @@
+// The tests below depend on the exact structure of the story (scene names, interaction
+// counts, persistent variable): they run on the `test_minimal.ron` fixture, not the demo.
 use std::sync::Arc;
 
 use orbit_core::{Node, NodeId, NodeKind, Story, Value, VarDecl};
@@ -5,10 +7,10 @@ use orbit_vm::{Pending, Rng, StepResult, Vm};
 
 use crate::*;
 
-const DEMO: &str = include_str!("../../../examples/stories/demo.ron");
+const FIXTURE: &str = include_str!("../../../examples/stories/test_minimal.ron");
 
 fn demo() -> Arc<Story> {
-    Arc::new(Story::from_ron(DEMO).expect("demo.ron must load"))
+    Arc::new(Story::from_ron(FIXTURE).expect("test_minimal.ron must load"))
 }
 
 fn manager(story: &Arc<Story>, storage: MemoryStorage) -> SaveManager {
@@ -44,13 +46,13 @@ fn info(t: u64) -> CaptureInfo {
 fn encode_decode_roundtrip_with_history_and_thumbnail() {
     let story = demo();
     let mut vm = Vm::from_start(story.clone()).unwrap();
-    play(&mut vm, 20, 0);
+    play(&mut vm, 8, 0);
     let mut capture = info(1_700_000_000_000);
     capture.thumbnail = Some(vec![0x89, b'P', b'N', b'G', 1, 2, 3]);
     let save = SaveData::capture(&vm, capture);
     assert_eq!(save.meta.format_version, FORMAT_VERSION);
     assert_eq!(save.meta.story_hash, story_hash(&story));
-    assert_eq!(save.meta.label, "hub");
+    assert_eq!(save.meta.label, "prologue");
     assert!(!save.meta.preview.is_empty());
     assert!(save.meta.has_history);
 
@@ -132,7 +134,7 @@ fn story_hash_ignores_texts_but_not_structure() {
 fn compat_with_a_modified_story() {
     let story = demo();
     let mut vm = Vm::from_start(story.clone()).unwrap();
-    play(&mut vm, 12, 0);
+    play(&mut vm, 8, 0);
     let save = SaveData::capture(&vm, info(5));
 
     // Same story, a text fixed: compatible.
@@ -437,19 +439,10 @@ fn persistent_variables_and_read_lines_live_outside_saves() {
     mgr.load_persistent().unwrap().apply_to(&mut third);
     save.apply_to(&mut third).unwrap();
     assert_eq!(third.variable("plays"), Some(&Value::Int(1)));
-    // The demo shows a "welcome back" line to returning players.
-    let mut text = Vec::new();
+    // A new game started by a returning player sees the carried-over value.
     let mut fresh = Vm::from_start(story.clone()).unwrap();
     mgr.load_persistent().unwrap().apply_to(&mut fresh);
-    for _ in 0..3 {
-        if let StepResult::Say { string_id, .. } = fresh.step() {
-            text.push(fresh.text(string_id).unwrap().to_owned());
-        }
-    }
-    assert!(
-        text.iter().any(|t| t.starts_with("Welcome back")),
-        "{text:?}"
-    );
+    assert_eq!(fresh.variable("plays"), Some(&Value::Int(1)));
 
     // Stale entries (deleted node, retyped variable) are ignored.
     let mut stale = persistent.clone();

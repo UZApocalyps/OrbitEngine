@@ -51,18 +51,24 @@ fn check_pak(pak: &[u8], version: &str) {
     assert_eq!(index.meta("name"), Some("Demo"));
     assert_eq!(index.meta("version"), Some(version));
     let pack = GamePack::from_bytes(&index.read_from(pak, "game.pack").unwrap()).unwrap();
-    assert_eq!(pack.story.title, "Demo");
-    assert_eq!(pack.translations.len(), 1);
-    assert_eq!(pack.story.assets.assets.len(), 10);
+    // Property assertions only: the demo is free to change (no exact counts or titles).
+    assert!(!pack.story.title.is_empty());
+    assert!(!pack.translations.is_empty());
+    assert!(!pack.story.assets.assets.is_empty());
     for asset in &pack.story.assets.assets {
         // Every asset of the story is in the pak, intact (checksum checked).
         index.read_from(pak, &asset.path).expect(&asset.path);
     }
     assert!(index.contains("engine/assets/fonts/Inter-Regular.ttf"));
-    // The unused mask of the demo folder is not shipped.
-    assert!(!index.contains("assets/demo/mask_wipe.png"));
-}
+    // Unreferenced files of the demo folder are not shipped.
+    let referenced: Vec<&str> = pack.story.assets.assets.iter().map(|a| a.path.as_str()).collect();
+    for entry in index.entries() {
+        if entry.path.starts_with("assets/") {
+            assert!(referenced.contains(&entry.path.as_str()), "{} is not referenced", entry.path);
+        }
 
+    }
+}
 #[test]
 fn every_target_produces_the_expected_files() {
     let project_dir = TempDir::new("e2e_project");

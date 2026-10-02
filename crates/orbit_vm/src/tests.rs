@@ -64,6 +64,7 @@ impl B {
                 .map(|(n, image)| Expression {
                     name: (*n).into(),
                     image: *image,
+                    motion: None,
                 })
                 .collect(),
             default_position: None,
@@ -1673,4 +1674,93 @@ fn show_scale_and_flip_are_tracked_and_restored() {
     let mut other = vm_for(story);
     other.restore(state).unwrap();
     assert_eq!(other.scene().character(ana).unwrap().scale, [1.5, 1.5]);
+}
+
+// ------------------------------------------------- no-code variable ops
+
+fn varop_story() -> Story {
+    let mut b = B::new();
+    b.story.variables.push(VarDecl::game("gold", Value::Int(10)));
+    b.story.variables.push(VarDecl::game("flag", Value::Bool(false)));
+    b.story
+        .variables
+        .push(VarDecl::persistent("plays", Value::Int(0)));
+    b.say(None, "one");
+    b.say(None, "two");
+    b.say(None, "three");
+    b.build()
+}
+
+#[test]
+fn ui_var_op_survives_rollback_of_the_current_screen_and_is_cut_from_the_future() {
+    use orbit_core::{OpKind, Operand, VarOp};
+    let mut vm = Vm::from_start(varop_story()).unwrap();
+    vm.step();
+    vm.step();
+    // On screen: line two. A UI button adds 5 gold.
+    let add = VarOp::new("gold", OpKind::Add, Operand::Lit(Value::Int(5)));
+    vm.apply_var_op(&add).unwrap();
+    assert_eq!(vm.variable("gold"), Some(&Value::Int(15)));
+    vm.step(); // line three
+    assert_eq!(vm.variable("gold"), Some(&Value::Int(15)));
+    // Back to line two: the change made while it was on screen is kept.
+    vm.rollback(1).unwrap();
+    assert_eq!(vm.variable("gold"), Some(&Value::Int(15)));
+    // Back to line one: before the change.
+    vm.rollback(1).unwrap();
+    assert_eq!(vm.variable("gold"), Some(&Value::Int(10)));
+    // Operating from the past cuts the known future.
+    vm.apply_var_op(&VarOp::toggle("flag")).unwrap();
+    assert!(!vm.can_roll_forward());
+    assert_eq!(vm.variable("flag"), Some(&Value::Bool(true)));
+    // The state (what a save embeds) carries the change.
+    assert_eq!(vm.snapshot().vars.get("flag"), Some(&Value::Bool(true)));
+}
+
+#[test]
+fn ui_var_op_on_persistent_and_invalid_targets() {
+    use orbit_core::{OpError, OpKind, Operand, VarOp};
+    let mut vm = Vm::from_start(varop_story()).unwrap();
+    vm.step();
+    let add = VarOp::new("plays", OpKind::Add, Operand::Lit(Value::Int(1)));
+    vm.apply_var_op(&add).unwrap();
+    assert_eq!(vm.persistent_vars().get("plays"), Some(&Value::Int(1)));
+    assert!(!vm.snapshot().vars.contains_key("plays"));
+    // Errors change nothing and leave a warning.
+    let div0 = VarOp::new("gold", OpKind::Div, Operand::Lit(Value::Int(0)));
+    assert_eq!(vm.apply_var_op(&div0), Err(OpError::DivisionByZero));
+    assert!(vm.apply_var_op(&VarOp::set("ghost", 1i64)).is_err());
+    assert!(vm.apply_var_op(&VarOp::set("gold", "text")).is_err());
+    assert_eq!(vm.variable("gold"), Some(&Value::Int(10)));
+    assert_eq!(vm.take_warnings().len(), 3);
+    assert!(vm.take_warnings().is_empty());
+}
+
+#[test]
+fn ui_condition_reads_variables() {
+    use orbit_core::{Cmp, Condition};
+    let mut vm = Vm::from_start(varop_story()).unwrap();
+    assert!(vm.eval_condition(&Condition::cmp("gold", Cmp::Ge, 10i64)));
+    assert!(!vm.eval_condition(&Condition::is_true("flag")));
+    assert!(!vm.eval_condition(&Condition::is_true("ghost")));
+    assert_eq!(vm.take_warnings().len(), 1);
+}
+
+#[test]
+fn set_var_node_is_a_noop_on_division_by_zero_and_keeps_int_type() {
+    let mut b = B::new();
+    b.story.variables.push(VarDecl::game("gold", Value::Int(10)));
+    b.push(NodeKind::SetVar {
+        var: "gold".into(),
+        value: Expr::parse("gold / 0").unwrap(),
+    });
+    b.push(NodeKind::SetVar {
+        var: "gold".into(),
+        value: Expr::parse("gold * 1.26").unwrap(),
+    });
+    b.say(None, "end");
+    let mut vm = Vm::from_start(b.build()).unwrap();
+    assert!(matches!(vm.step(), StepResult::Say { .. }));
+    assert_eq!(vm.variable("gold"), Some(&Value::Int(13)));
+    assert_eq!(vm.take_warnings().len(), 1);
 }

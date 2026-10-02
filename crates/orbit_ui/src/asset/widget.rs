@@ -1,5 +1,6 @@
 //! The document model of a data-driven screen.
 
+use orbit_core::Condition;
 use serde::{Deserialize, Serialize};
 
 use super::action::{BindPath, UiAction};
@@ -59,6 +60,8 @@ pub enum Cond {
     /// A game is running (as opposed to the title).
     InGame,
     Not(Box<Cond>),
+    /// A no-code condition on story variables (`gold >= 10`, all / any).
+    Vars(Condition),
 }
 
 /// Size, spacing and placement of a widget.

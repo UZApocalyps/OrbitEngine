@@ -1329,3 +1329,63 @@ fn a_button_resets_preferences_plays_sounds_and_calls_hooks() {
         args: vec!["a".into()]
     }));
 }
+
+const VARS_SCREEN: &str = r#"(id: "vars", pauses_game: true, on_cancel: [Close],
+    root: (kind: Stack(dir: Vertical), children: [
+        (kind: Button(text: Literal("+5"), action: [VarSet((var: "credits", op: Add, value: Lit(Int(5))))])),
+        (kind: Button(text: Literal("plays"), action: [VarSet((var: "plays", op: Add, value: Lit(Int(1))))])),
+        (kind: Button(text: Literal("bad"), action: [VarSet((var: "credits", op: Div, value: Lit(Int(0))))])),
+        (kind: Label(text: Bind(Var("credits")))),
+    ]))"#;
+
+fn game_var(sh: &Shell, name: &str) -> Option<Value> {
+    sh.game().unwrap().director.vm().variable(name).cloned()
+}
+
+#[test]
+fn a_var_button_changes_the_running_game_and_persistent_data() {
+    let mut sh = with_bundle(&bundle_of(&[VARS_SCREEN]));
+    sh.start_new_game();
+    assert_eq!(game_var(&sh, "credits"), Some(Value::Int(100)));
+    sh.apply(UiEvent::OpenScreen("vars".into()));
+    sh.input(ui(UiInput::Confirm)); // the first (focused) button: +5
+    assert_eq!(game_var(&sh, "credits"), Some(Value::Int(105)));
+    // The screen reads the new value back from the game.
+    let ctx = sh.data_context();
+    assert_eq!(ctx.vars.get("credits"), Some(&Value::Int(105)));
+    // Persistent variables are written to the store.
+    sh.apply(UiEvent::VarOp(VarOp::new(
+        "plays",
+        orbit_core::OpKind::Add,
+        orbit_core::Operand::Lit(Value::Int(1)),
+    )));
+    assert_eq!(sh.persistent.vars.get("plays"), Some(&Value::Int(1)));
+    // A division by zero is ignored.
+    sh.apply(UiEvent::VarOp(VarOp::new(
+        "credits",
+        orbit_core::OpKind::Div,
+        orbit_core::Operand::Lit(Value::Int(0)),
+    )));
+    assert_eq!(game_var(&sh, "credits"), Some(Value::Int(105)));
+}
+
+#[test]
+fn at_the_title_only_persistent_variables_change() {
+    let mut sh = with_bundle(&bundle_of(&[VARS_SCREEN]));
+    assert!(!sh.has_game());
+    let add = |name: &str| {
+        UiEvent::VarOp(VarOp::new(
+            name,
+            orbit_core::OpKind::Add,
+            orbit_core::Operand::Lit(Value::Int(1)),
+        ))
+    };
+    sh.apply(add("credits"));
+    sh.apply(add("plays"));
+    let vars = sh.data_context().vars;
+    assert_eq!(vars.get("credits"), Some(&Value::Int(100)), "no playthrough");
+    assert_eq!(vars.get("plays"), Some(&Value::Int(1)));
+    // The next game starts with it.
+    sh.start_new_game();
+    assert_eq!(game_var(&sh, "plays"), Some(Value::Int(1)));
+}

@@ -226,6 +226,8 @@ pub enum UiEvent {
     PlaySound(String),
     /// Free-form hook for the host or a plugin.
     Custom { name: String, args: Vec<String> },
+    /// Apply a no-code variable operation to the running game.
+    VarOp(orbit_core::VarOp),
     /// Show a short notification (already localized).
     Toast(String),
     /// Play a UI sound (see `Theme::sounds`).

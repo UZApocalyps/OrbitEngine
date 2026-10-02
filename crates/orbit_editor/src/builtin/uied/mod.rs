@@ -545,11 +545,13 @@ fn screens_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         .map(|t| t.styles.keys().cloned().collect())
         .unwrap_or_default();
     let images = images_of(ctx);
+    let vars = ctx.story().map(orbit_editor_api::varwidgets::story_vars).unwrap_or_default();
     let env = Env {
         tr: &tr,
         screens: &screens,
         styles: &styles,
         images: &images,
+        vars: &vars,
     };
     let enable_card = st
         .doc
@@ -956,6 +958,7 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         screens: &[],
         styles: &names,
         images: &images,
+        vars: &[],
     };
     ui.columns(2, |cols| {
         let (left, right) = cols.split_at_mut(1);
@@ -1295,7 +1298,12 @@ fn splash_props(ui: &mut Ui, st: &mut State, tr: &Translator, images: &[String])
 
 fn diagnostics(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
     let Some(doc) = &st.doc else { return };
-    let issues: Vec<Issue> = doc.diagnostics();
+    let vars = ctx.story().map(orbit_editor_api::varwidgets::story_vars);
+    let ty_of = |n: &str| {
+        vars.as_deref()
+            .and_then(|v| orbit_editor_api::varwidgets::type_of(v, n))
+    };
+    let issues: Vec<Issue> = doc.diagnostics_with(&ty_of, vars.is_some());
     ui.separator();
     let errors = issues.iter().filter(|i| i.severity == Severity::Error).count();
     let warnings = issues.len() - errors;

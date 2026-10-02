@@ -98,6 +98,7 @@ impl Fixture {
                 def.expressions.push(Expression {
                     name: "neutral".into(),
                     image: img,
+                    motion: None,
                 });
                 c.exec(Command::SetCharacter {
                     id,

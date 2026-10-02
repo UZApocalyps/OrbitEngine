@@ -12,6 +12,8 @@ pub const CHARACTER_HEIGHT: f32 = 920.0;
 #[derive(Clone, Debug, PartialEq)]
 pub struct StageCharacter {
     pub character: CharacterId,
+    /// Name of the current expression (looks up its animation, if any).
+    pub expression: String,
     /// Image of the current expression.
     pub image: AssetId,
     /// Normalized position of the bottom-center anchor (`0..=1`, origin
@@ -25,6 +27,48 @@ pub struct StageCharacter {
     pub flip_x: bool,
     /// Mirrored on the Y axis (the picture is flipped in place).
     pub flip_y: bool,
+}
+
+
+/// When each character's animation started, on a clock that only runs while
+/// the game does (so animations freeze with the game and a pause screen).
+/// Not part of the game state: saves and rollbacks simply restart animations.
+#[derive(Clone, Debug, Default)]
+pub struct AnimClock {
+    now: f32,
+    starts: std::collections::HashMap<(CharacterId, String), f32>,
+}
+
+impl AnimClock {
+    /// Advances the clock by `dt` seconds.
+    pub fn advance(&mut self, dt: f32) {
+        if dt.is_finite() && dt > 0.0 {
+            self.now += dt;
+        }
+    }
+
+    /// Starts the animation of every character of `stages` that is new, and
+    /// forgets the ones that left every one of them.
+    pub fn sync<'a>(&mut self, stages: impl IntoIterator<Item = &'a StageState>) {
+        let mut alive: Vec<(CharacterId, &str)> = Vec::new();
+        for stage in stages {
+            for c in &stage.characters {
+                alive.push((c.character, c.expression.as_str()));
+                self.starts
+                    .entry((c.character, c.expression.clone()))
+                    .or_insert(self.now);
+            }
+        }
+        self.starts
+            .retain(|(who, name), _| alive.iter().any(|(w, n)| w == who && *n == name.as_str()));
+    }
+
+    /// Seconds since the animation of `character` started (0 when unknown).
+    pub fn elapsed(&self, character: CharacterId, expression: &str) -> f32 {
+        self.starts
+            .get(&(character, expression.to_owned()))
+            .map_or(0.0, |start| (self.now - start).max(0.0))
+    }
 }
 
 /// Background layer + character layer.
@@ -54,6 +98,7 @@ impl StageState {
             }
             PresentationEvent::Show {
                 character,
+                expression,
                 image,
                 x,
                 y,
@@ -65,6 +110,7 @@ impl StageState {
             } => {
                 let entry = StageCharacter {
                     character: *character,
+                    expression: expression.clone(),
                     image: *image,
                     x: *x,
                     y: *y,
@@ -334,5 +380,35 @@ mod tests {
         let effect = stage.apply(&PresentationEvent::PlaySound { asset: asset(3) });
         assert_eq!(effect, StageEffect::None);
         assert_eq!(stage, before);
+    }
+
+    #[test]
+    fn anim_clock_runs_per_character_and_forgets_the_gone() {
+        let mut stage = StageState::default();
+        stage.apply(&show(1, 10, 0.5, None));
+        let mut clock = AnimClock::default();
+        clock.sync([&stage]);
+        clock.advance(0.5);
+        assert_eq!(clock.elapsed(who(1), "neutral"), 0.5);
+        // A character arriving later starts at 0 while the first keeps going.
+        stage.apply(&show(2, 20, 0.7, None));
+        clock.sync([&stage]);
+        clock.advance(0.25);
+        assert_eq!(clock.elapsed(who(1), "neutral"), 0.75);
+        assert_eq!(clock.elapsed(who(2), "neutral"), 0.25);
+        // Unknown = frame 0; bad dt is ignored.
+        assert_eq!(clock.elapsed(who(3), "neutral"), 0.0);
+        clock.advance(f32::NAN);
+        clock.advance(-1.0);
+        assert_eq!(clock.elapsed(who(1), "neutral"), 0.75);
+        // Hidden characters are forgotten, so showing them again restarts.
+        stage.apply(&PresentationEvent::Hide {
+            character: who(1),
+            transition: None,
+        });
+        clock.sync([&stage]);
+        stage.apply(&show(1, 10, 0.5, None));
+        clock.sync([&stage]);
+        assert_eq!(clock.elapsed(who(1), "neutral"), 0.0);
     }
 }

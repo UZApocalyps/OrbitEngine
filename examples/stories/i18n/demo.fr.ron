@@ -1,5 +1,4 @@
-// French translation of demo.ron. The last two strings are deliberately untranslated:
-// they fall back to the English source text (see orbit_i18n tests).
+// French translation of demo.ron (complete: every string of the story is translated).
 (
     lang: "fr",
     name: "Français",
@@ -89,5 +88,7 @@
         "01JBX0T0000000000000000083": "FIN 4 : « Chrome calciné ». Personne n'a la puce ; tout le monde a une histoire à raconter.",
         "01JBX0T0000000000000000084": "FIN 5 : « Deux runners ». Toi et Bob disparaissez dans la pluie de néon.",
         "01JBX0T0000000000000000085": "Ta réputation : légendaire. Ton nom est murmuré dans toutes les ruelles.",
+        "01JBX0T0000000000000000086": "La musique s'éteint.",
+        "01JBX0T0000000000000000087": "Merci d'avoir joué à la démo d'OrbitEngine !",
     },
 )

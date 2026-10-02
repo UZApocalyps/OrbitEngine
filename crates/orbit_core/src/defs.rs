@@ -119,12 +119,147 @@ pub fn builtin_position(position: &Position) -> Option<(f32, f32)> {
     }
 }
 
-/// One expression (sprite) of a character.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// One expression (sprite) of a character: a still picture (`image`) that
+/// can be turned into an animation by `motion` (schema v8). With a motion the
+/// `image` stays the *poster*: the picture used by thumbnails and as a
+/// fallback while the frames are not loaded (the editor keeps it on the
+/// first frame / the sheet).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Expression {
     pub name: String,
     pub image: AssetId,
+    /// `None` for a still image (not written to a RON file then).
+    #[serde(default)]
+    pub motion: Option<Motion>,
+}
+
+/// Same trick as [`Character`]: `motion` is only left out of human readable
+/// formats, a binary one must always write it.
+impl Serialize for Expression {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let write_motion = self.motion.is_some() || !serializer.is_human_readable();
+        let mut st = serializer.serialize_struct("Expression", 2 + usize::from(write_motion))?;
+        st.serialize_field("name", &self.name)?;
+        st.serialize_field("image", &self.image)?;
+        if write_motion {
+            st.serialize_field("motion", &self.motion)?;
+        } else {
+            st.skip_field("motion")?;
+        }
+        st.end()
+    }
+}
+
+impl Expression {
+    /// A still expression.
+    pub fn still(name: impl Into<String>, image: AssetId) -> Self {
+        Self {
+            name: name.into(),
+            image,
+            motion: None,
+        }
+    }
+
+    /// The frame animation, when this expression has one.
+    pub fn animation(&self) -> Option<&Animation> {
+        match &self.motion {
+            Some(Motion::Animation(a)) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// Every asset this expression needs (poster first, then the frames),
+    /// without duplicates.
+    pub fn assets(&self) -> Vec<AssetId> {
+        let mut out = vec![self.image];
+        if let Some(a) = self.animation() {
+            for id in a.frames.assets() {
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// How an expression moves.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum Motion {
+    /// Frame animation (sprite sheet or image sequence).
+    Animation(Animation),
+    /// Skeletal animation. Reserved: not supported yet (validation warns,
+    /// the poster image is drawn).
+    Rigged,
+}
+
+/// What to do when the last frame is reached.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum LoopMode {
+    /// Starts over.
+    #[default]
+    Loop,
+    /// Plays once and holds the last frame.
+    Once,
+    /// Forward then backward, endlessly.
+    PingPong,
+}
+
+/// Where the frames of an animation come from.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum AnimFrames {
+    /// One image holding a `cols` x `rows` grid read left to right, top to
+    /// bottom; only the first `frame_count` cells are frames. `frame_size`
+    /// (pixels) overrides the cell size (default: image size / grid) for
+    /// sheets with padding.
+    SpriteSheet {
+        asset: AssetId,
+        cols: u32,
+        rows: u32,
+        frame_count: u32,
+        #[serde(default)]
+        frame_size: Option<[u32; 2]>,
+    },
+    /// One image per frame, in order.
+    Sequence(Vec<AssetId>),
+}
+
+impl AnimFrames {
+    /// Number of frames.
+    pub fn len(&self) -> usize {
+        match self {
+            AnimFrames::SpriteSheet { frame_count, .. } => *frame_count as usize,
+            AnimFrames::Sequence(v) => v.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The assets the frames are read from.
+    pub fn assets(&self) -> Vec<AssetId> {
+        match self {
+            AnimFrames::SpriteSheet { asset, .. } => vec![*asset],
+            AnimFrames::Sequence(v) => v.clone(),
+        }
+    }
+}
+
+/// A frame animation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Animation {
+    pub frames: AnimFrames,
+    /// Frames per second (> 0).
+    pub fps: f32,
+    #[serde(default)]
+    pub loop_mode: LoopMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]

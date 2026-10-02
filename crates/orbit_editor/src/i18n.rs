@@ -38,7 +38,7 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
     ),
     (
         "inspector",
-        &["inspector", "node", "field"],
+        &["inspector", "node", "field", "varop", "varcond"],
         include_str!("../locales/en/inspector.ron"),
         include_str!("../locales/fr/inspector.ron"),
     ),

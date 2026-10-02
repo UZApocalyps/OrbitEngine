@@ -123,7 +123,9 @@ pub fn scene_asset_paths(story: &Story, scene: usize) -> Vec<String> {
                     .character(*character)
                     .and_then(|c| c.expression(expression))
                 {
-                    add(expr.image);
+                    for asset in expr.assets() {
+                        add(asset);
+                    }
                 }
             }
             _ => {}

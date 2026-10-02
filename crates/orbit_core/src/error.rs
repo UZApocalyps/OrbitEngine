@@ -82,6 +82,12 @@ pub enum ValidationError {
     InvalidDuration { node: NodeId, seconds: f32 },
     #[error("node {node}: {message}")]
     ExprType { node: NodeId, message: String },
+    #[error("character {character}, expression `{expression}`: invalid animation ({issue})")]
+    InvalidAnimation {
+        character: CharacterId,
+        expression: String,
+        issue: AnimationIssue,
+    },
     #[error("asset {asset} file `{path}` does not exist")]
     MissingAssetFile { asset: AssetId, path: String },
 }
@@ -106,6 +112,12 @@ pub enum ValidationWarning {
     PossibleInfiniteLoop(NodeId),
     #[error("every option of choice {0} has a condition: the player may get stuck")]
     AllOptionsConditional(NodeId),
+    /// `Motion::Rigged` is reserved: the poster image is drawn instead.
+    #[error("character {character}, expression `{expression}`: rigged animation is not supported yet, the still image is used")]
+    RiggedUnsupported {
+        character: CharacterId,
+        expression: String,
+    },
     /// Execution reaches the end of `scene` without a jump, an `End` or a
     /// `Return`: the game ends there (scenes never fall into the next one).
     /// `node` is the last node reached, `None` for an empty scene.
@@ -129,4 +141,21 @@ pub enum CoreError {
     Migration { from: u32, reason: String },
     #[error("story failed validation with {} error(s)", .0.len())]
     Invalid(Vec<ValidationError>),
+}
+
+/// What is wrong with an expression's animation.
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum AnimationIssue {
+    #[error("fps must be finite and > 0, got {0}")]
+    BadFps(f32),
+    #[error("the sprite sheet grid needs at least 1 column and 1 row")]
+    EmptyGrid,
+    #[error("a sprite sheet needs at least 1 frame")]
+    NoFrames,
+    #[error("frame count {frame_count} exceeds the {capacity} cells of the grid")]
+    FrameCountExceedsGrid { frame_count: u32, capacity: u64 },
+    #[error("the frame size must be at least 1x1 pixel")]
+    BadFrameSize,
+    #[error("an image sequence needs at least 1 image")]
+    EmptySequence,
 }

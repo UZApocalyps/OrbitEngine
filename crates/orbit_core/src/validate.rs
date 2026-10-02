@@ -122,6 +122,7 @@ impl Cx<'_> {
                     });
                 }
                 self.check_asset(None, e.image, AssetKind::Image);
+                self.check_motion(c.id, e);
             }
             if !scale_is_valid(c.default_scale) {
                 self.errors.push(ValidationError::InvalidScale {
@@ -166,6 +167,60 @@ impl Cx<'_> {
             if !seen.insert(n.id) {
                 self.errors.push(ValidationError::DuplicateNodeId(n.id));
             }
+        }
+    }
+
+    fn check_motion(&mut self, character: crate::ids::CharacterId, e: &crate::defs::Expression) {
+        use crate::defs::{AnimFrames, Motion};
+        use crate::error::AnimationIssue as I;
+        let Some(motion) = &e.motion else { return };
+        let anim = match motion {
+            Motion::Rigged => {
+                self.warnings.push(ValidationWarning::RiggedUnsupported {
+                    character,
+                    expression: e.name.clone(),
+                });
+                return;
+            }
+            Motion::Animation(a) => a,
+        };
+        let mut issue = |issue: I| {
+            self.errors.push(ValidationError::InvalidAnimation {
+                character,
+                expression: e.name.clone(),
+                issue,
+            });
+        };
+        if !(anim.fps.is_finite() && anim.fps > 0.0) {
+            issue(I::BadFps(anim.fps));
+        }
+        match &anim.frames {
+            AnimFrames::SpriteSheet {
+                cols,
+                rows,
+                frame_count,
+                frame_size,
+                ..
+            } => {
+                if *cols == 0 || *rows == 0 {
+                    issue(I::EmptyGrid);
+                } else if *frame_count == 0 {
+                    issue(I::NoFrames);
+                } else if u64::from(*frame_count) > u64::from(*cols) * u64::from(*rows) {
+                    issue(I::FrameCountExceedsGrid {
+                        frame_count: *frame_count,
+                        capacity: u64::from(*cols) * u64::from(*rows),
+                    });
+                }
+                if frame_size.is_some_and(|[w, h]| w == 0 || h == 0) {
+                    issue(I::BadFrameSize);
+                }
+            }
+            AnimFrames::Sequence(v) if v.is_empty() => issue(I::EmptySequence),
+            AnimFrames::Sequence(_) => {}
+        }
+        for id in anim.frames.assets() {
+            self.check_asset(None, id, AssetKind::Image);
         }
     }
 
@@ -651,6 +706,7 @@ mod tests {
             expressions: vec![Expression {
                 name: "happy".into(),
                 image: img,
+                motion: None,
             }],
             default_position: None,
         });
@@ -881,6 +937,7 @@ mod tests {
         s.characters[0].expressions.push(Expression {
             name: "happy".into(),
             image: img,
+            motion: None,
         });
         s.assets.assets.push(s.assets.assets[0].clone());
         asset(&mut s, AssetKind::Image, "../escape.png");
@@ -1239,5 +1296,110 @@ mod tests {
         assert!(
             matches!(&errs[..], [ValidationError::MissingAssetFile { path, .. }] if path == "b.png")
         );
+    }
+
+    fn with_motion(motion: crate::defs::Motion) -> ValidationReport {
+        let mut s = Story::new("t");
+        character(&mut s);
+        s.characters[0].expressions[0].motion = Some(motion);
+        let l = label();
+        let j = node(NodeKind::Jump { target: l.id });
+        let say = say(&mut s);
+        let s = with_nodes(s, vec![say, j, l, node(NodeKind::End)]);
+        validate(&s)
+    }
+
+    fn sheet(
+        cols: u32,
+        rows: u32,
+        frame_count: u32,
+        fps: f32,
+    ) -> crate::defs::Motion {
+        use crate::defs::{AnimFrames, Animation, LoopMode, Motion};
+        Motion::Animation(Animation {
+            frames: AnimFrames::SpriteSheet {
+                asset: AssetId::new(),
+                cols,
+                rows,
+                frame_count,
+                frame_size: None,
+            },
+            fps,
+            loop_mode: LoopMode::Loop,
+        })
+    }
+
+    #[test]
+    fn animation_problems_are_reported() {
+        use crate::error::AnimationIssue as I;
+        let issues = |m| -> Vec<ValidationError> {
+            with_motion(m)
+                .errors
+                .into_iter()
+                .filter(|e| matches!(e, ValidationError::InvalidAnimation { .. }))
+                .collect()
+        };
+        let issue_of = |e: &ValidationError| match e {
+            ValidationError::InvalidAnimation { issue, .. } => issue.clone(),
+            _ => unreachable!(),
+        };
+        let bad_fps = issues(sheet(2, 2, 4, 0.0));
+        assert!(matches!(issue_of(&bad_fps[0]), I::BadFps(_)));
+        let too_many = issues(sheet(2, 2, 5, 12.0));
+        assert!(matches!(
+            issue_of(&too_many[0]),
+            I::FrameCountExceedsGrid { capacity: 4, .. }
+        ));
+        assert!(matches!(
+            issue_of(&issues(sheet(0, 2, 1, 12.0))[0]),
+            I::EmptyGrid
+        ));
+        assert!(matches!(
+            issue_of(&issues(sheet(2, 2, 0, 12.0))[0]),
+            I::NoFrames
+        ));
+        let empty = crate::defs::Motion::Animation(crate::defs::Animation {
+            frames: crate::defs::AnimFrames::Sequence(vec![]),
+            fps: 12.0,
+            loop_mode: Default::default(),
+        });
+        assert!(matches!(issue_of(&issues(empty)[0]), I::EmptySequence));
+        // A valid grid only complains about the unknown asset id we invented.
+        let ok = with_motion(sheet(2, 2, 4, 12.0));
+        assert_eq!(ok.errors.len(), 1, "{ok:?}");
+        assert!(matches!(ok.errors[0], ValidationError::UnknownAsset { .. }));
+    }
+
+    #[test]
+    fn animation_frames_must_be_known_images() {
+        use crate::defs::{AnimFrames, Animation, Motion};
+        let mut s = Story::new("t");
+        let (_, img) = character(&mut s);
+        let music = asset(&mut s, AssetKind::Music, "m.ogg");
+        s.characters[0].expressions[0].motion = Some(Motion::Animation(Animation {
+            frames: AnimFrames::Sequence(vec![img, music]),
+            fps: 8.0,
+            loop_mode: Default::default(),
+        }));
+        let l = label();
+        let j = node(NodeKind::Jump { target: l.id });
+        let say = say(&mut s);
+        let s = with_nodes(s, vec![say, j, l, node(NodeKind::End)]);
+        let report = validate(&s);
+        assert_eq!(report.errors.len(), 1, "{report:?}");
+        assert!(matches!(
+            report.errors[0],
+            ValidationError::AssetKindMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn rigged_only_warns() {
+        let report = with_motion(crate::defs::Motion::Rigged);
+        assert!(report.is_ok(), "{report:?}");
+        assert!(matches!(
+            report.warnings[0],
+            ValidationWarning::RiggedUnsupported { .. }
+        ));
     }
 }

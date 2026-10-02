@@ -499,4 +499,6 @@ Architecture : [ADR 0009](adr/0009-architecture-editeur.md) (statut Accepté). P
 
 ## 7. UI en jeu pilotée par les données et splash screens
 - **Statut : runtime fait, éditeur à faire.** Écrans de menu décrits en RON (`orbit_ui::asset`), styles de thème, layout `margin` + `Grid`, `Shell` avec écrans de données (repli sur les écrans Rust), `GamePack` v2 avec bundle UI, export du dossier `ui/`, splash OrbitEngine obligatoire puis splashes du projet. Voir [ADR 0011](adr/0011-ui-data-driven-et-splash.md).
+- **Variables sans code (fait, ADR 0011 addendum)** : `VarOp` / `Condition` typés dans `orbit_core` (schéma v7 : `*` et `/` dans les expressions), `Vm::apply_var_op`, `UiAction::VarSet`, `Cond::Vars`, liaisons `Var`, widgets de l'éditeur (inspecteur et éditeur d'interface) avec mode expression. Reste : `SceneGoto`.
+- **Personnages animés (fait, ADR 0004 addendum)** : chaque expression est une image fixe ou une animation (sprite sheet / suite d'images, fps, boucle / une fois / aller-retour), schéma v8, rendu par sous-rectangle UV, éditeur dans le panneau des personnages. `Rigged` réservé (avertissement). Reste : voir `TODO_LATER.md`.
 - **Reste (éditeur) :** panneau d'édition des écrans / thème / splashes, aperçu dans la preview, activation du bundle par défaut pour un nouveau projet.

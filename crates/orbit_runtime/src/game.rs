@@ -161,11 +161,23 @@ impl Game {
     /// Whether anything moves without input: a typewriter, a timed pause, a
     /// transition, skip or auto mode.
     pub fn is_animating(&self) -> bool {
-        match self.kind() {
+        let by_flow = match self.kind() {
             FlowKind::Waiting | FlowKind::Transition => true,
             FlowKind::Say => !self.dialogue.is_complete() || self.skipping() || self.auto,
             FlowKind::Choice | FlowKind::Ended | FlowKind::Failed => false,
-        }
+        };
+        by_flow || self.stage_is_animated()
+    }
+
+    /// Whether a character on stage plays a frame animation.
+    pub fn stage_is_animated(&self) -> bool {
+        self.director.stage().characters.iter().any(|c| {
+            self.story
+                .character(c.character)
+                .and_then(|ch| ch.expression(&c.expression))
+                .and_then(|e| e.animation())
+                .is_some_and(orbit_core::Animation::is_animated)
+        })
     }
 
     /// Sets the Skip button state (it still stops by itself at a choice).

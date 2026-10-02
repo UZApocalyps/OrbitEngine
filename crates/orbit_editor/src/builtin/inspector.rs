@@ -12,8 +12,8 @@ use orbit_core::{
 };
 use orbit_editor_api::fields::{
     self, asset_picker, character_picker, expr_editor, expression_picker, field,
-    is_simple_condition, label_picker, position_picker, scene_label_picker, scene_picker,
-    seconds_field, simple_condition_editor, transition_editor, value_editor,
+    label_picker, position_picker, scene_label_picker, scene_picker, seconds_field,
+    transition_editor, value_editor,
 };
 use orbit_editor_api::{
     DockSlot, EditorContext, EditorPlugin, EditorRegistry, InspectorDef, Level, PanelDef, Plugin,
@@ -829,46 +829,16 @@ fn add_option(ctx: &mut EditorContext<'_>, id: NodeId, options: &[ChoiceOption])
     }
 }
 
-/// Condition editor: the simple builder when the expression allows it,
-/// otherwise (or on request) the text form with the parser.
+/// Condition editor: the no-code builder (variable, comparison, value,
+/// "all / any" groups) when the expression allows it, otherwise (or on
+/// request, "Expression mode") the text form with the parser.
 fn condition_editor(
     ui: &mut Ui,
     salt: impl fields::Salt,
     story: &orbit_core::Story,
     cond: &Expr,
 ) -> Option<Expr> {
-    let mode_id = ui.make_persistent_id(("cond_mode", salt));
-    let simple_possible = is_simple_condition(cond);
-    let advanced = ui.data(|d| d.get_temp::<bool>(mode_id)).unwrap_or(false) || !simple_possible;
-    let out;
-    if advanced {
-        out = expr_editor(ui, salt, story, cond, true);
-        if simple_possible
-            && ui
-                .small_button(ui.t("inspector.cond.simple"))
-                .on_hover_text(ui.t("inspector.cond.simple.tip"))
-                .clicked()
-        {
-            ui.data_mut(|d| d.insert_temp(mode_id, false));
-        }
-    } else {
-        out = simple_condition_editor(ui, salt, story, cond);
-        if story.variables.is_empty() {
-            ui.label(
-                RichText::new(ui.t("inspector.cond.no_vars"))
-                    .small()
-                    .color(weak(ui)),
-            );
-        }
-        if ui
-            .small_button(ui.t("inspector.cond.write"))
-            .on_hover_text(ui.t("inspector.cond.write.tip"))
-            .clicked()
-        {
-            ui.data_mut(|d| d.insert_temp(mode_id, true));
-        }
-    }
-    out
+    orbit_editor_api::varwidgets::expr_condition_editor(ui, salt, story, cond)
 }
 
 fn set_var(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, var: &str, value: &Expr) {
@@ -907,6 +877,38 @@ fn set_var(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, var: &str, valu
             );
         }
     });
+    // A declared variable: the no-code operation (set, add, toggle...),
+    // or the expression in "Expression mode".
+    if declared {
+        let mut handled = None;
+        tfield(ui, "inspector.setvar.new_value", |ui| {
+            handled = orbit_editor_api::varwidgets::setvar_value_editor(
+                ui,
+                ("setvar_op", id),
+                story,
+                var,
+                value,
+            );
+        });
+        if let Some(new_value) = handled {
+            // Moving a plain operation to another variable keeps what fits.
+            let new_value = new_value.or_else(|| {
+                let moved = new_var.as_deref()?;
+                let op = orbit_core::VarOp::from_expr(var, value)?;
+                let vars = orbit_editor_api::varwidgets::story_vars(story);
+                Some(orbit_editor_api::varwidgets::with_var(&op, &vars, moved).to_expr())
+            });
+            if new_var.is_some() || new_value.is_some() {
+                let key = if new_var.is_some() { "var" } else { "value" };
+                let kind = NodeKind::SetVar {
+                    var: new_var.unwrap_or_else(|| var.to_owned()),
+                    value: new_value.unwrap_or_else(|| value.clone()),
+                };
+                commit(ctx, id, kind, key);
+            }
+            return;
+        }
+    }
     // Value: typed widget for a constant, expression text otherwise.
     let ty = fields::var_type(story, var);
     let mode_id = ui.make_persistent_id(("setvar_mode", id));

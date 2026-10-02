@@ -94,10 +94,11 @@ mod tests {
     use crate::compile::compile;
     use crate::testing::{TempDir, demo_project};
 
+    // Fixture: exact entry names and count come from test_minimal.ron.
     #[test]
-    fn the_demo_pak_holds_exactly_what_the_game_needs() {
-        let dir = TempDir::new("pak_demo");
-        let project = demo_project(dir.path());
+    fn the_fixture_pak_holds_exactly_what_the_game_needs() {
+        let dir = TempDir::new("pak_fixture");
+        let project = crate::testing::fixture_project(dir.path());
         let mut profile = project.profile(None).unwrap();
         profile.version = "2.0.1".into();
         let compiled = compile(&project, &profile).unwrap();
@@ -105,26 +106,43 @@ mod tests {
         let built = build_pak(&compiled, &profile, &mut rep).unwrap();
 
         let (_, index) = orbit_pak::container::parse_prefix(&built.bytes).unwrap();
-        assert_eq!(index.meta("name"), Some("Demo"));
+        assert_eq!(index.meta("name"), Some("Test Minimal"));
         assert_eq!(index.meta("version"), Some("2.0.1"));
         for entry in [
             "game.pack",
-            "assets/demo/bg_room.png",
-            "assets/demo/music_theme.wav",
+            "fixtures/assets/bg_room.png",
+            "fixtures/assets/music_loop.wav",
             "engine/assets/fonts/Inter-Regular.ttf",
         ] {
             assert!(index.contains(entry), "{entry} is missing");
         }
-        // 1 pack + 10 assets + 3 fonts.
-        assert_eq!(index.entries().len(), 14);
+        // 1 pack + 5 assets + 3 fonts.
+        assert_eq!(index.entries().len(), 9);
         // The pack decodes back to the story.
         let pack =
             orbit_pak::GamePack::from_bytes(&index.read_from(&built.bytes, "game.pack").unwrap())
                 .unwrap();
-        assert_eq!(pack.story.title, "Demo");
+        assert_eq!(pack.story.title, "Test Minimal");
         assert_eq!(pack.translations.len(), 1);
         // Compression helps on the wave file and the fonts.
         assert!(built.stats.stored_bytes < built.stats.raw_bytes);
+    }
+
+    // Demo: global property only (the pak holds the pack, every compiled asset and the
+    // engine fonts); no exact names or counts.
+    #[test]
+    fn the_demo_pak_holds_what_the_game_needs() {
+        let dir = TempDir::new("pak_demo");
+        let project = demo_project(dir.path());
+        let profile = project.profile(None).unwrap();
+        let compiled = compile(&project, &profile).unwrap();
+        let built = build_pak(&compiled, &profile, &mut Reporter::silent()).unwrap();
+        let (_, index) = orbit_pak::container::parse_prefix(&built.bytes).unwrap();
+        assert!(index.contains("game.pack"));
+        assert!(index.contains("engine/assets/fonts/Inter-Regular.ttf"));
+        for asset in &compiled.assets {
+            assert!(index.contains(&asset.path), "{} is missing", asset.path);
+        }
     }
 
     #[test]

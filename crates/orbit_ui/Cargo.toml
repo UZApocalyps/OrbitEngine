@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+orbit_core.workspace = true
 orbit_render2d.workspace = true
 orbit_text.workspace = true
 serde.workspace = true

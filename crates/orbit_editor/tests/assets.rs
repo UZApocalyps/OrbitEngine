@@ -413,6 +413,7 @@ fn a_used_asset_cannot_be_removed_by_a_node_or_by_a_character_expression() {
     def.expressions.push(orbit_core::Expression {
         name: "happy".into(),
         image: ana,
+        motion: None,
     });
     with_ctx(&mut core, |c| {
         c.exec(Command::SetCharacter {

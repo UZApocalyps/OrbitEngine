@@ -74,7 +74,7 @@ pub fn fixture_project(dir: &Path) -> ExportProject {
         dir.join("i18n/story.fr.ron"),
     )
     .expect("copy translation");
-    restore_demo_assets(dir);
+    restore_fixture_assets(dir);
     let manifest = orbit_project::ProjectManifest::new("Test Minimal");
     std::fs::write(
         dir.join(orbit_project::MANIFEST_FILE),
@@ -82,4 +82,16 @@ pub fn fixture_project(dir: &Path) -> ExportProject {
     )
     .expect("write manifest");
     ExportProject::open(dir).expect("fixture project opens")
+}
+
+/// Copies the self-contained fixture assets (`examples/fixtures/assets`) to
+/// `<dir>/fixtures/assets`, where `test_*.ron` stories expect them.
+pub fn restore_fixture_assets(dir: &Path) {
+    let from = repo_root().join("examples/fixtures/assets");
+    let to = dir.join("fixtures/assets");
+    std::fs::create_dir_all(&to).expect("fixture assets dir");
+    for entry in std::fs::read_dir(from).expect("repo fixture assets") {
+        let entry = entry.expect("entry");
+        std::fs::copy(entry.path(), to.join(entry.file_name())).expect("copy fixture asset");
+    }
 }

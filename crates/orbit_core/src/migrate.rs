@@ -17,6 +17,9 @@
 //!   `flip_x`, `flip_y`, `Position::Free` is added and characters get a
 //!   `default_scale`. Purely additive: every new field has a default, so a v5
 //!   document is a valid v6 document.
+//! * v7 -> v8 (animated characters): `Expression` gains an optional `motion`
+//!   (frame animation or the reserved `Rigged`). Absent = still image, so a v7
+//!   document is a valid v8 document.
 
 use std::borrow::Cow;
 
@@ -40,7 +43,7 @@ pub fn read_version(source: &str) -> Result<u32, CoreError> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -267,6 +270,26 @@ fn v3_to_v4(source: &str) -> Result<String, CoreError> {
 
     let mut story: Story = ron::from_str(source)?;
     story.schema_version = 4;
+    story.to_ron()
+}
+
+/// v7 -> v8. `Expression::motion` (still / animation) defaults to `None`:
+/// every v7 expression stays a still image, only the version changes.
+fn v7_to_v8(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 8;
+    story.to_ron()
+}
+
+/// v6 -> v7. `BinOp::Mul` / `Div` are only written by v7 tools: only the
+/// version number changes.
+fn v6_to_v7(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 7;
     story.to_ron()
 }
 
@@ -502,6 +525,37 @@ mod tests {
     }
 
     #[test]
+    fn v6_story_migrates_to_v7_and_accepts_mul_div() {
+        use crate::story::{NodeKind, Story};
+
+        let v6 = r#"(
+    schema_version: 6,
+    title: "Old",
+    variables: [(name: "gold", initial: Int(2))],
+    scenes: [
+        (id: "01JBX0S0000000000000000001", name: "a", nodes: [
+            (id: "01JBX0N0000000000000000001", kind: SetVar(var: "gold", value: Binary(Add, Var("gold"), Lit(Int(1))))),
+            (id: "01JBX0N0000000000000000002", kind: End),
+        ]),
+    ],
+)"#;
+        let mut story = Story::from_ron(v6).unwrap();
+        assert_eq!(story.schema_version, CURRENT_SCHEMA_VERSION);
+        // The old expression form is untouched.
+        let NodeKind::SetVar { value, .. } = &story.scenes[0].nodes[0].kind else {
+            panic!("expected SetVar");
+        };
+        assert_eq!(value.to_string(), "gold + 1");
+        // New operators survive a round trip.
+        story.scenes[0].nodes[0].kind = NodeKind::SetVar {
+            var: "gold".into(),
+            value: crate::Expr::parse("gold * 2 / 4").unwrap(),
+        };
+        let again = Story::from_ron(&story.to_ron().unwrap()).unwrap();
+        assert_eq!(story, again);
+    }
+
+    #[test]
     fn v5_story_migrates_to_v6_with_default_scale_and_no_mirroring() {
         use crate::defs::Position;
         use crate::story::{NodeKind, Story};
@@ -580,5 +634,48 @@ mod tests {
             migrate_with(1, "", 4, steps),
             Err(CoreError::Migration { .. })
         ));
+    }
+
+    #[test]
+    fn v7_story_migrates_to_v8_and_stills_stay_valid() {
+        use crate::defs::{AnimFrames, Animation, LoopMode, Motion};
+        use crate::story::Story;
+
+        let v7 = r#"(
+    schema_version: 7,
+    title: "Old",
+    scenes: [],
+    characters: [
+        (id: "01JBX0C0000000000000000001", name_id: "01JBX0T0000000000000000001",
+         color: (r: 1, g: 2, b: 3), expressions: [(name: "happy", image: "01JBX0A0000000000000000001")]),
+    ],
+)"#;
+        let mut story = Story::from_ron_unchecked(v7).unwrap();
+        assert_eq!(story.schema_version, CURRENT_SCHEMA_VERSION);
+        let e = &story.characters[0].expressions[0];
+        assert_eq!(e.motion, None);
+        assert_eq!(e.assets(), vec![e.image]);
+        // A still is written without any `motion`.
+        assert!(!story.to_ron().unwrap().contains("motion"));
+        // An animation survives a round trip.
+        let image = story.characters[0].expressions[0].image;
+        story.characters[0].expressions[0].motion = Some(Motion::Animation(Animation {
+            frames: AnimFrames::SpriteSheet {
+                asset: image,
+                cols: 4,
+                rows: 2,
+                frame_count: 7,
+                frame_size: Some([32, 48]),
+            },
+            fps: 12.0,
+            loop_mode: LoopMode::PingPong,
+        }));
+        story.characters[0].expressions.push(crate::defs::Expression {
+            name: "r".into(),
+            image,
+            motion: Some(Motion::Rigged),
+        });
+        let again = Story::from_ron_unchecked(&story.to_ron().unwrap()).unwrap();
+        assert_eq!(story, again);
     }
 }

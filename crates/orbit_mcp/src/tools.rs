@@ -1170,6 +1170,7 @@ fn build_expressions(
         out.push(Expression {
             name,
             image: find_asset(cx.project.story(), &item.asset, Some(AssetKind::Image))?,
+            motion: None,
         });
     }
     Ok(out)

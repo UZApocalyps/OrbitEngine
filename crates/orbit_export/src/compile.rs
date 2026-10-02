@@ -385,18 +385,31 @@ mod tests {
         assert!(matches!(compile(&project, &profile), Err(ExportError::Ui(_))));
     }
 
+    // Fixture: exact title, asset count and unreferenced list come from test_minimal.ron.
     #[test]
-    fn the_demo_compiles_with_its_translation() {
+    fn the_fixture_compiles_with_its_translation() {
+        let dir = TempDir::new("compile_fixture");
+        let project = crate::testing::fixture_project(dir.path());
+        let profile = project.profile(None).unwrap();
+        let compiled = compile(&project, &profile).unwrap();
+        assert_eq!(compiled.pack.story.title, "Test Minimal");
+        assert_eq!(compiled.assets.len(), 5);
+        assert_eq!(compiled.pack.translations.len(), 1);
+        assert_eq!(compiled.pack.translations[0].lang, "fr");
+        assert!(compiled.unreferenced.is_empty());
+    }
+
+    // Demo: global property only (compiles, nothing blocking, nothing unreferenced,
+    // its translation is shipped); no exact counts.
+    #[test]
+    fn the_demo_still_compiles_with_its_translation() {
         let dir = TempDir::new("compile_demo");
         let project = demo_project(dir.path());
         let profile = project.profile(None).unwrap();
         let compiled = compile(&project, &profile).unwrap();
-        assert_eq!(compiled.pack.story.title, "Demo");
-        assert_eq!(compiled.assets.len(), 10);
-        assert_eq!(compiled.pack.translations.len(), 1);
-        assert_eq!(compiled.pack.translations[0].lang, "fr");
-        assert!(compiled.unreferenced.is_empty());
-        assert_eq!(compiled.pack.info.id, "demo");
+        assert!(!compiled.assets.is_empty());
+        assert!(compiled.pack.translations.iter().any(|t| t.lang == "fr"));
+        assert!(compiled.unreferenced.is_empty(), "{:?}", compiled.unreferenced);
     }
 
     #[test]
@@ -406,13 +419,13 @@ mod tests {
         let profile = project.profile(None).unwrap();
 
         // A missing used asset blocks the export.
-        std::fs::remove_file(dir.path().join("assets/demo/bg_room.png")).unwrap();
+        std::fs::remove_file(dir.path().join("fixtures/assets/bg_room.png")).unwrap();
         let err = compile(&project, &profile).unwrap_err();
         assert!(
             matches!(err, ExportError::MissingAssets(ref m) if m.len() == 1),
             "{err}"
         );
-        crate::testing::restore_demo_assets(dir.path());
+        crate::testing::restore_fixture_assets(dir.path());
 
         // A broken story blocks it too.
         let story = std::fs::read_to_string(dir.path().join("story.ron")).unwrap();
@@ -435,17 +448,17 @@ mod tests {
             dir.path().join("story.ron"),
             story.replace(
                 "assets: [\n",
-                "assets: [\n            (id: \"01JBX0A0000000000000000099\", kind: Image, path: \"assets/demo/mask_wipe.png\"),\n",
+                "assets: [\n            (id: \"01JBX0A0000000000000000099\", kind: Image, path: \"fixtures/assets/bg_street.png\"),\n",
             ),
         )
         .unwrap();
         let compiled = compile(&project, &profile).unwrap();
-        assert_eq!(compiled.unreferenced, ["assets/demo/mask_wipe.png"]);
+        assert_eq!(compiled.unreferenced, ["fixtures/assets/bg_street.png"]);
         assert!(
             compiled
                 .assets
                 .iter()
-                .all(|a| a.path != "assets/demo/mask_wipe.png")
+                .all(|a| a.path != "fixtures/assets/bg_street.png")
         );
         assert!(
             compiled
@@ -454,13 +467,13 @@ mod tests {
                 .assets
                 .assets
                 .iter()
-                .all(|a| a.path != "assets/demo/mask_wipe.png")
+                .all(|a| a.path != "fixtures/assets/bg_street.png")
         );
         assert!(
             compiled
                 .warnings
                 .iter()
-                .any(|w| w.contains("mask_wipe.png"))
+                .any(|w| w.contains("bg_street.png"))
         );
     }
 

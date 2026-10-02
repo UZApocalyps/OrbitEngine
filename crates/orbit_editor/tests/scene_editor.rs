@@ -161,6 +161,7 @@ fn a_story_is_built_with_the_editor_operations_only_and_validates() {
                 def.expressions.push(Expression {
                     name: "neutral".into(),
                     image: sprite,
+                    motion: None,
                 });
                 p.execute(Command::SetCharacter {
                     id: def.id,
@@ -467,6 +468,7 @@ fn every_node_kind_has_an_inspector_that_draws_and_edits() {
             def.expressions.push(Expression {
                 name: "neutral".into(),
                 image: bg,
+                motion: None,
             });
             p.execute(Command::SetCharacter {
                 id: def.id,
@@ -655,6 +657,7 @@ fn characters_and_variables_panels_draw_and_renames_follow_their_usages() {
             def.expressions.push(Expression {
                 name: "happy".into(),
                 image: sprite,
+                motion: None,
             });
             p.execute(Command::SetCharacter {
                 id: def.id,

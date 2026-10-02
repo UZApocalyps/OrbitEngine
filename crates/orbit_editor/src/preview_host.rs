@@ -783,7 +783,7 @@ impl PreviewHost {
                 flip_y: a.flip_y,
                 base_size: self
                     .runtime
-                    .image_size(story, a.image)
+                    .expression_size(story, a.character, &a.expression, a.image)
                     .map_or([0.0, 0.0], character_size),
             })
             .collect();

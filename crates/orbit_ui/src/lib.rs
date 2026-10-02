@@ -63,5 +63,5 @@ pub use widgets::{
 pub use asset::{
     BindPath, Cond, DataContext, DataScreen, Issue, LayoutDef, ScreenAsset, Severity, SlotsMode, NavStep, PreviewNav,
     SettingKey, SplashContent, SplashDef, TextRef, UI_VERSION, UiAction, UiBundle, WidgetDef,
-    WidgetKind, validate,
+    WidgetKind, validate, validate_with_vars,
 };

@@ -26,7 +26,7 @@ pub use bundle::{SYSTEM_SCREENS, SplashContent, SplashDef, UiBundle};
 pub use screen::{DataContext, DataScreen};
 pub use preview::{NavStep, PreviewNav, sample_saves};
 pub use slots::{SlotsPage, slots_page};
-pub use validate::{Issue, Severity, validate};
+pub use validate::{Issue, Severity, validate, validate_with_vars, variable_issues};
 pub use widget::{
     Cond, LayoutDef, ScreenAsset, SlotsMode, TextRef, UI_VERSION, WidgetDef, WidgetKind, from_ron, to_ron,
 };

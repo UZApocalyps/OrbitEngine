@@ -3,7 +3,9 @@
 use std::collections::HashSet;
 
 use super::action::{BindPath, SettingKey, UiAction};
-use super::widget::{ScreenAsset, TextRef, WidgetDef, WidgetKind};
+use orbit_core::ValueType;
+
+use super::widget::{Cond, ScreenAsset, TextRef, WidgetDef, WidgetKind};
 use crate::theme::Theme;
 use crate::widgets::Dir;
 
@@ -50,6 +52,86 @@ pub const MAX_SLOTS_PER_PAGE: usize = 24;
 
 /// Deepest nesting accepted (guards the recursive builders).
 pub const MAX_DEPTH: usize = 32;
+
+/// Like [`validate`], and also checks story variables against their declared
+/// types (`ty_of` gives the type of a declared variable): unknown variables,
+/// an operation the type does not offer, a value of another type, bindings
+/// the type cannot drive (slider: number, toggle: boolean).
+pub fn validate_with_vars(
+    screen: &ScreenAsset,
+    theme: Option<&Theme>,
+    ty_of: &dyn Fn(&str) -> Option<ValueType>,
+) -> Vec<Issue> {
+    let mut out = validate(screen, theme);
+    out.extend(variable_issues(screen, ty_of));
+    out
+}
+
+/// Only the story-variable warnings of [`validate_with_vars`].
+pub fn variable_issues(
+    screen: &ScreenAsset,
+    ty_of: &dyn Fn(&str) -> Option<ValueType>,
+) -> Vec<Issue> {
+    let mut out = Vec::new();
+    let sid = screen.id.as_str();
+    let add = |wid: &str, messages: Vec<String>, out: &mut Vec<Issue>| {
+        out.extend(messages.into_iter().map(|m| Issue::warning(sid, wid, m)));
+    };
+    for action in &screen.on_cancel {
+        if let UiAction::VarSet(op) = action {
+            add("", op.issues(ty_of), &mut out);
+        }
+    }
+    screen.root.walk(&mut |w| {
+        let wid = w.id.as_str();
+        for cond in [&w.visible, &w.enabled] {
+            let mut stack = vec![cond];
+            while let Some(c) = stack.pop() {
+                match c {
+                    Cond::Vars(c) => add(wid, c.issues(ty_of), &mut out),
+                    Cond::Not(inner) => stack.push(inner),
+                    _ => {}
+                }
+            }
+        }
+        match &w.kind {
+            WidgetKind::Button { action, .. } => {
+                for a in action {
+                    if let UiAction::VarSet(op) = a {
+                        add(wid, op.issues(ty_of), &mut out);
+                    }
+                }
+            }
+            WidgetKind::Slider { bind, .. } => {
+                if let Some(name) = bind.var() {
+                    match ty_of(name) {
+                        None => add(wid, vec![format!("unknown variable `{name}`")], &mut out),
+                        Some(t) if !t.is_numeric() => add(wid, vec![format!("a slider needs a number, `{name}` is {t}")], &mut out),
+                        _ => {}
+                    }
+                }
+            }
+            WidgetKind::Toggle { bind, .. } => {
+                if let Some(name) = bind.var() {
+                    match ty_of(name) {
+                        None => add(wid, vec![format!("unknown variable `{name}`")], &mut out),
+                        Some(t) if t != ValueType::Bool => add(wid, vec![format!("a toggle needs a boolean, `{name}` is {t}")], &mut out),
+                        _ => {}
+                    }
+                }
+            }
+            WidgetKind::Label { text: TextRef::Bind(b), .. } => {
+                if let Some(name) = b.var()
+                    && ty_of(name).is_none()
+                {
+                    add(wid, vec![format!("unknown variable `{name}`")], &mut out);
+                }
+            }
+            _ => {}
+        }
+    });
+    out
+}
 
 /// Checks `screen`; `theme` (when given) is used to verify style names.
 pub fn validate(screen: &ScreenAsset, theme: Option<&Theme>) -> Vec<Issue> {
@@ -105,11 +187,10 @@ fn check_action(sid: &str, wid: &str, action: &UiAction, out: &mut Vec<Issue>) {
 }
 
 fn check_bind(sid: &str, wid: &str, bind: &BindPath, out: &mut Vec<Issue>) -> Option<SettingKey> {
-    let key = bind.setting();
-    if key.is_none() {
-        out.push(Issue::warning(sid, wid, "story variable bindings are not supported yet"));
+    if bind.var().is_some_and(|v| v.trim().is_empty()) {
+        out.push(Issue::error(sid, wid, "empty variable name"));
     }
-    key
+    bind.setting()
 }
 
 fn check_text(sid: &str, wid: &str, text: &TextRef, out: &mut Vec<Issue>) {
@@ -250,7 +331,7 @@ mod tests {
             "(kind: Button(text: Literal(\"x\"), action: [SceneGoto(\"a\")]), children: [\
              (kind: Toggle(text: Literal(\"y\"), bind: Var(\"v\")))])",
         );
-        assert_eq!(out.len(), 2);
+        assert_eq!(out.len(), 1, "only SceneGoto is unsupported");
         assert!(out.iter().all(|i| i.severity == Severity::Warning));
     }
 

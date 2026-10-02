@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use orbit_core::{Value, VarOp};
 use orbit_render2d::TextureId;
 
 use super::action::{BindPath, SettingKey, UiAction};
@@ -31,6 +32,8 @@ pub struct DataContext {
     pub title: String,
     /// The save slots, for the `SaveSlots` widgets.
     pub saves: Vec<CategoryView>,
+    /// Story variables (both scopes) the conditions and bindings read.
+    pub vars: BTreeMap<String, Value>,
 }
 
 impl DataContext {
@@ -43,6 +46,7 @@ impl DataContext {
             Cond::ShowQuit => self.show_quit,
             Cond::InGame => self.in_game,
             Cond::Not(c) => !self.eval(c),
+            Cond::Vars(c) => c.eval(&|n| self.vars.get(n).cloned()).unwrap_or(false),
         }
     }
 
@@ -85,6 +89,14 @@ enum Bound {
         step: Option<f32>,
     },
     Toggle,
+    VarSlider {
+        name: String,
+        min: f32,
+        max: f32,
+        step: Option<f32>,
+        int: bool,
+    },
+    VarToggle(String),
     Dropdown {
         key: SettingKey,
         /// Language codes (language dropdown only).
@@ -93,11 +105,18 @@ enum Bound {
     Slot(SlotAction),
 }
 
+/// A label kept in sync with a setting or a story variable.
+#[derive(Clone, Debug)]
+enum Readout {
+    Setting(SettingKey),
+    Var(String),
+}
+
 struct Build {
     ui: Ui,
     next_tag: Tag,
     binds: HashMap<Tag, Bound>,
-    readouts: Vec<(Tag, SettingKey)>,
+    readouts: Vec<(Tag, Readout)>,
     styles: BTreeMap<String, Style>,
     counter: usize,
     paths: Vec<(NodeId, Vec<usize>)>,
@@ -112,7 +131,7 @@ pub struct DataScreen {
     texts: Texts,
     ctx: DataContext,
     binds: HashMap<Tag, Bound>,
-    readouts: Vec<(Tag, SettingKey)>,
+    readouts: Vec<(Tag, Readout)>,
     /// Widget nodes and where their definitions are (child indices from the
     /// root): what the editor picks with the pointer.
     node_paths: Vec<(NodeId, Vec<usize>)>,
@@ -123,6 +142,8 @@ pub struct DataScreen {
     /// Actions run that have no effect yet (`SceneGoto`, `VarSet`), for
     /// hosts that want to say so.
     unsupported: Vec<UiAction>,
+    /// A variable changed locally: the tree is rebuilt after the event.
+    vars_dirty: bool,
 }
 
 impl DataScreen {
@@ -140,6 +161,7 @@ impl DataScreen {
             slots_page: 0,
             confirm: Confirm::default(),
             unsupported: Vec::new(),
+            vars_dirty: false,
         };
         s.rebuild();
         s
@@ -212,8 +234,12 @@ impl DataScreen {
             TextRef::Key(k) => self.texts.get(k),
             TextRef::Literal(s) => s.clone(),
             TextRef::Bind(BindPath::Setting(key)) => self.format_setting(*key),
-            TextRef::Bind(BindPath::Var(_)) => String::new(),
+            TextRef::Bind(BindPath::Var(name)) => self.format_var(name),
         }
+    }
+
+    fn format_var(&self, name: &str) -> String {
+        self.ctx.vars.get(name).map(ToString::to_string).unwrap_or_default()
     }
 
     fn format_setting(&self, key: SettingKey) -> String {
@@ -268,7 +294,7 @@ impl DataScreen {
         let index = st.counter;
         st.counter += 1;
         let p = &self.ctx.prefs;
-        let mut node = match &def.kind {
+        let node = match &def.kind {
             WidgetKind::Panel { kind, dir } => Node::panel(*kind, *dir),
             WidgetKind::Stack { dir } => Node::container(*dir),
             WidgetKind::Grid { columns } => Node::grid(*columns),
@@ -293,10 +319,16 @@ impl DataScreen {
                 if *dim {
                     n = n.dimmed();
                 }
-                if let TextRef::Bind(BindPath::Setting(key)) = text {
-                    let tag = Self::new_tag(st);
-                    st.readouts.push((tag, *key));
-                    n = n.tag(tag);
+                if let TextRef::Bind(bind) = text {
+                    let readout = match bind {
+                        BindPath::Setting(key) => Some(Readout::Setting(*key)),
+                        BindPath::Var(name) => Some(Readout::Var(name.clone())),
+                    };
+                    if let Some(readout) = readout {
+                        let tag = Self::new_tag(st);
+                        st.readouts.push((tag, readout));
+                        n = n.tag(tag);
+                    }
                 }
                 n
             }
@@ -310,13 +342,36 @@ impl DataScreen {
                 max,
                 step,
             } => {
+                if max <= min {
+                    return;
+                }
+                if let Some(name) = bind.var() {
+                    let (value, int) = match self.ctx.vars.get(name) {
+                        Some(Value::Int(i)) => (*i as f32, true),
+                        Some(Value::Float(f)) => (*f as f32, false),
+                        _ => return,
+                    };
+                    let tag = Self::new_tag(st);
+                    st.binds.insert(
+                        tag,
+                        Bound::VarSlider {
+                            name: name.to_owned(),
+                            min: *min,
+                            max: *max,
+                            step: *step,
+                            int,
+                        },
+                    );
+                    let mut n = Node::slider(tag, ((value - min) / (max - min)).clamp(0.0, 1.0));
+                    if let Some(step) = step {
+                        n = n.step(step / (max - min));
+                    }
+                    return self.finish(n, def, parent, path, index, st);
+                }
                 let Some(key) = bind.setting() else { return };
                 let Some(value) = self.ctx.setting_f32(key) else {
                     return;
                 };
-                if max <= min {
-                    return;
-                }
                 let tag = Self::new_tag(st);
                 st.binds.insert(
                     tag,
@@ -334,6 +389,15 @@ impl DataScreen {
                 n
             }
             WidgetKind::Toggle { text, bind } => {
+                if let Some(name) = bind.var() {
+                    let Some(Value::Bool(on)) = self.ctx.vars.get(name) else {
+                        return;
+                    };
+                    let tag = Self::new_tag(st);
+                    st.binds.insert(tag, Bound::VarToggle(name.to_owned()));
+                    let n = Node::toggle(tag, self.text(text), *on);
+                    return self.finish(n, def, parent, path, index, st);
+                }
                 // Only the fullscreen toggle exists; the host may not offer it.
                 if bind.setting() != Some(SettingKey::Fullscreen) {
                     return;
@@ -368,7 +432,20 @@ impl DataScreen {
             WidgetKind::ScrollList => Node::scroll_list(Self::new_tag(st)),
             WidgetKind::SaveSlots { .. } => Node::vbox().gap(14.0),
         };
+        self.finish(node, def, parent, path, index, st);
+    }
 
+    /// Applies layout, style and conditions to `node`, adds it to the tree
+    /// and builds the children of `def`.
+    fn finish(
+        &self,
+        mut node: Node,
+        def: &WidgetDef,
+        parent: Option<NodeId>,
+        path: &mut Vec<usize>,
+        index: usize,
+        st: &mut Build,
+    ) {
         let l = &def.layout;
         node.width = l.width;
         node.height = l.height;
@@ -532,11 +609,49 @@ impl DataScreen {
         let updates: Vec<(Tag, String)> = self
             .readouts
             .iter()
-            .map(|(tag, key)| (*tag, self.format_setting(*key)))
+            .map(|(tag, readout)| {
+                (
+                    *tag,
+                    match readout {
+                        Readout::Setting(key) => self.format_setting(*key),
+                        Readout::Var(name) => self.format_var(name),
+                    },
+                )
+            })
             .collect();
         for (tag, text) in updates {
             self.ui.set_text(tag, text);
         }
+    }
+
+    /// A bound control changed a story variable.
+    fn set_var(&mut self, name: &str, value: Value, out: &mut Vec<UiEvent>) {
+        self.ctx.vars.insert(name.to_owned(), value.clone());
+        out.push(UiEvent::VarOp(VarOp::new(
+            name,
+            orbit_core::OpKind::Set,
+            orbit_core::Operand::Lit(value),
+        )));
+        // A condition on the variable may show or hide widgets.
+        if self.conditions_use(name) {
+            self.vars_dirty = true;
+        }
+    }
+
+    /// Whether a visible / enabled condition of the screen reads `name`.
+    fn conditions_use(&self, name: &str) -> bool {
+        fn uses(cond: &Cond, name: &str) -> bool {
+            match cond {
+                Cond::Vars(c) => c.variables().iter().any(|v| v == name),
+                Cond::Not(c) => uses(c, name),
+                _ => false,
+            }
+        }
+        let mut found = false;
+        self.asset.root.walk(&mut |w| {
+            found |= uses(&w.visible, name) || uses(&w.enabled, name);
+        });
+        found
     }
 
     fn run(&mut self, action: &UiAction, out: &mut Vec<UiEvent>) {
@@ -559,7 +674,16 @@ impl DataScreen {
                 name: name.clone(),
                 args: args.clone(),
             }),
-            UiAction::SceneGoto(_) | UiAction::VarSet { .. } => {
+            UiAction::VarSet(op) => {
+                // Show the effect at once; the shell applies the same
+                // operation to the game and sends the real values back.
+                if let Ok(value) = op.apply(&|n| self.ctx.vars.get(n).cloned()) {
+                    self.ctx.vars.insert(op.var.clone(), value);
+                    self.vars_dirty = true;
+                }
+                Some(UiEvent::VarOp(op.clone()))
+            }
+            UiAction::SceneGoto(_) => {
                 self.unsupported.push(action.clone());
                 None
             }
@@ -617,12 +741,38 @@ impl Screen for DataScreen {
                         self.ctx.set_setting_f32(key, v);
                         out.extend(setting_event(key, v));
                         changed = true;
+                    } else if let Some(Bound::VarSlider {
+                        name,
+                        min,
+                        max,
+                        step,
+                        int,
+                    }) = self.binds.get(&tag).cloned()
+                    {
+                        let mut v = min + unit.clamp(0.0, 1.0) * (max - min);
+                        if let Some(step) = step {
+                            v = (min + ((v - min) / step).round() * step).clamp(min, max);
+                        }
+                        let value = if int {
+                            Value::Int(v.round() as i64)
+                        } else {
+                            Value::Float(f64::from(v))
+                        };
+                        self.set_var(&name, value, &mut out);
+                        changed = true;
                     }
                 }
                 WidgetEvent::Toggled(tag, on) => {
-                    if matches!(self.binds.get(&tag), Some(Bound::Toggle)) {
-                        self.ctx.prefs.fullscreen = Some(on);
-                        out.push(UiEvent::SetFullscreen(on));
+                    match self.binds.get(&tag).cloned() {
+                        Some(Bound::Toggle) => {
+                            self.ctx.prefs.fullscreen = Some(on);
+                            out.push(UiEvent::SetFullscreen(on));
+                        }
+                        Some(Bound::VarToggle(name)) => {
+                            self.set_var(&name, Value::Bool(on), &mut out);
+                            changed = true;
+                        }
+                        _ => {}
                     }
                 }
                 WidgetEvent::Selected(tag, index) => {
@@ -655,7 +805,9 @@ impl Screen for DataScreen {
                 }
             }
         }
-        if changed {
+        if std::mem::take(&mut self.vars_dirty) {
+            self.rebuild();
+        } else if changed {
             self.refresh_readouts();
         }
         out
@@ -1022,4 +1174,106 @@ mod tests {
         assert!(s.ui().find(1).is_none());
         assert!(no_sound(s.handle(UiInput::Confirm)).is_empty());
     }
+    // ------------------------------------------------- story variables
+
+    const VARS_SCREEN: &str = r#"(
+        id: "vars",
+        root: (kind: Stack(dir: Vertical), children: [
+            (kind: Button(text: Literal("+5"), action: [VarSet((var: "gold", op: Add, value: Lit(Int(5))))])),
+            (kind: Button(text: Literal("Shop"), action: [GameNew]), visible: Vars(Cmp(var: "gold", cmp: Ge, value: Lit(Int(10))))),
+            (kind: Label(text: Bind(Var("gold")))),
+            (kind: Toggle(text: Literal("T"), bind: Var("flag"))),
+            (kind: Slider(bind: Var("gold"), min: 0.0, max: 20.0, step: Some(1.0))),
+        ]),
+    )"#;
+
+    fn vars_ctx(gold: i64) -> DataContext {
+        let mut c = ctx();
+        c.vars.insert("gold".into(), Value::Int(gold));
+        c.vars.insert("flag".into(), Value::Bool(false));
+        c
+    }
+
+    fn vars_screen(c: DataContext) -> DataScreen {
+        DataScreen::new(
+            from_ron(VARS_SCREEN).unwrap(),
+            &Theme::default(),
+            &Texts::builtin("en"),
+            c,
+        )
+    }
+
+    fn label_text(s: &mut DataScreen, tag: Tag) -> String {
+        let id = s.ui().find(tag).unwrap();
+        let crate::widgets::Kind::Label(l) = &s.ui().node(id).kind else {
+            panic!()
+        };
+        l.text.clone()
+    }
+
+    #[test]
+    fn a_var_button_emits_the_operation_and_updates_conditions_and_labels() {
+        let mut s = vars_screen(vars_ctx(0));
+        // Shop is hidden: tags are +5 (1), label (2), toggle (3), slider (4).
+        assert_eq!(label_text(&mut s, 2), "0");
+        let op = VarOp::new("gold", orbit_core::OpKind::Add, orbit_core::Operand::Lit(Value::Int(5)));
+        assert_eq!(click(&mut s, 1), vec![UiEvent::VarOp(op.clone())]);
+        assert_eq!(label_text(&mut s, 2), "5");
+        assert_eq!(click(&mut s, 1), vec![UiEvent::VarOp(op)]);
+        // gold == 10: the Shop button appeared (tags shift by one).
+        assert!(s.ui().find(2).is_some());
+        assert_eq!(label_text(&mut s, 3), "10");
+        // The shell then sends the real value: no visible change.
+        s.set_context(vars_ctx(10));
+        assert_eq!(label_text(&mut s, 3), "10");
+    }
+
+    #[test]
+    fn var_bound_toggle_and_slider_edit_the_variable() {
+        let mut s = vars_screen(vars_ctx(0));
+        let set = |v: Value| UiEvent::VarOp(VarOp::new("flag", orbit_core::OpKind::Set, orbit_core::Operand::Lit(v)));
+        assert_eq!(click(&mut s, 3), vec![set(Value::Bool(true))]);
+        let r = s.ui().rect_of(4).unwrap();
+        let p = [r[0] + r[2] * 0.5, r[1] + r[3] / 2.0];
+        s.handle(UiInput::PointerMove(p));
+        let mut ev = s.handle(UiInput::PointerDown(p));
+        ev.extend(s.handle(UiInput::PointerUp(p)));
+        let ev = no_sound(ev);
+        let UiEvent::VarOp(op) = &ev[0] else {
+            panic!("{ev:?}")
+        };
+        let orbit_core::Operand::Lit(Value::Int(v)) = op.value else {
+            panic!("an integer variable gets an integer: {op:?}")
+        };
+        assert!((v - 10).abs() <= 2, "{v}");
+        // The screen already shows the new value (the Shop condition may have
+        // rebuilt it, so look the label up by content).
+        assert_eq!(s.ctx.vars.get("gold"), Some(&Value::Int(v)));
+    }
+
+    #[test]
+    fn var_widgets_are_left_out_when_the_variable_has_the_wrong_type() {
+        let mut c = ctx();
+        c.vars.insert("gold".into(), Value::Str("x".into()));
+        let mut s = vars_screen(c);
+        // Only the button, the (empty-ish) label remain: no toggle, no slider.
+        let kinds = (1..8)
+            .filter(|t| s.ui().find(*t).is_some_and(|id| matches!(s.ui().node(id).kind, crate::widgets::Kind::Slider { .. } | crate::widgets::Kind::Toggle { .. })))
+            .count();
+        assert_eq!(kinds, 0);
+    }
+
+    #[test]
+    fn var_conditions_validate_against_declared_types() {
+        let asset = from_ron(VARS_SCREEN).unwrap();
+        let ty = |n: &str| match n {
+            "gold" => Some(orbit_core::ValueType::Int),
+            "flag" => Some(orbit_core::ValueType::Bool),
+            _ => None,
+        };
+        assert!(crate::asset::validate_with_vars(&asset, None, &ty).is_empty());
+        let none = |_: &str| None;
+        assert_eq!(crate::asset::validate_with_vars(&asset, None, &none).len(), 5);
+    }
+
 }

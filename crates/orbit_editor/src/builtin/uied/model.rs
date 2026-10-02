@@ -761,8 +761,22 @@ impl UiDoc {
     }
 
     /// Problems of the bundle (errors first) and of the actions.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn diagnostics(&self) -> Vec<Issue> {
+        self.diagnostics_with(&|_| None, false)
+    }
+
+    /// Like [`Self::diagnostics`], also checking story variables against
+    /// their declared types (`ty_of`) when `check_vars` is set.
+    pub fn diagnostics_with(
+        &self,
+        ty_of: &dyn Fn(&str) -> Option<orbit_core::ValueType>,
+        check_vars: bool,
+    ) -> Vec<Issue> {
         let mut issues = self.bundle.validate();
+        if check_vars {
+            issues.extend(self.bundle.variable_issues(ty_of));
+        }
         issues.extend(dangling_actions(&self.bundle));
         issues.sort_by_key(|i| i.severity != Severity::Error);
         issues
@@ -1138,6 +1152,41 @@ mod tests {
         assert!(issues.iter().any(|i| i.message.contains("nowhere")));
         assert!(issues.iter().any(|i| i.message.contains("duration")));
         assert_eq!(issues[0].severity, Severity::Error, "errors come first");
+    }
+
+    #[test]
+    fn variable_operations_are_checked_against_the_declared_types_and_saved() {
+        use orbit_core::{Cmp, Condition, OpKind, Operand, Value, ValueType, VarOp};
+        let t = TempDir::new("vars");
+        let mut doc = UiDoc::load(&t.0).unwrap();
+        doc.enable_defaults();
+        doc.edit(|b| {
+            let s = &mut b.screens[0];
+            let w = add_child(s, &[], KindTag::Button.default_widget()).unwrap();
+            let node = get_mut(&mut s.root, &w).unwrap();
+            node.visible = orbit_ui::Cond::Vars(Condition::cmp("gold", Cmp::Ge, 10i64));
+            if let WidgetKind::Button { action, .. } = &mut node.kind {
+                action.push(UiAction::VarSet(VarOp::new(
+                    "gold",
+                    OpKind::Div,
+                    Operand::Lit(Value::Int(0)),
+                )));
+                action.push(UiAction::VarSet(VarOp::toggle("gold")));
+            }
+        });
+        let ty = |n: &str| (n == "gold").then_some(ValueType::Int);
+        let plain = doc.diagnostics_with(&ty, false);
+        let checked = doc.diagnostics_with(&ty, true);
+        // Two warnings: dividing by zero, and Toggle on a number.
+        assert_eq!(checked.len(), plain.len() + 2, "{checked:?}");
+        // Unknown variables are flagged everywhere they are used.
+        let none = |_: &str| None;
+        assert!(doc.diagnostics_with(&none, true).len() >= plain.len() + 3);
+        // The operations survive a save and a reload.
+        doc.save().unwrap();
+        let back = UiDoc::load(&t.0).unwrap();
+        let id = doc.bundle.screens[0].id.clone();
+        assert_eq!(back.bundle.screen(&id), doc.bundle.screen(&id));
     }
 
     #[test]

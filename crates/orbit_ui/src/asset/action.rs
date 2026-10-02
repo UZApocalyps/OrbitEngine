@@ -1,5 +1,6 @@
 //! Actions a button runs and the values a control edits.
 
+use orbit_core::VarOp;
 use serde::{Deserialize, Serialize};
 
 /// A player setting a control can edit.
@@ -19,8 +20,8 @@ pub enum SettingKey {
     Language,
 }
 
-/// What a widget reads and writes. Only [`BindPath::Setting`] works at
-/// runtime yet; [`BindPath::Var`] is reserved for story variables.
+/// What a widget reads and writes: a player setting, or a story variable
+/// (a label shows it; a slider edits a number, a toggle a boolean).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum BindPath {
     Setting(SettingKey),
@@ -33,6 +34,14 @@ impl BindPath {
         match self {
             BindPath::Setting(key) => Some(*key),
             BindPath::Var(_) => None,
+        }
+    }
+
+    /// The story variable this path reads, when it is one.
+    pub fn var(&self) -> Option<&str> {
+        match self {
+            BindPath::Var(name) => Some(name),
+            BindPath::Setting(_) => None,
         }
     }
 }
@@ -68,13 +77,14 @@ pub enum UiAction {
     },
     /// Reserved: jump to a scene. Not supported at runtime yet.
     SceneGoto(String),
-    /// Reserved: set a story variable. Not supported at runtime yet.
-    VarSet { name: String, value: String },
+    /// A no-code story variable operation (set, add, toggle...). The shell
+    /// applies it to the running game.
+    VarSet(VarOp),
 }
 
 impl UiAction {
     /// `false` for the actions that are declared but do nothing yet.
     pub fn is_supported(&self) -> bool {
-        !matches!(self, UiAction::SceneGoto(_) | UiAction::VarSet { .. })
+        !matches!(self, UiAction::SceneGoto(_))
     }
 }

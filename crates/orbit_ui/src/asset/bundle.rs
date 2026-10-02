@@ -158,6 +158,18 @@ impl UiBundle {
         self.screen(id)
     }
 
+    /// Warnings about story variables in every screen (unknown variable,
+    /// operation or value of the wrong type), given the declared types.
+    pub fn variable_issues(
+        &self,
+        ty_of: &dyn Fn(&str) -> Option<orbit_core::ValueType>,
+    ) -> Vec<Issue> {
+        self.screens
+            .iter()
+            .flat_map(|s| super::validate::variable_issues(s, ty_of))
+            .collect()
+    }
+
     /// Problems of every screen and splash (errors make a bundle unusable).
     pub fn validate(&self) -> Vec<Issue> {
         let mut out = Vec::new();

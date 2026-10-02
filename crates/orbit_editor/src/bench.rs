@@ -50,6 +50,7 @@ pub fn generate_story(nodes: usize) -> Story {
                 expressions: vec![Expression {
                     name: "neutral".into(),
                     image: sprite,
+                    motion: None,
                 }],
                 default_position: None,
             });

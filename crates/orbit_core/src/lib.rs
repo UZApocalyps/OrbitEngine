@@ -4,6 +4,7 @@
 //! to `wasm32-unknown-unknown`. The story model is serialized as RON, one file
 //! per story, and every node carries a stable ULID.
 
+pub mod anim;
 pub mod custom;
 pub mod defs;
 pub mod error;
@@ -13,16 +14,19 @@ pub mod migrate;
 pub mod story;
 pub mod validate;
 pub mod value;
+pub mod varops;
 
 pub use custom::CustomData;
 pub use defs::{
-    AssetEntry, AssetKind, AssetManifest, Character, Color, Expression, FREE_POSITION_RANGE,
+    AnimFrames, Animation, AssetEntry, AssetKind, AssetManifest, Character, Color, Expression,
+    FREE_POSITION_RANGE, LoopMode, Motion,
     Position, PositionDef, SCALE_MAX, SCALE_MIN, StringTable, Transition, TransitionKind, VarDecl,
     VarScope, scale_is_valid,
 };
-pub use error::{CoreError, ValidationError, ValidationWarning};
+pub use error::{AnimationIssue, CoreError, ValidationError, ValidationWarning};
 pub use expr::{BinOp, EvalError, Expr, ParseError, TypeError, UnOp};
 pub use ids::{AssetId, CharacterId, NodeId, SceneId, StringId};
 pub use story::{CURRENT_SCHEMA_VERSION, ChoiceOption, Node, NodeKind, Scene, Story};
 pub use validate::{ValidationReport, check_asset_files, validate};
 pub use value::{Value, ValueType};
+pub use varops::{Cmp, Condition, OpError, OpKind, Operand, VarOp, coerce};

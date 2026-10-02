@@ -153,11 +153,13 @@ impl ScreenPreview {
         id: &str,
         theme: Theme,
         texts: orbit_ui::Texts,
+        vars: &std::collections::BTreeMap<String, orbit_core::Value>,
     ) -> Result<Self, String> {
         let stock = orbit_ui::UiBundle::builtin();
         let asset =
             Self::find(bundle, &stock, id).ok_or_else(|| format!("no screen called `{id}`"))?;
-        let nav = orbit_ui::PreviewNav::new(id);
+        let mut nav = orbit_ui::PreviewNav::new(id);
+        nav.set_declared(vars);
         let screen = orbit_ui::DataScreen::new(asset, &theme, &texts, nav.context("Preview"));
         Ok(Self {
             screen,
@@ -174,7 +176,14 @@ impl ScreenPreview {
 
     /// The editor sent a new version of the bundle: the stack stays, the
     /// screen on top is built again from it.
-    fn update_bundle(&mut self, bundle: &orbit_ui::UiBundle, theme: Theme, texts: orbit_ui::Texts) {
+    fn update_bundle(
+        &mut self,
+        bundle: &orbit_ui::UiBundle,
+        theme: Theme,
+        texts: orbit_ui::Texts,
+        vars: &std::collections::BTreeMap<String, orbit_core::Value>,
+    ) {
+        self.nav.set_declared(vars);
         self.bundle = bundle.clone();
         self.theme = theme;
         self.texts = texts;
@@ -616,6 +625,7 @@ impl Runtime {
             shell.set_now(orbit_platform::unix_time_ms());
             shell.update(dt_secs);
         }
+        self.advance_anims(dt_secs);
         self.service_thumbnails();
         self.after_shell();
         if let Phase::Failed(message) = &self.phase {
@@ -773,7 +783,14 @@ impl Runtime {
         target: TextureId,
     ) -> Result<(), RenderError> {
         let mut scene = Scene::new();
-        stage_scene(&self.ctx.renderer, &self.store, story, stage, &mut scene);
+        stage_scene(
+            &self.ctx.renderer,
+            &self.store,
+            story,
+            stage,
+            None,
+            &mut scene,
+        );
         self.ctx.renderer.render_to_target(target, &scene)
     }
 
@@ -782,6 +799,29 @@ impl Runtime {
         let path = &story.assets.get(asset)?.path;
         let texture = self.store.texture(path)?;
         self.ctx.renderer.texture_size(texture)
+    }
+
+    /// Pixel size of what an expression shows (the first frame / cell for an
+    /// animation, the image for a still), when its texture is loaded. The
+    /// scene view sizes its handles with it.
+    pub fn expression_size(
+        &self,
+        story: &Story,
+        character: orbit_core::CharacterId,
+        expression: &str,
+        image: orbit_core::AssetId,
+    ) -> Option<[u32; 2]> {
+        let c = StageCharacter {
+            character,
+            expression: expression.to_owned(),
+            image,
+            x: 0.0,
+            y: 0.0,
+            scale: [1.0, 1.0],
+            flip_x: false,
+            flip_y: false,
+        };
+        character_frame(&self.ctx.renderer, &self.store, story, &c, None).map(|f| f.size)
     }
 
     /// Changes whenever the story or an image file was swapped in the
@@ -832,6 +872,18 @@ impl Runtime {
             UiPreviewTarget::Screen(id) => {
                 let theme = bundle.theme.clone().unwrap_or_else(|| self.ctx.theme.clone());
                 let texts = orbit_ui::Texts::builtin(language);
+                // Mock story variables: the declared initial values.
+                let vars: std::collections::BTreeMap<String, orbit_core::Value> = self
+                    .embedded
+                    .as_ref()
+                    .and_then(|e| e.story.as_ref())
+                    .map(|s| {
+                        s.variables
+                            .iter()
+                            .map(|v| (v.name.clone(), v.initial.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 // The editor re-sends the bundle after every edit, and the
                 // screen the preview navigated to after a click: the stack
                 // is kept while the screen asked for is the one shown.
@@ -839,13 +891,13 @@ impl Runtime {
                     self.embedded.as_mut().and_then(|e| e.ui_preview.as_mut())
                     && p.nav.top() == id
                 {
-                    p.update_bundle(bundle, theme, texts);
+                    p.update_bundle(bundle, theme, texts, &vars);
                     let emb = self.emb_mut();
                     emb.ui_settle = UI_SETTLE;
                     emb.dirty = true;
                     return Ok(());
                 }
-                UiPreview::Screen(Box::new(ScreenPreview::new(bundle, id, theme, texts)?))
+                UiPreview::Screen(Box::new(ScreenPreview::new(bundle, id, theme, texts, &vars)?))
             }
             UiPreviewTarget::Splashes => {
                 let state = SplashState::new(&bundle.splashes);

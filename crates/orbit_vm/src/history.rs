@@ -151,6 +151,21 @@ impl History {
         }
     }
 
+    /// A variable changed outside of a node: records it in the checkpoint
+    /// on screen and cuts the known future.
+    pub fn patch_cursor_var(&mut self, name: &str, value: &orbit_core::Value) {
+        if self.entries.is_empty() {
+            return;
+        }
+        let index = self.cursor.min(self.entries.len() - 1);
+        self.cursor = index;
+        self.entries[index]
+            .state
+            .vars
+            .insert(name.to_owned(), value.clone());
+        self.truncate_future();
+    }
+
     /// Index of the oldest entry rollback may reach.
     pub fn floor(&self) -> usize {
         if self.entries.is_empty() {

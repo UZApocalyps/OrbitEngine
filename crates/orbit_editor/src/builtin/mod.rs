@@ -3,6 +3,7 @@
 //! the editor itself has no privileged UI code.
 
 mod actions;
+mod anim_edit;
 mod assistant;
 mod console;
 mod definitions;

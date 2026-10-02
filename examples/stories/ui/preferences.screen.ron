@@ -1,0 +1,103 @@
+(
+    ui_version: 1,
+    id: "preferences",
+    dim_background: true,
+    on_cancel: [Close],
+    root: (
+        kind: Panel(kind: Normal, dir: Vertical),
+        layout: (
+            width: Fixed(1500.0),
+            height: Fixed(960.0),
+            pad: (50.0, 30.0),
+            gap: 12.0,
+            cross: Stretch,
+            anchor: Some((canvas: (0.5, 0.5), pivot: (0.5, 0.5), offset: (0.0, 0.0))),
+        ),
+        children: [
+            (kind: Label(text: Key("ui.prefs.title")), style: Some("heading")),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 20.0),
+                children: [
+                    (kind: Label(text: Key("ui.prefs.volume_master")), layout: (width: Fixed(460.0))),
+                    (id: "master", kind: Slider(bind: Setting(MasterVolume), min: 0.0, max: 1.0), layout: (width: Fixed(620.0))),
+                    (kind: Label(text: Bind(Setting(MasterVolume)), dim: true), layout: (width: Fixed(180.0))),
+                ],
+            ),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 20.0),
+                children: [
+                    (kind: Label(text: Key("ui.prefs.volume_music")), layout: (width: Fixed(460.0))),
+                    (id: "music", kind: Slider(bind: Setting(MusicVolume), min: 0.0, max: 1.0), layout: (width: Fixed(620.0))),
+                    (kind: Label(text: Bind(Setting(MusicVolume)), dim: true), layout: (width: Fixed(180.0))),
+                ],
+            ),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 20.0),
+                children: [
+                    (kind: Label(text: Key("ui.prefs.volume_sfx")), layout: (width: Fixed(460.0))),
+                    (id: "sfx", kind: Slider(bind: Setting(SfxVolume), min: 0.0, max: 1.0), layout: (width: Fixed(620.0))),
+                    (kind: Label(text: Bind(Setting(SfxVolume)), dim: true), layout: (width: Fixed(180.0))),
+                ],
+            ),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 20.0),
+                children: [
+                    (kind: Label(text: Key("ui.prefs.volume_voice")), layout: (width: Fixed(460.0))),
+                    (id: "voice", kind: Slider(bind: Setting(VoiceVolume), min: 0.0, max: 1.0), layout: (width: Fixed(620.0))),
+                    (kind: Label(text: Bind(Setting(VoiceVolume)), dim: true), layout: (width: Fixed(180.0))),
+                ],
+            ),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 20.0),
+                children: [
+                    (kind: Label(text: Key("ui.prefs.text_speed")), layout: (width: Fixed(460.0))),
+                    (id: "text_speed", kind: Slider(bind: Setting(TextSpeed), min: 10.0, max: 120.0), layout: (width: Fixed(620.0))),
+                    (kind: Label(text: Bind(Setting(TextSpeed)), dim: true), layout: (width: Fixed(180.0))),
+                ],
+            ),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 20.0),
+                children: [
+                    (kind: Label(text: Key("ui.prefs.auto_delay")), layout: (width: Fixed(460.0))),
+                    (id: "auto_delay", kind: Slider(bind: Setting(AutoDelay), min: 0.5, max: 6.0), layout: (width: Fixed(620.0))),
+                    (kind: Label(text: Bind(Setting(AutoDelay)), dim: true), layout: (width: Fixed(180.0))),
+                ],
+            ),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 20.0),
+                children: [
+                    (kind: Label(text: Key("ui.prefs.skip_mode")), layout: (width: Fixed(460.0))),
+                    (
+                        id: "skip",
+                        kind: Dropdown(bind: Setting(SkipMode), options: [Key("ui.prefs.skip_read"), Key("ui.prefs.skip_all")]),
+                        layout: (width: Fixed(620.0)),
+                    ),
+                ],
+            ),
+            (id: "fullscreen", kind: Toggle(text: Key("ui.prefs.fullscreen"), bind: Setting(Fullscreen))),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 20.0),
+                children: [
+                    (kind: Label(text: Key("ui.prefs.language")), layout: (width: Fixed(460.0))),
+                    (id: "language", kind: Dropdown(bind: Setting(Language)), layout: (width: Fixed(620.0))),
+                ],
+            ),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 30.0, main: Center, cross: Start),
+                children: [
+                    (id: "defaults", kind: Button(text: Key("ui.prefs.defaults"), action: [ResetPreferences]), layout: (width: Fixed(420.0))),
+                    (id: "back", kind: Button(text: Key("ui.menu.back"), action: [Close]), layout: (width: Fixed(300.0))),
+                ],
+            ),
+        ],
+    ),
+)

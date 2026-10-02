@@ -29,6 +29,10 @@ pub enum UnOp {
 pub enum BinOp {
     Add,
     Sub,
+    /// Added in schema v7.
+    Mul,
+    /// Added in schema v7. Integer division when both sides are integers.
+    Div,
     Eq,
     Ne,
     Lt,
@@ -44,6 +48,8 @@ impl BinOp {
         match self {
             BinOp::Add => "+",
             BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
             BinOp::Eq => "==",
             BinOp::Ne => "!=",
             BinOp::Lt => "<",
@@ -75,6 +81,8 @@ pub enum EvalError {
     Type(String),
     #[error("integer overflow")]
     Overflow,
+    #[error("division by zero")]
+    DivisionByZero,
 }
 
 /// Static typing failure.
@@ -195,7 +203,7 @@ impl Expr {
                         expect(rt, |t| t == ValueType::Bool, &name, "bool")?;
                         Ok(Some(ValueType::Bool))
                     }
-                    BinOp::Add | BinOp::Sub => {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
                         let ok = |t: ValueType| {
                             t.is_numeric() || (*op == BinOp::Add && t == ValueType::Str)
                         };
@@ -289,6 +297,31 @@ fn eval_binary(op: BinOp, l: Value, r: Value) -> Result<Value, EvalError> {
                 }
                 _ => Err(EvalError::Type(format!(
                     "`{}` cannot combine {lt} and {rt}",
+                    op.symbol()
+                ))),
+            },
+        },
+        BinOp::Mul | BinOp::Div => match (&l, &r) {
+            (Value::Int(a), Value::Int(b)) => {
+                if op == BinOp::Div && *b == 0 {
+                    return Err(EvalError::DivisionByZero);
+                }
+                let res = if op == BinOp::Mul {
+                    a.checked_mul(*b)
+                } else {
+                    a.checked_div(*b)
+                };
+                res.map(Value::Int).ok_or(EvalError::Overflow)
+            }
+            _ => match (as_f64(&l), as_f64(&r)) {
+                (Some(a), Some(b)) => {
+                    if op == BinOp::Div && b == 0.0 {
+                        return Err(EvalError::DivisionByZero);
+                    }
+                    Ok(Value::Float(if op == BinOp::Mul { a * b } else { a / b }))
+                }
+                _ => Err(EvalError::Type(format!(
+                    "`{}` expects numbers, got {lt} and {rt}",
                     op.symbol()
                 ))),
             },
@@ -401,7 +434,7 @@ fn next_char(src: &str, i: usize) -> Option<char> {
 }
 
 fn tokenize(src: &str) -> Result<Vec<(usize, Tok)>, ParseError> {
-    const OPS: &[&str] = &["==", "!=", "<=", ">=", "&&", "||", "<", ">", "!", "+", "-"];
+    const OPS: &[&str] = &["==", "!=", "<=", ">=", "&&", "||", "<", ">", "!", "+", "-", "*", "/"];
     let bytes = src.as_bytes();
     let mut i = 0;
     let mut out = Vec::new();
@@ -542,7 +575,10 @@ impl Parser {
         self.binary_level(&["<", "<=", ">", ">="], Self::additive)
     }
     fn additive(&mut self) -> Result<Expr, ParseError> {
-        self.binary_level(&["+", "-"], Self::unary)
+        self.binary_level(&["+", "-"], Self::multiplicative)
+    }
+    fn multiplicative(&mut self) -> Result<Expr, ParseError> {
+        self.binary_level(&["*", "/"], Self::unary)
     }
 
     fn unary(&mut self) -> Result<Expr, ParseError> {
@@ -602,6 +638,8 @@ fn bin_op(sym: &str) -> BinOp {
     match sym {
         "+" => BinOp::Add,
         "-" => BinOp::Sub,
+        "*" => BinOp::Mul,
+        "/" => BinOp::Div,
         "==" => BinOp::Eq,
         "!=" => BinOp::Ne,
         "<" => BinOp::Lt,
@@ -634,6 +672,18 @@ mod tests {
             eval("2 < 3 && 3 >= 3 && 4 > 3 && 3 <= 3 && 1 != 2", &[]),
             Ok(Value::Bool(true))
         );
+    }
+
+    #[test]
+    fn multiplication_and_division() {
+        assert_eq!(eval("2 + 3 * 4", &[]), Ok(Value::Int(14)));
+        assert_eq!(eval("7 / 2", &[]), Ok(Value::Int(3)));
+        assert_eq!(eval("7 / 2.0", &[]), Ok(Value::Float(3.5)));
+        assert_eq!(eval("1 / 0", &[]), Err(EvalError::DivisionByZero));
+        assert_eq!(eval("1.0 / 0.0", &[]), Err(EvalError::DivisionByZero));
+        assert!(matches!(eval("\"a\" * 2", &[]), Err(EvalError::Type(_))));
+        let e = Expr::parse("(a + 1) * b / 2").unwrap();
+        assert_eq!(Expr::parse(&e.to_string()).unwrap(), e);
     }
 
     #[test]

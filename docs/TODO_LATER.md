@@ -2,6 +2,16 @@
 
 Idées validées mais hors des jalons en cours. À replanifier dans la roadmap le moment venu.
 
+## Variables sans code (UI phase 2)
+- **Fait** (voir ADR 0011, addendum « Variables sans code ») : `VarOp` / `Condition` dans `orbit_core`, schéma v7, `Vm::apply_var_op`, `UiAction::VarSet`, `Cond::Vars`, liaisons `Var`, widgets de l'éditeur (nœuds `SetVar` / `If` / choix et éditeur d'interface), mode expression conservé.
+- Reste : `UiAction::SceneGoto` (le VM n'a pas d'aller-à-une-scène hors nœud) ; liste déroulante liée à une variable ; condition « variable A comparée à une expression » ; avertissement de division par zéro dans le panneau Problèmes pour les nœuds `SetVar` en mode expression.
+
+## Personnages animés
+- **Fait (schéma v8, ADR 0004 addendum)** : image fixe ou animation par expression (sprite sheet, suite d'images, fps, boucle / une fois / aller-retour), runtime et éditeur (panneau Personnages, aperçu animé de la miniature, aperçu de jeu).
+- Reste : animation dans la vue de scène de l'éditeur (elle montre la première image), import de GIF / APNG, sprite sheet à cellules de tailles inégales (atlas), animations sur les anciens écrans (portraits, UI), saut d'images selon le temps réel lors d'un retard.
+- Plus tard : animation rigged (squelette, type Spine/Live2D-like) : la variante `Motion::Rigged` est réservée.
+
+
 ## Moderniser le thème de base du jeu
 - Le thème par défaut d'`orbit_ui` (menus, textbox, quick menu, écrans save/load/préférences) est fonctionnel mais daté : refonte visuelle complète.
 - Pistes : coins arrondis / 9-slice, ombres douces, flou ou dégradés, animations d'apparition/survol, typographie et espacements revus, icônes, mise en page responsive (16:9, 4:3, portrait mobile).
@@ -19,7 +29,7 @@ Idées validées mais hors des jalons en cours. À replanifier dans la roadmap l
 - Remplacer `.ron` par `.orbit` pour les fichiers d'histoire (le contenu reste du RON) ; `.ron` toujours accepté pour la compatibilité.
 - Manifeste, traductions, thèmes et préférences restent en `.ron` (ou `.orbitproj` pour le manifeste, à décider).
 - Association de fichier Windows/Linux dans les installeurs (double-clic → éditeur, icône dédiée).
-- Décision : reporté, on reste en `.ron` pour l'instant.
+- Décision (2026-10-02) : validé, planifié en TL-02 de [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md).
 
 ## Optimisations
 - Taille du bundle web : fait au M4 (10,2 → 4,4 Mo, budget en CI). Pistes restantes : décodage JPEG / polices chargés à la demande, `cosmic-text` sans `swash` inutile, binaryen récent, `twiggy` pour chercher les gros morceaux.

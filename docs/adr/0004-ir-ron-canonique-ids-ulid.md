@@ -40,3 +40,11 @@ Sauvegardes, localisation, diffs, undo et pilotage par IA exigent des référenc
 - **Sauvegardes** : l'état de la VM change de disposition (postcard n'est pas auto-descriptif), le format des sauvegardes passe donc à la **version 2** ; la version 1 reste lisible (décodeur dédié, `orbit_save::legacy_v1` : les personnages reviennent à l'échelle 1,0, sans miroir).
 - Migration 5 -> 6 (`migrate.rs`) : numéro de version seulement (testée sur un fichier v5 : champs par défaut, rien d'écrit de plus). `examples/stories/demo.ron` est en v6 et utilise miroir, échelle et position libre.
 
+
+## Addendum : personnages animés (schéma v8)
+
+- `Expression` gagne `motion: Option<Motion>` (absent du fichier RON quand c'est `None`, donc une image fixe s'écrit comme avant). `Motion::Animation(Animation { frames, fps, loop_mode })` ou `Motion::Rigged` (**réservé** : non géré, avertissement de validation `RiggedUnsupported`, l'image fixe est dessinée). `AnimFrames::SpriteSheet { asset, cols, rows, frame_count, frame_size }` (grille lue de gauche à droite, de haut en bas ; `frame_size` optionnel pour les planches avec marges) ou `AnimFrames::Sequence(Vec<AssetId>)`. `LoopMode` : `Loop`, `Once` (garde la dernière image), `PingPong`.
+- Modèle **additif** : `image` reste l'image « poster » (miniatures, repli tant que les frames ne sont pas chargées) ; l'éditeur la garde alignée sur la première image / la planche. Schéma **v8**, migration v7 -> v8 : numéro de version seulement (les images fixes restent valides).
+- Validation (erreurs `InvalidAnimation`) : `fps` fini et > 0, grille d'au moins 1x1, `frame_count` entre 1 et `cols * rows`, taille de cellule >= 1x1, séquence non vide ; chaque frame doit être un asset `Image` connu.
+- Calcul pur dans `orbit_core::anim` (`frame_index`, `Animation::frame_at`, `sheet_uv`, `sheet_cell_size`), partagé par le runtime et l'éditeur. Runtime : `AnimClock` (temps par personnage, qui n'avance que quand le jeu tourne : figé par un écran de pause ou pendant le chargement), sous-rectangle UV via `Sprite2d::uv` (compatible miroir, échelle et transitions), l'animation redémarre à chaque affichage ; rien dans les sauvegardes ni le rollback. L'export inclut toutes les frames (`asset_users` compte les frames).
+- Format `GamePack` : `motion` est toujours écrit en binaire (comme `Character::default_position`).

@@ -15,9 +15,11 @@ pub mod errors;
 pub mod fields;
 mod graph_state;
 pub mod i18n;
+
 mod preview;
 mod registry;
 mod scene_view;
+pub mod varwidgets;
 
 pub use context::{
     ConsoleEntry, ConsoleLog, Diagnostics, EditorContext, EditorError, EditorRequest, EditorState,

@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use orbit_core::Story;
+use orbit_core::{Story, Value, VarOp};
 use orbit_i18n::Localizer;
 use orbit_render2d::{Layer, Sprite2d, TextureId};
 use orbit_save::{
@@ -1236,6 +1236,72 @@ impl Shell {
             } else {
                 Vec::new()
             },
+            vars: self.story_vars(),
+        }
+    }
+
+    /// The story variables the data screens read: the running playthrough's
+    /// (both scopes), or at the title the declared initial values with the
+    /// saved persistent ones.
+    fn story_vars(&self) -> std::collections::BTreeMap<String, Value> {
+        if let Some(game) = &self.game {
+            let vm = game.director.vm();
+            let mut vars = vm.variables().clone();
+            vars.extend(vm.persistent_vars().clone());
+            return vars;
+        }
+        let mut vars: std::collections::BTreeMap<String, Value> = self
+            .story
+            .variables
+            .iter()
+            .map(|v| (v.name.clone(), v.initial.clone()))
+            .collect();
+        for decl in self.story.persistent_variables() {
+            if let Some(v) = self
+                .persistent
+                .vars
+                .get(&decl.name)
+                .filter(|v| v.value_type() == decl.initial.value_type())
+            {
+                vars.insert(decl.name.clone(), v.clone());
+            }
+        }
+        vars
+    }
+
+    /// Applies a no-code variable operation from a screen. In a game it goes
+    /// through the VM (rollback history and saves stay consistent); at the
+    /// title only persistent variables can change (there is no playthrough).
+    /// Persistent changes are written to disk at once.
+    fn apply_var_op(&mut self, op: &VarOp) {
+        let persistent = self
+            .story
+            .persistent_variables()
+            .any(|v| v.name == op.var);
+        if let Some(game) = &mut self.game {
+            if let Err(err) = game.director.vm_mut().apply_var_op(op) {
+                log::warn!("variable operation ignored: {err}");
+                return;
+            }
+        } else if persistent {
+            let mut vm = match self.fresh_vm() {
+                Ok(vm) => vm,
+                Err(message) => {
+                    log::warn!("variable operation ignored: {message}");
+                    return;
+                }
+            };
+            if let Err(err) = vm.apply_var_op(op) {
+                log::warn!("variable operation ignored: {err}");
+                return;
+            }
+            self.persistent = PersistentData::from_vm(&vm);
+        } else {
+            log::warn!("variable `{}` only exists during a game", op.var);
+            return;
+        }
+        if persistent {
+            self.flush_persistent();
         }
     }
 
@@ -1273,7 +1339,7 @@ impl Shell {
 
     /// `true` while the game must not advance: a stock screen is open, or a
     /// data screen with `pauses_game`.
-    fn game_paused(&self) -> bool {
+    pub fn game_paused(&self) -> bool {
         match self.top() {
             None => false,
             Some(Overlay::Custom(i)) => self.data[i].pauses_game(),
@@ -1405,6 +1471,7 @@ impl Shell {
             }
             UiEvent::PlaySound(path) => self.effects.push(Effect::PlayAsset(path)),
             UiEvent::Custom { name, args } => self.effects.push(Effect::Custom { name, args }),
+            UiEvent::VarOp(op) => self.apply_var_op(&op),
             UiEvent::Back => self.close_top(),
             UiEvent::ReturnToMainMenu => self.leave_game(),
             UiEvent::Quit => {

@@ -38,7 +38,9 @@ use crate::loading::{
 use crate::shell::{AutosaveConfig, Effect, Shell, ShellConfig};
 use crate::splash::SplashState;
 use crate::splash_draw::SplashAssets;
-use crate::stage::{CANVAS, StageState, character_placement, cover_size};
+use crate::stage::{AnimClock, CANVAS, StageCharacter, StageState, character_placement, cover_size};
+use orbit_core::anim::{FrameRef, sheet_cell_size, sheet_uv};
+use orbit_core::AnimFrames;
 use orbit_ui::UiInput;
 
 mod embedded;
@@ -497,6 +499,8 @@ pub struct Runtime {
     /// The player already pressed "start" once (audio is unlocked).
     started_once: bool,
     time: f32,
+    /// Animation times of the characters; runs with the game only.
+    anim_clock: AnimClock,
     screens: Screens,
     /// Language the cached [`Screens`] were built for.
     screens_language: String,
@@ -627,6 +631,7 @@ impl Runtime {
             phase,
             started_once: false,
             time: 0.0,
+            anim_clock: AnimClock::default(),
             screens: Screens::default(),
             screens_language: boot_language.clone(),
             boot_texts: Texts::builtin(&boot_language),
@@ -1062,6 +1067,18 @@ impl Runtime {
         };
     }
 
+    /// Advances the animation clock, unless the game is held (paused by a
+    /// screen, waiting for assets).
+    fn advance_anims(&mut self, dt: f32) {
+        let held = self.is_blocked();
+        if let Phase::Running(shell) = &self.phase
+            && !held
+            && !shell.game_paused()
+        {
+            self.anim_clock.advance(dt);
+        }
+    }
+
     /// Whether the game is held until the scene on screen has its assets.
     fn is_blocked(&self) -> bool {
         self.streaming.as_ref().is_some_and(|s| s.blocked)
@@ -1081,6 +1098,7 @@ impl Runtime {
                 &self.store,
                 shell.story(),
                 &request.stage,
+                None,
                 &mut scene,
             );
             let started = renderer
@@ -1220,15 +1238,27 @@ impl Runtime {
                 match shell.game() {
                     Some(game) => {
                         let mut scene = Scene::new();
+                        match game.director.transition() {
+                            Some(tr) => self.anim_clock.sync([&tr.from, game.director.stage()]),
+                            None => self.anim_clock.sync([game.director.stage()]),
+                        }
                         if let Some(tr) = game.director.transition() {
                             transitioning = true;
                             let mut from = Scene::new();
-                            stage_scene(renderer, &self.store, &game.story, &tr.from, &mut from);
+                            stage_scene(
+                                renderer,
+                                &self.store,
+                                &game.story,
+                                &tr.from,
+                                Some(&self.anim_clock),
+                                &mut from,
+                            );
                             stage_scene(
                                 renderer,
                                 &self.store,
                                 &game.story,
                                 game.director.stage(),
+                                Some(&self.anim_clock),
                                 &mut scene,
                             );
                             renderer.render_to_target(self.targets[0], &from)?;
@@ -1246,6 +1276,7 @@ impl Runtime {
                                 &self.store,
                                 &game.story,
                                 game.director.stage(),
+                                Some(&self.anim_clock),
                                 &mut scene,
                             );
                             out.scene(renderer, &scene)?;
@@ -1540,13 +1571,94 @@ fn render_transition(kind: TransitionKind) -> Transition {
     }
 }
 
+/// What to draw for a character: texture, sub-rectangle (sprite sheet cell)
+/// and the size in pixels of what is shown (cell or whole image).
+struct CharacterFrame {
+    texture: TextureId,
+    uv: Option<[f32; 4]>,
+    size: [u32; 2],
+}
+
+/// Picks the frame of `c` at its animation time: the current cell / image of
+/// its animation, else (still expression, rigged, frames not loaded) its
+/// poster image. `None` when nothing can be drawn yet.
+fn character_frame(
+    renderer: &Renderer2d,
+    store: &AssetStore,
+    story: &Story,
+    c: &StageCharacter,
+    anims: Option<&AnimClock>,
+) -> Option<CharacterFrame> {
+    let texture = |id| {
+        let path = &story.assets.get(id)?.path;
+        store.texture(path)
+    };
+    let animation = story
+        .character(c.character)
+        .and_then(|ch| ch.expression(&c.expression))
+        .and_then(|e| e.animation());
+    let elapsed = anims.map_or(0.0, |a| a.elapsed(c.character, &c.expression));
+    let animated = animation
+        .and_then(|a| a.frame_at(elapsed).map(|f| (a, f)))
+        .and_then(|(a, frame)| match frame {
+            FrameRef::Image(id) => {
+                let tex = texture(id)?;
+                Some(CharacterFrame {
+                    texture: tex,
+                    uv: None,
+                    size: renderer.texture_size(tex)?,
+                })
+            }
+            FrameRef::Sheet { asset, index } => {
+                let tex = texture(asset)?;
+                let sheet = renderer.texture_size(tex)?;
+                let AnimFrames::SpriteSheet {
+                    cols,
+                    rows,
+                    frame_size,
+                    ..
+                } = &a.frames
+                else {
+                    return None;
+                };
+                Some(CharacterFrame {
+                    texture: tex,
+                    uv: Some(sheet_uv(index, *cols, *rows, *frame_size, sheet)?),
+                    size: sheet_cell_size(*cols, *rows, *frame_size, sheet),
+                })
+            }
+        });
+    if animated.is_some() {
+        return animated;
+    }
+    if matches!(animation.map(|a| &a.frames), Some(AnimFrames::SpriteSheet { .. })) {
+        // The poster of a sheet is usually the sheet itself: not drawable.
+        let poster = story
+            .character(c.character)
+            .and_then(|ch| ch.expression(&c.expression))
+            .map(|e| e.image);
+        let sheet = animation.and_then(|a| a.frames.assets().first().copied());
+        if poster == sheet {
+            return None;
+        }
+    }
+    let tex = texture(c.image)?;
+    Some(CharacterFrame {
+        texture: tex,
+        uv: None,
+        size: renderer.texture_size(tex)?,
+    })
+}
+
 /// Fills `scene` with the stage: opaque black, background (covering the
 /// canvas), then the characters bottom-center anchored at their position.
+/// `anims` gives the animation times (`None`: every animation on frame 0).
 fn stage_scene(
     renderer: &Renderer2d,
     store: &AssetStore,
     story: &Story,
     stage: &StageState,
+    anims: Option<&AnimClock>,
     scene: &mut Scene,
 ) {
     let texture = |id| {
@@ -1563,15 +1675,18 @@ fn stage_scene(
         );
     }
     for (i, c) in stage.characters.iter().enumerate() {
-        let Some(tex) = texture(c.image) else {
+        let Some(frame) = character_frame(renderer, store, story, c, anims) else {
             continue;
         };
-        let texture_size = renderer.texture_size(tex).unwrap_or([0, 0]);
-        let placement = character_placement(c, texture_size);
+        let placement = character_placement(c, frame.size);
+        let mut sprite = Sprite2d::new(frame.texture, placement.anchor, placement.size)
+            .anchor([0.5, 1.0])
+            .scale(placement.scale);
+        if let Some(uv) = frame.uv {
+            sprite = sprite.uv(uv);
+        }
         scene.push(
-            Sprite2d::new(tex, placement.anchor, placement.size)
-                .anchor([0.5, 1.0])
-                .scale(placement.scale)
+            sprite
                 .flipped(placement.flip_x, placement.flip_y)
                 .layer(Layer::CHARACTERS)
                 .z(i as f32),
@@ -1640,6 +1755,7 @@ impl App for Runtime {
                 shell.update(dt_secs);
             }
         }
+        self.advance_anims(dt_secs);
         self.poll_streaming();
         self.service_thumbnails();
         self.after_shell();

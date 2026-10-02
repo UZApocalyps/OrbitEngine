@@ -1,0 +1,13 @@
+// Neo-Kyoto theme: the built-in look plus neon titles.
+(
+    styles: {
+        "title": (
+            text_size: Some(72.0),
+            text_colors: (normal: Some((90, 235, 255, 255))),
+        ),
+        "heading": (
+            text_size: Some(48.0),
+            text_colors: (normal: Some((255, 90, 170, 255))),
+        ),
+    },
+)

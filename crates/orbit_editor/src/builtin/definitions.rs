@@ -19,9 +19,10 @@ use orbit_editor_api::{
 };
 use orbit_project::{Command, ops};
 
+use super::anim_edit;
 use super::edit;
 use super::ids;
-use super::thumbs;
+
 use super::ui_util::{accent, card, danger, faint, primary_button, section_title, strong, weak};
 
 /// Colors offered for characters.
@@ -403,6 +404,8 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
         Remove(usize),
         Add,
         Import(usize),
+        Replace(usize, Expression, Option<String>),
+        ImportFrame(usize),
     }
     let mut action: Option<Do> = None;
     if def.expressions.is_empty() {
@@ -420,7 +423,7 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    thumbs::show(ui, ctx, story, e.image, egui::vec2(54.0, 68.0));
+                    anim_edit::preview(ui, ctx, story, e, egui::vec2(54.0, 68.0));
                     ui.vertical(|ui| {
                         // The name is committed on Enter / focus loss, so the
                         // references follow in one step.
@@ -441,14 +444,25 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
                         } else if buffer != e.name || resp.has_focus() {
                             ui.data_mut(|d| d.insert_temp(buf_id, buffer));
                         }
-                        if let Some(a) = asset_picker(
-                            ui,
-                            ("expr_asset", def.id, i),
-                            story,
-                            AssetKind::Image,
-                            e.image,
-                        ) {
-                            action = Some(Do::Asset(i, a));
+                        match anim_edit::editor(ui, story, (def.id, i), e) {
+                            Some(anim_edit::Outcome::Replace(new, key)) => {
+                                action = Some(Do::Replace(i, new, key));
+                            }
+                            Some(anim_edit::Outcome::ImportFrame) => {
+                                action = Some(Do::ImportFrame(i));
+                            }
+                            None => {}
+                        }
+                        if anim_edit::kind_of(e) == anim_edit::Kind::Still {
+                            if let Some(a) = asset_picker(
+                                ui,
+                                ("expr_asset", def.id, i),
+                                story,
+                                AssetKind::Image,
+                                e.image,
+                            ) {
+                                action = Some(Do::Asset(i, a));
+                            }
                         }
                         ui.horizontal(|ui| {
                             if ui
@@ -502,6 +516,28 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
             return;
         }
         Do::Asset(i, a) => new.expressions[i].image = a,
+        Do::Replace(i, expression, key) => {
+            new.expressions[i] = expression;
+            let command = Command::SetCharacter {
+                id: new.id,
+                character: Some(new),
+                index: None,
+            };
+            let result = match key {
+                Some(k) => ctx.exec_merged(command, &k),
+                None => ctx.exec(command),
+            };
+            if let Err(e) = result {
+                ctx.error(e.to_string());
+            }
+            return;
+        }
+        Do::ImportFrame(i) => {
+            let Some(a) = edit::import_asset_dialog(ctx, AssetKind::Image) else {
+                return;
+            };
+            anim_edit::push_frame(&mut new.expressions[i], a);
+        }
         Do::Remove(i) => {
             new.expressions.remove(i);
         }
@@ -538,7 +574,7 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
                 },
                 def.expressions.iter().map(|e| e.name.as_str()),
             );
-            new.expressions.push(Expression { name, image });
+            new.expressions.push(Expression::still(name, image));
         }
     }
     ctx.exec_or_toast(Command::SetCharacter {
