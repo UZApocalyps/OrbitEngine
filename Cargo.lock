@@ -2447,6 +2447,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit_anim"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "orbit_assets"
 version = "0.1.0"
 dependencies = [
