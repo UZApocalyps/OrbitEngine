@@ -149,7 +149,7 @@ fn save_settings(core: &mut EditorCore) {
 /// explicit request (the panel's button, `--mcp-port`) gets here.
 pub fn start(core: &mut EditorCore) -> Result<(), String> {
     if core.mcp.server.is_some() {
-        return Err("le serveur MCP est déjà démarré".to_owned());
+        return Err(core.state.t("live.already_running"));
     }
     if core.state.ai.token.is_empty() {
         core.state.ai.token = orbit_mcp::live::generate_token();
@@ -164,10 +164,8 @@ pub fn start(core: &mut EditorCore) -> Result<(), String> {
         Ok(server) => {
             core.state.ai.url = Some(server.url());
             core.state.ai.status = AiServerStatus::Listening;
-            core.state.console.push(
-                Level::Info,
-                format!("Serveur MCP à l'écoute sur {}", server.url()),
-            );
+            let message = core.state.tf("live.listening", &[("url", &server.url())]);
+            core.state.console.push(Level::Info, message);
             core.mcp.server = Some(server);
             save_settings(core);
             Ok(())
@@ -175,9 +173,8 @@ pub fn start(core: &mut EditorCore) -> Result<(), String> {
         Err(e) => {
             core.state.ai.status = AiServerStatus::Failed(e.clone());
             core.state.ai.url = None;
-            core.state
-                .console
-                .push(Level::Error, format!("Serveur MCP : {e}"));
+            let message = core.state.tf("live.failed", &[("error", &e)]);
+            core.state.console.push(Level::Error, message);
             Err(e)
         }
     }
@@ -187,9 +184,8 @@ pub fn start(core: &mut EditorCore) -> Result<(), String> {
 pub fn stop(core: &mut EditorCore) {
     if let Some(server) = core.mcp.server.take() {
         server.stop();
-        core.state
-            .console
-            .push(Level::Info, "Serveur MCP arrêté.".to_owned());
+        let message = core.state.t("live.stopped");
+        core.state.console.push(Level::Info, message);
     }
     core.state.ai.status = AiServerStatus::Stopped;
     core.state.ai.url = None;
@@ -211,17 +207,12 @@ pub fn on_project_opened(core: &mut EditorCore) {
     let Some(session) = &core.session else { return };
     let root = session.location.root.clone();
     if let Some(other) = lock::inspect(&root) {
-        let message = format!(
-            "Ce projet est déjà ouvert par {} : modifier le même projet depuis deux endroits \
-             écrase silencieusement des changements. Fermez l'autre côté, ou travaillez \
-             uniquement via le serveur MCP de l'éditeur.",
-            other.describe()
-        );
+        let message = core
+            .state
+            .tf("live.lock_other", &[("other", &other.describe())]);
         core.state.console.push(Level::Warn, message.clone());
-        core.state.push_toast(
-            Level::Warn,
-            "Projet déjà ouvert ailleurs (voir la console).",
-        );
+        let toast = core.state.t("live.lock_other_toast");
+        core.state.push_toast(Level::Warn, toast);
         core.state.ai.lock_warning = Some(message);
         return; // the other side keeps the lock
     }
@@ -251,16 +242,12 @@ fn check_lock(core: &mut EditorCore) {
         return;
     };
     core.mcp.takeover_reported = true;
-    let message = format!(
-        "{} a pris ce projet alors qu'il est ouvert ici : ses enregistrements et les vôtres \
-         peuvent s'écraser mutuellement. Fermez l'un des deux.",
-        other.describe()
-    );
+    let message = core
+        .state
+        .tf("live.lock_taken", &[("other", &other.describe())]);
     core.state.console.push(Level::Warn, message.clone());
-    core.state.push_toast(
-        Level::Warn,
-        "Un autre processus a pris ce projet (voir la console).",
-    );
+    let toast = core.state.t("live.lock_taken_toast");
+    core.state.push_toast(Level::Warn, toast);
     core.state.ai.lock_warning = Some(message);
 }
 
@@ -324,10 +311,8 @@ fn process_commands(core: &mut EditorCore) {
                     stop(core);
                     let _ = start(core);
                 }
-                core.state.push_toast(
-                    Level::Info,
-                    "Nouveau jeton généré : mettez à jour la configuration du client.",
-                );
+                let toast = core.state.t("live.token_regenerated");
+                core.state.push_toast(Level::Info, toast);
             }
             AiCommand::UndoLast => undo_last_ai_edit(core),
             AiCommand::ClearLog => core.state.ai.log.clear(),
@@ -342,28 +327,29 @@ fn undo_last_ai_edit(core: &mut EditorCore) {
         return;
     };
     let Some(label) = session.project.undo_label().map(str::to_owned) else {
-        core.state.push_toast(Level::Info, "Rien à annuler.");
+        let toast = core.state.t("live.nothing_to_undo");
+        core.state.push_toast(Level::Info, toast);
         return;
     };
     if !label.starts_with(UNDO_PREFIX) {
-        core.state.push_toast(
-            Level::Warn,
-            "La dernière modification est la vôtre, pas celle de l'IA : utilisez Annuler.",
-        );
+        let toast = core.state.t("live.not_ai_edit");
+        core.state.push_toast(Level::Warn, toast);
         return;
     }
     match session.project.undo() {
         Ok(true) => {
-            core.state
-                .push_toast(Level::Info, format!("Annulé : {label}"));
+            let toast = core.state.tf("live.undone", &[("label", &label)]);
+            core.state.push_toast(Level::Info, toast);
             let id = core.mcp.next_log_id;
             core.mcp.next_log_id += 1;
+            // These two texts are stored already translated (the journal
+            // keeps what the AI sent as is, so it has no key + args form).
             core.state.ai.push_log(AiLogEntry {
                 id,
                 time_ms: orbit_platform::unix_time_ms(),
-                tool: "(annulation par l'utilisateur)".to_owned(),
+                tool: core.state.t("live.undo_log_tool"),
                 args: String::new(),
-                result: format!("annulé : {label}"),
+                result: core.state.tf("live.undo_log_result", &[("label", &label)]),
                 ok: true,
                 duration_ms: 0,
                 touched: Vec::new(),
@@ -371,9 +357,10 @@ fn undo_last_ai_edit(core: &mut EditorCore) {
             });
         }
         Ok(false) => {}
-        Err(e) => core
-            .state
-            .push_toast(Level::Error, format!("Annulation impossible : {e}")),
+        Err(e) => {
+            let toast = core.state.tf("live.undo_failed", &[("error", &e)]);
+            core.state.push_toast(Level::Error, toast);
+        }
     }
 }
 

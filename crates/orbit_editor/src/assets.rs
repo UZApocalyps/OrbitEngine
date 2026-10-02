@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use orbit_core::{AssetEntry, AssetId, AssetKind, Story};
+use orbit_editor_api::Translator;
 use orbit_plugin_api::ProjectRegistry;
 use orbit_project::sandbox::Sandbox;
 use orbit_project::{Command, Project, ProjectError, ops};
@@ -31,7 +32,59 @@ pub fn asset_dir(kind: AssetKind) -> &'static str {
     }
 }
 
-/// Why a file could not be imported (messages are meant for the user).
+/// Reasons given by the built-in importers, and their translation.
+pub mod refusal {
+    use orbit_editor_api::Translator;
+
+    // The importers have no access to the editor's language (the plugin API is a
+    // plain `fn(&[u8])`), so they refuse with these stable English reasons, which
+    // are also what the MCP server reports to the AI. The editor shows them
+    // through [`localize`].
+    pub const ERR_NOT_IMAGE: &str = "not a PNG or JPEG image";
+    pub const ERR_EMPTY_IMAGE: &str = "empty image";
+    pub const ERR_EMPTY_AUDIO: &str = "empty audio";
+    pub const ERR_FORMAT: (&str, &str) = ("image format ", " not supported (PNG or JPEG)");
+    pub const ERR_IMAGE_UNREADABLE: (&str, &str) = ("unreadable image (", ")");
+    pub const ERR_AUDIO_UNREADABLE: (&str, &str) = ("unreadable audio (", ")");
+    pub const ERR_TOO_LARGE: (&str, &str) = ("image too large (", " px at most)");
+
+    fn between<'a>(text: &'a str, (head, tail): (&str, &str)) -> Option<&'a str> {
+        text.strip_prefix(head)?.strip_suffix(tail)
+    }
+
+    /// The reason an importer gave, in the editor's language. A reason that is
+    /// not one of the built-in importers' (a plugin's) is returned as it is.
+    pub fn localize(texts: &Translator, reason: &str) -> String {
+        match reason {
+            ERR_NOT_IMAGE => return texts.t("import.err.not_image"),
+            ERR_EMPTY_IMAGE => return texts.t("import.err.image_empty"),
+            ERR_EMPTY_AUDIO => return texts.t("import.err.audio_empty"),
+            _ => {}
+        }
+        if let Some(format) = between(reason, ERR_FORMAT) {
+            return texts.tf("import.err.image_format", &[("format", &format)]);
+        }
+        if let Some(error) = between(reason, ERR_IMAGE_UNREADABLE) {
+            return texts.tf("import.err.image_unreadable", &[("error", &error)]);
+        }
+        if let Some(error) = between(reason, ERR_AUDIO_UNREADABLE) {
+            return texts.tf("import.err.audio_unreadable", &[("error", &error)]);
+        }
+        if let Some(inner) = between(reason, ERR_TOO_LARGE)
+            && let Some((dims, max)) = inner.split_once(" px, ")
+            && let Some((width, height)) = dims.split_once('×')
+        {
+            return texts.tf(
+                "import.err.image_too_large",
+                &[("width", &width), ("height", &height), ("max", &max)],
+            );
+        }
+        reason.to_owned()
+    }
+}
+
+/// Why a file could not be imported; [`ImportError::message`] says it to the
+/// user in the editor's language.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ImportError {
     /// No importer handles this extension.
@@ -47,32 +100,36 @@ pub enum ImportError {
     Io(String),
 }
 
-impl std::fmt::Display for ImportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl ImportError {
+    /// The reason, in the editor's language.
+    pub fn message(&self, texts: &Translator) -> String {
         match self {
             ImportError::Unsupported {
                 extension,
                 accepted,
-            } if extension.is_empty() => write!(
-                f,
-                "format non pris en charge (fichier sans extension ; formats acceptés : {accepted})"
-            ),
+            } if extension.is_empty() => {
+                texts.tf("import.err.unsupported_no_ext", &[("accepted", accepted)])
+            }
             ImportError::Unsupported {
                 extension,
                 accepted,
-            } => write!(
-                f,
-                "format « .{extension} » non pris en charge (formats acceptés : {accepted})"
+            } => texts.tf(
+                "import.err.unsupported",
+                &[("extension", extension), ("accepted", accepted)],
             ),
-            ImportError::TooLarge(n) => write!(
-                f,
-                "fichier trop volumineux ({} Mo, limite {} Mo)",
-                n / (1024 * 1024),
-                MAX_IMPORT_BYTES / (1024 * 1024)
+            ImportError::TooLarge(n) => texts.tf(
+                "import.err.too_large",
+                &[
+                    ("size", &(n / (1024 * 1024))),
+                    ("limit", &(MAX_IMPORT_BYTES / (1024 * 1024))),
+                ],
             ),
-            ImportError::Unreadable(e) => write!(f, "lecture impossible : {e}"),
-            ImportError::Invalid(e) => write!(f, "contenu invalide : {e}"),
-            ImportError::Io(e) => write!(f, "écriture impossible : {e}"),
+            ImportError::Unreadable(e) => texts.tf("import.err.unreadable", &[("error", e)]),
+            ImportError::Invalid(e) => texts.tf(
+                "import.err.invalid",
+                &[("error", &refusal::localize(texts, e))],
+            ),
+            ImportError::Io(e) => texts.tf("import.err.io", &[("error", e)]),
         }
     }
 }
@@ -228,12 +285,11 @@ fn prepare(
     story: &Story,
     taken: &mut HashSet<String>,
     source: &Path,
+    texts: &Translator,
 ) -> Result<Prepared, ImportError> {
     let meta = fs::metadata(source).map_err(|e| ImportError::Unreadable(e.to_string()))?;
     if !meta.is_file() {
-        return Err(ImportError::Unreadable(
-            "ce n'est pas un fichier".to_owned(),
-        ));
+        return Err(ImportError::Unreadable(texts.t("import.err.not_a_file")));
     }
     if meta.len() > MAX_IMPORT_BYTES {
         return Err(ImportError::TooLarge(meta.len()));
@@ -310,6 +366,7 @@ pub fn import_files(
     root: &Path,
     registry: &ProjectRegistry,
     sources: &[PathBuf],
+    texts: &Translator,
 ) -> ImportReport {
     let mut report = ImportReport::default();
     let sandbox = match Sandbox::new(root) {
@@ -334,7 +391,7 @@ pub fn import_files(
     let mut copied: Vec<PathBuf> = Vec::new();
     for source in expand_sources(sources) {
         let story = project.story();
-        match prepare(root, &sandbox, registry, story, &mut taken, &source) {
+        match prepare(root, &sandbox, registry, story, &mut taken, &source, texts) {
             Ok(p) => {
                 if !p.existing {
                     copied.extend(p.copied);
@@ -354,11 +411,7 @@ pub fn import_files(
         return report;
     }
     let n = to_declare.len();
-    let label = if n == 1 {
-        "Importer une ressource".to_owned()
-    } else {
-        format!("Importer {n} ressources")
-    };
+    let label = texts.tn("import.undo", n, &[]);
     let base = project.story().assets.assets.len();
     let result = project.transaction_labeled(&label, |tx| {
         for (i, entry) in to_declare.iter().enumerate() {
@@ -415,21 +468,22 @@ pub fn move_asset(
     journal: &mut MoveJournal,
     id: AssetId,
     new_path: &str,
+    texts: &Translator,
 ) -> Result<(), ProjectError> {
-    let reject = |m: String| ProjectError::Rejected(m);
+    let reject = |m: String| ProjectError::rejected(m);
     let entry = project
         .story()
         .assets
         .get(id)
         .cloned()
-        .ok_or_else(|| reject("Ressource introuvable.".to_owned()))?;
+        .ok_or_else(|| reject(texts.t("asset.err.not_found")))?;
     if entry.path == new_path {
         return Ok(());
     }
     if !ops::is_valid_asset_path(new_path) {
-        return Err(reject(format!(
-            "« {new_path} » n'est pas un chemin valide."
-        )));
+        return Err(reject(
+            texts.tf("asset.err.invalid_path", &[("path", &new_path)]),
+        ));
     }
     let ext_of = |p: &str| {
         p.rsplit_once('.')
@@ -437,9 +491,7 @@ pub fn move_asset(
             .unwrap_or_default()
     };
     if ext_of(&entry.path) != ext_of(new_path) {
-        return Err(reject(
-            "L'extension d'un fichier ne peut pas changer ici.".to_owned(),
-        ));
+        return Err(reject(texts.t("asset.err.extension")));
     }
     let sandbox = Sandbox::new(root).map_err(|e| reject(e.to_string()))?;
     let from = sandbox
@@ -450,9 +502,7 @@ pub fn move_asset(
         .map_err(|e| reject(e.to_string()))?;
     let case_only = entry.path.to_lowercase() == new_path.to_lowercase();
     if !case_only && (to.exists() || exists_exact(root, new_path)) {
-        return Err(reject(format!(
-            "Le fichier « {new_path} » existe déjà dans le projet."
-        )));
+        return Err(reject(texts.tf("asset.err.exists", &[("path", &new_path)])));
     }
     // The manifest first: it validates the path and the collisions.
     ops::set_asset_path(project, id, new_path)?;
@@ -463,7 +513,7 @@ pub fn move_asset(
             .and_then(|()| fs::rename(&from, &to));
         if let Err(e) = moved {
             let _ = project.undo();
-            return Err(reject(format!("Déplacement impossible : {e}")));
+            return Err(reject(texts.tf("asset.err.move_failed", &[("error", &e)])));
         }
         journal.0.push((entry.path, new_path.to_owned()));
     }
@@ -528,14 +578,16 @@ impl AssetIssue {
         matches!(self, AssetIssue::Missing { .. })
     }
 
-    pub fn message(&self) -> String {
+    pub fn message(&self, texts: &Translator) -> String {
         match self {
-            AssetIssue::Missing { path, .. } => format!("Fichier introuvable : « {path} »"),
-            AssetIssue::CaseMismatch { path, actual, .. } => format!(
-                "Casse différente : « {actual} » sur le disque, « {path} » dans le manifeste (introuvable sous Linux et sur le web)"
+            AssetIssue::Missing { path, .. } => texts.tf("asset.issue.missing", &[("path", path)]),
+            AssetIssue::CaseMismatch { path, actual, .. } => texts.tf(
+                "asset.issue.case_mismatch",
+                &[("path", path), ("actual", actual)],
             ),
-            AssetIssue::CaseCollision { path, other, .. } => format!(
-                "« {path} » et « {other} » ne diffèrent que par la casse (un seul fichier sous Windows)"
+            AssetIssue::CaseCollision { path, other, .. } => texts.tf(
+                "asset.issue.case_collision",
+                &[("path", path), ("other", other)],
             ),
         }
     }

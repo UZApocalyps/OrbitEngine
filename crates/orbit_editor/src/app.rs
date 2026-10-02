@@ -98,6 +98,7 @@ impl EditorApp {
         let mut options = CoreOptions {
             config_dir,
             theme: args.theme,
+            language: args.lang,
             open_palette: args.open_palette,
             palette_query: args.palette_query.clone(),
             ..CoreOptions::default()

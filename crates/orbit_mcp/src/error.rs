@@ -92,7 +92,7 @@ impl From<ProjectError> for ToolError {
         let cmd = match &err {
             ProjectError::Command(cmd) => cmd,
             ProjectError::Rejected(message) => {
-                return Self::new(ErrorKind::Refused, message.clone());
+                return Self::new(ErrorKind::Refused, message.message.clone());
             }
         };
         let kind = match cmd {

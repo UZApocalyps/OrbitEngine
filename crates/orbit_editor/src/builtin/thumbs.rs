@@ -143,7 +143,7 @@ pub fn state(egui_ctx: &Context, waker: &Waker, root: &Path, entry: &AssetEntry)
             });
     }
     let Some(stamp) = svc.stamp(root, &entry.path) else {
-        return ThumbState::Failed("fichier introuvable".to_owned());
+        return ThumbState::Failed("file not found".to_owned());
     };
     let req = ThumbRequest {
         root: root.to_owned(),

@@ -29,26 +29,31 @@ pub fn describe(ctx: &EditorContext<'_>, location: &Location) -> String {
         Location::Node(id) => match story.locate(*id) {
             Some((si, ni)) => {
                 let scene = &story.scenes[si];
-                format!(
-                    "{} · {} n°{}",
-                    scene.name,
-                    super::kind_label(&scene.nodes[ni].kind),
-                    ni + 1
+                ctx.tf(
+                    "reveal.node",
+                    &[
+                        ("scene", &scene.name),
+                        (
+                            "kind",
+                            &super::kind_label(&ctx.translator(), &scene.nodes[ni].kind),
+                        ),
+                        ("index", &(ni + 1)),
+                    ],
                 )
             }
-            None => "nœud supprimé".to_owned(),
+            None => ctx.t("reveal.node_deleted"),
         },
         Location::Scene(id) => story
             .scene(*id)
-            .map_or_else(|| "scène supprimée".to_owned(), |s| s.name.clone()),
+            .map_or_else(|| ctx.t("reveal.scene_deleted"), |s| s.name.clone()),
         Location::Character(id) => story
             .character(*id)
             .and_then(|c| story.text(c.name_id))
-            .map_or_else(|| "personnage supprimé".to_owned(), str::to_owned),
-        Location::Variable(name) => format!("variable {name}"),
+            .map_or_else(|| ctx.t("reveal.character_deleted"), str::to_owned),
+        Location::Variable(name) => ctx.tf("reveal.variable", &[("name", name)]),
         Location::Asset(id) => story
             .assets
             .get(*id)
-            .map_or_else(|| "ressource supprimée".to_owned(), |a| a.path.clone()),
+            .map_or_else(|| ctx.t("reveal.asset_deleted"), |a| a.path.clone()),
     }
 }

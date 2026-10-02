@@ -5,6 +5,7 @@ use orbit_plugin_api::{PluginError, ProjectRegistry};
 
 use crate::EditorPlugin;
 use crate::context::EditorContext;
+use crate::i18n::{Lang, Table, Translator, parse_table};
 
 /// Where a panel opens in the default layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,14 +79,23 @@ pub struct ActionDef {
     pub id: String,
     pub label: String,
     pub icon: &'static str,
-    /// Group shown in the palette ("Fichier", "Affichage"...).
+    /// Text key of the group shown in the palette (`category.file`...).
     pub category: String,
     pub shortcut: Option<KeyboardShortcut>,
     /// Further shortcuts running the same action (`Ctrl+Y` next to `Ctrl+Shift+Z`).
     pub extra_shortcuts: Vec<KeyboardShortcut>,
-    /// Replaces `label` when it depends on the state ("Annuler : ...").
+    /// Replaces `label` when it depends on the state ("Undo: ..."); it
+    /// translates by itself (`ctx.t`).
     pub label_fn: Option<LabelFn>,
     pub menu: Option<MenuSlot>,
+    /// Text key of a submenu this action's menu entry goes into (the
+    /// entries sharing it are grouped; the first one places the submenu).
+    pub menu_group: Option<String>,
+    /// Text (key or literal) shown in the menu instead of `label` (the
+    /// palette keeps `label`), for entries inside a submenu.
+    pub menu_label: Option<String>,
+    /// Shows a check mark in the menu while this is true (radio items).
+    pub checked: Option<Enabled>,
     pub enabled: Enabled,
     pub run: Run,
 }
@@ -105,6 +115,9 @@ impl ActionDef {
             extra_shortcuts: Vec::new(),
             label_fn: None,
             menu: None,
+            menu_group: None,
+            menu_label: None,
+            checked: None,
             enabled: Box::new(|_| true),
             run: Box::new(run),
         }
@@ -141,6 +154,24 @@ impl ActionDef {
             menu: menu.into(),
             order,
         });
+        self
+    }
+
+    /// Puts the menu entry in a submenu titled by this text key.
+    pub fn menu_group(mut self, group: impl Into<String>) -> Self {
+        self.menu_group = Some(group.into());
+        self
+    }
+
+    /// Text shown for the menu entry instead of the label.
+    pub fn menu_label(mut self, label: impl Into<String>) -> Self {
+        self.menu_label = Some(label.into());
+        self
+    }
+
+    /// Marks the menu entry with a check while `checked` holds.
+    pub fn checked(mut self, checked: impl Fn(&EditorContext<'_>) -> bool + 'static) -> Self {
+        self.checked = Some(Box::new(checked));
         self
     }
 
@@ -184,12 +215,18 @@ pub struct RegisteredAction {
 }
 
 impl RegisteredAction {
-    /// Label to display now.
+    /// Label to display now, in the current language (`label` is a text
+    /// key; `label_fn` translates by itself).
     pub fn label(&self, ctx: &EditorContext<'_>) -> String {
         match &self.def.label_fn {
             Some(label) => label(ctx),
-            None => self.def.label.clone(),
+            None => ctx.t(&self.def.label),
         }
+    }
+
+    /// Palette group in the current language.
+    pub fn category(&self, ctx: &EditorContext<'_>) -> String {
+        ctx.t(&self.def.category)
     }
 
     /// Every shortcut that runs this action, main one first.
@@ -208,6 +245,8 @@ pub struct EditorRegistry {
     actions: Vec<RegisteredAction>,
     menus: Vec<MenuDef>,
     inspectors: Vec<(String, InspectorDef)>,
+    /// Text tables registered by plugins, merged by the host into its translator.
+    texts: Vec<(Lang, Table)>,
     /// Registration problems (duplicates...), reported in the console.
     pub errors: Vec<String>,
 }
@@ -229,6 +268,26 @@ impl EditorRegistry {
 
     fn full_id(&self, local: &str) -> String {
         format!("{}.{local}", self.current)
+    }
+
+    /// Registers the text table (RON map `{ "key": "text" }`) of a plugin for
+    /// one language. Keys should start with the plugin's own prefix. Panel
+    /// titles, action labels, categories and menu labels given to the
+    /// registry are such keys (a plain literal is displayed as is).
+    pub fn texts(&mut self, lang: Lang, ron_text: &str) {
+        match parse_table(ron_text) {
+            Ok(table) => self.texts.push((lang, table)),
+            Err(e) => self.errors.push(format!(
+                "text table ({}) of `{}` is invalid: {e}",
+                lang.code(),
+                self.current
+            )),
+        }
+    }
+
+    /// The text tables plugins registered.
+    pub fn text_tables(&self) -> &[(Lang, Table)] {
+        &self.texts
     }
 
     pub fn panel(&mut self, mut def: PanelDef) {
@@ -301,7 +360,7 @@ impl EditorRegistry {
         menus
     }
 
-    /// Actions of a menu, sorted by `order` then label.
+    /// Actions of a menu, sorted by `order` then id.
     pub fn menu_actions(&self, menu: &str) -> Vec<&RegisteredAction> {
         let mut items: Vec<&RegisteredAction> = self
             .actions
@@ -312,7 +371,7 @@ impl EditorRegistry {
             let (oa, ob) = (a.def.menu.as_ref(), b.def.menu.as_ref());
             oa.map(|m| m.order)
                 .cmp(&ob.map(|m| m.order))
-                .then_with(|| a.def.label.cmp(&b.def.label))
+                .then_with(|| a.def.id.cmp(&b.def.id))
         });
         items
     }
@@ -327,19 +386,26 @@ impl EditorRegistry {
 }
 
 /// `Ctrl+Shift+P`-style text for a shortcut (Windows / Linux wording).
-pub fn shortcut_text(shortcut: &KeyboardShortcut) -> String {
+/// Modifier and key names come from the `shortcut.*` text keys.
+pub fn shortcut_text(texts: &Translator, shortcut: &KeyboardShortcut) -> String {
     let m = shortcut.modifiers;
     let mut parts: Vec<String> = Vec::new();
     if m.command || m.ctrl {
-        parts.push("Ctrl".into());
+        parts.push(texts.get("shortcut.ctrl"));
     }
     if m.alt {
-        parts.push("Alt".into());
+        parts.push(texts.get("shortcut.alt"));
     }
     if m.shift {
-        parts.push("Maj".into());
+        parts.push(texts.get("shortcut.shift"));
     }
-    parts.push(shortcut.logical_key.symbol_or_name().to_owned());
+    let name = shortcut.logical_key.symbol_or_name();
+    let key = format!("shortcut.key.{name}");
+    parts.push(if texts.has(&key) {
+        texts.get(&key)
+    } else {
+        name.to_owned()
+    });
     parts.join("+")
 }
 
@@ -410,8 +476,15 @@ mod tests {
     #[test]
     fn shortcut_text_is_readable() {
         let s = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
-        assert_eq!(shortcut_text(&s), "Ctrl+Maj+P");
+        let texts = Translator::new(Lang::Fr);
+        texts
+            .add_ron(
+                Lang::Fr,
+                r#"{ "shortcut.ctrl": "Ctrl", "shortcut.alt": "Alt", "shortcut.shift": "Maj" }"#,
+            )
+            .unwrap();
+        assert_eq!(shortcut_text(&texts, &s), "Ctrl+Maj+P");
         let s = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
-        assert_eq!(shortcut_text(&s), "Ctrl+S");
+        assert_eq!(shortcut_text(&texts, &s), "Ctrl+S");
     }
 }

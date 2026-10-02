@@ -6,7 +6,7 @@ use egui::{
     Align, Align2, Color32, Context, CornerRadius, FontId, Frame, Id, Key, Margin, Modifiers,
     Sense, Stroke, TextEdit, Ui, vec2,
 };
-use orbit_editor_api::{EditorContext, EditorRegistry, Location, icons, shortcut_text};
+use orbit_editor_api::{EditorContext, EditorRegistry, Location, UiText, icons, shortcut_text};
 
 use crate::fuzzy::fuzzy_match;
 use crate::search::{HitKind, SearchHandle};
@@ -49,15 +49,19 @@ pub fn search(registry: &EditorRegistry, ctx: &EditorContext<'_>, query: &str) -
                 Some(m) => (m.score, m.positions),
                 // The category can match too ("fichier" lists the File actions).
                 None => {
-                    let m = fuzzy_match(query, &format!("{} {label}", a.def.category))?;
+                    let m = fuzzy_match(query, &format!("{} {label}", a.category(ctx)))?;
                     (m.score - 20, Vec::new())
                 }
             };
             Some(PaletteItem {
                 action_id: a.def.id.clone(),
-                category: a.def.category.clone(),
+                category: a.category(ctx),
                 icon: a.def.icon,
-                shortcut: a.def.shortcut.as_ref().map(shortcut_text),
+                shortcut: a
+                    .def
+                    .shortcut
+                    .as_ref()
+                    .map(|s| shortcut_text(&ctx.translator(), s)),
                 weak: is_weak(&label, &positions),
                 positions,
                 label,
@@ -103,7 +107,7 @@ pub fn navigation(handle: &SearchHandle, ctx: &EditorContext<'_>, query: &str) -
     let (Some(story), Some(project)) = (ctx.story(), ctx.project()) else {
         return Vec::new();
     };
-    handle.refresh(story, (0, project.revision()));
+    handle.refresh(story, (0, project.revision()), &ctx.translator());
     let mut hits = handle.query(query);
     // Names are what one jumps to; long texts come after.
     hits.sort_by_key(|h| matches!(h.kind, HitKind::Line | HitKind::Choice));
@@ -281,7 +285,7 @@ impl Palette {
                     .color(theme.text_faint()),
             );
             let edit = TextEdit::singleline(&mut self.query)
-                .hint_text("Commande, scène, personnage, réplique…")
+                .hint_text(ui.t("palette.input_hint"))
                 .desired_width(f32::INFINITY)
                 .font(FontId::proportional(16.0))
                 .frame(Frame::NONE)
@@ -302,7 +306,7 @@ impl Palette {
         if items.is_empty() {
             ui.add_space(18.0);
             ui.vertical_centered(|ui| {
-                ui.label(egui::RichText::new("Rien ne correspond.").color(theme.text_weak()));
+                ui.label(egui::RichText::new(ui.t("palette.empty")).color(theme.text_weak()));
             });
             ui.add_space(18.0);
         } else {
@@ -323,7 +327,7 @@ impl Palette {
         ui.separator();
         ui.horizontal(|ui| {
             ui.add_space(12.0);
-            let hint = egui::RichText::new("↑↓ naviguer     ⏎ exécuter     Échap fermer")
+            let hint = egui::RichText::new(ui.t("palette.footer"))
                 .small()
                 .color(theme.text_faint());
             ui.label(hint);
@@ -538,7 +542,10 @@ mod tests {
     fn shortcuts_are_exposed_for_display() {
         let mut registry = EditorRegistry::new();
         registry.install(&Fixture).unwrap();
-        let mut state = EditorState::default();
+        let mut state = EditorState {
+            i18n: crate::i18n::translator(orbit_editor_api::Lang::Fr),
+            ..EditorState::default()
+        };
         let ctx = EditorContext::new(None, &mut state, &registry);
         let hit = search(&registry, &ctx, "ouvrir").remove(0);
         assert_eq!(hit.shortcut.as_deref(), Some("Ctrl+O"));

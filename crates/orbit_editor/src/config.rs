@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use egui_dock::DockState;
-use orbit_editor_api::{RecentProject, ThemeMode};
+use orbit_editor_api::{Lang, RecentProject, ThemeMode};
 use serde::{Deserialize, Serialize};
 
 use crate::storage::write_atomic;
@@ -34,6 +34,9 @@ pub fn default_config_dir() -> Option<PathBuf> {
 #[serde(default)]
 pub struct UserConfig {
     pub theme: ThemeMode,
+    /// Interface language chosen by the user; `None` follows the system
+    /// language (French for `fr*`, English otherwise).
+    pub language: Option<Lang>,
     /// Dock layout: the tabs are panel ids.
     pub dock: Option<DockState<String>>,
     pub recent: Vec<RecentProject>,
@@ -129,6 +132,7 @@ mod tests {
         );
         let mut config = UserConfig {
             theme: ThemeMode::Light,
+            language: Some(Lang::Fr),
             dock: Some(dock),
             ..UserConfig::default()
         };
@@ -142,6 +146,7 @@ mod tests {
 
         let back = store.load();
         assert_eq!(back.theme, ThemeMode::Light);
+        assert_eq!(back.language, Some(Lang::Fr));
         assert_eq!(back.recent.len(), 1);
         assert_eq!(back.plugin_prefs["x.y"]["k"], "v");
         let tabs: Vec<String> = back
@@ -152,6 +157,15 @@ mod tests {
             .collect();
         assert_eq!(tabs.len(), 3);
         assert!(tabs.contains(&"c".to_owned()));
+    }
+
+    #[test]
+    fn a_config_without_a_language_follows_the_system() {
+        // Configs written before the language setting existed still load.
+        let dir = TempDir::new("nolang");
+        std::fs::write(dir.path().join(CONFIG_FILE), "(theme: Dark)").unwrap();
+        let store = ConfigStore::new(Some(dir.path().to_owned()));
+        assert_eq!(store.load().language, None);
     }
 
     #[test]

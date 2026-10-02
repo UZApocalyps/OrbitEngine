@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use orbit_editor_api::ThemeMode;
+use orbit_editor_api::{Lang, ThemeMode};
 
 pub const USAGE: &str = "\
 orbit-editor [projet | histoire.ron] [options]
@@ -11,6 +11,7 @@ Options :
   --config-dir <dossier>   dossier de configuration utilisateur (disposition, projets récents)
   --no-config              ne lit ni n'écrit aucune configuration
   --theme dark|light       force le thème
+  --lang en|fr             force la langue de l'interface (sans l'enregistrer), pour les captures
   --size <LxH>             taille initiale de la fenêtre, en pixels logiques (ex. 1360x820)
   --autosave-secs <n>      délai de la sauvegarde automatique (défaut 30)
   --frame-counter          journalise chaque frame dessinée et affiche le compteur
@@ -51,6 +52,7 @@ pub struct Args {
     pub config_dir: Option<PathBuf>,
     pub no_config: bool,
     pub theme: Option<ThemeMode>,
+    pub lang: Option<Lang>,
     pub size: Option<(f64, f64)>,
     pub autosave_secs: Option<u64>,
     pub frame_counter: bool,
@@ -151,6 +153,11 @@ impl Args {
                         other => return Err(format!("thème inconnu : {other}")),
                     });
                 }
+                "--lang" => {
+                    let v = value("--lang")?;
+                    out.lang =
+                        Some(Lang::from_tag(&v).ok_or_else(|| format!("langue inconnue : {v}"))?);
+                }
                 "--size" => {
                     let v = value("--size")?;
                     let (w, h) = v
@@ -215,6 +222,8 @@ mod tests {
         assert_eq!(args.exit_after, Some(2.5));
         assert!(args.open_palette && args.frame_counter);
         assert_eq!(args.theme, Some(ThemeMode::Light));
+        assert_eq!(parse(&["--lang", "fr"]).unwrap().lang, Some(Lang::Fr));
+        assert_eq!(parse(&["--lang", "en-US"]).unwrap().lang, Some(Lang::En));
         assert_eq!(args.size, Some((1000.0, 700.0)));
     }
 
@@ -222,6 +231,7 @@ mod tests {
     fn rejects_bad_input() {
         assert!(parse(&["--nope"]).is_err());
         assert!(parse(&["--theme", "pink"]).is_err());
+        assert!(parse(&["--lang", "de"]).is_err());
         assert!(parse(&["--size", "wide"]).is_err());
         assert!(parse(&["--exit-after"]).is_err());
         assert!(parse(&["a", "b"]).is_err());

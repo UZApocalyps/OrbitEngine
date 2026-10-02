@@ -65,7 +65,7 @@ fn demo_project(root: &Path) -> PathBuf {
 
 fn editor_with_demo(dir: &TempDir) -> (EditorCore, Context) {
     let ctx = Context::default();
-    let mut core = EditorCore::new(CoreOptions::default(), &ctx);
+    let mut core = EditorCore::new(CoreOptions::with_language(orbit_editor_api::Lang::Fr), &ctx);
     core.open_project(&demo_project(dir.path()));
     assert!(core.has_project());
     (core, ctx)
@@ -697,7 +697,10 @@ fn stopping_the_server_closes_the_port_and_a_busy_port_is_reported() {
 
     // A second editor on the same port fails with a message, not a panic.
     let ctx2 = Context::default();
-    let mut other = EditorCore::new(CoreOptions::default(), &ctx2);
+    let mut other = EditorCore::new(
+        CoreOptions::with_language(orbit_editor_api::Lang::Fr),
+        &ctx2,
+    );
     other.state.ai.port = port;
     let err = live::start(&mut other).unwrap_err();
     assert!(err.contains("cannot listen"), "{err}");
@@ -791,7 +794,7 @@ fn a_project_held_by_headless_mcp_is_reported_when_the_editor_opens_it() {
     )
     .unwrap();
     let ctx = Context::default();
-    let mut core = EditorCore::new(CoreOptions::default(), &ctx);
+    let mut core = EditorCore::new(CoreOptions::with_language(orbit_editor_api::Lang::Fr), &ctx);
     core.open_project(&project);
     let warning = core.state.ai.lock_warning.clone().expect("a warning");
     assert!(warning.contains("MCP headless"), "{warning}");

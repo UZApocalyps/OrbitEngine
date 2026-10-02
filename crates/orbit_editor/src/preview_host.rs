@@ -225,12 +225,12 @@ fn flow_text(flow: Option<&orbit_runtime::director::Flow>) -> String {
     use orbit_runtime::director::Flow;
     match flow {
         None => String::new(),
-        Some(Flow::Say(_)) => "réplique".into(),
-        Some(Flow::Choice(_)) => "choix".into(),
-        Some(Flow::Waiting { .. }) => "pause".into(),
-        Some(Flow::Transition { .. }) => "transition".into(),
-        Some(Flow::Ended) => "fin de l'histoire".into(),
-        Some(Flow::Failed(_)) => "erreur".into(),
+        Some(Flow::Say(_)) => "preview.flow.say".into(),
+        Some(Flow::Choice(_)) => "preview.flow.choice".into(),
+        Some(Flow::Waiting { .. }) => "preview.flow.waiting".into(),
+        Some(Flow::Transition { .. }) => "preview.flow.transition".into(),
+        Some(Flow::Ended) => "preview.flow.ended".into(),
+        Some(Flow::Failed(_)) => "preview.flow.failed".into(),
     }
 }
 
@@ -394,9 +394,8 @@ impl PreviewHost {
             && self.last_error.as_deref() != Some(message)
         {
             let head = message.lines().next().unwrap_or("").to_owned();
-            core.state
-                .console
-                .push(Level::Warn, format!("Preview : {head}"));
+            let line = core.state.tf("preview.console", &[("text", &head)]);
+            core.state.console.push(Level::Warn, line);
         }
     }
 
@@ -542,9 +541,8 @@ impl PreviewHost {
             } else {
                 Level::Info
             };
-            core.state
-                .console
-                .push(level, format!("Preview : {}", notice.text));
+            let line = core.state.tf("preview.console", &[("text", &notice.text)]);
+            core.state.console.push(level, line);
         }
         self.publish(core);
         let after = Published::of(&core.state.preview);

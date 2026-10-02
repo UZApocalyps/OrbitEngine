@@ -14,6 +14,7 @@ orbit_plugin_api.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
 serde.workspace = true
+ron.workspace = true
 thiserror.workspace = true
 
 [lints]

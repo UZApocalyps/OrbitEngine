@@ -6,7 +6,7 @@ use egui::{Align2, FontId, Key, Modifiers, Rect, Ui};
 use orbit_core::{NodeId, NodeKind, Story};
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Plugin,
-    PluginManifest, Selection, icons,
+    PluginManifest, Selection, UiText, icons,
 };
 
 use super::ids;
@@ -29,25 +29,25 @@ impl EditorPlugin for ExplorerPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
         reg.panel(orbit_editor_api::PanelDef::new(
             "explorer",
-            "Explorateur",
+            "explorer.title",
             icons::TREE_STRUCTURE,
             DockSlot::Left,
             panel,
         ));
         reg.action(
-            ActionDef::new("add_say", "Ajouter une réplique", add_say)
+            ActionDef::new("add_say", "explorer.add_say", add_say)
                 .icon(icons::CHAT_TEXT)
-                .category("Édition")
+                .category("category.edit")
                 .shortcut(Modifiers::COMMAND, Key::Enter)
                 .menu("edit", 200)
                 .enabled(|c| c.story().is_some_and(|s| !s.scenes.is_empty())),
         );
         reg.action(
-            ActionDef::new("delete", "Supprimer l'élément sélectionné", |c| {
+            ActionDef::new("delete", "explorer.delete_selected", |c| {
                 delete_selected(c);
             })
             .icon(icons::TRASH)
-            .category("Édition")
+            .category("category.edit")
             .shortcut(Modifiers::NONE, Key::Delete)
             .menu("edit", 210)
             .enabled(|c| matches!(c.selection(), Some(Selection::Node(_)))),
@@ -100,9 +100,9 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                     .color(faint(ui)),
             );
             ui.add_space(6.0);
-            ui.label(egui::RichText::new("Aucun projet ouvert").color(weak(ui)));
+            ui.label(egui::RichText::new(ctx.t("explorer.no_project")).color(weak(ui)));
             ui.add_space(10.0);
-            if primary_button(ui, "Ouvrir un projet…").clicked() {
+            if primary_button(ui, &ctx.t("explorer.open_project")).clicked() {
                 ctx.request(EditorRequest::PickOpenProject);
             }
         });
@@ -111,19 +111,19 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
 
     // Toolbar.
     ui.horizontal(|ui| {
-        section_title(ui, "Scènes");
+        section_title(ui, &ctx.t("explorer.scenes"));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let can_delete = matches!(ctx.selection(), Some(Selection::Node(_)));
             if ui
                 .add_enabled_ui(can_delete, |ui| {
-                    icon_button(ui, icons::TRASH, "Supprimer (Suppr)")
+                    icon_button(ui, icons::TRASH, &ctx.t("explorer.delete_tip"))
                 })
                 .inner
                 .clicked()
             {
                 ctx.run_action("orbit.explorer.delete");
             }
-            if icon_button(ui, icons::PLUS, "Ajouter une réplique (Ctrl+Entrée)").clicked() {
+            if icon_button(ui, icons::PLUS, &ctx.t("explorer.add_say_tip")).clicked() {
                 ctx.run_action("orbit.explorer.add_say");
             }
         });
@@ -254,7 +254,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                                 ui.id().with(("play_here", node.id)),
                                 egui::Sense::click(),
                             )
-                            .on_hover_text("Jouer depuis ici (F7)");
+                            .on_hover_text(ui.t("explorer.play_here_tip"));
                         painter.text(
                             play_rect.center(),
                             Align2::CENTER_CENTER,
@@ -268,7 +268,11 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                     }
                     response.context_menu(|ui| {
                         if ui
-                            .button(format!("{}  Jouer depuis ici", icons::CROSSHAIR))
+                            .button(format!(
+                                "{}  {}",
+                                icons::CROSSHAIR,
+                                ui.t("explorer.play_here")
+                            ))
                             .clicked()
                         {
                             play_from = Some(node.id);
@@ -282,12 +286,12 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                         FontId::proportional(14.0),
                         if selected { accent(ui) } else { weak(ui) },
                     );
-                    let text = summary(story, node);
+                    let text = summary(&ui.texts(), story, node);
                     let is_say = matches!(node.kind, NodeKind::Say { .. });
                     let mut x = x0 + 24.0;
                     if !is_say || text.is_empty() {
                         let g = painter.layout_no_wrap(
-                            kind_label(&node.kind).to_owned(),
+                            kind_label(&ui.texts(), &node.kind),
                             FontId::proportional(13.0),
                             if text.is_empty() {
                                 ui.visuals().text_color()

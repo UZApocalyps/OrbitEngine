@@ -1,7 +1,7 @@
 //! How a node looks in lists: kind key, label, icon and one-line summary.
 
 use orbit_core::{Node, NodeKind, Story};
-use orbit_editor_api::icons;
+use orbit_editor_api::{Translator, icons};
 
 /// Key used to find an inspector: the variant name, or `plugin.kind` for a
 /// plugin node.
@@ -30,28 +30,28 @@ pub fn kind_key(kind: &NodeKind) -> String {
     }
 }
 
-/// Human name of a node kind.
-pub fn kind_label(kind: &NodeKind) -> &'static str {
-    match kind {
-        NodeKind::Label { .. } => "Étiquette",
-        NodeKind::Say { .. } => "Réplique",
-        NodeKind::Choice { .. } => "Choix",
-        NodeKind::Jump { .. } => "Saut",
-        NodeKind::JumpScene { .. } => "Saut de scène",
-        NodeKind::SetVar { .. } => "Variable",
-        NodeKind::If { .. } => "Condition",
-        NodeKind::Background { .. } => "Décor",
-        NodeKind::Show { .. } => "Afficher un personnage",
-        NodeKind::Hide { .. } => "Masquer un personnage",
-        NodeKind::PlayMusic { .. } => "Musique",
-        NodeKind::StopMusic { .. } => "Arrêt de la musique",
-        NodeKind::PlaySound { .. } => "Son",
-        NodeKind::Wait { .. } => "Attente",
-        NodeKind::Call { .. } => "Appel",
-        NodeKind::Return => "Retour",
-        NodeKind::End => "Fin",
-        NodeKind::Custom { .. } => "Nœud de plugin",
-    }
+/// Human name of a node kind, in the editor language.
+pub fn kind_label(texts: &Translator, kind: &NodeKind) -> String {
+    texts.get(match kind {
+        NodeKind::Label { .. } => "node.kind.label",
+        NodeKind::Say { .. } => "node.kind.say",
+        NodeKind::Choice { .. } => "node.kind.choice",
+        NodeKind::Jump { .. } => "node.kind.jump",
+        NodeKind::JumpScene { .. } => "node.kind.jump_scene",
+        NodeKind::SetVar { .. } => "node.kind.set_var",
+        NodeKind::If { .. } => "node.kind.if",
+        NodeKind::Background { .. } => "node.kind.background",
+        NodeKind::Show { .. } => "node.kind.show",
+        NodeKind::Hide { .. } => "node.kind.hide",
+        NodeKind::PlayMusic { .. } => "node.kind.play_music",
+        NodeKind::StopMusic { .. } => "node.kind.stop_music",
+        NodeKind::PlaySound { .. } => "node.kind.play_sound",
+        NodeKind::Wait { .. } => "node.kind.wait",
+        NodeKind::Call { .. } => "node.kind.call",
+        NodeKind::Return => "node.kind.return",
+        NodeKind::End => "node.kind.end",
+        NodeKind::Custom { .. } => "node.kind.custom",
+    })
 }
 
 pub fn kind_icon(kind: &NodeKind) -> &'static str {
@@ -121,33 +121,45 @@ fn asset_name(story: &Story, id: orbit_core::AssetId) -> String {
     story.asset_path(id).unwrap_or("?").to_owned()
 }
 
-/// A stage position in words ("gauche", "libre (0.40, 0.95)"...).
-pub fn position_name(position: &orbit_core::Position) -> String {
+/// A stage position in words ("left", "free (0.40, 0.95)"...).
+pub fn position_name(texts: &Translator, position: &orbit_core::Position) -> String {
     use orbit_core::Position;
     match position {
-        Position::Left => "gauche".to_owned(),
-        Position::Center => "centre".to_owned(),
-        Position::Right => "droite".to_owned(),
+        Position::Left => texts.get("node.position.left"),
+        Position::Center => texts.get("node.position.center"),
+        Position::Right => texts.get("node.position.right"),
         Position::Custom(n) => n.clone(),
-        Position::Free { x, y } => format!("libre ({x:.2}, {y:.2})"),
+        Position::Free { x, y } => texts.format(
+            "node.position.free",
+            &[("x", &format!("{x:.2}")), ("y", &format!("{y:.2}"))],
+        ),
     }
 }
 
 /// What a `Show` changes about the sprite besides its position, for a list
-/// row: `"  ·  ×0.8  ·  miroir X"`, empty for the standard look.
-pub fn look_text(scale: Option<f32>, scale_y: Option<f32>, flip_x: bool, flip_y: bool) -> String {
+/// row: `"  ·  ×0.8  ·  mirror X"`, empty for the standard look.
+pub fn look_text(
+    texts: &Translator,
+    scale: Option<f32>,
+    scale_y: Option<f32>,
+    flip_x: bool,
+    flip_y: bool,
+) -> String {
     let mut out = String::new();
     match (scale, scale_y) {
         (Some(s), Some(sy)) if sy != s => out.push_str(&format!("  ·  ×{s:.2} / ×{sy:.2}")),
         (Some(s), _) => out.push_str(&format!("  ·  ×{s:.2}")),
-        (None, Some(sy)) => out.push_str(&format!("  ·  ×{sy:.2} (vertical)")),
+        (None, Some(sy)) => out.push_str(&format!(
+            "  ·  ×{sy:.2} {}",
+            texts.get("node.look.vertical")
+        )),
         (None, None) => {}
     }
     if flip_x {
-        out.push_str("  ·  miroir X");
+        out.push_str(&format!("  ·  {}", texts.get("node.look.mirror_x")));
     }
     if flip_y {
-        out.push_str("  ·  miroir Y");
+        out.push_str(&format!("  ·  {}", texts.get("node.look.mirror_y")));
     }
     out
 }
@@ -164,23 +176,30 @@ pub fn truncate(text: &str, max_chars: usize) -> String {
 }
 
 /// One line describing a node, for the explorer.
-pub fn summary(story: &Story, node: &Node) -> String {
+pub fn summary(texts: &Translator, story: &Story, node: &Node) -> String {
     match &node.kind {
-        NodeKind::Label { name } => format!("« {name} »"),
+        NodeKind::Label { name } => texts.format("node.summary.label", &[("name", name)]),
         NodeKind::Say { speaker, text_id } => {
-            let who = speaker.map_or_else(|| "Narrateur".to_owned(), |c| character_name(story, c));
-            format!(
-                "{who} : {}",
-                truncate(story.text(*text_id).unwrap_or("?"), 70)
+            let who =
+                speaker.map_or_else(|| texts.get("node.narrator"), |c| character_name(story, c));
+            texts.format(
+                "node.summary.say",
+                &[
+                    ("who", &who),
+                    ("text", &truncate(story.text(*text_id).unwrap_or("?"), 70)),
+                ],
             )
         }
-        NodeKind::Choice { options } => format!("{} option(s)", options.len()),
+        NodeKind::Choice { options } => texts.plural("node.summary.options", options.len(), &[]),
         NodeKind::Jump { target } => format!("→ {}", label_name(story, *target)),
         NodeKind::JumpScene { scene, label } => {
             let name = story.scene(*scene).map_or("?", |s| s.name.as_str());
             match label {
-                Some(l) => format!("→ Scène {name} › {}", label_name(story, *l)),
-                None => format!("→ Scène {name}"),
+                Some(l) => texts.format(
+                    "node.summary.jump_scene_label",
+                    &[("scene", &name), ("label", &label_name(story, *l))],
+                ),
+                None => texts.format("node.summary.jump_scene", &[("scene", &name)]),
             }
         }
         NodeKind::SetVar { var, value } => format!("{var} = {value}"),
@@ -188,7 +207,13 @@ pub fn summary(story: &Story, node: &Node) -> String {
             condition,
             then_target,
             ..
-        } => format!("si {condition} → {}", label_name(story, *then_target)),
+        } => texts.format(
+            "node.summary.if",
+            &[
+                ("condition", condition),
+                ("label", &label_name(story, *then_target)),
+            ],
+        ),
         NodeKind::Background { asset, .. } => asset_name(story, *asset),
         NodeKind::Show {
             character,
@@ -201,14 +226,14 @@ pub fn summary(story: &Story, node: &Node) -> String {
         } => format!(
             "{} ({expression}){}",
             character_name(story, *character),
-            look_text(*scale, *scale_y, *flip_x, *flip_y)
+            look_text(texts, *scale, *scale_y, *flip_x, *flip_y)
         ),
         NodeKind::Hide { character, .. } => character_name(story, *character),
         NodeKind::PlayMusic { asset, .. } | NodeKind::PlaySound { asset } => {
             asset_name(story, *asset)
         }
         NodeKind::StopMusic { .. } | NodeKind::Return | NodeKind::End => String::new(),
-        NodeKind::Wait { seconds } => format!("{seconds} s"),
+        NodeKind::Wait { seconds } => texts.format("node.summary.wait", &[("seconds", seconds)]),
         NodeKind::Call { label } => format!("→ {}", label_name(story, *label)),
         NodeKind::Custom {
             plugin_id, kind, ..
@@ -246,8 +271,18 @@ mod tests {
             name: "s".into(),
             nodes: vec![say.clone(), jump.clone(), label],
         });
-        assert_eq!(summary(&story, &say), "Narrateur : Bonjour tout le monde");
-        assert_eq!(summary(&story, &jump), "→ fin");
+        let fr = crate::i18n::translator(orbit_editor_api::Lang::Fr);
+        assert_eq!(
+            summary(&fr, &story, &say),
+            "Narrateur : Bonjour tout le monde"
+        );
+        assert_eq!(summary(&fr, &story, &jump), "→ fin");
+        let en = crate::i18n::translator(orbit_editor_api::Lang::En);
+        assert_eq!(
+            summary(&en, &story, &say),
+            "Narrator: Bonjour tout le monde"
+        );
+        assert_eq!(kind_label(&en, &say.kind), "Dialogue");
         assert_eq!(kind_key(&say.kind), "Say");
     }
 

@@ -39,8 +39,8 @@ impl SearchPlugin {
 struct SearchUi {
     query: String,
     hits: Vec<Hit>,
-    /// `(query, project revision)` the hits are for.
-    computed_for: Option<(String, u64)>,
+    /// `(query, project revision, language)` the hits are for.
+    computed_for: Option<(String, u64, orbit_editor_api::Lang)>,
     took: Duration,
     selected: usize,
     scroll_to_selected: bool,
@@ -57,18 +57,18 @@ impl EditorPlugin for SearchPlugin {
         let (handle, state) = (self.handle.clone(), self.state.clone());
         reg.panel(PanelDef::new(
             "search",
-            "Recherche",
+            "search.title",
             icons::MAGNIFYING_GLASS,
             DockSlot::Bottom,
             move |ui, ctx| panel(ui, ctx, &handle, &state),
         ));
         reg.action(
-            ActionDef::new("open", "Rechercher dans le projet", |c| {
+            ActionDef::new("open", "search.open", |c| {
                 c.state_mut().focus_panel = Some(super::panels::SEARCH.to_owned());
                 c.request(EditorRequest::ShowPanel(super::panels::SEARCH.to_owned()));
             })
             .icon(icons::MAGNIFYING_GLASS)
-            .category("Édition")
+            .category("category.edit")
             .shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::F)
             .menu("edit", 300)
             .enabled(|c| c.has_project()),
@@ -118,7 +118,7 @@ fn panel(
     let Some(revision) = ctx.project().map(orbit_project::Project::revision) else {
         ui.add_space(14.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("Aucun projet ouvert").color(weak(ui)));
+            ui.label(egui::RichText::new(ctx.t("search.no_project")).color(weak(ui)));
         });
         return;
     };
@@ -148,9 +148,10 @@ fn panel(
                 .size(16.0)
                 .color(faint(ui)),
         );
+        let hint = ctx.t("search.hint");
         let edit = ui.add(
             egui::TextEdit::singleline(&mut st.query)
-                .hint_text("Répliques, choix, personnages, variables, étiquettes, scènes, assets…")
+                .hint_text(hint)
                 .desired_width(f32::INFINITY)
                 .font(FontId::proportional(14.5)),
         );
@@ -170,10 +171,10 @@ fn panel(
     });
 
     // The results, recomputed when the query or the project changed.
-    let key = (st.query.clone(), revision);
+    let key = (st.query.clone(), revision, ctx.lang());
     if st.computed_for.as_ref() != Some(&key) {
         if let Some(story) = ctx.story() {
-            handle.refresh(story, (0, revision));
+            handle.refresh(story, (0, revision), &ctx.translator());
         }
         let started = Instant::now();
         let hits = handle.query(&st.query);
@@ -203,11 +204,9 @@ fn panel(
     if st.query.trim().is_empty() {
         ui.add_space(12.0);
         ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new(ctx.t("search.type_to_search")).color(weak(ui)));
             ui.label(
-                egui::RichText::new("Tapez pour chercher dans tout le projet.").color(weak(ui)),
-            );
-            ui.label(
-                egui::RichText::new("↑↓ naviguer    ⏎ afficher le résultat")
+                egui::RichText::new(ctx.t("search.keys_hint"))
                     .small()
                     .color(faint(ui)),
             );
@@ -217,10 +216,11 @@ fn panel(
     if st.hits.is_empty() {
         ui.add_space(12.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("Aucun résultat.").color(weak(ui)));
+            ui.label(egui::RichText::new(ctx.t("search.no_results")).color(weak(ui)));
         });
         return;
     }
+    let texts = ctx.translator();
     let list = rows(&st.hits);
     let selected = st.selected;
     let scroll_to = std::mem::take(&mut st.scroll_to_selected);
@@ -269,7 +269,7 @@ fn panel(
                         format!(
                             "{}  {}  ·  {count}",
                             kind_icon(*kind),
-                            kind.title().to_uppercase()
+                            kind.title(&texts).to_uppercase()
                         ),
                         crate::theme::bold(10.5),
                         faint(ui),
@@ -301,10 +301,10 @@ fn panel(
     });
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new(format!(
-                "{} résultat(s) en {:.1} ms",
+            egui::RichText::new(ctx.tn(
+                "search.summary",
                 st.hits.len(),
-                st.took.as_secs_f64() * 1000.0
+                &[("ms", &format!("{:.1}", st.took.as_secs_f64() * 1000.0))],
             ))
             .small()
             .color(faint(ui)),

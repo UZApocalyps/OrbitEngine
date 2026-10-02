@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use orbit_core::{AssetId, AssetKind, NodeId, NodeKind, SceneId, Story};
-use orbit_editor_api::{EditorContext, Selection};
+use orbit_editor_api::{EditorContext, Selection, Translator};
 use orbit_project::ops::{self, NodeClip};
 
 use super::drafts::{DraftError, drafts_for};
@@ -49,15 +49,15 @@ pub fn insertion_point(ctx: &EditorContext<'_>) -> Option<(SceneId, usize)> {
 /// stable id). Returns its id.
 pub fn import_asset_dialog(ctx: &mut EditorContext<'_>, kind: AssetKind) -> Option<AssetId> {
     let root = ctx.project_info()?.root.clone();
-    let (title, extensions): (&str, &[&str]) = match kind {
-        AssetKind::Image => ("Choisir une image", &["png", "jpg", "jpeg"]),
-        AssetKind::Music => ("Choisir une musique", &["ogg", "wav"]),
-        AssetKind::Sound => ("Choisir un son", &["ogg", "wav"]),
+    let (title, extensions): (String, &[&str]) = match kind {
+        AssetKind::Image => (ctx.t("edit.pick_image"), &["png", "jpg", "jpeg"]),
+        AssetKind::Music => (ctx.t("edit.pick_music"), &["ogg", "wav"]),
+        AssetKind::Sound => (ctx.t("edit.pick_sound"), &["ogg", "wav"]),
     };
     let file = rfd::FileDialog::new()
         .set_title(title)
         .set_directory(&root)
-        .add_filter(kind.to_string(), extensions)
+        .add_filter(kind_name(&ctx.translator(), kind), extensions)
         .pick_file()?;
     register_asset_file(ctx, &file, kind)
 }
@@ -77,9 +77,14 @@ pub fn register_asset_file(
         // The importer guessed from the length; the field says what it is.
         let audio = |k: AssetKind| matches!(k, AssetKind::Music | AssetKind::Sound);
         if !(audio(kind) && audio(imported.kind)) {
-            ctx.error(format!(
-                "« {} » est de type « {} », « {kind} » attendu.",
-                imported.path, imported.kind
+            let texts = ctx.translator();
+            ctx.error(texts.tf(
+                "edit.wrong_kind",
+                &[
+                    ("path", &imported.path),
+                    ("found", &kind_name(&texts, imported.kind)),
+                    ("expected", &kind_name(&texts, kind)),
+                ],
             ));
             return None;
         }
@@ -103,25 +108,23 @@ pub fn register_asset_file(
 /// selects it. A `Say` starts in edit mode. Returns the new node ids.
 pub fn insert_kind(ctx: &mut EditorContext<'_>, key: &str) -> Option<Vec<NodeId>> {
     let (scene, index) = insertion_point(ctx).or_else(|| {
-        ctx.error("Le projet n'a aucune scène : créez-en une d'abord.");
+        ctx.error(ctx.t("edit.no_scene"));
         None
     })?;
     let mut attempt = 0;
     let drafts = loop {
         let story = ctx.story()?;
-        match drafts_for(story, ctx.registry(), key, scene, index) {
+        match drafts_for(story, ctx.registry(), &ctx.translator(), key, scene, index) {
             Ok(drafts) => break drafts,
             Err(DraftError::NeedAsset(kind)) if attempt == 0 => {
                 attempt += 1;
-                ctx.info(format!(
-                    "Aucune ressource de type « {kind} » : choisissez un fichier à ajouter au projet."
-                ));
+                let name = kind_name(&ctx.translator(), kind);
+                ctx.info(ctx.tf("edit.need_asset_pick", &[("kind", &name)]));
                 import_asset_dialog(ctx, kind)?;
             }
             Err(DraftError::NeedAsset(kind)) => {
-                ctx.error(format!(
-                    "Aucune ressource de type « {kind} » dans le projet."
-                ));
+                let name = kind_name(&ctx.translator(), kind);
+                ctx.error(ctx.tf("edit.need_asset", &[("kind", &name)]));
                 return None;
             }
             Err(DraftError::Message(m)) => {
@@ -131,14 +134,15 @@ pub fn insert_kind(ctx: &mut EditorContext<'_>, key: &str) -> Option<Vec<NodeId>
         }
     };
     let label = match key {
-        "Say" => "Ajouter une réplique".to_owned(),
-        "Choice" => "Ajouter un choix".to_owned(),
+        "Say" => ctx.t("edit.add_say"),
+        "Choice" => ctx.t("edit.add_choice"),
         other => {
+            let texts = ctx.translator();
             let name = super::drafts::all_insertables(ctx.registry())
                 .into_iter()
                 .find(|i| i.key == other)
-                .map_or_else(|| other.to_owned(), |i| i.label);
-            format!("Ajouter : {name}")
+                .map_or_else(|| other.to_owned(), |i| i.label_text(&texts));
+            ctx.tf("edit.add_kind", &[("name", &name)])
         }
     };
     let ids = ctx.ops_or_toast(|p| ops::insert_drafts(p, scene, index, drafts, &label))?;
@@ -207,11 +211,7 @@ pub fn copy_selection(ctx: &mut EditorContext<'_>, cut: bool) {
     if cut {
         delete_selection(ctx);
     } else {
-        ctx.info(if count == 1 {
-            "1 nœud copié.".to_owned()
-        } else {
-            format!("{count} nœuds copiés.")
-        });
+        ctx.info(ctx.tn("edit.copied", count, &[]));
     }
 }
 
@@ -255,10 +255,8 @@ pub fn select_all(ctx: &mut EditorContext<'_>) {
 /// Creates a scene after the current one's end and selects it.
 pub fn new_scene(ctx: &mut EditorContext<'_>) {
     let Some(story) = ctx.story() else { return };
-    let name = ops::unique_name(
-        "Nouvelle scène",
-        story.scenes.iter().map(|s| s.name.as_str()),
-    );
+    let base = ctx.t("edit.new_scene");
+    let name = ops::unique_name(&base, story.scenes.iter().map(|s| s.name.as_str()));
     if let Some(id) = ctx.ops_or_toast(|p| ops::add_scene(p, &name)) {
         ctx.select(Selection::Scene(id));
     }
@@ -280,7 +278,8 @@ pub fn delete_scene(ctx: &mut EditorContext<'_>, id: SceneId) {
         .scene(id)
         .map(|s| s.nodes.iter().flat_map(|n| n.kind.strings()).collect())
         .unwrap_or_default();
-    let result = ctx.transaction("Supprimer la scène", |tx| {
+    let label = ctx.t("edit.delete_scene");
+    let result = ctx.transaction(&label, |tx| {
         tx.execute(orbit_project::Command::RemoveScene { id })?;
         for text in strings {
             tx.execute(orbit_project::Command::SetString {
@@ -313,6 +312,15 @@ pub fn move_scene(ctx: &mut EditorContext<'_>, id: SceneId, direction: i32) {
         id,
         index: target as usize,
     });
+}
+
+/// The name of an asset kind, in the language of `texts`.
+pub fn kind_name(texts: &Translator, kind: AssetKind) -> String {
+    texts.t(match kind {
+        AssetKind::Image => "edit.kind.image",
+        AssetKind::Music => "edit.kind.music",
+        AssetKind::Sound => "edit.kind.sound",
+    })
 }
 
 /// Whether the clipboard holds something to paste.

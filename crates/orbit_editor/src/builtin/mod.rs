@@ -18,7 +18,7 @@ mod nodeinfo;
 mod preview;
 mod problems;
 pub mod reveal;
-mod sample;
+pub mod sample;
 mod scene;
 mod sceneview;
 mod search;
@@ -119,7 +119,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
     ]
 }
 
-/// Registers, once every panel is known, an "Afficher : <panel>" action for
+/// Registers, once every panel is known, a "Show: <panel>" action for
 /// each of them (View menu and palette), so that a closed panel can always
 /// be reopened.
 pub struct PanelActions {
@@ -140,7 +140,7 @@ impl PanelActions {
 
 impl Plugin for PanelActions {
     fn manifest(&self) -> PluginManifest {
-        PluginManifest::new("orbit.core.views", "Affichage des panneaux", "0.1.0")
+        PluginManifest::new("orbit.core.views", "Panel views", "0.1.0")
     }
 }
 
@@ -148,16 +148,18 @@ impl EditorPlugin for PanelActions {
     fn register_ui(&self, registry: &mut EditorRegistry) {
         for (n, (panel_id, title, icon)) in self.panels.iter().enumerate() {
             let panel_id = panel_id.clone();
+            let title = title.clone();
             registry.action(
                 ActionDef::new(
                     format!("show.{panel_id}"),
-                    format!("Afficher : {title}"),
+                    "action.show_panel",
                     move |ctx| {
                         ctx.request(EditorRequest::ShowPanel(panel_id.clone()));
                     },
                 )
+                .label_with(move |ctx| ctx.tf("action.show_panel", &[("panel", &ctx.t(&title))]))
                 .icon(icon)
-                .category("Affichage")
+                .category("category.view")
                 .menu("view", 300 + n as i32),
             );
         }

@@ -2544,6 +2544,7 @@ dependencies = [
  "orbit_core",
  "orbit_plugin_api",
  "orbit_project",
+ "ron",
  "serde",
  "thiserror 2.0.21",
 ]

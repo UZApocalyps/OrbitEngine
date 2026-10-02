@@ -95,8 +95,8 @@ impl TabViewer for DockViewer<'_, '_> {
 
     fn title(&mut self, tab: &mut String) -> WidgetText {
         match self.ctx.registry().find_panel(tab) {
-            Some(panel) if panel.def.icon.is_empty() => panel.def.title.clone().into(),
-            Some(panel) => format!("{}  {}", panel.def.icon, panel.def.title).into(),
+            Some(panel) if panel.def.icon.is_empty() => self.ctx.t(&panel.def.title).into(),
+            Some(panel) => format!("{}  {}", panel.def.icon, self.ctx.t(&panel.def.title)).into(),
             None => format!("? {tab}").into(),
         }
     }
@@ -111,7 +111,7 @@ impl TabViewer for DockViewer<'_, '_> {
                 });
             }
             None => {
-                ui.label(format!("Panneau inconnu : {tab}"));
+                ui.label(self.ctx.tf("dock.unknown_panel", &[("id", tab)]));
             }
         }
     }

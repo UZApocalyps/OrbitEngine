@@ -28,7 +28,7 @@ use egui::{
 use orbit_core::{NodeId, Position};
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Location,
-    PanelDef, Plugin, PluginManifest, SceneViewActor, Selection, icons,
+    PanelDef, Plugin, PluginManifest, SceneViewActor, Selection, UiText, icons,
 };
 use orbit_project::ops::{self, ShowLook};
 
@@ -55,7 +55,7 @@ impl EditorPlugin for SceneViewPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
         reg.panel(PanelDef::new(
             "sceneview",
-            "Éditeur de vue",
+            "sceneview.panel.title",
             icons::FRAME_CORNERS,
             // A big canvas: a tab next to the scene editor and the graph,
             // with the preview (hot reload) beside it.
@@ -63,29 +63,29 @@ impl EditorPlugin for SceneViewPlugin {
             panel,
         ));
         reg.action(
-            ActionDef::new("flip_x", "Personnage : miroir horizontal", |ctx| {
+            ActionDef::new("flip_x", "sceneview.action.flip_x", |ctx| {
                 flip_selected(ctx, true);
             })
             .icon(icons::FLIP_HORIZONTAL)
-            .category("Éditeur de vue")
+            .category("category.sceneview")
             .enabled(|c| selected_show(c).is_some()),
         );
         reg.action(
-            ActionDef::new("flip_y", "Personnage : miroir vertical", |ctx| {
+            ActionDef::new("flip_y", "sceneview.action.flip_y", |ctx| {
                 flip_selected(ctx, false);
             })
             .icon(icons::FLIP_VERTICAL)
-            .category("Éditeur de vue")
+            .category("category.sceneview")
             .enabled(|c| selected_show(c).is_some()),
         );
         reg.action(
-            ActionDef::new("fullscreen", "Éditeur de vue : plein panneau", |ctx| {
+            ActionDef::new("fullscreen", "sceneview.action.fullscreen", |ctx| {
                 ctx.request(EditorRequest::ToggleMaximizePanel(
                     super::panels::SCENEVIEW.to_owned(),
                 ));
             })
             .icon(icons::CORNERS_OUT)
-            .category("Éditeur de vue"),
+            .category("category.sceneview"),
         );
     }
 }
@@ -311,7 +311,10 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     };
     let show = selected_show(ctx);
     let target = show.and_then(|n| target_of(ctx, n, &actors));
-    let points: Vec<NamedPoint> = ctx.story().map(geom::named_points).unwrap_or_default();
+    let points: Vec<NamedPoint> = ctx
+        .story()
+        .map(|s| geom::named_points(&ctx.translator(), s))
+        .unwrap_or_default();
     let named_for_guides: Vec<(String, f32, f32)> =
         points.iter().map(|p| (p.name.clone(), p.x, p.y)).collect();
 
@@ -405,15 +408,21 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) -> Toggles {
                 .as_ref()
                 .map_or((false, false), |l| (l.flip_x, l.flip_y));
             if ui
-                .selectable_label(fx, format!("{}  Miroir X", icons::FLIP_HORIZONTAL))
-                .on_hover_text("Inverse le personnage de gauche à droite")
+                .selectable_label(
+                    fx,
+                    format!("{}  {}", icons::FLIP_HORIZONTAL, ui.t("sceneview.flip_x")),
+                )
+                .on_hover_text(ui.t("sceneview.flip_x_tip"))
                 .clicked()
             {
                 flip_selected(ctx, true);
             }
             if ui
-                .selectable_label(fy, format!("{}  Miroir Y", icons::FLIP_VERTICAL))
-                .on_hover_text("Inverse le personnage de haut en bas")
+                .selectable_label(
+                    fy,
+                    format!("{}  {}", icons::FLIP_VERTICAL, ui.t("sceneview.flip_y")),
+                )
+                .on_hover_text(ui.t("sceneview.flip_y_tip"))
                 .clicked()
             {
                 flip_selected(ctx, false);
@@ -435,8 +444,8 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) -> Toggles {
             ui,
             &mut flags.guides,
             icons::RULER,
-            "Repères",
-            "Gauche / centre / droite et marges de sécurité 16:9",
+            &ui.t("sceneview.guides"),
+            &ui.t("sceneview.guides_tip"),
         ) {
             set_toggle(ctx, "guides", flags.guides);
         }
@@ -444,8 +453,8 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) -> Toggles {
             ui,
             &mut flags.snap,
             icons::MAGNET,
-            "Magnétisme",
-            "Aimante aux positions nommées (Alt : désactive pendant le glissement)",
+            &ui.t("sceneview.snap"),
+            &ui.t("sceneview.snap_tip"),
         ) {
             set_toggle(ctx, "snap", flags.snap);
         }
@@ -453,8 +462,8 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) -> Toggles {
             ui,
             &mut flags.grid,
             icons::GRID_FOUR,
-            "Grille",
-            "Aimante à une grille de 5 %",
+            &ui.t("sceneview.grid"),
+            &ui.t("sceneview.grid_tip"),
         ) {
             set_toggle(ctx, "grid", flags.grid);
         }
@@ -728,7 +737,7 @@ fn paint(
         painter.text(
             safe.left_top() + vec2(4.0, 2.0),
             Align2::LEFT_TOP,
-            "marge de sécurité",
+            ui.t("sceneview.safe_margin"),
             FontId::proportional(9.5),
             Color32::from_rgba_unmultiplied(120, 200, 255, 130),
         );
@@ -797,7 +806,7 @@ fn paint(
             painter.text(
                 r.left_top() + vec2(4.0, 3.0),
                 Align2::LEFT_TOP,
-                "cliquer : sélectionner son « Afficher »",
+                ui.t("sceneview.click_to_select"),
                 FontId::proportional(10.0),
                 Color32::WHITE,
             );
@@ -810,7 +819,7 @@ fn paint(
         let b = geom::bounds(&pose, t.base);
         let r = view.rect(b);
         if !drawn {
-            stand_in_of(&painter, r, "sélection");
+            stand_in_of(&painter, r, &ui.t("sceneview.selection"));
         }
         painter.rect_stroke(
             r,
@@ -851,7 +860,7 @@ fn paint(
             // Live readout next to the anchor.
             let text = match d.mode {
                 Mode::Move { .. } => match &d.named {
-                    Some(p) => super::nodeinfo::position_name(p),
+                    Some(p) => super::nodeinfo::position_name(&ui.texts(), p),
                     None => format!("{:.3}, {:.3}", d.current.x, d.current.y),
                 },
                 Mode::Scale(_) => {
@@ -893,18 +902,18 @@ fn paint(
     // What the picture does not say by itself.
     let message = if !info.has_project {
         Some((
-            "Aucun projet ouvert",
-            "Ouvrez un projet pour placer ses personnages.",
+            ui.t("sceneview.empty.no_project.title"),
+            ui.t("sceneview.empty.no_project.hint"),
         ))
     } else if !info.wanted {
         Some((
-            "Sélectionnez un nœud",
-            "L'éditeur de vue montre la scène telle qu'elle est à ce nœud.",
+            ui.t("sceneview.empty.no_node.title"),
+            ui.t("sceneview.empty.no_node.hint"),
         ))
     } else if !info.available && info.scene_view_node_ready {
         Some((
-            "Aperçu indisponible",
-            "Aucun GPU n'a pu être initialisé ; les cadres restent éditables.",
+            ui.t("sceneview.empty.no_gpu.title"),
+            ui.t("sceneview.empty.no_gpu.hint"),
         ))
     } else {
         None
@@ -929,7 +938,7 @@ fn paint(
         painter.text(
             picture.left_top() + vec2(8.0, 8.0),
             Align2::LEFT_TOP,
-            "Sélectionnez un nœud « Afficher » pour placer son personnage",
+            ui.t("sceneview.select_show"),
             FontId::proportional(11.0),
             Color32::from_white_alpha(170),
         );
@@ -1005,23 +1014,23 @@ fn status_line(
                 let look = drag.map_or_else(|| t.look.clone(), look_of);
                 let mut text = format!(
                     "{}  ·  ×{:.2}",
-                    super::nodeinfo::position_name(&look.position),
+                    super::nodeinfo::position_name(&ui.texts(), &look.position),
                     pose.scale[0]
                 );
                 if (pose.scale[0] - pose.scale[1]).abs() > 1e-4 {
                     text.push_str(&format!(" / ×{:.2}", pose.scale[1]));
                 }
                 if look.flip_x {
-                    text.push_str("  ·  miroir X");
+                    text.push_str(&format!("  ·  {}", ui.t("sceneview.mirror_x")));
                 }
                 if look.flip_y {
-                    text.push_str("  ·  miroir Y");
+                    text.push_str(&format!("  ·  {}", ui.t("sceneview.mirror_y")));
                 }
                 ui.add(egui::Label::new(RichText::new(text).size(11.5).color(weak(ui))).truncate());
             }
             None => {
                 ui.label(
-                    RichText::new("Aucun personnage sélectionné")
+                    RichText::new(ui.t("sceneview.no_character"))
                         .size(11.5)
                         .color(weak(ui)),
                 );
@@ -1033,12 +1042,7 @@ fn status_line(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(RichText::new(icons::QUESTION).color(faint(ui)))
-                .on_hover_text(
-                    "Glisser : placer librement (Alt : sans magnétisme)
-                     Poignées : échelle autour des pieds (Maj : garder le ratio)
-                     Flèches : ajuster (Maj : grand pas) · Échap : annuler le geste
-                     Cliquer un autre personnage : sélectionner son « Afficher »",
-                );
+                .on_hover_text(ui.t("sceneview.help"));
         });
     });
 }

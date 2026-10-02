@@ -5,7 +5,7 @@
 use orbit_core::{
     AssetKind, CharacterId, ChoiceOption, Expr, NodeKind, Position, SceneId, Story, StringId, Value,
 };
-use orbit_editor_api::{EditorRegistry, icons};
+use orbit_editor_api::{EditorRegistry, Translator, icons};
 use orbit_project::ops::{NodeDraft, unique_name};
 
 /// Why a draft could not be built.
@@ -22,9 +22,24 @@ pub enum DraftError {
 pub struct Insertable {
     /// `Say`, `Choice`... or `plugin_id.kind`.
     pub key: String,
+    /// A translation key (a plugin type: its own label, shown as is);
+    /// see [`Insertable::label_text`].
     pub label: String,
     pub icon: &'static str,
+    /// A translation key; see [`Insertable::group_text`].
     pub group: &'static str,
+}
+
+impl Insertable {
+    /// The label in the language of `texts`.
+    pub fn label_text(&self, texts: &Translator) -> String {
+        texts.t(&self.label)
+    }
+
+    /// The group title in the language of `texts`.
+    pub fn group_text(&self, texts: &Translator) -> String {
+        texts.t(self.group)
+    }
 }
 
 fn item(key: &str, label: &str, icon: &'static str, group: &'static str) -> Insertable {
@@ -39,52 +54,102 @@ fn item(key: &str, label: &str, icon: &'static str, group: &'static str) -> Inse
 /// Built-in node types, grouped for the menus.
 pub fn builtin_insertables() -> Vec<Insertable> {
     vec![
-        item("Say", "Réplique", icons::CHAT_TEXT, "Dialogue"),
-        item("Choice", "Choix du joueur", icons::GIT_BRANCH, "Dialogue"),
-        item("Background", "Décor", icons::IMAGE, "Scène"),
-        item("Show", "Afficher un personnage", icons::USER_PLUS, "Scène"),
-        item("Hide", "Masquer un personnage", icons::USER_MINUS, "Scène"),
-        item("PlayMusic", "Jouer une musique", icons::MUSIC_NOTE, "Son"),
-        item("StopMusic", "Arrêter la musique", icons::STOP, "Son"),
-        item("PlaySound", "Jouer un son", icons::SPEAKER_HIGH, "Son"),
-        item("Wait", "Attendre", icons::TIMER, "Scène"),
+        item(
+            "Say",
+            "draft.label.say",
+            icons::CHAT_TEXT,
+            "draft.group.dialogue",
+        ),
+        item(
+            "Choice",
+            "draft.label.choice",
+            icons::GIT_BRANCH,
+            "draft.group.dialogue",
+        ),
+        item(
+            "Background",
+            "draft.label.background",
+            icons::IMAGE,
+            "draft.group.scene",
+        ),
+        item(
+            "Show",
+            "draft.label.show",
+            icons::USER_PLUS,
+            "draft.group.scene",
+        ),
+        item(
+            "Hide",
+            "draft.label.hide",
+            icons::USER_MINUS,
+            "draft.group.scene",
+        ),
+        item(
+            "PlayMusic",
+            "draft.label.play_music",
+            icons::MUSIC_NOTE,
+            "draft.group.sound",
+        ),
+        item(
+            "StopMusic",
+            "draft.label.stop_music",
+            icons::STOP,
+            "draft.group.sound",
+        ),
+        item(
+            "PlaySound",
+            "draft.label.play_sound",
+            icons::SPEAKER_HIGH,
+            "draft.group.sound",
+        ),
+        item(
+            "Wait",
+            "draft.label.wait",
+            icons::TIMER,
+            "draft.group.scene",
+        ),
         item(
             "SetVar",
-            "Modifier une variable",
+            "draft.label.set_var",
             icons::FUNCTION,
-            "Logique",
+            "draft.group.logic",
         ),
-        item("If", "Condition", icons::GIT_FORK, "Logique"),
-        item("Label", "Étiquette", icons::FLAG, "Navigation"),
+        item("If", "draft.label.if", icons::GIT_FORK, "draft.group.logic"),
+        item(
+            "Label",
+            "draft.label.label",
+            icons::FLAG,
+            "draft.group.navigation",
+        ),
         item(
             "Jump",
-            "Saut vers une étiquette",
+            "draft.label.jump",
             icons::ARROW_BEND_UP_RIGHT,
-            "Navigation",
+            "draft.group.navigation",
         ),
         item(
             "JumpScene",
-            "Saut de scène",
+            "draft.label.jump_scene",
             icons::ARROW_SQUARE_OUT,
-            "Navigation",
+            "draft.group.navigation",
         ),
         item(
             "Call",
-            "Appeler une routine",
+            "draft.label.call",
             icons::PHONE_CALL,
-            "Navigation",
+            "draft.group.navigation",
         ),
         item(
             "Return",
-            "Retour de routine",
+            "draft.label.return",
             icons::ARROW_U_UP_LEFT,
-            "Navigation",
+            "draft.group.navigation",
         ),
         item(
             "End",
-            "Fin de l'histoire",
+            "draft.label.end",
             icons::FLAG_CHECKERED,
-            "Navigation",
+            "draft.group.navigation",
         ),
     ]
 }
@@ -97,7 +162,7 @@ pub fn all_insertables(registry: &EditorRegistry) -> Vec<Insertable> {
             key: format!("{}.{}", t.plugin_id, t.def.kind),
             label: t.def.label.clone(),
             icon: icons::PUZZLE_PIECE,
-            group: "Plugins",
+            group: "draft.group.plugins",
         });
     }
     items
@@ -137,15 +202,16 @@ fn first_asset(story: &Story, kind: AssetKind) -> Result<orbit_core::AssetId, Dr
         .ok_or(DraftError::NeedAsset(kind))
 }
 
-fn stage_character(story: &Story, scene: SceneId, index: usize) -> Result<CharacterId, DraftError> {
+fn stage_character(
+    story: &Story,
+    texts: &Translator,
+    scene: SceneId,
+    index: usize,
+) -> Result<CharacterId, DraftError> {
     previous_speaker(story, scene, index)
         .filter(|c| story.character(*c).is_some())
         .or_else(|| story.characters.first().map(|c| c.id))
-        .ok_or_else(|| {
-            DraftError::Message(
-                "Créez d'abord un personnage (panneau Personnages) pour l'afficher.".to_owned(),
-            )
-        })
+        .ok_or_else(|| DraftError::Message(texts.t("draft.need_character")))
 }
 
 /// The drafts inserted by "insert a node of type `key` at `index` of
@@ -154,6 +220,7 @@ fn stage_character(story: &Story, scene: SceneId, index: usize) -> Result<Charac
 pub fn drafts_for(
     story: &Story,
     registry: &EditorRegistry,
+    texts: &Translator,
     key: &str,
     scene: SceneId,
     index: usize,
@@ -190,7 +257,10 @@ pub fn drafts_for(
                         ],
                     },
                 },
-                strings: vec![(text_a, "Option A".into()), (text_b, "Option B".into())],
+                strings: vec![
+                    (text_a, texts.t("draft.option_a")),
+                    (text_b, texts.t("draft.option_b")),
+                ],
             };
             let join = |target| NodeDraft::plain(NodeKind::Jump { target });
             let (jump_a, jump_b) = (join(end.node.id), join(end.node.id));
@@ -210,7 +280,7 @@ pub fn drafts_for(
             transition: None,
         })],
         "Show" => {
-            let character = stage_character(story, scene, index)?;
+            let character = stage_character(story, texts, scene, index)?;
             let def = story.character(character);
             let expression = def
                 .and_then(|c| c.expressions.first())
@@ -231,7 +301,7 @@ pub fn drafts_for(
             })]
         }
         "Hide" => vec![NodeDraft::plain(NodeKind::Hide {
-            character: stage_character(story, scene, index)?,
+            character: stage_character(story, texts, scene, index)?,
             transition: None,
         })],
         "PlayMusic" => vec![NodeDraft::plain(NodeKind::PlayMusic {
@@ -309,11 +379,7 @@ pub fn drafts_for(
                         .iter()
                         .find(|s| Some(s.id) != here.map(|i| scenes[i].id))
                 })
-                .ok_or_else(|| {
-                    DraftError::Message(
-                        "Créez une autre scène pour y faire un saut de scène.".to_owned(),
-                    )
-                })?;
+                .ok_or_else(|| DraftError::Message(texts.t("draft.need_scene")))?;
             vec![NodeDraft::plain(NodeKind::JumpScene {
                 scene: target.id,
                 label: None,
@@ -327,7 +393,9 @@ pub fn drafts_for(
                 .node_types()
                 .iter()
                 .find(|t| format!("{}.{}", t.plugin_id, t.def.kind) == other)
-                .ok_or_else(|| DraftError::Message(format!("Type de nœud inconnu : {other}")))?;
+                .ok_or_else(|| {
+                    DraftError::Message(texts.tf("draft.unknown_type", &[("type", &other)]))
+                })?;
             vec![NodeDraft::plain(NodeKind::Custom {
                 plugin_id: t.plugin_id.clone(),
                 kind: t.def.kind.clone(),

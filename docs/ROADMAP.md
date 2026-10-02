@@ -335,6 +335,11 @@ Architecture : [ADR 0009](adr/0009-architecture-editeur.md) (statut Accepté). P
   - les flèches font une entrée d'undo par pression (pas de fusion des répétitions) ;
   - le panneau n'est dans la disposition par défaut que pour les nouvelles installations (Affichage > Afficher : Éditeur de vue sinon).
 
+**M3h : langue de l'éditeur (anglais / français). Statut : fait.**
+
+- Tous les textes de l'éditeur passent par des **clés** résolues à l'affichage (tables RON embarquées, 1053 clés par langue, test de parité en / fr). Langue du système au premier lancement, choix dans Affichage > Langue, changement à chaud, option de debug `--lang`. Un plugin enregistre ses propres tables (`EditorRegistry::texts`). Détails : notes i18n de l'[ADR 0009](adr/0009-architecture-editeur.md).
+- **Dettes M3h** : les libellés d'annulation et les lignes de journal créés par l'éditeur restent dans la langue du moment ; les messages techniques de `orbit_core` (types d'expressions) et d'`orbit_project` (erreurs d'E/S) restent en anglais ; les noms de manifeste des plugins ne sont pas traduits ; les histoires de bench ne le sont pas non plus.
+
 **Fin de M3 :** un non-développeur crée une VN de 5 min uniquement depuis l'interface ; **et** une IA crée via MCP une courte scène avec choix qui passe `orbit validate`. Une archive portable de l'éditeur (zip / tar.gz) est produite par la CI.
 
 ### M4 : Export multiplateforme (jalon MVP)

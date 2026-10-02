@@ -107,6 +107,18 @@ pub enum Terminator {
 }
 
 impl Terminator {
+    /// Stable name of the terminator, for front ends that write the label
+    /// in their own language.
+    pub fn code(self) -> &'static str {
+        match self {
+            Terminator::Jump => "jump",
+            Terminator::JumpScene => "jump_scene",
+            Terminator::Choice => "choice",
+            Terminator::End => "end",
+            Terminator::Return => "return",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Terminator::Jump => "un saut",

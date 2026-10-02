@@ -11,8 +11,10 @@
 
 pub mod ai;
 mod context;
+pub mod errors;
 pub mod fields;
 mod graph_state;
+pub mod i18n;
 mod preview;
 mod registry;
 mod scene_view;
@@ -21,7 +23,12 @@ pub use context::{
     ConsoleEntry, ConsoleLog, Diagnostics, EditorContext, EditorError, EditorRequest, EditorState,
     Level, Location, Problem, ProjectInfo, RecentProject, Selection, ThemeMode, Toast, Waker,
 };
+pub use errors::{
+    describe_command_error, describe_editor_error, describe_project_error, describe_rejection,
+    describe_undo_label,
+};
 pub use graph_state::GraphState;
+pub use i18n::{Lang, Translator, UiText};
 pub use orbit_plugin_api::{API_VERSION, Plugin, PluginError, PluginManifest, ProjectRegistry};
 pub use preview::{PreviewCommand, PreviewInput, PreviewSpeed, PreviewState, PreviewStatus};
 pub use registry::{

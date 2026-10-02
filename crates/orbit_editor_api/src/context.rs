@@ -10,6 +10,7 @@ use orbit_project::ops::NodeClip;
 use orbit_project::{Command, Project, ProjectError, Transaction};
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::{Lang, Translator};
 use crate::preview::{PreviewCommand, PreviewState};
 use crate::registry::EditorRegistry;
 
@@ -133,6 +134,8 @@ pub enum EditorRequest {
     /// Brings a panel (full id) to the front, adding it to the layout if needed.
     ShowPanel(String),
     SetTheme(ThemeMode),
+    /// Switches the interface language (instantly, and remembers it).
+    SetLanguage(Lang),
     /// Runs an action by full id.
     RunAction(String),
     /// Shows a panel (full id) alone, filling the window, or brings the
@@ -152,7 +155,9 @@ pub enum Location {
     Asset(AssetId),
 }
 
-/// One finding of the live validation, in French, with where it is.
+/// One finding of the live validation, in the editor language at the time it
+/// was computed (the host validates again when the language changes), with
+/// where it is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Problem {
     pub level: Level,
@@ -160,7 +165,8 @@ pub struct Problem {
     pub location: Option<Location>,
 }
 
-/// What validation found about nodes: errors and warnings, in French.
+/// What validation found about nodes: errors and warnings, in the editor
+/// language (see [`Problem`]).
 #[derive(Clone, Debug, Default)]
 pub struct Diagnostics {
     /// Project revision these findings were computed for.
@@ -280,6 +286,8 @@ pub struct EditorState {
     /// Per-plugin preferences (a sandbox keyed by plugin id), persisted by the host.
     pub plugin_prefs: BTreeMap<String, BTreeMap<String, String>>,
     pub theme: ThemeMode,
+    /// Resolves text keys; holds the interface language (see `i18n`).
+    pub i18n: Translator,
     /// Frames drawn so far, when the debug counter is on.
     pub debug_frames: Option<u64>,
     /// The panel (full id) shown alone over the whole window, if any.
@@ -296,6 +304,21 @@ pub struct EditorState {
 
 impl EditorState {
     const TOAST_LIFETIME: Duration = Duration::from_secs(4);
+
+    /// Text of a key in the current language (see [`Translator::get`]).
+    pub fn t(&self, key: &str) -> String {
+        self.i18n.get(key)
+    }
+
+    /// Text of a key with `{name}` parameters.
+    pub fn tf(&self, key: &str, args: &[(&str, &dyn std::fmt::Display)]) -> String {
+        self.i18n.format(key, args)
+    }
+
+    /// Singular / plural text (`key.one`, `key.other`) for a count.
+    pub fn tn(&self, key: &str, n: usize, args: &[(&str, &dyn std::fmt::Display)]) -> String {
+        self.i18n.plural(key, n, args)
+    }
 
     pub fn push_toast(&mut self, level: Level, message: impl Into<String>) {
         let message = message.into();
@@ -432,7 +455,8 @@ impl<'a> EditorContext<'a> {
         match self.ops(f) {
             Ok(value) => Some(value),
             Err(e) => {
-                self.error(e.to_string());
+                let message = self.describe(&e);
+                self.error(message);
                 None
             }
         }
@@ -443,7 +467,8 @@ impl<'a> EditorContext<'a> {
         match self.exec(command) {
             Ok(()) => true,
             Err(e) => {
-                self.error(e.to_string());
+                let message = self.describe(&e);
+                self.error(message);
                 false
             }
         }
@@ -473,6 +498,45 @@ impl<'a> EditorContext<'a> {
 
     pub fn redo_label(&self) -> Option<&str> {
         self.project().and_then(Project::redo_label)
+    }
+
+    // ---- texts
+
+    /// Text of a key in the current language: that language, then English,
+    /// then the key itself (so a literal also works).
+    pub fn t(&self, key: &str) -> String {
+        self.state.i18n.get(key)
+    }
+
+    /// Text of a key with `{name}` parameters: `ctx.tf("hi", &[("name", &n)])`.
+    pub fn tf(&self, key: &str, args: &[(&str, &dyn std::fmt::Display)]) -> String {
+        self.state.i18n.format(key, args)
+    }
+
+    /// Singular or plural text (`key.one` / `key.other`) for a count, which
+    /// is also the `{count}` parameter.
+    pub fn tn(&self, key: &str, n: usize, args: &[(&str, &dyn std::fmt::Display)]) -> String {
+        self.state.i18n.plural(key, n, args)
+    }
+
+    /// The message of an editor error, in the current language.
+    pub fn describe(&self, error: &EditorError) -> String {
+        crate::errors::describe_editor_error(&self.state.i18n, error)
+    }
+
+    /// The label of the next undo / redo entry, in the current language.
+    pub fn undo_text(&self, label: &str) -> String {
+        crate::errors::describe_undo_label(&self.state.i18n, label)
+    }
+
+    /// The current interface language.
+    pub fn lang(&self) -> Lang {
+        self.state.i18n.lang()
+    }
+
+    /// The translator, to move into a closure or a thread.
+    pub fn translator(&self) -> Translator {
+        self.state.i18n.clone()
     }
 
     // ---- editor state

@@ -12,8 +12,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use orbit_core::{NodeKind, Story};
-use orbit_editor_api::Location;
+use orbit_core::{AssetKind, NodeKind, Story};
+use orbit_editor_api::{Location, Translator};
 
 use crate::fuzzy::{fold_str, fuzzy_match};
 
@@ -30,17 +30,17 @@ pub enum HitKind {
 }
 
 impl HitKind {
-    /// Group title, in French.
-    pub fn title(self) -> &'static str {
-        match self {
-            HitKind::Line => "Répliques",
-            HitKind::Choice => "Choix",
-            HitKind::Character => "Personnages",
-            HitKind::Variable => "Variables",
-            HitKind::Label => "Étiquettes",
-            HitKind::Scene => "Scènes",
-            HitKind::Asset => "Ressources",
-        }
+    /// Group title, in the language of `texts`.
+    pub fn title(self, texts: &Translator) -> String {
+        texts.t(match self {
+            HitKind::Line => "search.kind.line",
+            HitKind::Choice => "search.kind.choice",
+            HitKind::Character => "search.kind.character",
+            HitKind::Variable => "search.kind.variable",
+            HitKind::Label => "search.kind.label",
+            HitKind::Scene => "search.kind.scene",
+            HitKind::Asset => "search.kind.asset",
+        })
     }
 
     /// Long texts are searched by words only; names also fuzzily.
@@ -83,13 +83,14 @@ pub const PER_GROUP: usize = 60;
 
 impl SearchIndex {
     /// Brings the index up to date for `key` (project generation,
-    /// revision). Returns `true` when it was rebuilt.
-    pub fn refresh(&mut self, story: &Story, key: (u64, u64)) -> bool {
+    /// revision). Returns `true` when it was rebuilt. The context texts are
+    /// written in the language of `texts`: clear the index when it changes.
+    pub fn refresh(&mut self, story: &Story, key: (u64, u64), texts: &Translator) -> bool {
         if self.key == Some(key) {
             return false;
         }
         let started = Instant::now();
-        self.rebuild(story);
+        self.rebuild(story, texts);
         self.key = Some(key);
         self.last_build = Some(started.elapsed());
         true
@@ -108,7 +109,7 @@ impl SearchIndex {
         self.entries.is_empty()
     }
 
-    fn rebuild(&mut self, story: &Story) {
+    fn rebuild(&mut self, story: &Story, texts: &Translator) {
         let mut entries = Vec::with_capacity(
             story.strings.entries.len() + story.assets.assets.len() + story.characters.len() + 16,
         );
@@ -133,14 +134,17 @@ impl SearchIndex {
             add(
                 HitKind::Scene,
                 &scene.name,
-                format!("{} nœud(s)", scene.nodes.len()),
+                texts.tn("search.ctx.nodes", scene.nodes.len(), &[]),
                 Location::Scene(scene.id),
             );
             for node in &scene.nodes {
                 match &node.kind {
                     NodeKind::Say { speaker, text_id } => {
                         let text = story.text(*text_id).unwrap_or_default();
-                        let who = speaker.map_or("Narrateur", speaker_name);
+                        let who = speaker.map_or_else(
+                            || texts.t("search.narrator"),
+                            |id| speaker_name(id).to_owned(),
+                        );
                         add(
                             HitKind::Line,
                             text,
@@ -153,7 +157,7 @@ impl SearchIndex {
                             add(
                                 HitKind::Choice,
                                 story.text(option.text_id).unwrap_or_default(),
-                                format!("{} · choix", scene.name),
+                                format!("{} · {}", scene.name, texts.t("search.ctx.choice")),
                                 Location::Node(node.id),
                             );
                         }
@@ -172,7 +176,7 @@ impl SearchIndex {
             add(
                 HitKind::Character,
                 story.text(c.name_id).unwrap_or_default(),
-                format!("{} expression(s)", c.expressions.len()),
+                texts.tn("search.ctx.expressions", c.expressions.len(), &[]),
                 Location::Character(c.id),
             );
         }
@@ -180,7 +184,7 @@ impl SearchIndex {
             add(
                 HitKind::Variable,
                 &v.name,
-                "variable".to_owned(),
+                texts.t("search.ctx.variable"),
                 Location::Variable(v.name.clone()),
             );
         }
@@ -188,7 +192,11 @@ impl SearchIndex {
             add(
                 HitKind::Asset,
                 &a.path,
-                a.kind.to_string(),
+                texts.t(match a.kind {
+                    AssetKind::Image => "search.asset.image",
+                    AssetKind::Music => "search.asset.music",
+                    AssetKind::Sound => "search.asset.sound",
+                }),
                 Location::Asset(a.id),
             );
         }
@@ -302,8 +310,8 @@ fn marks(folded: &str, words: &[String]) -> Vec<(usize, usize)> {
 pub struct SearchHandle(pub Rc<RefCell<SearchIndex>>);
 
 impl SearchHandle {
-    pub fn refresh(&self, story: &Story, key: (u64, u64)) {
-        self.0.borrow_mut().refresh(story, key);
+    pub fn refresh(&self, story: &Story, key: (u64, u64), texts: &Translator) {
+        self.0.borrow_mut().refresh(story, key, texts);
     }
 
     pub fn query(&self, q: &str) -> Vec<Hit> {
@@ -316,6 +324,10 @@ mod tests {
     use orbit_core::{Character, Color, Node, NodeId, Scene, SceneId, Value, VarDecl};
 
     use super::*;
+
+    fn fr() -> Translator {
+        crate::i18n::translator(orbit_editor_api::Lang::Fr)
+    }
 
     fn story() -> Story {
         let mut story = Story::new("t");
@@ -363,7 +375,7 @@ mod tests {
 
     fn index() -> SearchIndex {
         let mut idx = SearchIndex::default();
-        idx.refresh(&story(), (1, 1));
+        idx.refresh(&story(), (1, 1), &fr());
         idx
     }
 
@@ -422,7 +434,7 @@ mod tests {
             },
         });
         let mut idx = SearchIndex::default();
-        idx.refresh(&story, (1, 1));
+        idx.refresh(&story, (1, 1), &fr());
         let hits = idx.query("clef");
         assert_eq!(hits[0].text, "clef", "the exact text comes first");
         assert_eq!(hits[1].text, "la clef de voûte");
@@ -432,9 +444,9 @@ mod tests {
     fn the_index_is_rebuilt_only_when_the_revision_changes() {
         let story = story();
         let mut idx = SearchIndex::default();
-        assert!(idx.refresh(&story, (1, 1)));
-        assert!(!idx.refresh(&story, (1, 1)));
-        assert!(idx.refresh(&story, (1, 2)));
+        assert!(idx.refresh(&story, (1, 1), &fr()));
+        assert!(!idx.refresh(&story, (1, 1), &fr()));
+        assert!(idx.refresh(&story, (1, 2), &fr()));
         idx.clear();
         assert!(idx.is_empty());
     }
@@ -444,7 +456,7 @@ mod tests {
         let story = crate::bench::generate_story(10_000);
         let mut idx = SearchIndex::default();
         let started = Instant::now();
-        idx.refresh(&story, (1, 1));
+        idx.refresh(&story, (1, 1), &fr());
         let build = started.elapsed();
         assert!(idx.len() > 5_000, "{}", idx.len());
         let mut worst = Duration::ZERO;

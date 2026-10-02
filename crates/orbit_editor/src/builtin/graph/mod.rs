@@ -20,7 +20,7 @@ use egui_phosphor::regular as ph;
 use orbit_core::{NodeKind, SceneId, Story};
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Level,
-    Location, PanelDef, Plugin, PluginManifest, Selection,
+    Location, PanelDef, Plugin, PluginManifest, Selection, Translator, UiText,
 };
 use orbit_project::graph::{BlockId, GraphModel, SlotKind, SlotRef, SlotTarget, Terminator};
 use orbit_project::graph_layout::{BLOCK_WIDTH, GraphLayout, auto_layout, block_height};
@@ -105,7 +105,7 @@ impl EditorPlugin for GraphPlugin {
             let state = state.clone();
             reg.panel(PanelDef::new(
                 "graph",
-                "Graphe",
+                "graph.title",
                 ph::TREE_STRUCTURE,
                 DockSlot::Center,
                 move |ui, ctx| panel(ui, ctx, &state),
@@ -114,78 +114,70 @@ impl EditorPlugin for GraphPlugin {
         {
             let state = state.clone();
             reg.action(
-                ActionDef::new("fit", "Graphe : recadrer tout", move |ctx| {
+                ActionDef::new("fit", "graph.action.fit", move |ctx| {
                     state.borrow_mut().view.fit_all();
                     ctx.request(EditorRequest::ShowPanel(super::panels::GRAPH.to_owned()));
                 })
                 .icon(ph::CORNERS_OUT)
-                .category("Graphe")
+                .category("category.graph")
                 .enabled(has_story),
             );
         }
         {
             let state = state.clone();
             reg.action(
-                ActionDef::new("reorganize", "Graphe : réorganiser les blocs", move |ctx| {
+                ActionDef::new("reorganize", "graph.action.reorganize", move |ctx| {
                     reorganize(ctx, &state);
                 })
                 .icon(ph::SPARKLE)
-                .category("Graphe")
+                .category("category.graph")
                 .enabled(has_story),
             );
         }
         {
             let state = state.clone();
             reg.action(
-                ActionDef::new("focus", "Graphe : centrer sur la sélection", move |ctx| {
+                ActionDef::new("focus", "graph.action.focus", move |ctx| {
                     if let Some(block) = selected_block(ctx) {
                         focus_block(&state, block, Some(0.9));
                     }
                     ctx.request(EditorRequest::ShowPanel(super::panels::GRAPH.to_owned()));
                 })
                 .icon(ph::CROSSHAIR)
-                .category("Graphe")
+                .category("category.graph")
                 .enabled(has_story),
             );
         }
         reg.action(
-            ActionDef::new("new_scene", "Graphe : nouvelle scène", |ctx| {
+            ActionDef::new("new_scene", "graph.action.new_scene", |ctx| {
                 new_scene(ctx, None);
             })
             .icon(ph::FOLDER_PLUS)
-            .category("Graphe")
+            .category("category.graph")
             .enabled(|c| c.has_project()),
         );
         reg.action(
-            ActionDef::new(
-                "add_choice",
-                "Graphe : ajouter un choix au bloc sélectionné",
-                |ctx| {
-                    if let Some(block) = selected_block(ctx) {
-                        apply(ctx, GraphEvent::AddChoice(block));
-                    }
-                },
-            )
+            ActionDef::new("add_choice", "graph.action.add_choice", |ctx| {
+                if let Some(block) = selected_block(ctx) {
+                    apply(ctx, GraphEvent::AddChoice(block));
+                }
+            })
             .icon(ph::GIT_BRANCH)
-            .category("Graphe")
+            .category("category.graph")
             .enabled(has_story),
         );
         reg.action(
-            ActionDef::new(
-                "add_condition",
-                "Graphe : ajouter une condition au bloc sélectionné",
-                |ctx| {
-                    if let Some(block) = selected_block(ctx) {
-                        apply(ctx, GraphEvent::AddCondition(block));
-                    }
-                },
-            )
+            ActionDef::new("add_condition", "graph.action.add_condition", |ctx| {
+                if let Some(block) = selected_block(ctx) {
+                    apply(ctx, GraphEvent::AddCondition(block));
+                }
+            })
             .icon(ph::GIT_FORK)
-            .category("Graphe")
+            .category("category.graph")
             .enabled(has_story),
         );
         reg.action(
-            ActionDef::new("find", "Graphe : chercher un bloc", {
+            ActionDef::new("find", "graph.action.find", {
                 let state = state.clone();
                 move |ctx| {
                     state.borrow_mut().search_focus = true;
@@ -193,7 +185,7 @@ impl EditorPlugin for GraphPlugin {
                 }
             })
             .icon(ph::MAGNIFYING_GLASS)
-            .category("Graphe")
+            .category("category.graph")
             .enabled(has_story),
         );
     }
@@ -230,32 +222,32 @@ fn character_names(story: &Story, ids: &[orbit_core::CharacterId]) -> String {
 
 /// How a block looks: icon and color from what it does.
 fn block_style(
+    texts: &Translator,
     block: &orbit_project::graph::Block,
     entry: bool,
 ) -> (&'static str, Color32, String) {
     let kind = if block.has_choice() {
-        (ph::GIT_BRANCH, palette::CHOICE, "Choix")
+        (ph::GIT_BRANCH, palette::CHOICE)
     } else if block.has_condition() {
-        (ph::GIT_FORK, palette::CONDITION, "Condition")
+        (ph::GIT_FORK, palette::CONDITION)
     } else if matches!(block.terminator, Some((_, Terminator::End))) {
-        (ph::STOP_CIRCLE, palette::END, "Fin")
+        (ph::STOP_CIRCLE, palette::END)
     } else if matches!(block.terminator, Some((_, Terminator::Return))) {
-        (ph::ARROW_U_UP_LEFT, palette::RETURN, "Retour")
+        (ph::ARROW_U_UP_LEFT, palette::RETURN)
     } else if block.has_call() {
-        (ph::PHONE_CALL, palette::CALL, "Appel")
+        (ph::PHONE_CALL, palette::CALL)
     } else if block.is_head {
-        (ph::FILM_SLATE, palette::SCENE, "Scène")
+        (ph::FILM_SLATE, palette::SCENE)
     } else {
-        (ph::FLAG, palette::LABEL, "Étiquette")
+        (ph::FLAG, palette::LABEL)
     };
     let role = if entry {
-        "Début de l'histoire".to_owned()
+        texts.t("graph.role.entry")
     } else if block.is_head {
-        "Scène".to_owned()
+        texts.t("graph.role.scene")
     } else {
-        format!("Étiquette · {}", block.scene_name)
+        texts.tf("graph.role.label", &[("scene", &block.scene_name)])
     };
-    let _ = kind.2;
     (kind.0, kind.1, role)
 }
 
@@ -269,24 +261,24 @@ fn build_content(
     signature: u64,
 ) -> ViewContent {
     let diagnostics = &ctx.state().diagnostics;
+    let texts = ctx.translator();
     let entry = model.entry();
     let nodes = model
         .blocks
         .iter()
         .map(|block| {
-            let (icon, accent, role) = block_style(block, entry == Some(block.id));
+            let (icon, accent, role) = block_style(&texts, block, entry == Some(block.id));
             let mut meta = Vec::new();
             let mut line = match block.lines {
-                0 => "Aucune réplique".to_owned(),
-                1 => "1 réplique".to_owned(),
-                n => format!("{n} répliques"),
+                0 => texts.t("graph.lines.none"),
+                n => texts.tn("graph.lines", n, &[]),
             };
             let who = character_names(story, &block.speakers);
             if !who.is_empty() || block.narrator {
                 let who = if block.narrator && who.is_empty() {
-                    "narrateur".to_owned()
+                    texts.t("graph.narrator")
                 } else if block.narrator {
-                    format!("{who} + narrateur")
+                    texts.tf("graph.speakers_narrator", &[("who", &who)])
                 } else {
                     who
                 };
@@ -302,10 +294,27 @@ fn build_content(
                         SlotTarget::Missing(_) => (None, true),
                         SlotTarget::None => (None, false),
                     };
-                    let label = match slot.kind {
-                        SlotKind::Option(_) => format!("« {} »", slot.label),
-                        SlotKind::Next if target.is_none() => "fin de partie".into(),
-                        SlotKind::Else if target.is_none() => "sinon · suite".into(),
+                    let node_kind = slot.node.and_then(|n| story.node(n)).map(|n| &n.kind);
+                    // The model's own labels are French: rebuilt here from the node.
+                    let label = match (slot.kind, node_kind) {
+                        (SlotKind::Option(_), _) => {
+                            texts.tf("graph.slot.option", &[("text", &slot.label)])
+                        }
+                        (SlotKind::Next, _) if target.is_none() => texts.t("graph.slot.end_game"),
+                        (SlotKind::Next, _) => texts.t("graph.slot.next"),
+                        (SlotKind::Else, _) if target.is_none() => texts.t("graph.slot.else_next"),
+                        (SlotKind::Else, _) => texts.t("graph.slot.else"),
+                        (SlotKind::Then, Some(NodeKind::If { condition, .. })) => {
+                            texts.tf("graph.slot.if", &[("condition", condition)])
+                        }
+                        (SlotKind::JumpScene, Some(NodeKind::JumpScene { scene, label })) => {
+                            let name = story.scene(*scene).map_or("?", |s| s.name.as_str());
+                            let label = match label.and_then(|l| story.node(l)).map(|n| &n.kind) {
+                                Some(NodeKind::Label { name: l }) => format!(" › {l}"),
+                                _ => String::new(),
+                            };
+                            texts.tf("graph.slot.scene", &[("name", &name), ("label", &label)])
+                        }
                         _ => slot.label.clone(),
                     };
                     ViewSlot {
@@ -351,7 +360,7 @@ fn build_content(
             if let Some((_, text)) = &mut problem
                 && count > 1
             {
-                text.push_str(&format!(" (+ {} autre(s))", count - 1));
+                text.push_str(&texts.tn("graph.problem.more", count - 1, &[]));
             }
             let pos = layout.get(block.id).unwrap_or((0.0, 0.0));
             (
@@ -442,13 +451,10 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) {
                     .size(40.0)
                     .color(faint(ui)),
             );
-            ui.label(RichText::new("Aucun projet ouvert").font(bold(16.0)));
-            ui.label(
-                RichText::new("Ouvrez un projet pour voir le graphe de son histoire.")
-                    .color(weak(ui)),
-            );
+            ui.label(RichText::new(ui.t("graph.empty.title")).font(bold(16.0)));
+            ui.label(RichText::new(ui.t("graph.empty.hint")).color(weak(ui)));
             ui.add_space(8.0);
-            if primary_button(ui, "Ouvrir un projet…").clicked() {
+            if primary_button(ui, &ui.t("graph.empty.open")).clicked() {
                 ctx.request(EditorRequest::PickOpenProject);
             }
         });
@@ -481,9 +487,9 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) {
     if scene_count == 0 {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("Ce projet n'a pas encore de scène").font(bold(16.0)));
+            ui.label(RichText::new(ui.t("graph.no_scene.title")).font(bold(16.0)));
             ui.add_space(8.0);
-            if primary_button(ui, "Créer la première scène").clicked() {
+            if primary_button(ui, &ui.t("graph.no_scene.create")).clicked() {
                 new_scene(ctx, None);
             }
         });
@@ -554,7 +560,13 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) {
             .collect();
         let selected = selected_set(ctx, &st.model);
         let diag_revision = ctx.state().diagnostics.revision;
-        let signature = hash_of(&[generation, revision, diag_revision, st.epoch]);
+        let signature = hash_of(&[
+            generation,
+            revision,
+            diag_revision,
+            st.epoch,
+            ctx.translator().generation(),
+        ]);
         let mut sel_hash: Vec<u64> = selected
             .iter()
             .map(|b| match b {
@@ -627,22 +639,34 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) -> Vec<Gra
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         if ui
-            .button(format!("{}  Recadrer", ph::CORNERS_OUT))
-            .on_hover_text("Cadrer tous les blocs (F)")
+            .button(format!(
+                "{}  {}",
+                ph::CORNERS_OUT,
+                ui.t("graph.toolbar.fit")
+            ))
+            .on_hover_text(ui.t("graph.toolbar.fit_tip"))
             .clicked()
         {
             shared.borrow_mut().view.fit_all();
         }
         if ui
-            .button(format!("{}  Réorganiser", ph::SPARKLE))
-            .on_hover_text("Replacer tous les blocs automatiquement")
+            .button(format!(
+                "{}  {}",
+                ph::SPARKLE,
+                ui.t("graph.toolbar.reorganize")
+            ))
+            .on_hover_text(ui.t("graph.toolbar.reorganize_tip"))
             .clicked()
         {
             reorganize(ctx, shared);
         }
         if ui
-            .button(format!("{}  Nouvelle scène", ph::FOLDER_PLUS))
-            .on_hover_text("Créer une scène (avec une étiquette et une fin)")
+            .button(format!(
+                "{}  {}",
+                ph::FOLDER_PLUS,
+                ui.t("graph.toolbar.new_scene")
+            ))
+            .on_hover_text(ui.t("graph.toolbar.new_scene_tip"))
             .clicked()
         {
             events.push(GraphEvent::NewScene((f32::NAN, f32::NAN)));
@@ -653,7 +677,11 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) -> Vec<Gra
             let focus = std::mem::take(&mut st.search_focus);
             let response = ui.add(
                 egui::TextEdit::singleline(&mut st.search)
-                    .hint_text(format!("{} Chercher un bloc", ph::MAGNIFYING_GLASS))
+                    .hint_text(format!(
+                        "{} {}",
+                        ph::MAGNIFYING_GLASS,
+                        ui.t("graph.search.hint")
+                    ))
                     .desired_width(190.0),
             );
             if focus {
@@ -675,9 +703,8 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &Shared) -> Vec<Gra
                 let count = matches.len();
                 ui.label(
                     RichText::new(match count {
-                        0 => "aucun résultat".to_owned(),
-                        1 => "1 résultat".to_owned(),
-                        n => format!("{n} résultats"),
+                        0 => ui.t("graph.search.none"),
+                        n => ui.tn("graph.search.results", n, &[]),
                     })
                     .color(weak(ui))
                     .size(12.0),
@@ -811,9 +838,16 @@ fn stats_overlay(ui: &mut Ui, shared: &Shared, canvas: egui::Rect) {
     let st = shared.borrow();
     let edges = st.model.edges().len();
     let orphans = st.model.unreachable.len();
-    let mut text = format!("{} blocs · {edges} liens", st.model.blocks.len());
+    let mut text = format!(
+        "{} · {}",
+        ui.tn("graph.stats.blocks", st.model.blocks.len(), &[]),
+        ui.tn("graph.stats.links", edges, &[])
+    );
     if orphans > 0 {
-        text.push_str(&format!(" · {orphans} orphelin(s)"));
+        text.push_str(&format!(
+            " · {}",
+            ui.tn("graph.stats.orphans", orphans, &[])
+        ));
     }
     egui::Area::new(egui::Id::new("orbit_graph_stats"))
         .order(egui::Order::Foreground)
@@ -844,41 +878,41 @@ fn confirm_dialog(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     });
     let title = title.unwrap_or_default();
     let mut choice = None;
-    egui::Window::new("Supprimer ?")
+    egui::Window::new(ui.t("graph.delete.title"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
             ui.set_max_width(380.0);
             let what = if plan.scene {
-                format!("la scène « {title} » et tout son contenu")
+                ui.tf("graph.delete.what_scene", &[("title", &title)])
             } else {
-                format!("le bloc « {title} »")
+                ui.tf("graph.delete.what_block", &[("title", &title)])
             };
-            ui.label(RichText::new(format!("Supprimer {what} ?")).font(bold(14.0)));
+            ui.label(
+                RichText::new(ui.tf("graph.delete.question", &[("what", &what)])).font(bold(14.0)),
+            );
             ui.add_space(4.0);
             if lines > 0 {
-                ui.label(format!("{lines} réplique(s) seront supprimée(s)."));
+                ui.label(ui.tn("graph.delete.lines", lines, &[]));
             }
             if !plan.incoming.is_empty() {
-                ui.label(format!(
-                    "{} lien(s) venant d'autres blocs seront coupés (sauts, options, conditions).",
-                    plan.incoming.len()
-                ));
+                ui.label(ui.tn("graph.delete.links", plan.incoming.len(), &[]));
             }
             ui.label(
-                RichText::new("Annulable avec Ctrl+Z.")
+                RichText::new(ui.t("graph.delete.undo_hint"))
                     .color(weak(ui))
                     .size(12.0),
             );
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                let delete = egui::Button::new(RichText::new("Supprimer").color(Color32::WHITE))
-                    .fill(danger(ui));
+                let delete =
+                    egui::Button::new(RichText::new(ui.t("common.delete")).color(Color32::WHITE))
+                        .fill(danger(ui));
                 if ui.add(delete).clicked() {
                     choice = Some(true);
                 }
-                if secondary_button(ui, "Annuler").clicked() {
+                if secondary_button(ui, &ui.t("common.cancel")).clicked() {
                     choice = Some(false);
                 }
             });
@@ -952,7 +986,7 @@ fn select_block(ctx: &mut EditorContext<'_>, model: &GraphModel, block: BlockId)
 fn new_scene(ctx: &mut EditorContext<'_>, at: Option<(f32, f32)>) {
     let Some(story) = ctx.story() else { return };
     let name = orbit_project::ops::unique_name(
-        "Nouvelle scène",
+        &ctx.t("graph.default.scene"),
         story.scenes.iter().map(|s| s.name.as_str()),
     );
     let Some(block) = ctx.ops_or_toast(|p| graph_ops::create_scene(p, &name)) else {
@@ -1006,7 +1040,10 @@ fn handle_with(ctx: &mut EditorContext<'_>, model: &GraphModel, event: GraphEven
             select_block(ctx, model, block);
             match model.block(block).and_then(|b| b.head_node()) {
                 Some(node) => ctx.play_from(node),
-                None => ctx.warn("Ce bloc est vide : rien à jouer."),
+                None => {
+                    let message = ctx.t("graph.warn.empty_block");
+                    ctx.warn(message);
+                }
             }
         }
         GraphEvent::Moved(block, pos) => ctx.state_mut().graph.set_position(block, pos),
@@ -1018,11 +1055,12 @@ fn handle_with(ctx: &mut EditorContext<'_>, model: &GraphModel, event: GraphEven
         GraphEvent::ConnectNew(slot, pos) => {
             let Some(story) = ctx.story() else { return };
             let name = orbit_project::ops::unique_name(
-                "Nouvelle scène",
+                &ctx.t("graph.default.scene"),
                 story.scenes.iter().map(|s| s.name.as_str()),
             );
+            let group = ctx.t("graph.undo.linked_scene");
             let result = ctx.ops(|p| {
-                p.group("Créer une scène liée", |p| {
+                p.group(&group, |p| {
                     let block = graph_ops::create_scene(p, &name)?;
                     graph_ops::set_slot_target(p, slot, block)?;
                     Ok(block)
@@ -1048,9 +1086,8 @@ fn handle_with(ctx: &mut EditorContext<'_>, model: &GraphModel, event: GraphEven
             let Some(scene) = scene_for_new_label(ctx) else {
                 return;
             };
-            if let Some(block) =
-                ctx.ops_or_toast(|p| graph_ops::create_label(p, scene, "Étiquette"))
-            {
+            let name = ctx.t("graph.default.label");
+            if let Some(block) = ctx.ops_or_toast(|p| graph_ops::create_label(p, scene, &name)) {
                 place_new(ctx, block, Some(pos));
                 if let Some(story) = ctx.story() {
                     let model = GraphModel::build(story);
@@ -1059,33 +1096,30 @@ fn handle_with(ctx: &mut EditorContext<'_>, model: &GraphModel, event: GraphEven
             }
         }
         GraphEvent::AddChoice(block) => {
-            let created = ctx.ops_or_toast(|p| {
-                graph_ops::add_choice(
-                    p,
-                    block,
-                    vec![
-                        (
-                            "Option A".into(),
-                            ChoiceTarget::NewScene("Branche A".into()),
-                        ),
-                        (
-                            "Option B".into(),
-                            ChoiceTarget::NewScene("Branche B".into()),
-                        ),
-                    ],
-                )
-            });
+            let options = vec![
+                (
+                    ctx.t("graph.default.option_a"),
+                    ChoiceTarget::NewScene(ctx.t("graph.default.branch_a")),
+                ),
+                (
+                    ctx.t("graph.default.option_b"),
+                    ChoiceTarget::NewScene(ctx.t("graph.default.branch_b")),
+                ),
+            ];
+            let created = ctx.ops_or_toast(|p| graph_ops::add_choice(p, block, options));
             if created.is_some() {
                 select_block(ctx, model, block);
             }
         }
         GraphEvent::AddCondition(block) => {
+            let (then_name, else_name) =
+                (ctx.t("graph.default.if_true"), ctx.t("graph.default.else"));
             let created = ctx.ops_or_toast(|p| {
                 graph_ops::add_condition(
                     p,
                     block,
-                    ChoiceTarget::NewScene("Si vrai".into()),
-                    Some(ChoiceTarget::NewScene("Sinon".into())),
+                    ChoiceTarget::NewScene(then_name),
+                    Some(ChoiceTarget::NewScene(else_name)),
                 )
             });
             if created.is_some() {
@@ -1100,13 +1134,12 @@ fn handle_with(ctx: &mut EditorContext<'_>, model: &GraphModel, event: GraphEven
         }
         GraphEvent::AddOption(slot) => {
             if let Some(node) = slot.node {
+                let (option, branch) = (
+                    ctx.t("graph.default.new_option"),
+                    ctx.t("graph.default.new_branch"),
+                );
                 ctx.ops_or_toast(|p| {
-                    graph_ops::add_option(
-                        p,
-                        node,
-                        "Nouvelle option",
-                        ChoiceTarget::NewScene("Nouvelle branche".into()),
-                    )
+                    graph_ops::add_option(p, node, &option, ChoiceTarget::NewScene(branch))
                 });
             }
         }
@@ -1174,6 +1207,6 @@ fn delete_now(ctx: &mut EditorContext<'_>, block: BlockId) {
 fn editor_error(e: orbit_editor_api::EditorError) -> ProjectError {
     match e {
         orbit_editor_api::EditorError::Project(p) => p,
-        other => ProjectError::Rejected(other.to_string()),
+        other => ProjectError::rejected(other.to_string()),
     }
 }

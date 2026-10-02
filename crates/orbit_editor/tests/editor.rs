@@ -58,7 +58,7 @@ fn demo_project(root: &Path) -> PathBuf {
 fn options(config: Option<&Path>) -> CoreOptions {
     CoreOptions {
         config_dir: config.map(Path::to_owned),
-        ..CoreOptions::default()
+        ..CoreOptions::with_language(orbit_editor_api::Lang::Fr)
     }
 }
 
@@ -428,7 +428,12 @@ fn opening_another_project_with_changes_asks_first() {
     let ctx = Context::default();
     let dir = TempDir::new("switch");
     let a = demo_project(dir.path());
-    let b = orbit_editor::storage::create_project(dir.path(), "Autre").unwrap();
+    let b = orbit_editor::storage::create_project(
+        dir.path(),
+        "Autre",
+        &orbit_editor::i18n::translator(orbit_editor_api::Lang::Fr),
+    )
+    .unwrap();
     let mut core = EditorCore::new(options(None), &ctx);
     core.open_project(&a);
     core.run_action_now("orbit.explorer.add_say", &ctx);

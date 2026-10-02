@@ -1,4 +1,4 @@
-//! Live validation, in French: the findings per node (inline display in the
+//! Live validation, in the editor language: the findings per node (inline display in the
 //! scene editor and the inspector) and the full list of problems (the
 //! Problems panel, the status bar badges).
 //!
@@ -14,7 +14,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use orbit_core::{NodeId, NodeKind, Story, ValidationError, ValidationWarning, validate};
-use orbit_editor_api::{Diagnostics, Level, Location, Problem, Waker};
+use orbit_editor_api::{Diagnostics, Level, Location, Problem, Translator, Waker};
 
 use crate::assets::AssetIssue;
 
@@ -23,57 +23,70 @@ pub const SYNC_NODE_LIMIT: usize = 1500;
 /// Quiet time before a big story is validated again.
 pub const DEBOUNCE: Duration = Duration::from_millis(80);
 
-fn label_of(story: &Story, id: NodeId) -> String {
+fn label_of(texts: &Translator, story: &Story, id: NodeId) -> String {
     match story.node(id).map(|n| &n.kind) {
-        Some(NodeKind::Label { name }) => format!("« {name} »"),
-        Some(_) => "un nœud qui n'est pas une étiquette".to_owned(),
-        None => "un nœud supprimé".to_owned(),
+        Some(NodeKind::Label { name }) => texts.format("problem.label_named", &[("name", name)]),
+        Some(_) => texts.get("problem.not_a_label"),
+        None => texts.get("problem.deleted_node"),
     }
 }
 
-fn character_of(story: &Story, id: orbit_core::CharacterId) -> String {
+fn character_of(texts: &Translator, story: &Story, id: orbit_core::CharacterId) -> String {
     story
         .character(id)
         .and_then(|c| story.text(c.name_id))
         .map_or_else(
-            || "un personnage supprimé".to_owned(),
-            |n| format!("« {n} »"),
+            || texts.get("problem.deleted_character"),
+            |n| texts.format("problem.character_named", &[("name", &n)]),
         )
 }
 
-/// Node an error is about, with its French message.
-pub fn describe_error(story: &Story, error: &ValidationError) -> (Option<NodeId>, String) {
+/// Node an error is about, with its message in the editor language. The
+/// wording is built here from the error type: `orbit_core` keeps its own
+/// (English, technical) `Display` for `orbit validate` and the MCP.
+pub fn describe_error(
+    texts: &Translator,
+    story: &Story,
+    error: &ValidationError,
+) -> (Option<NodeId>, String) {
     use ValidationError as E;
+    let t = |key: &str| texts.get(key);
     match error {
         E::UnknownTarget { from, target } => (
             Some(*from),
-            format!("Cible introuvable ({})", label_of(story, *target)),
+            texts.format(
+                "problem.unknown_target",
+                &[("target", &label_of(texts, story, *target))],
+            ),
         ),
         E::TargetNotLabel { from, target } => (
             Some(*from),
-            format!(
-                "La cible doit être une étiquette, pas {}",
-                label_of(story, *target)
+            texts.format(
+                "problem.target_not_label",
+                &[("target", &label_of(texts, story, *target))],
             ),
         ),
-        E::UnknownScene { node, .. } => (Some(*node), "Scène cible introuvable".to_owned()),
+        E::UnknownScene { node, .. } => (Some(*node), t("problem.unknown_scene")),
         E::LabelNotInScene { node, scene, .. } => (
             Some(*node),
-            format!(
-                "Cette étiquette n'appartient pas à la scène cible{}",
-                story
-                    .scene(*scene)
-                    .map_or(String::new(), |s| format!(" (« {} »)", s.name))
+            texts.format(
+                "problem.label_not_in_scene",
+                &[(
+                    "scene",
+                    &story.scene(*scene).map_or(String::new(), |s| {
+                        texts.format("problem.scene_suffix", &[("name", &s.name)])
+                    }),
+                )],
             ),
         ),
-        E::EmptyChoice(n) => (Some(*n), "Ce choix n'a aucune option".to_owned()),
-        E::UnknownString { node, .. } => (
-            *node,
-            "Texte introuvable dans la table des textes".to_owned(),
-        ),
+        E::EmptyChoice(n) => (Some(*n), t("problem.empty_choice")),
+        E::UnknownString { node, .. } => (*node, t("problem.unknown_string")),
         E::UnknownCharacter { node, character } => (
             Some(*node),
-            format!("Personnage inconnu ({})", character_of(story, *character)),
+            texts.format(
+                "problem.unknown_character",
+                &[("character", &character_of(texts, story, *character))],
+            ),
         ),
         E::UnknownExpression {
             node,
@@ -81,14 +94,15 @@ pub fn describe_error(story: &Story, error: &ValidationError) -> (Option<NodeId>
             expression,
         } => (
             Some(*node),
-            format!(
-                "{} n'a pas d'expression « {expression} »",
-                character_of(story, *character)
+            texts.format(
+                "problem.unknown_expression",
+                &[
+                    ("character", &character_of(texts, story, *character)),
+                    ("expression", expression),
+                ],
             ),
         ),
-        E::UnknownAsset { node, .. } => {
-            (*node, "Ressource introuvable dans le manifeste".to_owned())
-        }
+        E::UnknownAsset { node, .. } => (*node, t("problem.unknown_asset")),
         E::AssetKindMismatch {
             node,
             expected,
@@ -96,44 +110,59 @@ pub fn describe_error(story: &Story, error: &ValidationError) -> (Option<NodeId>
             ..
         } => (
             *node,
-            format!("La ressource est de type « {found} », « {expected} » attendu"),
+            texts.format(
+                "problem.asset_kind_mismatch",
+                &[("found", found), ("expected", expected)],
+            ),
         ),
-        E::UnknownPosition { node, name } => (Some(*node), format!("Position inconnue « {name} »")),
+        E::UnknownPosition { node, name } => (
+            Some(*node),
+            texts.format("problem.unknown_position", &[("name", name)]),
+        ),
         E::InvalidDuration { node, seconds } => (
             Some(*node),
-            format!("Durée invalide ({seconds}) : un nombre positif est attendu"),
+            texts.format("problem.invalid_duration", &[("seconds", seconds)]),
         ),
-        E::ExprType { node, message } => (Some(*node), format!("Expression : {message}")),
-        E::DuplicateNodeId(n) => (Some(*n), "Identifiant de nœud en double".to_owned()),
+        E::ExprType { node, message } => (
+            Some(*node),
+            texts.format("problem.expression", &[("message", message)]),
+        ),
+        E::DuplicateNodeId(n) => (Some(*n), t("problem.duplicate_node")),
         E::InvalidAssetPath { path, .. } => (
             None,
-            format!("Chemin de ressource invalide : « {path} » (relatif, sans « .. » ni « \\ »)"),
+            texts.format("problem.invalid_asset_path", &[("path", path)]),
         ),
-        E::DuplicateAssetId(_) => (None, "Identifiant de ressource en double".to_owned()),
+        E::DuplicateAssetId(_) => (None, t("problem.duplicate_asset")),
         E::DuplicateCharacterId(c) => (
             None,
-            format!(
-                "Identifiant de personnage en double ({})",
-                character_of(story, *c)
+            texts.format(
+                "problem.duplicate_character",
+                &[("character", &character_of(texts, story, *c))],
             ),
         ),
         E::DuplicateExpression { character, name } => (
             None,
-            format!(
-                "{} définit deux fois l'expression « {name} »",
-                character_of(story, *character)
+            texts.format(
+                "problem.duplicate_expression",
+                &[
+                    ("character", &character_of(texts, story, *character)),
+                    ("name", name),
+                ],
             ),
         ),
-        E::DuplicateVariable(name) => (None, format!("Variable « {name} » déclarée deux fois")),
+        E::DuplicateVariable(name) => (
+            None,
+            texts.format("problem.duplicate_variable", &[("name", name)]),
+        ),
         E::DuplicatePosition(name) => (
             None,
-            format!("Nom de position en double ou réservé : « {name} »"),
+            texts.format("problem.duplicate_position", &[("name", name)]),
         ),
         E::InvalidPositionCoords { name } => (
             None,
-            format!("La position « {name} » sort de l'écran (0 à 1 attendu)"),
+            texts.format("problem.invalid_position_coords", &[("name", name)]),
         ),
-        E::DuplicateSceneId(_) => (None, "Identifiant de scène en double".to_owned()),
+        E::DuplicateSceneId(_) => (None, t("problem.duplicate_scene")),
         other => (None, other.to_string()),
     }
 }
@@ -164,26 +193,20 @@ fn warning_location(warning: &ValidationWarning) -> Option<Location> {
     }
 }
 
-fn describe_warning(warning: &ValidationWarning) -> (Option<NodeId>, String) {
+pub fn describe_warning(
+    texts: &Translator,
+    warning: &ValidationWarning,
+) -> (Option<NodeId>, String) {
     use ValidationWarning as W;
     match warning {
         W::UndefinedVariable { node, var } => (
             Some(*node),
-            format!("La variable « {var} » n'est ni déclarée ni assignée"),
+            texts.format("problem.undefined_variable", &[("var", var)]),
         ),
-        W::UnreachableNode(n) => (Some(*n), "Ce nœud n'est jamais atteint".to_owned()),
-        W::PossibleInfiniteLoop(n) => (
-            Some(*n),
-            "Boucle possible sans réplique, choix ni attente".to_owned(),
-        ),
-        W::SceneEndsGame { node, .. } => (
-            *node,
-            "La partie se termine ici (la scène n'a ni saut, ni fin, ni retour)".to_owned(),
-        ),
-        W::AllOptionsConditional(n) => (
-            Some(*n),
-            "Toutes les options ont une condition : le joueur peut être bloqué".to_owned(),
-        ),
+        W::UnreachableNode(n) => (Some(*n), texts.get("problem.unreachable_node")),
+        W::PossibleInfiniteLoop(n) => (Some(*n), texts.get("problem.infinite_loop")),
+        W::SceneEndsGame { node, .. } => (*node, texts.get("problem.scene_ends_game")),
+        W::AllOptionsConditional(n) => (Some(*n), texts.get("problem.all_options_conditional")),
     }
 }
 
@@ -199,7 +222,7 @@ pub struct Extras {
 
 /// Runs the story validation and groups the findings by node. `extras` adds
 /// the findings that need the registry or the file system.
-pub fn compute(story: &Story, revision: u64, extras: &Extras) -> Diagnostics {
+pub fn compute(texts: &Translator, story: &Story, revision: u64, extras: &Extras) -> Diagnostics {
     let report = validate(story);
     let mut out = Diagnostics {
         revision,
@@ -221,11 +244,17 @@ pub fn compute(story: &Story, revision: u64, extras: &Extras) -> Diagnostics {
         });
     };
     for e in &report.errors {
-        let (node, message) = describe_error(story, e);
+        let (node, message) = describe_error(texts, story, e);
         push(&mut out, Level::Error, node, error_location(e), message);
     }
     for (node, message) in &extras.custom {
-        push(&mut out, Level::Error, Some(*node), None, message.clone());
+        push(
+            &mut out,
+            Level::Error,
+            Some(*node),
+            None,
+            texts.get(message),
+        );
     }
     for issue in &extras.asset_issues {
         let level = if issue.is_error() {
@@ -238,11 +267,11 @@ pub fn compute(story: &Story, revision: u64, extras: &Extras) -> Diagnostics {
             level,
             None,
             Some(Location::Asset(issue.asset())),
-            issue.message(),
+            issue.message(texts),
         );
     }
     for w in &report.warnings {
-        let (node, message) = describe_warning(w);
+        let (node, message) = describe_warning(texts, w);
         push(&mut out, Level::Warn, node, warning_location(w), message);
     }
     for (node, plugin) in &extras.missing_plugins {
@@ -251,7 +280,7 @@ pub fn compute(story: &Story, revision: u64, extras: &Extras) -> Diagnostics {
             Level::Warn,
             Some(*node),
             None,
-            format!("Plugin absent : « {plugin} » ; ce nœud est conservé en lecture seule"),
+            texts.format("problem.missing_plugin", &[("plugin", plugin)]),
         );
     }
     sort_problems(story, &mut out.problems);
@@ -288,6 +317,7 @@ struct Job {
     key: (u64, u64),
     story: Story,
     extras: Extras,
+    texts: Translator,
 }
 
 struct Done {
@@ -335,7 +365,7 @@ impl Live {
                         job = newer;
                     }
                     let started = Instant::now();
-                    let diagnostics = compute(&job.story, job.key.1, &job.extras);
+                    let diagnostics = compute(&job.texts, &job.story, job.key.1, &job.extras);
                     let done = Done {
                         key: job.key,
                         diagnostics,
@@ -402,6 +432,7 @@ impl Live {
         key: (u64, u64),
         story: &Story,
         root: &std::path::Path,
+        texts: &Translator,
         registry_extras: impl FnOnce(&Story) -> Extras,
     ) -> Option<Diagnostics> {
         // A finished worker run.
@@ -444,7 +475,7 @@ impl Live {
             let started = Instant::now();
             let mut extras = registry_extras(story);
             extras.asset_issues.clone_from(&self.asset_issues);
-            let out = compute(story, key.1, &extras);
+            let out = compute(texts, story, key.1, &extras);
             self.published = Some(key);
             self.due = None;
             self.first_edit = None;
@@ -474,6 +505,7 @@ impl Live {
                     key,
                     story: story.clone(),
                     extras,
+                    texts: texts.clone(),
                 };
                 self.inflight = Some(key);
                 if let Some(tx) = &self.jobs
@@ -540,7 +572,12 @@ mod tests {
     #[test]
     fn problems_carry_a_location_and_errors_come_first() {
         let story = story_with_error();
-        let diag = compute(&story, 1, &Extras::default());
+        let diag = compute(
+            &crate::i18n::translator(orbit_editor_api::Lang::Fr),
+            &story,
+            1,
+            &Extras::default(),
+        );
         assert!(diag.error_count() >= 1);
         let first = &diag.problems[0];
         assert_eq!(first.level, Level::Error);
@@ -559,15 +596,21 @@ mod tests {
         let story = story_with_error();
         let root = std::env::temp_dir();
         let now = Instant::now();
-        let first = live.update(now, (1, 1), &story, &root, |_| Extras::default());
+        let first = live.update(now, (1, 1), &story, &root, &Translator::default(), |_| {
+            Extras::default()
+        });
         assert!(first.is_some_and(|d| d.error_count() > 0));
         assert!(
-            live.update(now, (1, 1), &story, &root, |_| Extras::default())
-                .is_none()
+            live.update(now, (1, 1), &story, &root, &Translator::default(), |_| {
+                Extras::default()
+            })
+            .is_none()
         );
         assert!(
-            live.update(now, (1, 2), &story, &root, |_| Extras::default())
-                .is_some()
+            live.update(now, (1, 2), &story, &root, &Translator::default(), |_| {
+                Extras::default()
+            })
+            .is_some()
         );
         assert!(!live.busy());
     }

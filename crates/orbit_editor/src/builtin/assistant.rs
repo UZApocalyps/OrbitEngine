@@ -15,7 +15,7 @@ use egui::{Align, Align2, Color32, FontId, Key, Layout, Modifiers, RichText, Sen
 use orbit_editor_api::ai::{AiCommand, AiLogEntry, AiServerStatus};
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Location,
-    PanelDef, Plugin, PluginManifest, icons,
+    PanelDef, Plugin, PluginManifest, Translator, UiText, icons,
 };
 
 use super::ids;
@@ -41,20 +41,20 @@ impl EditorPlugin for AssistantPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
         reg.panel(PanelDef::new(
             "assistant",
-            "Assistant IA",
+            "assistant.title",
             icons::ROBOT,
             DockSlot::Bottom,
             panel,
         ));
         // Opens (or brings back, even when the saved layout lacks it) the panel.
         reg.action(
-            ActionDef::new("open", "Assistant IA (MCP)…", |c| {
+            ActionDef::new("open", "assistant.open", |c| {
                 c.request(EditorRequest::ShowPanel(
                     super::panels::ASSISTANT.to_owned(),
                 ));
             })
             .icon(icons::ROBOT)
-            .category("Outils")
+            .category("category.tools")
             .shortcut(
                 Modifiers {
                     command: true,
@@ -76,28 +76,23 @@ fn masked(token: &str) -> String {
     format!("{}{}", &token[..6], "•".repeat(14))
 }
 
-fn age(ms_ago: u64) -> String {
+fn age(texts: &Translator, ms_ago: u64) -> String {
     let s = ms_ago / 1000;
     match s {
-        0..=1 => "à l'instant".to_owned(),
-        2..=59 => format!("il y a {s} s"),
-        60..=3599 => format!("il y a {} min", s / 60),
-        _ => format!("il y a {} h", s / 3600),
+        0..=1 => texts.t("assistant.age.now"),
+        2..=59 => texts.tf("assistant.age.seconds", &[("n", &s)]),
+        60..=3599 => texts.tf("assistant.age.minutes", &[("n", &(s / 60))]),
+        _ => texts.tf("assistant.age.hours", &[("n", &(s / 3600))]),
     }
 }
 
-fn status_line(status: &AiServerStatus) -> (Color32, String) {
+fn status_line(texts: &Translator, status: &AiServerStatus) -> (Color32, String) {
     match status {
-        AiServerStatus::Stopped => (Color32::from_gray(140), "Arrêté".to_owned()),
-        AiServerStatus::Listening => (success(), "À l'écoute".to_owned()),
+        AiServerStatus::Stopped => (Color32::from_gray(140), texts.t("assistant.status.stopped")),
+        AiServerStatus::Listening => (success(), texts.t("assistant.status.listening")),
         AiServerStatus::Connected { clients } => (
             success(),
-            format!(
-                "{} client{} connecté{}",
-                clients,
-                if *clients > 1 { "s" } else { "" },
-                if *clients > 1 { "s" } else { "" },
-            ),
+            texts.tn("assistant.status.clients", *clients, &[]),
         ),
         AiServerStatus::Failed(message) => (Color32::from_rgb(220, 90, 90), message.clone()),
     }
@@ -142,7 +137,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
 
 fn server_card(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let running = ctx.state().ai.status.is_running();
-    let (dot, text) = status_line(&ctx.state().ai.status);
+    let (dot, text) = status_line(&ctx.translator(), &ctx.state().ai.status);
     let url = ctx.state().ai.url.clone();
     let editing = ctx.state().ai.edited_within(ACTIVITY_SECONDS);
     let lock_warning = ctx.state().ai.lock_warning.clone();
@@ -154,17 +149,22 @@ fn server_card(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             if editing {
                 ui.label(RichText::new("·").color(faint(ui)));
                 ui.label(
-                    RichText::new(format!("{} L'IA modifie le projet", icons::SPARKLE))
+                    RichText::new(format!("{} {}", icons::SPARKLE, ui.t("assistant.editing")))
                         .color(accent(ui)),
                 );
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if running {
-                    if secondary_button(ui, &format!("{}  Arrêter", icons::STOP)).clicked() {
+                    if secondary_button(ui, &format!("{}  {}", icons::STOP, ui.t("assistant.stop")))
+                        .clicked()
+                    {
                         ctx.state_mut().ai.command(AiCommand::Stop);
                     }
-                } else if primary_button(ui, &format!("{}  Activer le serveur MCP", icons::PLAY))
-                    .clicked()
+                } else if primary_button(
+                    ui,
+                    &format!("{}  {}", icons::PLAY, ui.t("assistant.start")),
+                )
+                .clicked()
                 {
                     ctx.state_mut().ai.command(AiCommand::Start);
                 }
@@ -182,12 +182,9 @@ fn server_card(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         if !running {
             ui.add_space(6.0);
             ui.label(
-                RichText::new(
-                    "Désactivé par défaut. Une fois activé, l'éditeur écoute uniquement sur \
-                     127.0.0.1 et refuse toute requête sans le jeton ci-dessus.",
-                )
-                .size(12.0)
-                .color(weak(ui)),
+                RichText::new(ui.t("assistant.off_note"))
+                    .size(12.0)
+                    .color(weak(ui)),
             );
         }
     });
@@ -203,7 +200,7 @@ fn settings_grid(ui: &mut Ui, ctx: &mut EditorContext<'_>, running: bool) {
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
-            ui.label(RichText::new("Port").color(weak(ui)));
+            ui.label(RichText::new(ui.t("assistant.port")).color(weak(ui)));
             ui.horizontal(|ui| {
                 ui.add_enabled(
                     !running,
@@ -211,11 +208,11 @@ fn settings_grid(ui: &mut Ui, ctx: &mut EditorContext<'_>, running: bool) {
                         .range(1024..=65535)
                         .speed(1.0),
                 )
-                .on_hover_text("Port TCP sur 127.0.0.1 (modifiable quand le serveur est arrêté).");
+                .on_hover_text(ui.t("assistant.port_hint"));
             });
             ui.end_row();
 
-            ui.label(RichText::new("Jeton").color(weak(ui)));
+            ui.label(RichText::new(ui.t("assistant.token")).color(weak(ui)));
             ui.horizontal(|ui| {
                 let shown = if show_token {
                     token.clone()
@@ -230,21 +227,22 @@ fn settings_grid(ui: &mut Ui, ctx: &mut EditorContext<'_>, running: bool) {
                     } else {
                         icons::EYE
                     },
-                    "Afficher / masquer le jeton",
+                    &ui.t("assistant.token_toggle"),
                 )
                 .clicked()
                 {
                     show_token = !show_token;
                 }
-                if icon_button(ui, icons::COPY, "Copier le jeton").clicked() {
+                if icon_button(ui, icons::COPY, &ui.t("assistant.token_copy")).clicked() {
                     ui.ctx().copy_text(token.clone());
+                    let toast = ui.t("assistant.token_copied");
                     ctx.state_mut()
-                        .push_toast(orbit_editor_api::Level::Info, "Jeton copié.");
+                        .push_toast(orbit_editor_api::Level::Info, toast);
                 }
                 if icon_button(
                     ui,
                     icons::ARROWS_CLOCKWISE,
-                    "Générer un nouveau jeton (l'ancien cesse de fonctionner)",
+                    &ui.t("assistant.token_regenerate"),
                 )
                 .clicked()
                 {
@@ -253,28 +251,31 @@ fn settings_grid(ui: &mut Ui, ctx: &mut EditorContext<'_>, running: bool) {
             });
             ui.end_row();
 
-            ui.label(RichText::new("Configuration").color(weak(ui)));
+            ui.label(RichText::new(ui.t("assistant.config")).color(weak(ui)));
             ui.horizontal_wrapped(|ui| {
                 let port_now = ctx.state().ai.port;
-                if secondary_button(ui, &format!("{}  Commande Claude Code", icons::COPY))
-                    .on_hover_text(
-                        "claude mcp add --transport http … (avec l'en-tête d'autorisation)",
-                    )
-                    .clicked()
+                if secondary_button(
+                    ui,
+                    &format!("{}  {}", icons::COPY, ui.t("assistant.claude_command")),
+                )
+                .on_hover_text(ui.t("assistant.claude_command_hint"))
+                .clicked()
                 {
                     let text = ctx.state().ai.claude_command(port_now);
                     ui.ctx().copy_text(text);
+                    let toast = ui.t("assistant.command_copied");
                     ctx.state_mut()
-                        .push_toast(orbit_editor_api::Level::Info, "Commande copiée.");
+                        .push_toast(orbit_editor_api::Level::Info, toast);
                 }
                 if secondary_button(ui, &format!("{}  .mcp.json", icons::COPY))
-                    .on_hover_text("Bloc à coller dans le .mcp.json du dépôt de l'IA")
+                    .on_hover_text(ui.t("assistant.mcp_json_hint"))
                     .clicked()
                 {
                     let text = ctx.state().ai.mcp_json(port_now);
                     ui.ctx().copy_text(text);
+                    let toast = ui.t("assistant.mcp_json_copied");
                     ctx.state_mut()
-                        .push_toast(orbit_editor_api::Level::Info, ".mcp.json copié.");
+                        .push_toast(orbit_editor_api::Level::Info, toast);
                 }
             });
             ui.end_row();
@@ -294,26 +295,27 @@ fn journal(ui: &mut Ui, ctx: &mut EditorContext<'_>, fill: bool) {
     ui.add_space(6.0);
     let can_undo = ctx.state().ai.can_undo_last;
     let count = ctx.state().ai.log.len();
-    section_title(ui, &format!("Journal de l'IA ({count})"));
+    section_title(ui, &ui.tf("assistant.journal", &[("count", &count)]));
     ui.horizontal(|ui| {
         let undo = ui
             .add_enabled(
                 can_undo,
                 egui::Button::new(format!(
-                    "{}  Annuler la dernière action de l'IA",
-                    icons::ARROW_COUNTER_CLOCKWISE
+                    "{}  {}",
+                    icons::ARROW_COUNTER_CLOCKWISE,
+                    ui.t("assistant.undo_last")
                 ))
                 .min_size(vec2(0.0, 26.0)),
             )
-            .on_hover_text(if can_undo {
-                "Annule l'entrée d'historique créée par le dernier appel de l'IA."
+            .on_hover_text(ui.t(if can_undo {
+                "assistant.undo_hint"
             } else {
-                "Disponible tant que la dernière modification de l'historique est celle de l'IA."
-            });
+                "assistant.undo_hint_off"
+            }));
         if undo.clicked() {
             ctx.state_mut().ai.command(AiCommand::UndoLast);
         }
-        if icon_button(ui, icons::TRASH, "Vider le journal").clicked() {
+        if icon_button(ui, icons::TRASH, &ui.t("assistant.clear_log")).clicked() {
             ctx.state_mut().ai.command(AiCommand::ClearLog);
         }
     });
@@ -323,12 +325,13 @@ fn journal(ui: &mut Ui, ctx: &mut EditorContext<'_>, fill: bool) {
         ui.add_space(14.0);
         ui.vertical_centered(|ui| {
             ui.label(RichText::new(icons::ROBOT).size(26.0).color(faint(ui)));
-            ui.label(RichText::new("Les actions de l'IA apparaîtront ici.").color(weak(ui)));
+            ui.label(RichText::new(ui.t("assistant.log_empty")).color(weak(ui)));
         });
         return;
     }
 
     let now = orbit_platform::unix_time_ms();
+    let texts = ui.texts();
     // Newest first.
     let entries: Vec<AiLogEntry> = ctx.state().ai.log.iter().rev().cloned().collect();
     let mut to_reveal: Option<Location> = None;
@@ -370,9 +373,13 @@ fn journal(ui: &mut Ui, ctx: &mut EditorContext<'_>, fill: bool) {
             Align2::LEFT_CENTER,
             format!(
                 "{} · {} ms{}",
-                age(now.saturating_sub(entry.time_ms)),
+                age(&texts, now.saturating_sub(entry.time_ms)),
                 entry.duration_ms,
-                if entry.undoable { " · annulable" } else { "" }
+                if entry.undoable {
+                    format!(" · {}", texts.t("assistant.undoable"))
+                } else {
+                    String::new()
+                }
             ),
             FontId::proportional(11.5),
             faint(ui),
@@ -407,19 +414,15 @@ fn journal(ui: &mut Ui, ctx: &mut EditorContext<'_>, fill: bool) {
                 button.center(),
                 Align2::CENTER_CENTER,
                 format!(
-                    "{}  révéler{}",
+                    "{}  {}",
                     icons::CURSOR_CLICK,
-                    if entry.touched.len() > 1 {
-                        format!(" ({})", entry.touched.len())
-                    } else {
-                        String::new()
-                    }
+                    texts.tn("assistant.reveal", entry.touched.len(), &[])
                 ),
                 FontId::proportional(12.0),
                 accent(ui),
             );
             if click
-                .on_hover_text("Sélectionner le nœud touché dans l'éditeur")
+                .on_hover_text(texts.t("assistant.reveal_hint"))
                 .clicked()
             {
                 to_reveal = Some(Location::Node(*first));

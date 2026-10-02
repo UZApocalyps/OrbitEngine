@@ -45,8 +45,13 @@ impl Drop for TempDir {
 fn new_project(tag: &str) -> (EditorCore, Context, TempDir, PathBuf) {
     let dir = TempDir::new(tag);
     let ctx = Context::default();
-    let mut core = EditorCore::new(CoreOptions::default(), &ctx);
-    let root = orbit_editor::storage::create_project(dir.path(), "Projet").unwrap();
+    let mut core = EditorCore::new(CoreOptions::with_language(orbit_editor_api::Lang::Fr), &ctx);
+    let root = orbit_editor::storage::create_project(
+        dir.path(),
+        "Projet",
+        &orbit_editor::i18n::translator(orbit_editor_api::Lang::Fr),
+    )
+    .unwrap();
     core.open_project(&root);
     assert!(core.has_project());
     core.run_action_now("orbit.core.views.show.orbit.graph.graph", &ctx);
@@ -481,8 +486,13 @@ fn positions_persist_in_the_layout_sidecar_and_reload() {
 fn a_200_block_graph_draws_and_every_block_has_a_position() {
     let dir = TempDir::new("big");
     let ctx = Context::default();
-    let mut core = EditorCore::new(CoreOptions::default(), &ctx);
-    let root = orbit_editor::storage::create_project(dir.path(), "Gros").unwrap();
+    let mut core = EditorCore::new(CoreOptions::with_language(orbit_editor_api::Lang::Fr), &ctx);
+    let root = orbit_editor::storage::create_project(
+        dir.path(),
+        "Gros",
+        &orbit_editor::i18n::translator(orbit_editor_api::Lang::Fr),
+    )
+    .unwrap();
     let big = generate_graph_story(225);
     orbit_project::save_story(
         &orbit_editor::storage::FsStorage::new(&root),

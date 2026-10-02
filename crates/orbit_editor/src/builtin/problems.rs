@@ -26,13 +26,13 @@ impl EditorPlugin for ProblemsPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
         reg.panel(PanelDef::new(
             "problems",
-            "Problèmes",
+            "problems.title",
             icons::WARNING_CIRCLE,
             DockSlot::Bottom,
             panel,
         ));
         reg.action(
-            ActionDef::new("next", "Aller au problème suivant", |c| {
+            ActionDef::new("next", "problems.next", |c| {
                 let selected = c.selection();
                 let problems = c.state().diagnostics.problems.clone();
                 let current = problems.iter().position(|p| {
@@ -53,7 +53,7 @@ impl EditorPlugin for ProblemsPlugin {
                 }
             })
             .icon(icons::ARROW_FAT_LINE_DOWN)
-            .category("Édition")
+            .category("category.edit")
             .shortcut(egui::Modifiers::NONE, egui::Key::F8)
             .menu("edit", 400)
             .enabled(|c| !c.state().diagnostics.problems.is_empty()),
@@ -65,7 +65,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     if !ctx.has_project() {
         ui.add_space(14.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("Aucun projet ouvert").color(weak(ui)));
+            ui.label(egui::RichText::new(ctx.t("problems.no_project")).color(weak(ui)));
         });
         return;
     }
@@ -78,11 +78,19 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     ui.horizontal(|ui| {
         ui.toggle_value(
             &mut filter.0,
-            format!("{}  {errors} erreur(s)", icons::WARNING_CIRCLE),
+            format!(
+                "{}  {}",
+                icons::WARNING_CIRCLE,
+                ctx.tn("problems.errors", errors, &[])
+            ),
         );
         ui.toggle_value(
             &mut filter.1,
-            format!("{}  {warnings} avertissement(s)", icons::WARNING),
+            format!(
+                "{}  {}",
+                icons::WARNING,
+                ctx.tn("problems.warnings", warnings, &[])
+            ),
         );
     });
     ui.data_mut(|d| d.insert_temp(id, filter));
@@ -104,9 +112,9 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         ui.add_space(14.0);
         ui.vertical_centered(|ui| {
             let (glyph, text) = if errors + warnings == 0 {
-                (icons::CHECK_CIRCLE, "Aucun problème détecté.")
+                (icons::CHECK_CIRCLE, ctx.t("problems.none"))
             } else {
-                (icons::FUNNEL, "Aucun problème dans ce filtre.")
+                (icons::FUNNEL, ctx.t("problems.none_filtered"))
             };
             ui.label(
                 egui::RichText::new(glyph)
@@ -126,6 +134,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                 .unwrap_or_default()
         })
         .collect();
+    let click_hint = ctx.t("problems.click_hint");
     let mut clicked: Option<Location> = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -170,8 +179,8 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                 );
                 if problem.location.is_some() {
                     let response = response.on_hover_text(format!(
-                        "{}\n{}\nCliquez pour afficher l'élément.",
-                        problem.message, location
+                        "{}\n{}\n{}",
+                        problem.message, location, click_hint
                     ));
                     if response.clicked() {
                         clicked = problem.location.clone();

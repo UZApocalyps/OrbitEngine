@@ -8,7 +8,8 @@ use egui::{
 use egui_dock::DockArea;
 use orbit_editor_api::ai::AiServerStatus;
 use orbit_editor_api::{
-    EditorContext, EditorRegistry, EditorRequest, Level, Location, ThemeMode, icons, shortcut_text,
+    EditorContext, EditorRegistry, EditorRequest, Level, Location, RegisteredAction, ThemeMode,
+    Translator, UiText, icons, shortcut_text,
 };
 
 use crate::core::{Dialog, EditorCore, NewProjectForm, Pending, UnsavedChoice};
@@ -243,30 +244,44 @@ fn menu_bar(
         egui::MenuBar::new().ui(ui, |ui| {
             let registry = ectx.registry();
             for menu in registry.menus() {
-                ui.menu_button(&menu.label, |ui| {
+                ui.menu_button(ectx.t(&menu.label), |ui| {
                     ui.set_min_width(260.0);
                     let mut last_group: Option<i32> = None;
-                    for action in registry.menu_actions(&menu.id) {
+                    let actions = registry.menu_actions(&menu.id);
+                    let mut placed: Vec<&str> = Vec::new();
+                    for action in &actions {
                         let order = action.def.menu.as_ref().map_or(0, |m| m.order);
                         let group = order.div_euclid(100);
+                        if let Some(submenu) = action.def.menu_group.as_deref() {
+                            if placed.contains(&submenu) {
+                                continue;
+                            }
+                            placed.push(submenu);
+                        }
                         if last_group.is_some_and(|g| g != group) {
                             ui.separator();
                         }
                         last_group = Some(group);
-                        let label = action.label(ectx);
-                        let text = if action.def.icon.is_empty() {
-                            format!("      {label}")
-                        } else {
-                            format!("{}   {label}", action.def.icon)
-                        };
-                        let mut button = egui::Button::new(text);
-                        if let Some(shortcut) = action.shortcuts().next() {
-                            button = button.shortcut_text(shortcut_text(shortcut));
-                        }
-                        let enabled = (action.def.enabled)(ectx);
-                        if ui.add_enabled(enabled, button).clicked() {
-                            clicked.push(action.def.id.clone());
-                            ui.close();
+                        match action.def.menu_group.as_deref() {
+                            Some(submenu) => {
+                                ui.menu_button(ectx.t(submenu), |ui| {
+                                    for item in actions
+                                        .iter()
+                                        .filter(|a| a.def.menu_group.as_deref() == Some(submenu))
+                                    {
+                                        if menu_item(ui, ectx, item) {
+                                            clicked.push(item.def.id.clone());
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                            }
+                            None => {
+                                if menu_item(ui, ectx, action) {
+                                    clicked.push(action.def.id.clone());
+                                    ui.close();
+                                }
+                            }
                         }
                     }
                 });
@@ -275,8 +290,9 @@ fn menu_bar(
             // Right side: project and a palette hint.
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let hint = format!(
-                    "{}  Rechercher une commande   Ctrl+K",
-                    icons::MAGNIFYING_GLASS
+                    "{}  {}   Ctrl+K",
+                    icons::MAGNIFYING_GLASS,
+                    ectx.t("palette.search_hint")
                 );
                 let pill = egui::Button::new(RichText::new(hint).small().color(theme.text_faint()))
                     .fill(theme.bg())
@@ -304,6 +320,28 @@ fn menu_bar(
     clicked
 }
 
+/// One entry of a menu; `true` when clicked.
+fn menu_item(ui: &mut Ui, ectx: &EditorContext<'_>, action: &RegisteredAction) -> bool {
+    let label = match &action.def.menu_label {
+        Some(text) => ectx.t(text),
+        None => action.label(ectx),
+    };
+    let checked = action.def.checked.as_ref().is_some_and(|f| f(ectx));
+    let text = if checked {
+        format!("{}   {label}", icons::CHECK)
+    } else if action.def.icon.is_empty() || action.def.checked.is_some() {
+        format!("      {label}")
+    } else {
+        format!("{}   {label}", action.def.icon)
+    };
+    let mut button = egui::Button::new(text);
+    if let Some(shortcut) = action.shortcuts().next() {
+        button = button.shortcut_text(shortcut_text(&ectx.translator(), shortcut));
+    }
+    let enabled = (action.def.enabled)(ectx);
+    ui.add_enabled(enabled, button).clicked()
+}
+
 // -------------------------------------------------------------- status bar
 
 fn status_bar(
@@ -328,10 +366,10 @@ fn status_bar(
                             (
                                 icons::DOT_OUTLINE,
                                 theme.warning(),
-                                "modifications non enregistrées",
+                                ectx.t("status.unsaved"),
                             )
                         } else {
-                            (icons::CHECK_CIRCLE, theme.success(), "enregistré")
+                            (icons::CHECK_CIRCLE, theme.success(), ectx.t("status.saved"))
                         };
                         ui.label(RichText::new(icon).color(color));
                         ui.label(RichText::new(text).small().color(color));
@@ -346,7 +384,7 @@ fn status_bar(
                     }
                     None => {
                         ui.label(
-                            RichText::new("Aucun projet ouvert")
+                            RichText::new(ectx.t("status.no_project"))
                                 .small()
                                 .color(theme.text_faint()),
                         );
@@ -363,21 +401,17 @@ fn status_bar(
                     if frame_counter {
                         let frames = ectx.state().debug_frames.unwrap_or(0);
                         ui.label(
-                            RichText::new(format!("frames : {frames}"))
+                            RichText::new(ectx.tf("status.frames", &[("count", &frames)]))
                                 .small()
                                 .color(theme.text_faint()),
                         );
                         ui.separator();
                     }
                     let mode = match ectx.state().theme {
-                        ThemeMode::Dark => "sombre",
-                        ThemeMode::Light => "clair",
+                        ThemeMode::Dark => ectx.t("status.theme_dark"),
+                        ThemeMode::Light => ectx.t("status.theme_light"),
                     };
-                    ui.label(
-                        RichText::new(format!("thème {mode}"))
-                            .small()
-                            .color(theme.text_faint()),
-                    );
+                    ui.label(RichText::new(mode).small().color(theme.text_faint()));
                     // The live MCP: an always-visible robot (grey when the server
                     // is off, green when it listens, accent while the AI edits);
                     // a click opens the "Assistant IA" panel.
@@ -385,40 +419,38 @@ fn status_bar(
                     let ai = &ectx.state().ai;
                     let editing = ai.edited_within(2.5);
                     let (color, tip) = match &ai.status {
-                        AiServerStatus::Stopped => (
-                            theme.text_faint(),
-                            "Assistant IA : serveur MCP arrêté".to_owned(),
-                        ),
-                        AiServerStatus::Listening => (
-                            theme.success(),
-                            "Assistant IA : serveur MCP à l'écoute".to_owned(),
-                        ),
-                        AiServerStatus::Connected { clients } => (
-                            theme.success(),
-                            format!("Assistant IA : {clients} client(s) connecté(s)"),
-                        ),
+                        AiServerStatus::Stopped => {
+                            (theme.text_faint(), ectx.t("status.ai_stopped"))
+                        }
+                        AiServerStatus::Listening => {
+                            (theme.success(), ectx.t("status.ai_listening"))
+                        }
+                        AiServerStatus::Connected { clients } => {
+                            (theme.success(), ectx.tn("status.ai_clients", *clients, &[]))
+                        }
                         AiServerStatus::Failed(e) => {
-                            (theme.danger(), format!("Assistant IA : échec ({e})"))
+                            (theme.danger(), ectx.tf("status.ai_failed", &[("error", e)]))
                         }
                     };
                     let (color, tip) = if editing && ai.status.is_running() {
-                        (
-                            theme.accent(),
-                            "Assistant IA : modification en cours".to_owned(),
-                        )
+                        (theme.accent(), ectx.t("status.ai_editing"))
                     } else {
                         (color, tip)
                     };
                     let response = ui
                         .add(
                             egui::Button::new(
-                                RichText::new(format!("{} IA", icons::ROBOT))
-                                    .small()
-                                    .color(color),
+                                RichText::new(format!(
+                                    "{} {}",
+                                    icons::ROBOT,
+                                    ectx.t("status.ai_label")
+                                ))
+                                .small()
+                                .color(color),
                             )
                             .frame(false),
                         )
-                        .on_hover_text(format!("{tip}\nCliquer pour ouvrir le panneau"));
+                        .on_hover_text(format!("{tip}\n{}", ectx.t("status.ai_click")));
                     if response.clicked() {
                         *open_assistant = true;
                     }
@@ -437,14 +469,14 @@ fn problem_badges(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme) -> bool 
     let diagnostics = &ectx.state().diagnostics;
     let (errors, warnings) = (diagnostics.error_count(), diagnostics.warning_count());
     let mut clicked = false;
-    let badge = |ui: &mut Ui, icon: &str, n: usize, color: Color32, what: &str| -> bool {
+    let badge = |ui: &mut Ui, icon: &str, n: usize, color: Color32, tip: String| -> bool {
         let color = if n == 0 { theme.text_faint() } else { color };
         let response = ui
             .add(
                 egui::Button::new(RichText::new(format!("{icon} {n}")).small().color(color))
                     .frame(false),
             )
-            .on_hover_text(format!("{n} {what} : afficher le panneau Problèmes"));
+            .on_hover_text(tip);
         response.clicked()
     };
     clicked |= badge(
@@ -452,14 +484,14 @@ fn problem_badges(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme) -> bool 
         icons::WARNING_CIRCLE,
         errors,
         theme.danger(),
-        "erreur(s)",
+        ectx.tn("status.errors_tip", errors, &[]),
     );
     clicked |= badge(
         ui,
         icons::WARNING,
         warnings,
         theme.warning(),
-        "avertissement(s)",
+        ectx.tn("status.warnings_tip", warnings, &[]),
     );
     clicked
 }
@@ -484,17 +516,14 @@ fn drop_overlay(ctx: &Context, theme: &Theme) {
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
-        format!(
-            "{}  Déposez pour importer dans le projet",
-            icons::UPLOAD_SIMPLE
-        ),
+        format!("{}  {}", icons::UPLOAD_SIMPLE, ctx.t("dialog.drop_title")),
         bold(22.0),
         theme.text(),
     );
     painter.text(
         rect.center() + vec2(0.0, 30.0),
         Align2::CENTER_CENTER,
-        "Images PNG / JPEG, sons WAV / OGG, ou un dossier",
+        ctx.t("dialog.drop_hint"),
         egui::FontId::proportional(14.0),
         theme.text_weak(),
     );
@@ -566,23 +595,21 @@ fn show_dialog(
                 .frame(dialog_frame(theme, ctx))
                 .show(ctx, |ui| {
                     ui.set_width(400.0);
-                    ui.label(RichText::new("Enregistrer les modifications ?").font(bold(17.0)));
+                    ui.label(RichText::new(ctx.t("dialog.unsaved_title")).font(bold(17.0)));
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new(format!(
-                            "« {project_name} » contient des modifications non enregistrées."
-                        ))
-                        .color(theme.text_weak()),
+                        RichText::new(ctx.tf("dialog.unsaved_body", &[("name", &project_name)]))
+                            .color(theme.text_weak()),
                     );
                     ui.add_space(16.0);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if primary(ui, theme, "Enregistrer").clicked() {
+                        if primary(ui, theme, &ctx.t("common.save")).clicked() {
                             outcome = DialogOutcome::Unsaved(then.clone(), UnsavedChoice::Save);
                         }
-                        if ui.button("Ne pas enregistrer").clicked() {
+                        if ui.button(ctx.t("dialog.dont_save")).clicked() {
                             outcome = DialogOutcome::Unsaved(then.clone(), UnsavedChoice::Discard);
                         }
-                        if ui.button("Annuler").clicked() {
+                        if ui.button(ctx.t("common.cancel")).clicked() {
                             outcome = DialogOutcome::Unsaved(then.clone(), UnsavedChoice::Cancel);
                         }
                     });
@@ -592,29 +619,33 @@ fn show_dialog(
             }
         }
         Dialog::Recovery { meta } => {
-            let age = describe_age(meta);
+            let age = describe_age(&ctx.translator().unwrap_or_default(), meta);
             egui::Modal::new(Id::new("orbit_recovery"))
                 .frame(dialog_frame(theme, ctx))
                 .show(ctx, |ui| {
                     ui.set_width(430.0);
                     ui.label(
-                        RichText::new(format!("{}  Restaurer le travail non enregistré ?", icons::WARNING))
-                            .font(bold(17.0)),
+                        RichText::new(format!(
+                            "{}  {}",
+                            icons::WARNING,
+                            ctx.t("dialog.recovery_title")
+                        ))
+                        .font(bold(17.0)),
                     );
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new(format!(
-                            "La dernière session de « {project_name} » s'est terminée sans enregistrer \
-                             (sauvegarde automatique {age}). Voulez-vous retrouver ces modifications ?"
+                        RichText::new(ctx.tf(
+                            "dialog.recovery_body",
+                            &[("name", &project_name), ("age", &age)],
                         ))
                         .color(theme.text_weak()),
                     );
                     ui.add_space(16.0);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if primary(ui, theme, "Restaurer").clicked() {
+                        if primary(ui, theme, &ctx.t("dialog.restore")).clicked() {
                             outcome = DialogOutcome::Recovery(true);
                         }
-                        if ui.button("Ignorer").clicked() {
+                        if ui.button(ctx.t("dialog.ignore")).clicked() {
                             outcome = DialogOutcome::Recovery(false);
                         }
                     });
@@ -633,37 +664,35 @@ fn show_dialog(
                     ui.set_width(440.0);
                     ui.label(
                         RichText::new(format!(
-                            "{}  L'histoire a changé sur le disque",
-                            icons::WARNING
+                            "{}  {}",
+                            icons::WARNING,
+                            ctx.t("dialog.external_title")
                         ))
                         .font(bold(17.0)),
                     );
                     ui.add_space(6.0);
-                    let text = if conflict {
-                        format!(
-                            "Le fichier de « {project_name} » a été modifié en dehors de l'éditeur, \
-                             et vous avez aussi des modifications non enregistrées. Recharger \
-                             remplace votre version ; garder la vôtre écrasera le fichier au \
-                             prochain enregistrement."
-                        )
+                    let key = if conflict {
+                        "dialog.external_conflict"
                     } else {
-                        format!(
-                            "Le fichier de « {project_name} » a été modifié en dehors de l'éditeur. \
-                             Voulez-vous le recharger ? (L'historique d'annulation repart de zéro.)"
-                        )
+                        "dialog.external_body"
                     };
+                    let text = ctx.tf(key, &[("name", &project_name)]);
                     ui.label(RichText::new(text).color(theme.text_weak()));
                     ui.add_space(16.0);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let reload = if conflict {
-                            "Recharger (perdre mes modifications)"
+                        let reload = ctx.t(if conflict {
+                            "dialog.reload_lose"
                         } else {
-                            "Recharger"
-                        };
-                        if primary(ui, theme, reload).clicked() {
+                            "dialog.reload"
+                        });
+                        if primary(ui, theme, &reload).clicked() {
                             outcome = DialogOutcome::ExternalChange(true);
                         }
-                        let keep = if conflict { "Garder les miennes" } else { "Ignorer" };
+                        let keep = ctx.t(if conflict {
+                            "dialog.keep_mine"
+                        } else {
+                            "dialog.ignore"
+                        });
                         if ui.button(keep).clicked() {
                             outcome = DialogOutcome::ExternalChange(false);
                         }
@@ -687,12 +716,16 @@ fn new_project_dialog(
         .frame(dialog_frame(theme, ctx))
         .show(ctx, |ui| {
             ui.set_width(460.0);
-            ui.label(RichText::new("Nouveau projet").font(bold(17.0)));
+            ui.label(RichText::new(ctx.t("dialog.new_project")).font(bold(17.0)));
             ui.add_space(10.0);
-            ui.label(RichText::new("Nom").small().color(theme.text_weak()));
+            ui.label(
+                RichText::new(ctx.t("dialog.name"))
+                    .small()
+                    .color(theme.text_weak()),
+            );
             let name = ui.add(
                 TextEdit::singleline(&mut form.name)
-                    .hint_text("Mon visual novel")
+                    .hint_text(ctx.t("dialog.name_hint"))
                     .desired_width(f32::INFINITY),
             );
             if name.changed() {
@@ -705,7 +738,7 @@ fn new_project_dialog(
             let enter_in_name = name.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Dossier parent")
+                RichText::new(ctx.t("dialog.parent_folder"))
                     .small()
                     .color(theme.text_weak()),
             );
@@ -713,10 +746,14 @@ fn new_project_dialog(
                 let width = ui.available_width() - 110.0;
                 ui.add(TextEdit::singleline(&mut form.parent).desired_width(width));
                 if ui
-                    .button(format!("{}  Parcourir…", icons::FOLDER_OPEN))
+                    .button(format!(
+                        "{}  {}",
+                        icons::FOLDER_OPEN,
+                        ctx.t("dialog.browse")
+                    ))
                     .clicked()
                     && let Some(folder) = rfd::FileDialog::new()
-                        .set_title("Dossier qui contiendra le projet")
+                        .set_title(ctx.t("dialog.pick_parent"))
                         .pick_folder()
                 {
                     form.parent = folder.display().to_string();
@@ -732,7 +769,7 @@ fn new_project_dialog(
                 let create = ui.add_enabled(
                     ready,
                     egui::Button::new(
-                        RichText::new("Créer")
+                        RichText::new(ctx.t("dialog.create"))
                             .color(Color32::WHITE)
                             .font(bold(13.5)),
                     )
@@ -745,7 +782,7 @@ fn new_project_dialog(
                         parent: form.parent.clone(),
                     };
                 }
-                if ui.button("Annuler").clicked() {
+                if ui.button(ctx.t("common.cancel")).clicked() {
                     outcome = DialogOutcome::CancelNewProject;
                 }
             });
@@ -764,14 +801,14 @@ fn primary(ui: &mut Ui, theme: &Theme, text: &str) -> egui::Response {
     )
 }
 
-/// "il y a 3 min" for a recovery snapshot.
-fn describe_age(meta: &RecoveryMeta) -> String {
+/// "3 min ago" for a recovery snapshot.
+fn describe_age(texts: &Translator, meta: &RecoveryMeta) -> String {
     let now = orbit_platform::unix_time_ms();
     let secs = now.saturating_sub(meta.saved_at_ms) / 1000;
     match secs {
-        0..=59 => "il y a moins d'une minute".to_owned(),
-        60..=3599 => format!("il y a {} min", secs / 60),
-        3600..=86_399 => format!("il y a {} h", secs / 3600),
-        _ => format!("il y a {} j", secs / 86_400),
+        0..=59 => texts.get("time.just_now"),
+        60..=3599 => texts.plural("time.minutes_ago", (secs / 60) as usize, &[]),
+        3600..=86_399 => texts.plural("time.hours_ago", (secs / 3600) as usize, &[]),
+        _ => texts.plural("time.days_ago", (secs / 86_400) as usize, &[]),
     }
 }

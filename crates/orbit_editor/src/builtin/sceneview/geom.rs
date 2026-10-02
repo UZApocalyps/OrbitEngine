@@ -8,6 +8,7 @@
 //! story stores. A sprite is anchored by its bottom-center point.
 
 use orbit_core::{FREE_POSITION_RANGE, Position, SCALE_MAX, SCALE_MIN, Story};
+use orbit_editor_api::Translator;
 
 pub const CANVAS: [f32; 2] = [1920.0, 1080.0];
 /// Grid spacing, as a fraction of the canvas.
@@ -183,18 +184,18 @@ pub struct NamedPoint {
 }
 
 /// Left, center, right and the project's custom positions.
-pub fn named_points(story: &Story) -> Vec<NamedPoint> {
+pub fn named_points(texts: &Translator, story: &Story) -> Vec<NamedPoint> {
     let mut out: Vec<NamedPoint> = [
-        (Position::Left, "Gauche"),
-        (Position::Center, "Centre"),
-        (Position::Right, "Droite"),
+        (Position::Left, "sceneview.position.left"),
+        (Position::Center, "sceneview.position.center"),
+        (Position::Right, "sceneview.position.right"),
     ]
     .into_iter()
     .filter_map(|(position, name)| {
         let (x, y) = story.resolve_position(&position)?;
         Some(NamedPoint {
             position,
-            name: name.to_owned(),
+            name: texts.t(name),
             x,
             y,
         })
@@ -333,7 +334,10 @@ mod tests {
     }
 
     fn points() -> Vec<NamedPoint> {
-        named_points(&Story::new("t"))
+        named_points(
+            &crate::i18n::translator(orbit_editor_api::Lang::Fr),
+            &Story::new("t"),
+        )
     }
 
     #[test]
@@ -535,7 +539,7 @@ mod tests {
             x: 0.9,
             y: 0.8,
         });
-        let p = named_points(&story);
+        let p = named_points(&crate::i18n::translator(orbit_editor_api::Lang::Fr), &story);
         assert_eq!(p.len(), 4);
         let s = snap_position([0.903, 0.797], &p, opts(true, false));
         assert_eq!((s.x, s.y), (0.9, 0.8));

@@ -64,8 +64,22 @@ impl NodeClip {
     }
 }
 
-fn reject(message: impl Into<String>) -> ProjectError {
-    ProjectError::Rejected(message.into())
+/// A refusal with a stable `code` (the editor writes the message in its own
+/// language from it) and the French `message` (see [`crate::Rejection`]).
+fn reject(code: &'static str, message: impl Into<String>) -> ProjectError {
+    reject_with(code, &[], message)
+}
+
+fn reject_with(
+    code: &'static str,
+    args: &[(&'static str, String)],
+    message: impl Into<String>,
+) -> ProjectError {
+    ProjectError::Rejected(crate::Rejection {
+        code,
+        args: args.to_vec(),
+        message: message.into(),
+    })
 }
 
 /// Ids in reading order (scene order, then node order), without duplicates;
@@ -183,7 +197,7 @@ pub fn paste_nodes(
     index: usize,
 ) -> Result<Vec<NodeId>, ProjectError> {
     if clip.is_empty() {
-        return Err(reject("Le presse-papiers est vide."));
+        return Err(reject("clipboard_empty", "Le presse-papiers est vide."));
     }
     insert_drafts(project, scene, index, instantiate(clip), "Coller")
 }
@@ -193,11 +207,11 @@ pub fn duplicate_nodes(project: &mut Project, ids: &[NodeId]) -> Result<Vec<Node
     let story = project.story();
     let ordered = in_story_order(story, ids);
     let Some(&last) = ordered.last() else {
-        return Err(reject("Rien à dupliquer."));
+        return Err(reject("nothing_to_duplicate", "Rien à dupliquer."));
     };
     let (si, ni) = story
         .locate(last)
-        .ok_or_else(|| reject("Nœud introuvable."))?;
+        .ok_or_else(|| reject("node_not_found", "Nœud introuvable."))?;
     let scene = story.scenes[si].id;
     let clip = copy_nodes(story, &ordered);
     insert_drafts(project, scene, ni + 1, instantiate(&clip), "Dupliquer")
@@ -221,9 +235,11 @@ pub fn delete_nodes(project: &mut Project, ids: &[NodeId]) -> Result<(), Project
                 Some(NodeKind::Label { name }) => format!("« {name} »"),
                 _ => "ce nœud".to_owned(),
             };
-            return Err(reject(format!(
-                "Impossible de supprimer {name} : un autre nœud y fait encore référence."
-            )));
+            return Err(reject_with(
+                "node_referenced",
+                &[("name", name.to_string())],
+                format!("Impossible de supprimer {name} : un autre nœud y fait encore référence."),
+            ));
         }
     }
     // Referencing nodes first, so that a Jump goes before its Label.
@@ -277,7 +293,7 @@ pub fn move_nodes(
     }
     let target = story
         .scene(scene)
-        .ok_or_else(|| reject("Scène introuvable."))?;
+        .ok_or_else(|| reject("scene_not_found", "Scène introuvable."))?;
     // The node the block goes in front of (`None`: at the end).
     let anchor = target
         .nodes
@@ -295,7 +311,7 @@ pub fn move_nodes(
             let story = tx.project().story();
             let sc = story
                 .scene(scene)
-                .ok_or_else(|| reject("Scène introuvable."))?;
+                .ok_or_else(|| reject("scene_not_found", "Scène introuvable."))?;
             let own = sc.nodes.iter().position(|n| n.id == id);
             let at = match anchor.and_then(|a| sc.nodes.iter().position(|n| n.id == a)) {
                 Some(a) => a - usize::from(own.is_some_and(|o| o < a)),
@@ -326,7 +342,7 @@ pub fn nudge_nodes(
     };
     let (si, first_index) = story
         .locate(first)
-        .ok_or_else(|| reject("Nœud introuvable."))?;
+        .ok_or_else(|| reject("node_not_found", "Nœud introuvable."))?;
     let scene = &story.scenes[si];
     // Only a selection inside a single scene can be nudged.
     let positions: Vec<usize> = ordered
@@ -413,7 +429,7 @@ pub fn delete_character(project: &mut Project, id: CharacterId) -> Result<(), Pr
         .story()
         .character(id)
         .map(|c| c.name_id)
-        .ok_or_else(|| reject("Personnage introuvable."))?;
+        .ok_or_else(|| reject("character_not_found", "Personnage introuvable."))?;
     project.transaction_labeled("Supprimer le personnage", |tx| {
         tx.execute(Command::SetCharacter {
             id,
@@ -443,9 +459,11 @@ pub fn add_asset(
         return if existing.kind == kind {
             Ok(existing.id)
         } else {
-            Err(reject(format!(
-                "« {path} » est déjà déclaré d'un autre type."
-            )))
+            Err(reject_with(
+                "asset_other_type",
+                &[("path", path.to_string())],
+                format!("« {path} » est déjà déclaré d'un autre type."),
+            ))
         };
     }
     let id = AssetId::new();
@@ -487,11 +505,13 @@ pub fn set_asset_path(
         .assets
         .get(id)
         .cloned()
-        .ok_or_else(|| reject("Ressource introuvable."))?;
+        .ok_or_else(|| reject("asset_not_found", "Ressource introuvable."))?;
     if !is_valid_asset_path(new_path) {
-        return Err(reject(format!(
-            "« {new_path} » n'est pas un chemin valide."
-        )));
+        return Err(reject_with(
+            "asset_path_invalid",
+            &[("path", new_path.to_string())],
+            format!("« {new_path} » n'est pas un chemin valide."),
+        ));
     }
     if entry.path == new_path {
         return Ok(());
@@ -504,9 +524,13 @@ pub fn set_asset_path(
         .iter()
         .any(|a| a.id != id && a.path.to_lowercase() == lower)
     {
-        return Err(reject(format!(
-            "Une autre ressource utilise déjà le chemin « {new_path} » (la casse ne compte pas)."
-        )));
+        return Err(reject_with(
+            "asset_path_taken",
+            &[("path", new_path.to_string())],
+            format!(
+                "Une autre ressource utilise déjà le chemin « {new_path} » (la casse ne compte pas)."
+            ),
+        ));
     }
     let index = project
         .story()
@@ -531,12 +555,12 @@ pub fn set_asset_path(
 /// uses it.
 pub fn remove_asset(project: &mut Project, id: AssetId) -> Result<(), ProjectError> {
     if project.story().assets.get(id).is_none() {
-        return Err(reject("Ressource introuvable."));
+        return Err(reject("asset_not_found", "Ressource introuvable."));
     }
     let story = project.story();
     let users = crate::ext::asset_users(story, id);
     if !users.is_empty() {
-        return Err(reject(describe_asset_users(story, &users)));
+        return Err(describe_asset_users(story, &users));
     }
     project.transaction_labeled("Supprimer la ressource", |tx| {
         tx.execute(Command::SetAsset {
@@ -547,7 +571,7 @@ pub fn remove_asset(project: &mut Project, id: AssetId) -> Result<(), ProjectErr
     })
 }
 
-fn describe_asset_users(story: &Story, users: &[crate::ext::AssetUser]) -> String {
+fn describe_asset_users(story: &Story, users: &[crate::ext::AssetUser]) -> ProjectError {
     use crate::ext::AssetUser;
     let nodes = users
         .iter()
@@ -570,9 +594,16 @@ fn describe_asset_users(story: &Story, users: &[crate::ext::AssetUser]) -> Strin
     if !names.is_empty() {
         parts.push(format!("une expression de {}", names.join(", ")));
     }
-    format!(
-        "Cette ressource est encore utilisée par {} : retirez-la d'abord.",
-        parts.join(" et ")
+    reject_with(
+        "asset_in_use",
+        &[
+            ("nodes", nodes.to_string()),
+            ("characters", names.join(", ")),
+        ],
+        format!(
+            "Cette ressource est encore utilisée par {} : retirez-la d'abord.",
+            parts.join(" et ")
+        ),
     )
 }
 
@@ -601,20 +632,29 @@ pub fn rename_expression(
     let story = project.story();
     let def = story
         .character(character)
-        .ok_or_else(|| reject("Personnage introuvable."))?;
+        .ok_or_else(|| reject("character_not_found", "Personnage introuvable."))?;
     if new.is_empty() {
-        return Err(reject("Le nom d'une expression ne peut pas être vide."));
+        return Err(reject(
+            "expression_name_empty",
+            "Le nom d'une expression ne peut pas être vide.",
+        ));
     }
     if new == old {
         return Ok(());
     }
     if def.expression(new).is_some() {
-        return Err(reject(format!(
-            "Ce personnage a déjà une expression « {new} »."
-        )));
+        return Err(reject_with(
+            "expression_exists",
+            &[("name", new.to_string())],
+            format!("Ce personnage a déjà une expression « {new} »."),
+        ));
     }
     if def.expression(old).is_none() {
-        return Err(reject(format!("Expression « {old} » introuvable.")));
+        return Err(reject_with(
+            "expression_not_found",
+            &[("name", old.to_string())],
+            format!("Expression « {old} » introuvable."),
+        ));
     }
     let mut def = def.clone();
     if let Some(e) = def.expressions.iter_mut().find(|e| e.name == old) {
@@ -702,10 +742,14 @@ pub fn variable_users(story: &Story, name: &str) -> Vec<NodeId> {
 /// Declares a variable.
 pub fn add_variable(project: &mut Project, decl: VarDecl) -> Result<(), ProjectError> {
     if !valid_identifier(&decl.name) {
-        return Err(reject(format!(
-            "« {} » n'est pas un nom de variable valide (lettres, chiffres et _).",
-            decl.name
-        )));
+        return Err(reject_with(
+            "variable_name_invalid",
+            &[("name", decl.name.clone())],
+            format!(
+                "« {} » n'est pas un nom de variable valide (lettres, chiffres et _).",
+                decl.name
+            ),
+        ));
     }
     if project
         .story()
@@ -713,10 +757,11 @@ pub fn add_variable(project: &mut Project, decl: VarDecl) -> Result<(), ProjectE
         .iter()
         .any(|v| v.name == decl.name)
     {
-        return Err(reject(format!(
-            "La variable « {} » existe déjà.",
-            decl.name
-        )));
+        return Err(reject_with(
+            "variable_exists",
+            &[("name", decl.name.clone())],
+            format!("La variable « {} » existe déjà.", decl.name),
+        ));
     }
     project.execute(Command::SetVariable {
         name: decl.name.clone(),
@@ -738,7 +783,13 @@ pub fn update_variable(
         .iter()
         .find(|v| v.name == name)
         .cloned()
-        .ok_or_else(|| reject(format!("Variable « {name} » introuvable.")))?;
+        .ok_or_else(|| {
+            reject_with(
+                "variable_not_found",
+                &[("name", name.to_string())],
+                format!("Variable « {name} » introuvable."),
+            )
+        })?;
     decl.initial = initial;
     decl.scope = scope;
     project.execute(Command::SetVariable {
@@ -757,20 +808,32 @@ pub fn rename_variable(project: &mut Project, old: &str, new: &str) -> Result<()
         return Ok(());
     }
     if !valid_identifier(new) {
-        return Err(reject(format!(
-            "« {new} » n'est pas un nom de variable valide (lettres, chiffres et _)."
-        )));
+        return Err(reject_with(
+            "variable_name_invalid",
+            &[("name", new.to_string())],
+            format!("« {new} » n'est pas un nom de variable valide (lettres, chiffres et _)."),
+        ));
     }
     let story = project.story();
     if story.variables.iter().any(|v| v.name == new) {
-        return Err(reject(format!("La variable « {new} » existe déjà.")));
+        return Err(reject_with(
+            "variable_exists",
+            &[("name", new.to_string())],
+            format!("La variable « {new} » existe déjà."),
+        ));
     }
     let mut renamed = story
         .variables
         .iter()
         .find(|v| v.name == old)
         .cloned()
-        .ok_or_else(|| reject(format!("Variable « {old} » introuvable.")))?;
+        .ok_or_else(|| {
+            reject_with(
+                "variable_not_found",
+                &[("name", old.to_string())],
+                format!("Variable « {old} » introuvable."),
+            )
+        })?;
     renamed.name = new.to_owned();
     let updates: Vec<(NodeId, NodeKind)> = story
         .scenes
@@ -830,9 +893,11 @@ pub fn rename_variable(project: &mut Project, old: &str, new: &str) -> Result<()
 /// Removes a variable declaration. Refused while a node uses it.
 pub fn delete_variable(project: &mut Project, name: &str) -> Result<(), ProjectError> {
     if !variable_users(project.story(), name).is_empty() {
-        return Err(reject(format!(
-            "La variable « {name} » est encore utilisée par des nœuds."
-        )));
+        return Err(reject_with(
+            "variable_in_use",
+            &[("name", name.to_string())],
+            format!("La variable « {name} » est encore utilisée par des nœuds."),
+        ));
     }
     project.execute(Command::SetVariable {
         name: name.to_owned(),
@@ -918,25 +983,42 @@ pub fn show_look(story: &Story, node: NodeId) -> Option<ShowLook> {
 pub fn check_show_look(story: &Story, look: &ShowLook) -> Result<(), ProjectError> {
     for s in [look.scale, look.scale_y].into_iter().flatten() {
         if !orbit_core::scale_is_valid(s) {
-            return Err(reject(format!(
-                "L'échelle doit être comprise entre {} et {} (reçu {s}).",
-                orbit_core::SCALE_MIN,
-                orbit_core::SCALE_MAX
-            )));
+            return Err(reject_with(
+                "scale_out_of_range_got",
+                &[
+                    ("min", orbit_core::SCALE_MIN.to_string()),
+                    ("max", orbit_core::SCALE_MAX.to_string()),
+                    ("value", s.to_string()),
+                ],
+                format!(
+                    "L'échelle doit être comprise entre {} et {} (reçu {s}).",
+                    orbit_core::SCALE_MIN,
+                    orbit_core::SCALE_MAX
+                ),
+            ));
         }
     }
     if let Position::Free { x, y } = &look.position
         && !(orbit_core::FREE_POSITION_RANGE.contains(x)
             && orbit_core::FREE_POSITION_RANGE.contains(y))
     {
-        return Err(reject(format!(
-            "La position libre ({x}, {y}) est hors limites ({}..{}).",
-            orbit_core::FREE_POSITION_RANGE.start(),
-            orbit_core::FREE_POSITION_RANGE.end()
-        )));
+        return Err(reject_with(
+            "free_position_out_of_range",
+            &[
+                ("x", x.to_string()),
+                ("y", y.to_string()),
+                ("min", orbit_core::FREE_POSITION_RANGE.start().to_string()),
+                ("max", orbit_core::FREE_POSITION_RANGE.end().to_string()),
+            ],
+            format!(
+                "La position libre ({x}, {y}) est hors limites ({}..{}).",
+                orbit_core::FREE_POSITION_RANGE.start(),
+                orbit_core::FREE_POSITION_RANGE.end()
+            ),
+        ));
     }
     if !position_exists(story, &look.position) {
-        return Err(reject("Position inconnue."));
+        return Err(reject("position_unknown", "Position inconnue."));
     }
     Ok(())
 }
@@ -952,7 +1034,7 @@ pub fn show_look_command(
     check_show_look(story, look)?;
     let mut kind = story
         .node(node)
-        .ok_or_else(|| reject("Nœud introuvable."))?
+        .ok_or_else(|| reject("node_not_found", "Nœud introuvable."))?
         .kind
         .clone();
     let NodeKind::Show {
@@ -964,7 +1046,7 @@ pub fn show_look_command(
         ..
     } = &mut kind
     else {
-        return Err(reject("Ce nœud n'est pas un « Montrer »."));
+        return Err(reject("not_a_show", "Ce nœud n'est pas un « Montrer »."));
     };
     *position = look.position.clone();
     *scale = look.scale;
@@ -996,16 +1078,23 @@ pub fn set_default_scale(
     scale: f32,
 ) -> Result<(), ProjectError> {
     if !orbit_core::scale_is_valid(scale) {
-        return Err(reject(format!(
-            "L'échelle doit être comprise entre {} et {}.",
-            orbit_core::SCALE_MIN,
-            orbit_core::SCALE_MAX
-        )));
+        return Err(reject_with(
+            "scale_out_of_range",
+            &[
+                ("min", orbit_core::SCALE_MIN.to_string()),
+                ("max", orbit_core::SCALE_MAX.to_string()),
+            ],
+            format!(
+                "L'échelle doit être comprise entre {} et {}.",
+                orbit_core::SCALE_MIN,
+                orbit_core::SCALE_MAX
+            ),
+        ));
     }
     let mut def = project
         .story()
         .character(character)
-        .ok_or_else(|| reject("Personnage introuvable."))?
+        .ok_or_else(|| reject("character_not_found", "Personnage introuvable."))?
         .clone();
     def.default_scale = scale;
     project.transaction_labeled("Échelle du personnage", |tx| {

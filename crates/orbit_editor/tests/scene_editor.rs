@@ -45,7 +45,7 @@ impl Drop for TempDir {
 }
 
 fn options() -> CoreOptions {
-    CoreOptions::default()
+    CoreOptions::with_language(orbit_editor_api::Lang::Fr)
 }
 
 /// A freshly created project (manifest + minimal story), opened.
@@ -53,7 +53,12 @@ fn new_project(tag: &str) -> (EditorCore, Context, TempDir) {
     let dir = TempDir::new(tag);
     let ctx = Context::default();
     let mut core = EditorCore::new(options(), &ctx);
-    let root = orbit_editor::storage::create_project(dir.path(), "Projet").unwrap();
+    let root = orbit_editor::storage::create_project(
+        dir.path(),
+        "Projet",
+        &orbit_editor::i18n::translator(orbit_editor_api::Lang::Fr),
+    )
+    .unwrap();
     core.open_project(&root);
     assert!(core.has_project());
     (core, ctx, dir)

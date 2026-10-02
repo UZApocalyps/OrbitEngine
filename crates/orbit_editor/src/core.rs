@@ -13,8 +13,8 @@ use egui::Context;
 use egui_dock::DockState;
 use orbit_core::Story;
 use orbit_editor_api::{
-    EditorContext, EditorPlugin, EditorRegistry, EditorRequest, EditorState, Level, ProjectInfo,
-    Selection, ThemeMode,
+    EditorContext, EditorPlugin, EditorRegistry, EditorRequest, EditorState, Lang, Level,
+    ProjectInfo, Selection, ThemeMode,
 };
 use orbit_plugin_api::ProjectEvent;
 use orbit_project::{ChangeKind, load_story};
@@ -46,6 +46,20 @@ pub struct CoreOptions {
     pub open_palette: bool,
     /// Text typed in the palette when opened with `open_palette`.
     pub palette_query: String,
+    /// Forces the interface language for this run (debug `--lang`, tests)
+    /// without touching the saved choice; `None` uses the saved choice, then
+    /// the system language.
+    pub language: Option<Lang>,
+}
+
+impl CoreOptions {
+    /// Default options with the interface language forced (tests, screenshots).
+    pub fn with_language(language: Lang) -> Self {
+        Self {
+            language: Some(language),
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for CoreOptions {
@@ -57,6 +71,7 @@ impl Default for CoreOptions {
             theme: None,
             open_palette: false,
             palette_query: String::new(),
+            language: None,
         }
     }
 }
@@ -108,6 +123,8 @@ pub struct EditorCore {
     pub theme: Theme,
     pub options: CoreOptions,
     store: ConfigStore,
+    /// The language the user chose (saved); `None` follows the system.
+    language_pref: Option<Lang>,
     saved_layout: String,
     quit: bool,
     first_frame_done: bool,
@@ -151,7 +168,7 @@ impl EditorCore {
                 registry.errors.push(e.to_string());
             }
         }
-        // One "Afficher : <panel>" action per panel, once all panels are known.
+        // One "Show: <panel>" action per panel, once all panels are known.
         let view = builtin::PanelActions::for_registry(&registry);
         if let Err(e) = registry.install(&view) {
             registry.errors.push(e.to_string());
@@ -164,21 +181,32 @@ impl EditorCore {
         install_fonts(ctx);
         theme.apply(ctx);
 
+        let language_pref = config.language;
+        let lang = options
+            .language
+            .or(language_pref)
+            .unwrap_or_else(|| Lang::from_system(orbit_platform::system_language().as_deref()));
+        let translator = crate::i18n::translator(lang);
+        for (table_lang, table) in registry.text_tables() {
+            translator.add_table(*table_lang, table.clone());
+        }
+        translator.install(ctx);
+
         let mut dock = config
             .dock
             .unwrap_or_else(|| dock::default_layout(&registry));
         dock::sanitize(&mut dock, &registry);
 
         let mut state = EditorState {
+            i18n: translator,
             theme: mode,
             recent: config.recent,
             plugin_prefs: config.plugin_prefs,
             ..EditorState::default()
         };
         for error in &registry.errors {
-            state
-                .console
-                .push(Level::Error, format!("plugin : {error}"));
+            let message = state.tf("host.plugin_error", &[("error", error)]);
+            state.console.push(Level::Error, message);
         }
         let saved_layout = ron::to_string(&dock).unwrap_or_default();
         let live = Live::new(state.waker.clone());
@@ -192,6 +220,7 @@ impl EditorCore {
             theme,
             options,
             store,
+            language_pref,
             saved_layout,
             quit: false,
             first_frame_done: false,
@@ -251,7 +280,7 @@ impl EditorCore {
     /// Replaces the text of the `n`-th line (`Say` node, reading order) of
     /// the open story, as a typed edit would (debug option `--edit-text`).
     pub fn edit_nth_say(&mut self, n: usize, text: &str) -> Result<(), String> {
-        let session = self.session.as_mut().ok_or("aucun projet ouvert")?;
+        let session = self.session.as_mut().ok_or("no project is open")?;
         let id = session
             .project
             .story()
@@ -263,7 +292,7 @@ impl EditorCore {
                 _ => None,
             })
             .nth(n)
-            .ok_or_else(|| format!("pas de réplique n°{n}"))?;
+            .ok_or_else(|| format!("no line number {n}"))?;
         session
             .project
             .execute(orbit_project::Command::SetString {
@@ -290,7 +319,7 @@ impl EditorCore {
     }
 
     fn open_now(&mut self, path: &Path) {
-        let location = match ProjectLocation::resolve(path) {
+        let location = match ProjectLocation::resolve(path, &self.state.i18n) {
             Ok(location) => location,
             Err(e) => {
                 self.state.push_toast(Level::Error, e);
@@ -354,26 +383,39 @@ impl EditorCore {
     /// Console summary: counts, validation problems, missing plugins.
     fn report_opened(&mut self) {
         let Some(story) = self.story() else { return };
+        let texts = &self.state.i18n;
         let nodes: usize = story.scenes.iter().map(|s| s.nodes.len()).sum();
         let mut lines = vec![(
             Level::Info,
-            format!(
-                "Projet « {} » ouvert : {} scène(s), {nodes} nœud(s).",
-                story.title,
-                story.scenes.len()
+            texts.format(
+                "project.opened",
+                &[
+                    ("title", &story.title),
+                    (
+                        "scenes",
+                        &texts.plural("project.scenes", story.scenes.len(), &[]),
+                    ),
+                    ("nodes", &texts.plural("project.nodes", nodes, &[])),
+                ],
             ),
         )];
         let report = orbit_core::validate(story);
         for e in report.errors.iter().take(20) {
-            lines.push((Level::Error, e.to_string()));
+            lines.push((
+                Level::Error,
+                crate::diagnostics::describe_error(texts, story, e).1,
+            ));
         }
         for w in report.warnings.iter().take(20) {
-            lines.push((Level::Warn, w.to_string()));
+            lines.push((
+                Level::Warn,
+                crate::diagnostics::describe_warning(texts, w).1,
+            ));
         }
         for plugin in self.registry.project.missing_plugins(story) {
             lines.push((
                 Level::Warn,
-                format!("Plugin absent : `{plugin}` ; ses nœuds sont conservés en lecture seule."),
+                texts.format("project.missing_plugin", &[("plugin", &plugin)]),
             ));
         }
         for (level, message) in lines {
@@ -393,13 +435,13 @@ impl EditorCore {
                     watcher.accept_story_now();
                 }
                 let name = session.name.clone();
-                self.state
-                    .push_toast(Level::Info, format!("« {name} » enregistré."));
+                let message = self.state.tf("project.saved", &[("name", &name)]);
+                self.state.push_toast(Level::Info, message);
                 true
             }
             Err(e) => {
-                self.state
-                    .push_toast(Level::Error, format!("Échec de l'enregistrement : {e}"));
+                let message = self.state.tf("project.save_failed", &[("error", &e)]);
+                self.state.push_toast(Level::Error, message);
                 false
             }
         }
@@ -437,7 +479,7 @@ impl EditorCore {
 
     /// Creates a project folder from the minimal template and opens it.
     pub fn create_and_open(&mut self, parent: &Path, name: &str) -> Result<(), String> {
-        let root = create_project(parent, name)?;
+        let root = create_project(parent, name, &self.state.i18n)?;
         self.open_project(&root);
         Ok(())
     }
@@ -465,13 +507,14 @@ impl EditorCore {
         };
         if restore {
             match session.restore_recovery() {
-                Ok(()) => self.state.push_toast(
-                    Level::Info,
-                    "Version non enregistrée restaurée ; enregistrez pour la conserver.",
-                ),
-                Err(e) => self
-                    .state
-                    .push_toast(Level::Error, format!("Restauration impossible : {e}")),
+                Ok(()) => {
+                    let message = self.state.t("project.recovered");
+                    self.state.push_toast(Level::Info, message);
+                }
+                Err(e) => {
+                    let message = self.state.tf("project.recovery_failed", &[("error", &e)]);
+                    self.state.push_toast(Level::Error, message);
+                }
             }
         } else {
             session.discard_recovery();
@@ -576,7 +619,7 @@ impl EditorCore {
             EditorRequest::OpenProject(path) => self.open_project(&path),
             EditorRequest::PickOpenProject => {
                 if let Some(path) = rfd::FileDialog::new()
-                    .set_title("Ouvrir un projet")
+                    .set_title(self.state.t("host.pick_project"))
                     .pick_folder()
                 {
                     self.open_project(&path);
@@ -584,8 +627,8 @@ impl EditorCore {
             }
             EditorRequest::PickOpenStory => {
                 if let Some(path) = rfd::FileDialog::new()
-                    .set_title("Ouvrir une histoire")
-                    .add_filter("Histoire OrbitEngine", &["ron"])
+                    .set_title(self.state.t("host.pick_story"))
+                    .add_filter(self.state.t("host.story_filter"), &["ron"])
                     .pick_file()
                 {
                     self.open_project(&path);
@@ -625,13 +668,14 @@ impl EditorCore {
                 };
             }
             EditorRequest::SetTheme(mode) => self.set_theme(mode, ctx),
+            EditorRequest::SetLanguage(lang) => self.set_language(lang, ctx),
         }
     }
 
     fn run_action(&mut self, id: &str) {
         let Some(action) = self.registry.find_action(id) else {
-            self.state
-                .push_toast(Level::Error, format!("Action inconnue : {id}"));
+            let message = self.state.tf("host.unknown_action", &[("id", &id)]);
+            self.state.push_toast(Level::Error, message);
             return;
         };
         let mut ctx = EditorContext::new(
@@ -657,6 +701,29 @@ impl EditorCore {
         self.theme = Theme::for_mode(mode);
         self.theme.apply(ctx);
         self.persist();
+    }
+
+    /// Switches the interface language, at once: texts are resolved when drawn.
+    /// The choice is remembered. Findings of the live validation are written
+    /// in the language, so they are computed again.
+    pub fn set_language(&mut self, lang: Lang, ctx: &Context) {
+        self.language_pref = Some(lang);
+        self.apply_language(lang, ctx);
+        self.persist();
+    }
+
+    /// Switches the language without remembering it (the `--lang` debug option).
+    pub fn apply_language(&mut self, lang: Lang, ctx: &Context) {
+        self.state.i18n.set_lang(lang);
+        // Findings and search entries hold texts written in the language.
+        self.live.reset();
+        self.shared.search.0.borrow_mut().clear();
+        ctx.request_repaint();
+    }
+
+    /// The current interface language.
+    pub fn lang(&self) -> Lang {
+        self.state.i18n.lang()
     }
 
     /// Runs once on the first frame.
@@ -687,9 +754,8 @@ impl EditorCore {
                 && let Err(e) = session.autosave(now)
             {
                 log::warn!("autosave failed: {e}");
-                self.state
-                    .console
-                    .push(Level::Warn, format!("Autosave impossible : {e}"));
+                let message = self.state.tf("project.autosave_failed", &[("error", &e)]);
+                self.state.console.push(Level::Warn, message);
             }
         }
         // Graph positions: written once a drag has ended.
@@ -720,10 +786,8 @@ impl EditorCore {
             &session.location.story_file,
             &self.state.graph.layout,
         ) {
-            self.state.console.push(
-                Level::Warn,
-                format!("Positions du graphe non enregistrées : {e}"),
-            );
+            let message = self.state.tf("project.layout_not_saved", &[("error", &e)]);
+            self.state.console.push(Level::Warn, message);
         }
     }
 
@@ -744,6 +808,7 @@ impl EditorCore {
             key,
             session.project.story(),
             &self.assets_root,
+            &self.state.i18n,
             |story| Extras {
                 custom: registry.validate_custom(story),
                 missing_plugins: registry.missing_plugin_nodes(story),
@@ -836,22 +901,26 @@ impl EditorCore {
             .cloned()
             .collect();
         builtin::thumbs::invalidate(ctx, &self.state.waker, &changed);
-        for (verb, list) in [
-            ("ajouté", added),
-            ("modifié", modified),
-            ("supprimé", removed),
+        for (one, more, list) in [
+            ("project.file_added", "project.files_more_added", added),
+            (
+                "project.file_modified",
+                "project.files_more_modified",
+                modified,
+            ),
+            (
+                "project.file_removed",
+                "project.files_more_removed",
+                removed,
+            ),
         ] {
             for path in list.iter().take(5) {
-                self.state.console.push(
-                    Level::Info,
-                    format!("Fichier {verb} sur le disque : {path}"),
-                );
+                let message = self.state.tf(one, &[("path", path)]);
+                self.state.console.push(Level::Info, message);
             }
             if list.len() > 5 {
-                self.state.console.push(
-                    Level::Info,
-                    format!("… et {} autre(s) fichier(s) {verb}(s)", list.len() - 5),
-                );
+                let message = self.state.tn(more, list.len() - 5, &[]);
+                self.state.console.push(Level::Info, message);
             }
         }
         ctx.request_repaint();
@@ -871,12 +940,12 @@ impl EditorCore {
                 let conflict = session.modified();
                 self.dialog = Some(Dialog::ExternalChange { conflict });
             }
-            Err(e) => self.state.console.push(
-                Level::Warn,
-                format!(
-                    "Le fichier de l'histoire a changé sur le disque mais n'est pas lisible : {e}"
-                ),
-            ),
+            Err(e) => {
+                let message = self
+                    .state
+                    .tf("project.external_unreadable", &[("error", &e)]);
+                self.state.console.push(Level::Warn, message);
+            }
         }
     }
 
@@ -889,10 +958,8 @@ impl EditorCore {
             if let Some(watcher) = &self.watcher {
                 watcher.accept_story_now();
             }
-            self.state.push_toast(
-                Level::Info,
-                "Fichier modifié ignoré : l'enregistrement le remplacera.",
-            );
+            let message = self.state.t("project.external_ignored");
+            self.state.push_toast(Level::Info, message);
             return;
         }
         match session.reload_from_disk() {
@@ -913,12 +980,13 @@ impl EditorCore {
                         .project
                         .dispatch(&ProjectEvent::Opened { title: &title });
                 }
-                self.state
-                    .push_toast(Level::Info, "Histoire rechargée depuis le disque.");
+                let message = self.state.t("project.reloaded");
+                self.state.push_toast(Level::Info, message);
             }
-            Err(e) => self
-                .state
-                .push_toast(Level::Error, format!("Rechargement impossible : {e}")),
+            Err(e) => {
+                let message = self.state.tf("project.reload_failed", &[("error", &e)]);
+                self.state.push_toast(Level::Error, message);
+            }
         }
     }
 
@@ -934,10 +1002,10 @@ impl EditorCore {
                 [one] if one.is_dir() || one.extension().is_some_and(|e| e == "ron") => {
                     self.open_project(one);
                 }
-                _ => self.state.push_toast(
-                    Level::Warn,
-                    "Ouvrez un projet avant de déposer des ressources.",
-                ),
+                _ => {
+                    let message = self.state.t("project.open_before_drop");
+                    self.state.push_toast(Level::Warn, message);
+                }
             }
             return;
         };
@@ -1059,6 +1127,7 @@ impl EditorCore {
     fn user_config(&self) -> UserConfig {
         UserConfig {
             theme: self.state.theme,
+            language: self.language_pref,
             dock: Some(self.dock.clone()),
             recent: self.state.recent.clone(),
             plugin_prefs: self.state.plugin_prefs.clone(),

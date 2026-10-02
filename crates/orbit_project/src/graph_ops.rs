@@ -25,8 +25,22 @@ use crate::graph::{BlockId, GraphModel, SlotKind, SlotRef, Terminator};
 use crate::ops::{self, NodeDraft};
 use crate::project::{Project, ProjectError};
 
-fn reject(message: impl Into<String>) -> ProjectError {
-    ProjectError::Rejected(message.into())
+/// A refusal with a stable `code` and the French `message` (see
+/// [`crate::Rejection`]).
+fn reject(code: &'static str, message: impl Into<String>) -> ProjectError {
+    reject_with(code, &[], message)
+}
+
+fn reject_with(
+    code: &'static str,
+    args: &[(&'static str, String)],
+    message: impl Into<String>,
+) -> ProjectError {
+    ProjectError::Rejected(crate::Rejection {
+        code,
+        args: args.to_vec(),
+        message: message.into(),
+    })
 }
 
 /// Where a new link of a choice or a condition leads.
@@ -38,7 +52,7 @@ pub enum ChoiceTarget {
 }
 
 fn block_missing() -> ProjectError {
-    reject("Ce bloc n'existe plus.")
+    reject("block_missing", "Ce bloc n'existe plus.")
 }
 
 /// Index just after the last node of a block.
@@ -61,10 +75,14 @@ fn append_point(
 fn require_open(model: &GraphModel, block: BlockId) -> Result<(), ProjectError> {
     let b = model.block(block).ok_or_else(block_missing)?;
     match b.terminator {
-        Some((_, t)) => Err(reject(format!(
-            "Ce bloc se termine déjà par {} : supprimez-le d'abord.",
-            t.label()
-        ))),
+        Some((_, t)) => Err(reject_with(
+            "block_already_ends",
+            &[("terminator", t.code().to_owned())],
+            format!(
+                "Ce bloc se termine déjà par {} : supprimez-le d'abord.",
+                t.label()
+            ),
+        )),
         None => Ok(()),
     }
 }
@@ -258,7 +276,10 @@ pub fn add_choice(
     options: Vec<(String, ChoiceTarget)>,
 ) -> Result<Vec<BlockId>, ProjectError> {
     if options.is_empty() {
-        return Err(reject("Un choix a besoin d'au moins une option."));
+        return Err(reject(
+            "choice_needs_option",
+            "Un choix a besoin d'au moins une option.",
+        ));
     }
     p.group("Ajouter un choix", |p| {
         require_open(&GraphModel::build(p.story()), block)?;
@@ -347,7 +368,7 @@ pub fn remove_terminator(p: &mut Project, block: BlockId) -> Result<Terminator, 
         .block(block)
         .ok_or_else(block_missing)?
         .terminator
-        .ok_or_else(|| reject("Ce bloc n'a rien à retirer."))?;
+        .ok_or_else(|| reject("block_nothing_to_remove", "Ce bloc n'a rien à retirer."))?;
     p.group("Retirer la fin du bloc", |p| {
         ops::delete_nodes(p, &[node])?;
         Ok(kind)
@@ -358,7 +379,10 @@ pub fn remove_terminator(p: &mut Project, block: BlockId) -> Result<Terminator, 
 
 fn slot_node(story: &Story, slot: SlotRef) -> Result<NodeId, ProjectError> {
     let id = slot.node.ok_or_else(|| {
-        reject("La suite d'un bloc se relie en tirant un lien, ou se retire en le terminant.")
+        reject(
+            "block_next_link",
+            "La suite d'un bloc se relie en tirant un lien, ou se retire en le terminant.",
+        )
     })?;
     story.node(id).map(|n| n.id).ok_or_else(block_missing)
 }
@@ -383,7 +407,7 @@ pub fn set_slot_target(
                     *l = label;
                     Ok(())
                 }
-                _ => Err(reject("Ce lien ne correspond plus au nœud.")),
+                _ => Err(reject("link_stale", "Ce lien ne correspond plus au nœud.")),
             });
         }
         let label = ensure_label(p, target)?;
@@ -399,7 +423,7 @@ pub fn set_slot_target(
             (NodeKind::Choice { options }, SlotKind::Option(i)) => {
                 options
                     .get_mut(i)
-                    .ok_or_else(|| reject("Cette option n'existe plus."))?
+                    .ok_or_else(|| reject("option_missing", "Cette option n'existe plus."))?
                     .target = label;
                 Ok(())
             }
@@ -411,7 +435,7 @@ pub fn set_slot_target(
                 *else_target = Some(label);
                 Ok(())
             }
-            _ => Err(reject("Ce lien ne correspond plus au nœud.")),
+            _ => Err(reject("link_stale", "Ce lien ne correspond plus au nœud.")),
         })
     })
 }
@@ -419,7 +443,10 @@ pub fn set_slot_target(
 /// Removes what carries a link (see the module docs).
 fn sever(p: &mut Project, node: NodeId, kind: SlotKind) -> Result<(), ProjectError> {
     match kind {
-        SlotKind::Next => Err(reject("La suite d'un bloc ne se coupe pas : terminez-le.")),
+        SlotKind::Next => Err(reject(
+            "block_next_cannot_cut",
+            "La suite d'un bloc ne se coupe pas : terminez-le.",
+        )),
         SlotKind::Jump | SlotKind::JumpScene | SlotKind::Call | SlotKind::Then => {
             ops::delete_nodes(p, &[node])
         }
@@ -428,16 +455,17 @@ fn sever(p: &mut Project, node: NodeId, kind: SlotKind) -> Result<(), ProjectErr
                 *else_target = None;
                 Ok(())
             }
-            _ => Err(reject("Ce lien ne correspond plus au nœud.")),
+            _ => Err(reject("link_stale", "Ce lien ne correspond plus au nœud.")),
         }),
         SlotKind::Option(i) => {
             let (len, text) = match p.story().node(node).map(|n| &n.kind) {
                 Some(NodeKind::Choice { options }) => {
                     (options.len(), options.get(i).map(|o| o.text_id))
                 }
-                _ => return Err(reject("Ce lien ne correspond plus au nœud.")),
+                _ => return Err(reject("link_stale", "Ce lien ne correspond plus au nœud.")),
             };
-            let text = text.ok_or_else(|| reject("Cette option n'existe plus."))?;
+            let text =
+                text.ok_or_else(|| reject("option_missing", "Cette option n'existe plus."))?;
             if len == 1 {
                 return ops::delete_nodes(p, &[node]);
             }
@@ -499,7 +527,7 @@ pub fn add_option(
                 });
                 Ok(())
             }
-            _ => Err(reject("Ce nœud n'est pas un choix.")),
+            _ => Err(reject("not_a_choice", "Ce nœud n'est pas un choix.")),
         })?;
         Ok(created)
     })
@@ -511,7 +539,7 @@ pub fn add_option(
 pub fn rename_block(p: &mut Project, block: BlockId, name: &str) -> Result<(), ProjectError> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(reject("Le nom ne peut pas être vide."));
+        return Err(reject("name_empty", "Le nom ne peut pas être vide."));
     }
     match block {
         BlockId::Scene(id) => p.execute(Command::RenameScene {

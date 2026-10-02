@@ -14,7 +14,8 @@ use orbit_core::{
 };
 use orbit_editor_api::fields::{self, asset_picker, position_picker, to_color32, type_name};
 use orbit_editor_api::{
-    DockSlot, EditorContext, EditorPlugin, EditorRegistry, PanelDef, Plugin, PluginManifest, icons,
+    DockSlot, EditorContext, EditorPlugin, EditorRegistry, PanelDef, Plugin, PluginManifest,
+    UiText, icons,
 };
 use orbit_project::{Command, ops};
 
@@ -40,7 +41,7 @@ const PALETTE: [(u8, u8, u8); 10] = [
 fn empty_project(ui: &mut Ui) {
     ui.add_space(24.0);
     ui.vertical_centered(|ui| {
-        ui.label(RichText::new("Aucun projet ouvert").color(weak(ui)));
+        ui.label(RichText::new(ui.t("defs.no_project")).color(weak(ui)));
     });
 }
 
@@ -64,7 +65,7 @@ impl EditorPlugin for CharactersPlugin {
         let state = Rc::new(CharactersUi::default());
         reg.panel(PanelDef::new(
             "characters",
-            "Personnages",
+            "defs.characters.title",
             icons::USERS_THREE,
             DockSlot::Right,
             move |ui, ctx| characters_panel(ui, ctx, &state),
@@ -87,9 +88,11 @@ fn characters_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Characters
         .show(ui, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                ui.label(strong("Personnages", 16.0));
+                ui.label(strong(ui.t("defs.characters.title"), 16.0));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if primary_button(ui, &format!("{}  Nouveau", icons::PLUS)).clicked() {
+                    if primary_button(ui, &format!("{}  {}", icons::PLUS, ui.t("defs.new")))
+                        .clicked()
+                    {
                         add_character(ctx, state);
                     }
                 });
@@ -106,12 +109,7 @@ fn characters_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Characters
                             .color(faint(ui)),
                     );
                     ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(
-                            "Aucun personnage.\nCréez-en un pour écrire des répliques à son nom.",
-                        )
-                        .color(weak(ui)),
-                    );
+                    ui.label(RichText::new(ui.t("defs.characters.empty")).color(weak(ui)));
                 });
             }
             // The character chips.
@@ -154,8 +152,9 @@ fn characters_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Characters
 fn add_character(ctx: &mut EditorContext<'_>, state: &CharactersUi) {
     let Some(story) = ctx.story() else { return };
     let n = story.characters.len();
+    let default_name = ctx.t("defs.character.default_name");
     let name = ops::unique_name(
-        "Nouveau personnage",
+        &default_name,
         story
             .characters
             .iter()
@@ -207,10 +206,15 @@ fn character_details(
     card(ui, |ui| {
         ui.set_width(ui.available_width());
         // Name and color.
-        section_title(ui, "Identité");
-        if let Some(n) =
-            fields::text_field(ui, ("char_name", id), &name, "Nom affiché", 1, &mut done)
-        {
+        section_title(ui, &ui.t("defs.identity"));
+        if let Some(n) = fields::text_field(
+            ui,
+            ("char_name", id),
+            &name,
+            &ui.t("defs.display_name"),
+            1,
+            &mut done,
+        ) {
             pending.push((
                 Command::SetString {
                     id: def.name_id,
@@ -221,7 +225,7 @@ fn character_details(
         }
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Couleur").small().color(weak(ui)));
+            ui.label(RichText::new(ui.t("defs.color")).small().color(weak(ui)));
             if let Some(c) = fields::color_field(ui, def.color) {
                 let mut new = def.clone();
                 new.color = c;
@@ -264,7 +268,11 @@ fn character_details(
 
         // Default position.
         ui.add_space(8.0);
-        ui.label(RichText::new("Position par défaut").small().color(weak(ui)));
+        ui.label(
+            RichText::new(ui.t("defs.default_position"))
+                .small()
+                .color(weak(ui)),
+        );
         let mut change: Option<Option<Position>> = None;
         ui.horizontal(|ui| {
             let has = def.default_position.is_some();
@@ -292,14 +300,18 @@ fn character_details(
 
         // Default scale: what a `Show` uses unless it sets its own.
         ui.add_space(8.0);
-        ui.label(RichText::new("Échelle par défaut").small().color(weak(ui)));
+        ui.label(
+            RichText::new(ui.t("defs.default_scale"))
+                .small()
+                .color(weak(ui)),
+        );
         ui.horizontal(|ui| {
             let reset = ui
                 .add_enabled(
                     def.default_scale != 1.0,
                     egui::Button::new(icons::ARROW_COUNTER_CLOCKWISE).small(),
                 )
-                .on_hover_text("Remet l'échelle par défaut à ×1.00")
+                .on_hover_text(ui.t("defs.reset_scale"))
                 .clicked();
             let new_scale = if reset {
                 Some(1.0)
@@ -336,16 +348,19 @@ fn character_details(
     card(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
-            section_title(ui, "Expressions");
+            section_title(ui, &ui.t("defs.expressions"));
         });
         expressions(ui, ctx, &def);
     });
 
     ui.add_space(10.0);
     ui.horizontal(|ui| {
+        let says_text = ui.tn("defs.says", says, &[]);
+        let stage_text = ui.tn("defs.stages", stage, &[]);
         ui.label(
-            RichText::new(format!(
-                "Utilisé dans {says} réplique(s) et {stage} affichage(s)."
+            RichText::new(ui.tf(
+                "defs.usage",
+                &[("says", &says_text), ("stage", &stage_text)],
             ))
             .small()
             .color(weak(ui)),
@@ -353,14 +368,29 @@ fn character_details(
     });
     ui.add_space(4.0);
     let delete = egui::Button::new(
-        RichText::new(format!("{}  Supprimer le personnage", icons::TRASH)).color(danger(ui)),
+        RichText::new(format!(
+            "{}  {}",
+            icons::TRASH,
+            ui.t("defs.delete_character")
+        ))
+        .color(danger(ui)),
     );
     if ui.add(delete).clicked() {
         match ctx.ops(|p| ops::delete_character(p, id)) {
             Ok(()) => state.selected.set(None),
-            Err(_) => ctx.error(format!(
-                "Impossible de supprimer « {name} » : {says} réplique(s) et {stage} affichage(s) l'utilisent encore."
-            )),
+            Err(_) => {
+                let says_text = ctx.tn("defs.says", says, &[]);
+                let stage_text = ctx.tn("defs.stages", stage, &[]);
+                let message = ctx.tf(
+                    "defs.cannot_delete",
+                    &[
+                        ("name", &name),
+                        ("says", &says_text),
+                        ("stage", &stage_text),
+                    ],
+                );
+                ctx.error(message);
+            }
         }
     }
 }
@@ -377,7 +407,7 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
     let mut action: Option<Do> = None;
     if def.expressions.is_empty() {
         ui.label(
-            RichText::new("Aucune expression : ajoutez au moins un sprite pour pouvoir afficher ce personnage.")
+            RichText::new(ui.t("defs.no_expressions"))
                 .small()
                 .color(weak(ui)),
         );
@@ -422,7 +452,11 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
                         }
                         ui.horizontal(|ui| {
                             if ui
-                                .small_button(format!("{}  Fichier…", icons::FILE_PLUS))
+                                .small_button(format!(
+                                    "{}  {}",
+                                    icons::FILE_PLUS,
+                                    ui.t("defs.file")
+                                ))
                                 .clicked()
                             {
                                 action = Some(Do::Import(i));
@@ -432,14 +466,16 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
                                 .add_enabled(
                                     !used,
                                     egui::Button::new(
-                                        RichText::new(format!("{}  Supprimer", icons::TRASH))
-                                            .color(danger(ui)),
+                                        RichText::new(format!(
+                                            "{}  {}",
+                                            icons::TRASH,
+                                            ui.t("common.delete")
+                                        ))
+                                        .color(danger(ui)),
                                     )
                                     .small(),
                                 )
-                                .on_disabled_hover_text(
-                                    "Cette expression est utilisée par un affichage de personnage.",
-                                );
+                                .on_disabled_hover_text(ui.t("defs.expression_in_use"));
                             if remove.clicked() {
                                 action = Some(Do::Remove(i));
                             }
@@ -450,7 +486,7 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
         ui.add_space(4.0);
     }
     if ui
-        .button(format!("{}  Ajouter une expression", icons::PLUS))
+        .button(format!("{}  {}", icons::PLUS, ui.t("defs.add_expression")))
         .clicked()
     {
         action = Some(Do::Add);
@@ -486,7 +522,8 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
             let image = match image {
                 Some(i) => i,
                 None => {
-                    ctx.info("Aucune image dans le projet : choisissez un fichier.");
+                    let message = ctx.t("defs.no_image");
+                    ctx.info(message);
                     let Some(a) = edit::import_asset_dialog(ctx, AssetKind::Image) else {
                         return;
                     };
@@ -514,9 +551,9 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
 fn positions_section(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let Some(story) = ctx.story() else { return };
     let positions = story.positions.clone();
-    section_title(ui, "Positions de scène");
+    section_title(ui, &ui.t("defs.positions.title"));
     ui.label(
-        RichText::new("Gauche, centre et droite existent toujours. Ajoutez-en d'autres (coordonnées de 0 à 1, ancrage au bas du sprite).")
+        RichText::new(ui.t("defs.positions.hint"))
             .small()
             .color(weak(ui)),
     );
@@ -567,7 +604,7 @@ fn positions_section(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         });
     }
     if ui
-        .button(format!("{}  Ajouter une position", icons::PLUS))
+        .button(format!("{}  {}", icons::PLUS, ui.t("defs.add_position")))
         .clicked()
     {
         let name = ops::unique_name("position", positions.iter().map(|p| p.name.as_str()));
@@ -584,9 +621,8 @@ fn positions_section(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             matches!(&n.kind, NodeKind::Show { position: Position::Custom(c), .. } if *c == name)
         });
         if used {
-            ctx.error(format!(
-                "La position « {name} » est utilisée par un affichage de personnage."
-            ));
+            let message = ctx.tf("defs.position_in_use", &[("name", &name)]);
+            ctx.error(message);
         } else {
             new.remove(i);
             changed = true;
@@ -611,7 +647,7 @@ impl EditorPlugin for VariablesPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
         reg.panel(PanelDef::new(
             "variables",
-            "Variables",
+            "defs.variables.title",
             icons::FUNCTION,
             DockSlot::Right,
             variables_panel,
@@ -619,10 +655,11 @@ impl EditorPlugin for VariablesPlugin {
     }
 }
 
-fn scope_name(scope: VarScope) -> &'static str {
+/// Text key of the name of a scope.
+fn scope_key(scope: VarScope) -> &'static str {
     match scope {
-        VarScope::Game => "Partie",
-        VarScope::Persistent => "Persistante",
+        VarScope::Game => "defs.scope.game",
+        VarScope::Persistent => "defs.scope.persistent",
     }
 }
 
@@ -647,9 +684,11 @@ fn variables_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         .show(ui, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                ui.label(strong("Variables", 16.0));
+                ui.label(strong(ui.t("defs.variables.title"), 16.0));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if primary_button(ui, &format!("{}  Nouvelle", icons::PLUS)).clicked() {
+                    if primary_button(ui, &format!("{}  {}", icons::PLUS, ui.t("defs.new_f")))
+                        .clicked()
+                    {
                         let Some(story) = ctx.story() else { return };
                         let name = ops::unique_name(
                             "variable",
@@ -662,7 +701,7 @@ fn variables_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                 });
             });
             ui.label(
-                RichText::new("« Partie » : sauvegardée avec la partie. « Persistante » : conservée entre les parties (fins vues, nombre de parties).")
+                RichText::new(ui.t("defs.variables.scope_hint"))
                     .small()
                     .color(weak(ui)),
             );
@@ -673,10 +712,7 @@ fn variables_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new(icons::FUNCTION).size(30.0).color(faint(ui)));
                     ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Aucune variable.\nUne variable retient un choix du joueur (affinité, clé trouvée…).")
-                            .color(weak(ui)),
-                    );
+                    ui.label(RichText::new(ui.t("defs.variables.empty")).color(weak(ui)));
                 });
                 return;
             }
@@ -732,9 +768,9 @@ fn variable_row(ui: &mut Ui, ctx: &mut EditorContext<'_>, decl: &VarDecl) {
             }
             ui.label(
                 RichText::new(if uses == 0 {
-                    "inutilisée".to_owned()
+                    ui.t("defs.var.unused")
                 } else {
-                    format!("{uses} nœud(s)")
+                    ui.tn("defs.var.nodes", uses, &[])
                 })
                 .small()
                 .color(faint(ui)),
@@ -742,7 +778,7 @@ fn variable_row(ui: &mut Ui, ctx: &mut EditorContext<'_>, decl: &VarDecl) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .small_button(RichText::new(icons::TRASH).color(danger(ui)))
-                    .on_hover_text("Supprimer la variable")
+                    .on_hover_text(ui.t("defs.var.delete"))
                     .clicked()
                 {
                     action = Some(Do::Delete);
@@ -752,7 +788,7 @@ fn variable_row(ui: &mut Ui, ctx: &mut EditorContext<'_>, decl: &VarDecl) {
         ui.horizontal_wrapped(|ui| {
             let ty = decl.initial.value_type();
             egui::ComboBox::from_id_salt(("var_type", &decl.name))
-                .selected_text(type_name(ty))
+                .selected_text(type_name(ui, ty))
                 .width(130.0)
                 .show_ui(ui, |ui| {
                     for t in [
@@ -761,24 +797,32 @@ fn variable_row(ui: &mut Ui, ctx: &mut EditorContext<'_>, decl: &VarDecl) {
                         ValueType::Float,
                         ValueType::Str,
                     ] {
-                        if ui.selectable_label(t == ty, type_name(t)).clicked() && t != ty {
+                        if ui.selectable_label(t == ty, type_name(ui, t)).clicked() && t != ty {
                             action = Some(Do::Type(t));
                         }
                     }
                 });
-            ui.label(RichText::new("valeur initiale").small().color(weak(ui)));
+            ui.label(
+                RichText::new(ui.t("defs.var.initial"))
+                    .small()
+                    .color(weak(ui)),
+            );
             if let Some(v) = fields::value_editor(ui, &decl.initial) {
                 action = Some(Do::Initial(v));
             }
         });
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Portée").small().color(weak(ui)));
+            ui.label(
+                RichText::new(ui.t("defs.var.scope"))
+                    .small()
+                    .color(weak(ui)),
+            );
             egui::ComboBox::from_id_salt(("var_scope", &decl.name))
-                .selected_text(scope_name(decl.scope))
+                .selected_text(ui.t(scope_key(decl.scope)))
                 .show_ui(ui, |ui| {
                     for s in [VarScope::Game, VarScope::Persistent] {
                         if ui
-                            .selectable_label(decl.scope == s, scope_name(s))
+                            .selectable_label(decl.scope == s, ui.t(scope_key(s)))
                             .clicked()
                             && decl.scope != s
                         {

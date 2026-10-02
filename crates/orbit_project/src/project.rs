@@ -7,6 +7,46 @@ use thiserror::Error;
 
 use crate::command::{Command, CommandError};
 
+/// Why a compound operation (see [`crate::ops`]) refused a request.
+///
+/// `message` is meant for the user and is always available (French, like the
+/// rest of the story-side wording; the MCP relays it as is). `code` and
+/// `args` identify the reason without words, so that a front end can write
+/// the message in its own language: the editor looks `code` up in its text
+/// tables and falls back to `message`. `code` is empty for a reason that has
+/// no stable identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rejection {
+    pub code: &'static str,
+    pub args: Vec<(&'static str, String)>,
+    pub message: String,
+}
+
+impl Rejection {
+    /// A refusal with only a message (no code to translate it from).
+    pub fn plain(message: impl Into<String>) -> Self {
+        Self {
+            code: "",
+            args: Vec::new(),
+            message: message.into(),
+        }
+    }
+
+    /// Value of the named argument, if the reason has it.
+    pub fn arg(&self, name: &str) -> Option<&str> {
+        self.args
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+impl std::fmt::Display for Rejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ProjectError {
     #[error(transparent)]
@@ -14,7 +54,14 @@ pub enum ProjectError {
     /// A compound operation (see [`crate::ops`]) refused the request; the
     /// message is meant for the user.
     #[error("{0}")]
-    Rejected(String),
+    Rejected(Rejection),
+}
+
+impl ProjectError {
+    /// A refusal with a message only (see [`Rejection::plain`]).
+    pub fn rejected(message: impl Into<String>) -> Self {
+        Self::Rejected(Rejection::plain(message))
+    }
 }
 
 /// Why a change event was emitted.

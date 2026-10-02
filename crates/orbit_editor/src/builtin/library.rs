@@ -16,7 +16,7 @@ use orbit_core::{AssetEntry, AssetId, AssetKind, Story};
 use orbit_editor_api::fields::AssetDrag;
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Level,
-    Location, PanelDef, Plugin, PluginManifest, icons,
+    Location, PanelDef, Plugin, PluginManifest, Translator, UiText, icons,
 };
 use orbit_project::{AssetUser, asset_users, ops};
 
@@ -58,22 +58,22 @@ impl EditorPlugin for LibraryPlugin {
         let (state, moves) = (self.state.clone(), self.moves.clone());
         reg.panel(PanelDef::new(
             "library",
-            "Assets",
+            "library.title",
             icons::IMAGES,
             DockSlot::Bottom,
             move |ui, ctx| panel(ui, ctx, &state, &moves),
         ));
         reg.action(
-            ActionDef::new("import", "Importer des ressources…", |c| {
+            ActionDef::new("import", "library.action.import", |c| {
                 import_dialog(c);
             })
             .icon(icons::UPLOAD_SIMPLE)
-            .category("Fichier")
+            .category("category.file")
             .shortcut(
                 egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
                 egui::Key::I,
             )
-            .menu("file", 130)
+            .menu("menu.file", 130)
             .enabled(|c| c.has_project()),
         );
     }
@@ -83,14 +83,24 @@ impl EditorPlugin for LibraryPlugin {
 
 /// Imports files (picked or dropped) into the open project and tells the
 /// user what happened: one toast for the successes, one per refusal, the
-/// reason in French. The first new asset is selected in the library.
+/// reason in the editor's language. The first new asset is selected in the library.
 pub fn import_paths(ctx: &mut EditorContext<'_>, paths: &[PathBuf]) -> ImportReport {
     let Some(root) = assets_root_of(ctx) else {
-        ctx.error("Ouvrez un projet avant d'importer des ressources.");
+        let message = ctx.t("import.no_project");
+        ctx.error(message);
         return ImportReport::default();
     };
     let registry = ctx.registry();
-    let report = match ctx.ops(|p| Ok(assets::import_files(p, &root, &registry.project, paths))) {
+    let texts = ctx.translator();
+    let report = match ctx.ops(|p| {
+        Ok(assets::import_files(
+            p,
+            &root,
+            &registry.project,
+            paths,
+            &texts,
+        ))
+    }) {
         Ok(r) => r,
         Err(e) => {
             ctx.error(e.to_string());
@@ -107,26 +117,27 @@ pub fn import_paths(ctx: &mut EditorContext<'_>, paths: &[PathBuf]) -> ImportRep
                     .iter()
                     .filter(|i| !i.existing && i.kind == k)
                     .count();
-                (n > 0).then(|| format!("{n} {}", kind_plural(k)))
+                (n > 0).then(|| texts.tn(kind_count_key(k), n, &[]))
             })
             .collect();
-        ctx.info(format!(
-            "{added} ressource(s) importée(s) ({}).",
-            kinds.join(", ")
-        ));
+        let message = texts.tn("import.done", added, &[("kinds", &kinds.join(", "))]);
+        ctx.info(message);
     }
     let existing = report.imported.len() - added;
     if existing > 0 {
-        ctx.info(format!(
-            "{existing} fichier(s) déjà déclaré(s) dans le projet."
-        ));
+        let message = texts.tn("import.already", existing, &[]);
+        ctx.info(message);
     }
     for (path, error) in &report.failed {
         let name = path.file_name().map_or_else(
             || path.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
-        ctx.error(format!("Import refusé : « {name} » : {error}."));
+        let message = texts.tf(
+            "import.refused",
+            &[("name", &name), ("error", &error.message(&texts))],
+        );
+        ctx.error(message);
     }
     if let Some(first) = report.imported.first() {
         ctx.state_mut().selected_asset = Some(first.id);
@@ -154,9 +165,9 @@ fn import_dialog(ctx: &mut EditorContext<'_>) {
     let extensions = ctx.registry().project.import_extensions();
     let ext_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
     let files = rfd::FileDialog::new()
-        .set_title("Importer des ressources")
+        .set_title(ctx.t("import.dialog_title"))
         .set_directory(&root)
-        .add_filter("Images et sons", &ext_refs)
+        .add_filter(ctx.t("import.filter"), &ext_refs)
         .pick_files();
     if let Some(files) = files {
         import_paths(ctx, &files);
@@ -164,20 +175,21 @@ fn import_dialog(ctx: &mut EditorContext<'_>) {
     }
 }
 
-fn kind_plural(kind: AssetKind) -> &'static str {
+/// Plural key of "N images" / "N music tracks" / "N sounds".
+fn kind_count_key(kind: AssetKind) -> &'static str {
     match kind {
-        AssetKind::Image => "image(s)",
-        AssetKind::Music => "musique(s)",
-        AssetKind::Sound => "son(s)",
+        AssetKind::Image => "asset.count.image",
+        AssetKind::Music => "asset.count.music",
+        AssetKind::Sound => "asset.count.sound",
     }
 }
 
-fn kind_name(kind: AssetKind) -> &'static str {
-    match kind {
-        AssetKind::Image => "Image",
-        AssetKind::Music => "Musique",
-        AssetKind::Sound => "Son",
-    }
+fn kind_name(texts: &Translator, kind: AssetKind) -> String {
+    texts.t(match kind {
+        AssetKind::Image => "asset.kind.image",
+        AssetKind::Music => "asset.kind.music",
+        AssetKind::Sound => "asset.kind.sound",
+    })
 }
 
 fn kind_icon(kind: AssetKind) -> &'static str {
@@ -427,12 +439,18 @@ fn items(
     out
 }
 
-fn human_size(bytes: u64) -> String {
+fn human_size(texts: &Translator, bytes: u64) -> String {
     match bytes {
         0 => String::new(),
-        b if b < 1024 => format!("{b} o"),
-        b if b < 1024 * 1024 => format!("{:.0} Ko", b as f64 / 1024.0),
-        b => format!("{:.1} Mo", b as f64 / (1024.0 * 1024.0)),
+        b if b < 1024 => texts.tf("asset.size.bytes", &[("n", &b)]),
+        b if b < 1024 * 1024 => texts.tf(
+            "asset.size.kb",
+            &[("n", &format!("{:.0}", b as f64 / 1024.0))],
+        ),
+        b => texts.tf(
+            "asset.size.mb",
+            &[("n", &format!("{:.1}", b as f64 / (1024.0 * 1024.0)))],
+        ),
     }
 }
 
@@ -452,14 +470,15 @@ fn panel(
                     .size(28.0)
                     .color(faint(ui)),
             );
-            ui.label(egui::RichText::new("Aucun projet ouvert").color(weak(ui)));
+            ui.label(egui::RichText::new(ui.t("library.no_project")).color(weak(ui)));
         });
         return;
     }
     let mut st = state.borrow_mut();
     let waker = ctx.state().waker.clone();
     if let Some(error) = st.audio.update(&waker) {
-        ctx.error(format!("Lecture impossible : {error}"));
+        let message = ctx.tf("library.read_error", &[("error", &error)]);
+        ctx.error(message);
     }
     if st.audio.is_busy() {
         ui.ctx().request_repaint_after(Duration::from_millis(120));
@@ -521,7 +540,7 @@ fn panel(
         } else if shown.is_empty() {
             ui.add_space(14.0);
             ui.vertical_centered(|ui| {
-                ui.label(egui::RichText::new("Aucune ressource ne correspond.").color(weak(ui)));
+                ui.label(egui::RichText::new(ui.t("library.no_match")).color(weak(ui)));
             });
         } else {
             match st.view {
@@ -574,9 +593,16 @@ fn visible(st: &LibUi, all: &[Item]) -> Vec<Item> {
 
 fn toolbar(ui: &mut Ui, st: &mut LibUi, all: &[Item], actions: &mut Vec<Action>) {
     ui.horizontal_wrapped(|ui| {
-        if primary_button(ui, &format!("{}  Importer", icons::UPLOAD_SIMPLE))
-            .on_hover_text("Importer des images et des sons (ou déposez-les sur la fenêtre)")
-            .clicked()
+        if primary_button(
+            ui,
+            &format!(
+                "{}  {}",
+                icons::UPLOAD_SIMPLE,
+                ui.t("library.toolbar.import")
+            ),
+        )
+        .on_hover_text(ui.t("library.toolbar.import_tip"))
+        .clicked()
         {
             actions.push(Action::Import);
         }
@@ -590,18 +616,18 @@ fn toolbar(ui: &mut Ui, st: &mut LibUi, all: &[Item], actions: &mut Vec<Action>)
                 .count()
         };
         for (filter, label) in [
-            (Filter::All, "Tout".to_owned()),
+            (Filter::All, ui.t("library.filter.all")),
             (
                 Filter::Kind(AssetKind::Image),
-                format!("{} Images", icons::IMAGE),
+                format!("{} {}", icons::IMAGE, ui.t("library.filter.images")),
             ),
             (
                 Filter::Kind(AssetKind::Music),
-                format!("{} Musiques", icons::MUSIC_NOTES),
+                format!("{} {}", icons::MUSIC_NOTES, ui.t("library.filter.music")),
             ),
             (
                 Filter::Kind(AssetKind::Sound),
-                format!("{} Sons", icons::SPEAKER_HIGH),
+                format!("{} {}", icons::SPEAKER_HIGH, ui.t("library.filter.sounds")),
             ),
         ] {
             ui.selectable_value(
@@ -613,42 +639,45 @@ fn toolbar(ui: &mut Ui, st: &mut LibUi, all: &[Item], actions: &mut Vec<Action>)
         ui.add_space(6.0);
         ui.add(
             egui::TextEdit::singleline(&mut st.query)
-                .hint_text(format!("{}  Filtrer…", icons::MAGNIFYING_GLASS))
+                .hint_text(format!(
+                    "{}  {}",
+                    icons::MAGNIFYING_GLASS,
+                    ui.t("library.filter.hint")
+                ))
                 .desired_width(140.0),
         );
         egui::ComboBox::from_id_salt("library_sort")
             .selected_text(match st.sort {
-                Sort::Name => "Nom",
-                Sort::Kind => "Type",
-                Sort::Size => "Taille",
+                Sort::Name => ui.t("library.sort.name"),
+                Sort::Kind => ui.t("library.sort.kind"),
+                Sort::Size => ui.t("library.sort.size"),
             })
             .width(70.0)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut st.sort, Sort::Name, "Nom");
-                ui.selectable_value(&mut st.sort, Sort::Kind, "Type");
-                ui.selectable_value(&mut st.sort, Sort::Size, "Taille");
+                ui.selectable_value(&mut st.sort, Sort::Name, ui.t("library.sort.name"));
+                ui.selectable_value(&mut st.sort, Sort::Kind, ui.t("library.sort.kind"));
+                ui.selectable_value(&mut st.sort, Sort::Size, ui.t("library.sort.size"));
             });
         ui.selectable_value(&mut st.view, View::Grid, icons::SQUARES_FOUR)
-            .on_hover_text("Grille");
+            .on_hover_text(ui.t("library.view.grid"));
         ui.selectable_value(&mut st.view, View::List, icons::LIST)
-            .on_hover_text("Liste");
+            .on_hover_text(ui.t("library.view.list"));
     });
 }
 
 fn empty_state(ui: &mut Ui, actions: &mut Vec<Action>) {
     ui.add_space(18.0);
     ui.vertical_centered(|ui| {
-        ui.label(egui::RichText::new(icons::UPLOAD_SIMPLE).size(30.0).color(faint(ui)));
-        ui.add_space(4.0);
-        ui.label(strong("Aucune ressource", 14.0));
         ui.label(
-            egui::RichText::new(
-                "Glissez des images (PNG, JPEG) et des sons (WAV, OGG) sur la fenêtre,\nou utilisez le bouton Importer.",
-            )
-            .color(weak(ui)),
+            egui::RichText::new(icons::UPLOAD_SIMPLE)
+                .size(30.0)
+                .color(faint(ui)),
         );
+        ui.add_space(4.0);
+        ui.label(strong(ui.t("library.empty.title"), 14.0));
+        ui.label(egui::RichText::new(ui.t("library.empty.hint")).color(weak(ui)));
         ui.add_space(8.0);
-        if primary_button(ui, "Importer des fichiers…").clicked() {
+        if primary_button(ui, &ui.t("library.empty.button")).clicked() {
             actions.push(Action::Import);
         }
     });
@@ -779,10 +808,10 @@ fn interact(
         tip.push_str(&format!("\n{info}"));
     }
     if item.size > 0 {
-        tip.push_str(&format!("  ·  {}", human_size(item.size)));
+        tip.push_str(&format!("  ·  {}", human_size(&ui.texts(), item.size)));
     }
     if item.undeclared {
-        tip.push_str("\nFichier présent dans le projet mais non déclaré.");
+        tip.push_str(&format!("\n{}", ui.t("library.tip.undeclared")));
     }
     if let Some((_, message)) = &item.issue {
         tip.push_str(&format!("\n{message}"));
@@ -791,7 +820,7 @@ fn interact(
     response.context_menu(|ui| {
         if item.undeclared {
             if ui
-                .button(format!("{}  Déclarer dans le projet", icons::PLUS))
+                .button(format!("{}  {}", icons::PLUS, ui.t("library.menu.declare")))
                 .clicked()
             {
                 actions.push(Action::Declare(item.entry.path.clone()));
@@ -801,9 +830,9 @@ fn interact(
         }
         if item.entry.kind != AssetKind::Image {
             let label = if audio_playing {
-                format!("{}  Arrêter", icons::STOP)
+                format!("{}  {}", icons::STOP, ui.t("library.menu.stop"))
             } else {
-                format!("{}  Écouter", icons::PLAY)
+                format!("{}  {}", icons::PLAY, ui.t("library.menu.play"))
             };
             if ui.button(label).clicked() {
                 actions.push(if audio_playing {
@@ -815,7 +844,11 @@ fn interact(
             }
         }
         if ui
-            .button(format!("{}  Renommer", icons::PENCIL_SIMPLE))
+            .button(format!(
+                "{}  {}",
+                icons::PENCIL_SIMPLE,
+                ui.t("common.rename")
+            ))
             .clicked()
         {
             actions.push(Action::Select(item.entry.id));
@@ -823,7 +856,7 @@ fn interact(
             ui.close();
         }
         if ui
-            .button(format!("{}  Retirer du projet", icons::TRASH))
+            .button(format!("{}  {}", icons::TRASH, ui.t("library.menu.remove")))
             .clicked()
         {
             actions.push(Action::AskDelete(item.entry.id));
@@ -926,9 +959,9 @@ fn grid(
                     ui.visuals().text_color(),
                 );
                 let sub = match (&thumb, item.undeclared) {
-                    (_, true) => "non déclaré".to_owned(),
+                    (_, true) => ui.t("library.undeclared"),
                     (ThumbState::Ready { info, .. }, _) => info.clone(),
-                    _ => kind_name(item.entry.kind).to_owned(),
+                    _ => kind_name(&ui.texts(), item.entry.kind),
                 };
                 painter.text(
                     egui::pos2(rect.center().x, thumb_rect.bottom() + 29.0),
@@ -987,6 +1020,7 @@ fn list(
         area = area.vertical_scroll_offset(index as f32 * LIST_ROW);
     }
     let playing = st.audio.playing;
+    let texts = ui.texts();
     area.show_rows(ui, LIST_ROW, shown.len(), |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for index in range {
@@ -1031,7 +1065,7 @@ fn list(
             painter.text(
                 egui::pos2(right, mid),
                 Align2::RIGHT_CENTER,
-                human_size(item.size),
+                human_size(&texts, item.size),
                 FontId::proportional(11.5),
                 faint(ui),
             );
@@ -1046,9 +1080,9 @@ fn list(
                 egui::pos2(right - 150.0, mid),
                 Align2::RIGHT_CENTER,
                 if item.undeclared {
-                    "non déclaré"
+                    texts.t("library.undeclared")
                 } else {
-                    kind_name(item.entry.kind)
+                    kind_name(&texts, item.entry.kind)
                 },
                 FontId::proportional(11.5),
                 if item.undeclared {
@@ -1119,12 +1153,12 @@ fn details(
                     ui.label(
                         egui::RichText::new(format!(
                             "{}  ·  {}  ·  {}  ·  {}",
-                            kind_name(item.entry.kind),
+                            kind_name(&ui.texts(), item.entry.kind),
                             match &thumb {
                                 ThumbState::Ready { info, .. } => info.as_str(),
                                 _ => "",
                             },
-                            human_size(item.size),
+                            human_size(&ui.texts(), item.size),
                             item.entry.path
                         ))
                         .color(weak(ui)),
@@ -1140,11 +1174,11 @@ fn details(
                         .as_ref()
                         .is_some_and(|(id, _)| *id == item.entry.id);
                     let label = if playing {
-                        format!("{}  Arrêter", icons::STOP)
+                        format!("{}  {}", icons::STOP, ui.t("library.menu.stop"))
                     } else if loading {
-                        format!("{}  Chargement…", icons::PLAY)
+                        format!("{}  {}", icons::PLAY, ui.t("library.menu.loading"))
                     } else {
-                        format!("{}  Écouter", icons::PLAY)
+                        format!("{}  {}", icons::PLAY, ui.t("library.menu.play"))
                     };
                     if ui.small_button(label).clicked() {
                         actions.push(if playing {
@@ -1154,22 +1188,28 @@ fn details(
                         });
                     }
                 }
-                if icon_button(ui, icons::PENCIL_SIMPLE, "Renommer le fichier").clicked() {
+                if icon_button(
+                    ui,
+                    icons::PENCIL_SIMPLE,
+                    &ui.t("library.details.rename_tip"),
+                )
+                .clicked()
+                {
                     actions.push(Action::BeginRename(item.entry.id));
                 }
-                if icon_button(ui, icons::TRASH, "Retirer du projet").clicked() {
+                if icon_button(ui, icons::TRASH, &ui.t("library.menu.remove")).clicked() {
                     actions.push(Action::AskDelete(item.entry.id));
                 }
                 let users = asset_users(story, item.entry.id);
                 if users.is_empty() {
                     ui.label(
-                        egui::RichText::new("Utilisée nulle part")
+                        egui::RichText::new(ui.t("library.details.unused"))
                             .small()
                             .color(faint(ui)),
                     );
                 } else {
                     ui.label(
-                        egui::RichText::new(format!("Utilisée {} fois :", users.len()))
+                        egui::RichText::new(ui.tn("library.details.used", users.len(), &[]))
                             .small()
                             .color(weak(ui)),
                     );
@@ -1225,28 +1265,29 @@ fn confirm_delete(
     let uses = ctx.story().map_or(0, |s| asset_users(s, id).len());
     let modal = egui::Modal::new(Id::new("orbit_asset_delete")).show(ui.ctx(), |ui| {
         ui.set_width(380.0);
-        ui.label(strong("Retirer cette ressource ?", 15.0));
+        ui.label(strong(ui.t("library.delete.title"), 15.0));
         ui.add_space(6.0);
         if uses > 0 {
             ui.label(
-                egui::RichText::new(format!(
-                    "« {name} » est encore utilisée ({uses} endroit(s)) : retirez-la d'abord des nœuds et des expressions qui la référencent."
-                ))
-                .color(danger(ui)),
+                egui::RichText::new(ui.tn("library.delete.in_use", uses, &[("name", &name)]))
+                    .color(danger(ui)),
             );
         } else {
-            ui.label(format!(
-                "« {name} » sera retirée du projet (annulable). Le fichier reste sur le disque."
-            ));
+            ui.label(ui.tf("library.delete.confirm", &[("name", &name)]));
         }
         ui.add_space(10.0);
         let mut close = false;
         ui.horizontal(|ui| {
-            if uses == 0 && primary_button(ui, "Retirer").clicked() {
+            if uses == 0 && primary_button(ui, &ui.t("common.remove")).clicked() {
                 actions.push(Action::Delete(id));
                 close = true;
             }
-            if ui.button(if uses == 0 { "Annuler" } else { "Fermer" }).clicked() {
+            let dismiss = ui.t(if uses == 0 {
+                "common.cancel"
+            } else {
+                "common.close"
+            });
+            if ui.button(dismiss).clicked() {
                 close = true;
             }
         });
@@ -1306,10 +1347,8 @@ fn apply(
                         ctx.state_mut().selected_asset = None;
                     }
                     ctx.state_mut().asset_epoch += 1;
-                    ctx.log(
-                        Level::Info,
-                        "Ressource retirée du projet (le fichier reste sur le disque).",
-                    );
+                    let message = ctx.t("library.removed");
+                    ctx.log(Level::Info, message);
                 }
             }
             Action::ShowUser(location) => reveal::reveal(ctx, location),
@@ -1331,7 +1370,8 @@ fn rename(
     };
     let stem = stem.trim();
     if stem.is_empty() {
-        ctx.error("Le nom ne peut pas être vide.");
+        let message = ctx.t("library.name_empty");
+        ctx.error(message);
         return;
     }
     let (dir, ext) = split_path(&entry.path);
@@ -1342,11 +1382,13 @@ fn rename(
         format!("{dir}/{file}")
     };
     let mut journal = moves.borrow_mut();
+    let texts = ctx.translator();
     if ctx
-        .ops_or_toast(|p| assets::move_asset(p, root, &mut journal, id, &new_path))
+        .ops_or_toast(|p| assets::move_asset(p, root, &mut journal, id, &new_path, &texts))
         .is_some()
     {
         ctx.state_mut().asset_epoch += 1;
-        ctx.log(Level::Info, format!("Ressource renommée : {new_path}"));
+        let message = ctx.tf("library.renamed", &[("path", &new_path)]);
+        ctx.log(Level::Info, message);
     }
 }

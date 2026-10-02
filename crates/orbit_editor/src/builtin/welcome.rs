@@ -17,7 +17,7 @@ pub struct WelcomePlugin;
 
 impl Plugin for WelcomePlugin {
     fn manifest(&self) -> PluginManifest {
-        PluginManifest::new(ids::WELCOME, "Bienvenue", "0.1.0")
+        PluginManifest::new(ids::WELCOME, "Welcome", "0.1.0")
     }
 }
 
@@ -25,7 +25,7 @@ impl EditorPlugin for WelcomePlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
         reg.panel(PanelDef::new(
             "welcome",
-            "Bienvenue",
+            "welcome.title",
             icons::HOUSE,
             DockSlot::Center,
             panel,
@@ -91,7 +91,7 @@ fn content(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     ui.add_space(28.0);
     logo(ui);
     ui.add_space(6.0);
-    ui.label(RichText::new("Éditeur de visual novels").color(weak(ui)));
+    ui.label(RichText::new(ctx.t("welcome.subtitle")).color(weak(ui)));
     ui.add_space(20.0);
 
     // Open project summary.
@@ -101,17 +101,21 @@ fn content(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         let characters = story.characters.len();
         card(ui, |ui| {
             ui.set_width(ui.available_width());
-            section_title(ui, "Projet ouvert");
+            section_title(ui, &ctx.t("welcome.open_project"));
             ui.horizontal(|ui| {
                 ui.label(strong(&info.name, 18.0));
                 if info.modified {
                     ui.label(
-                        RichText::new("● modifications non enregistrées")
+                        RichText::new(format!("● {}", ctx.t("status.unsaved")))
                             .color(warning(ui))
                             .small(),
                     );
                 } else {
-                    ui.label(RichText::new("● enregistré").color(success()).small());
+                    ui.label(
+                        RichText::new(format!("● {}", ctx.t("status.saved")))
+                            .color(success())
+                            .small(),
+                    );
                 }
             });
             ui.label(
@@ -121,16 +125,17 @@ fn content(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             );
             ui.add_space(6.0);
             ui.label(format!(
-                "{scenes} scène(s) · {nodes} nœud(s) · {characters} personnage(s)"
+                "{} · {} · {}",
+                ctx.tn("project.scenes", scenes, &[]),
+                ctx.tn("project.nodes", nodes, &[]),
+                ctx.tn("project.characters", characters, &[])
             ));
             if !info.has_manifest {
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new(
-                        "Histoire ouverte sans dossier de projet (pas de orbit.project.ron).",
-                    )
-                    .small()
-                    .color(faint(ui)),
+                    RichText::new(ctx.t("welcome.no_manifest"))
+                        .small()
+                        .color(faint(ui)),
                 );
             }
         });
@@ -139,13 +144,27 @@ fn content(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
 
     // Start actions.
     ui.horizontal(|ui| {
-        if primary_button(ui, &format!("{}  Nouveau projet", icons::FILE_PLUS)).clicked() {
+        if primary_button(
+            ui,
+            &format!("{}  {}", icons::FILE_PLUS, ctx.t("welcome.new_project")),
+        )
+        .clicked()
+        {
             ctx.request(EditorRequest::NewProjectDialog);
         }
-        if secondary_button(ui, &format!("{}  Ouvrir un projet…", icons::FOLDER_OPEN)).clicked() {
+        if secondary_button(
+            ui,
+            &format!("{}  {}", icons::FOLDER_OPEN, ctx.t("action.open_project")),
+        )
+        .clicked()
+        {
             ctx.request(EditorRequest::PickOpenProject);
         }
-        if secondary_button(ui, &format!("{}  Ouvrir une histoire…", icons::FILM_SLATE)).clicked()
+        if secondary_button(
+            ui,
+            &format!("{}  {}", icons::FILM_SLATE, ctx.t("welcome.open_story")),
+        )
+        .clicked()
         {
             ctx.request(EditorRequest::PickOpenStory);
         }
@@ -153,13 +172,10 @@ fn content(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     ui.add_space(22.0);
 
     // Recent projects.
-    section_title(ui, "Projets récents");
+    section_title(ui, &ctx.t("welcome.recent"));
     let recent = ctx.state().recent.clone();
     if recent.is_empty() {
-        ui.label(
-            RichText::new("Aucun projet récent. Créez-en un ou ouvrez-en un existant.")
-                .color(faint(ui)),
-        );
+        ui.label(RichText::new(ctx.t("welcome.no_recent")).color(faint(ui)));
     }
     for project in recent {
         let (rect, response) =
@@ -209,13 +225,13 @@ fn content(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
 
     // Tips.
     ui.add_space(22.0);
-    section_title(ui, "Raccourcis utiles");
+    section_title(ui, &ctx.t("welcome.tips"));
     ui.horizontal_wrapped(|ui| {
         for (keys, what) in [
-            ("Ctrl+K", "palette de commandes"),
-            ("Ctrl+S", "enregistrer"),
-            ("Ctrl+Z", "annuler"),
-            ("Ctrl+Y", "rétablir"),
+            ("Ctrl+K", ctx.t("welcome.tip_palette")),
+            ("Ctrl+S", ctx.t("welcome.tip_save")),
+            ("Ctrl+Z", ctx.t("welcome.tip_undo")),
+            ("Ctrl+Y", ctx.t("welcome.tip_redo")),
         ] {
             ui.label(RichText::new(keys).strong().color(accent(ui)));
             ui.label(RichText::new(what).color(weak(ui)));

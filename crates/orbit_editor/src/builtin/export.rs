@@ -4,7 +4,7 @@
 //! the manifest, runs an export on a worker thread (the window stays alive,
 //! the thread wakes it with the editor's `Waker`), shows the progress and the
 //! journal, opens the output folder and serves a web export to try it in the
-//! browser. The panel is hidden by default: File > "Exporter le jeu…" or the
+//! browser. The panel is hidden by default: File > "Export game…" or the
 //! View menu opens it.
 
 use std::path::{Path, PathBuf};
@@ -15,7 +15,7 @@ use std::thread::JoinHandle;
 use egui::{ComboBox, ProgressBar, RichText, ScrollArea, TextEdit, Ui};
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, PanelDef,
-    Plugin, PluginManifest, Waker, icons,
+    Plugin, PluginManifest, Translator, UiText, Waker, icons,
 };
 use orbit_export::{
     Event, ExportOptions, ExportProfile, ExportProject, ExportReport, ExportTarget, LogLevel,
@@ -43,17 +43,17 @@ impl EditorPlugin for ExportPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
         reg.panel(PanelDef::new(
             "export",
-            "Export",
+            "export.title",
             icons::EXPORT,
             DockSlot::Hidden,
             panel,
         ));
         reg.action(
-            ActionDef::new("open", "Exporter le jeu…", |c| {
+            ActionDef::new("open", "export.open", |c| {
                 c.request(EditorRequest::ShowPanel(panels::EXPORT.to_owned()));
             })
             .icon(icons::EXPORT)
-            .category("Fichier")
+            .category("category.file")
             .menu("file", 300)
             .enabled(|c| c.has_project()),
         );
@@ -104,6 +104,7 @@ impl ExportJob {
         out_dir: PathBuf,
         templates: Templates,
         waker: Waker,
+        texts: &Translator,
     ) -> Self {
         let shared = Arc::new(Mutex::new(JobShared::default()));
         let cancel = Arc::new(AtomicBool::new(false));
@@ -152,7 +153,7 @@ impl ExportJob {
         if thread.is_none()
             && let Ok(mut s) = shared.lock()
         {
-            s.outcome = Some(Err("impossible de démarrer le fil d'export".to_owned()));
+            s.outcome = Some(Err(texts.t("export.thread_failed")));
         }
         Self {
             shared,
@@ -305,7 +306,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let Some(info) = ctx.project_info().cloned() else {
         ui.add_space(14.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("Aucun projet ouvert").color(weak(ui)));
+            ui.label(RichText::new(ui.t("export.no_project")).color(weak(ui)));
         });
         return;
     };
@@ -361,7 +362,8 @@ fn profile_form(
     root: &Path,
     messages: &mut Vec<(bool, String)>,
 ) {
-    section_title(ui, "Profil d'export");
+    let texts = ui.texts();
+    section_title(ui, &texts.t("export.profile.title"));
     let names: Vec<String> = state.profiles.iter().map(|p| p.name.clone()).collect();
     let mut changed = false;
     ui.horizontal(|ui| {
@@ -373,7 +375,14 @@ fn profile_form(
                     ui.selectable_value(&mut state.selected, i, name);
                 }
             });
-        if ui.button(format!("{}  Nouveau", icons::PLUS)).clicked() {
+        if ui
+            .button(format!(
+                "{}  {}",
+                icons::PLUS,
+                texts.t("export.profile.new")
+            ))
+            .clicked()
+        {
             let base = state.profile().clone();
             let mut next = base.clone();
             next.name = unique_name(&names, &base.name);
@@ -383,8 +392,8 @@ fn profile_form(
         }
         if state.profiles.len() > 1
             && ui
-                .button(format!("{}  Supprimer", icons::TRASH))
-                .on_hover_text("Supprime ce profil")
+                .button(format!("{}  {}", icons::TRASH, texts.t("common.delete")))
+                .on_hover_text(texts.t("export.profile.delete_hint"))
                 .clicked()
         {
             let at = state.selected.min(state.profiles.len() - 1);
@@ -408,43 +417,70 @@ fn profile_form(
                 ui.end_row();
                 r.changed()
             };
-            changed |= field(ui, "Nom du profil", "", &mut profile.name);
-            changed |= field(ui, "Nom du jeu", "Titre de la fenêtre, nom des fichiers.", &mut profile.game_name);
             changed |= field(
                 ui,
-                "Identifiant",
-                "Dossier des sauvegardes des joueurs : lettres minuscules, chiffres, - et _. Ne le changez plus une fois le jeu publié.",
+                &texts.t("export.field.profile_name"),
+                "",
+                &mut profile.name,
+            );
+            changed |= field(
+                ui,
+                &texts.t("export.field.game_name"),
+                &texts.t("export.field.game_name_hint"),
+                &mut profile.game_name,
+            );
+            changed |= field(
+                ui,
+                &texts.t("export.field.game_id"),
+                &texts.t("export.field.game_id_hint"),
                 &mut profile.game_id,
             );
-            changed |= field(ui, "Version", "", &mut profile.version);
+            changed |= field(
+                ui,
+                &texts.t("export.field.version"),
+                "",
+                &mut profile.version,
+            );
             let mut icon = profile.icon.clone().unwrap_or_default();
-            if field(ui, "Icône (PNG)", "Chemin relatif au projet, carré, 256x256 recommandé.", &mut icon) {
+            if field(
+                ui,
+                &texts.t("export.field.icon"),
+                &texts.t("export.field.icon_hint"),
+                &mut icon,
+            ) {
                 profile.icon = (!icon.trim().is_empty()).then_some(icon);
                 changed = true;
             }
             let mut language = profile.default_language.clone().unwrap_or_default();
             if field(
                 ui,
-                "Langue par défaut",
-                "Code de langue (fr, en...) utilisé quand le joueur n'a pas choisi ; vide : celle du système.",
+                &texts.t("export.field.language"),
+                &texts.t("export.field.language_hint"),
                 &mut language,
             ) {
                 profile.default_language = (!language.trim().is_empty()).then_some(language);
                 changed = true;
             }
-            ui.label("Compression du pak");
+            ui.label(texts.t("export.field.pak"));
             ui.horizontal(|ui| {
                 changed |= ui
                     .selectable_value(&mut profile.pak_compression, PakCompression::Lz4, "LZ4")
                     .changed();
                 changed |= ui
-                    .selectable_value(&mut profile.pak_compression, PakCompression::None, "Aucune")
+                    .selectable_value(
+                        &mut profile.pak_compression,
+                        PakCompression::None,
+                        texts.t("export.field.pak_none"),
+                    )
                     .changed();
             });
             ui.end_row();
-            ui.label("Web");
+            ui.label(texts.t("export.field.web"));
             changed |= ui
-                .checkbox(&mut profile.web_precompress, "Fichiers .br et .gz précompressés")
+                .checkbox(
+                    &mut profile.web_precompress,
+                    texts.t("export.field.web_precompress"),
+                )
                 .changed();
             ui.end_row();
         });
@@ -457,21 +493,31 @@ fn profile_form(
     ui.horizontal(|ui| {
         let can_save = state.has_manifest && state.dirty;
         if ui
-            .add_enabled(can_save, egui::Button::new(format!("{}  Enregistrer les profils", icons::FLOPPY_DISK)))
+            .add_enabled(
+                can_save,
+                egui::Button::new(format!(
+                    "{}  {}",
+                    icons::FLOPPY_DISK,
+                    texts.t("export.profile.save")
+                )),
+            )
             .clicked()
         {
             match state.save_profiles(root) {
-                Ok(()) => messages.push((false, format!("Profils d'export enregistrés dans {MANIFEST_FILE}."))),
-                Err(e) => messages.push((true, format!("Profils non enregistrés : {e}"))),
+                Ok(()) => messages.push((
+                    false,
+                    texts.tf("export.profile.saved", &[("file", &MANIFEST_FILE)]),
+                )),
+                Err(e) => messages.push((
+                    true,
+                    texts.tf("export.profile.save_failed", &[("error", &e)]),
+                )),
             }
         }
         if !state.has_manifest {
-            ui.label(
-                RichText::new("Ce projet n'a pas de manifeste : le profil sert à cet export mais n'est pas enregistré.")
-                    .color(faint(ui)),
-            );
+            ui.label(RichText::new(texts.t("export.profile.no_manifest")).color(faint(ui)));
         } else if state.dirty {
-            ui.label(RichText::new("modifications non enregistrées").color(faint(ui)));
+            ui.label(RichText::new(texts.t("export.profile.dirty")).color(faint(ui)));
         }
     });
 }
@@ -484,7 +530,8 @@ fn unique_name(existing: &[String], base: &str) -> String {
 }
 
 fn targets_and_output(ui: &mut Ui, state: &mut ExportUi) {
-    section_title(ui, "Cibles");
+    let texts = ui.texts();
+    section_title(ui, &texts.t("export.targets"));
     let templates = state.templates();
     let available = templates.available();
     let mut changed = false;
@@ -495,13 +542,11 @@ fn targets_and_output(ui: &mut Ui, state: &mut ExportUi) {
         let label = if present {
             target.label().to_owned()
         } else {
-            format!("{}  (template introuvable)", target.label())
+            format!("{}  {}", target.label(), texts.t("export.template_missing"))
         };
         let response = ui.checkbox(&mut on, label);
         if !present {
-            response.on_hover_text(
-                "Le template du player de cette cible n'est pas installé : voir `cargo xtask templates` ou le dossier des templates ci-dessous.",
-            );
+            response.on_hover_text(texts.t("export.template_missing_hint"));
         }
         if on != profile.targets.contains(&target) {
             if on {
@@ -520,22 +565,28 @@ fn targets_and_output(ui: &mut Ui, state: &mut ExportUi) {
         .num_columns(3)
         .spacing([10.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Dossier de sortie");
+            ui.label(texts.t("export.output_dir"));
             ui.add(TextEdit::singleline(&mut state.out_dir).desired_width(260.0));
-            if ui.button(icons::FOLDER_OPEN).on_hover_text("Choisir un dossier").clicked()
+            if ui
+                .button(icons::FOLDER_OPEN)
+                .on_hover_text(texts.t("export.pick_folder"))
+                .clicked()
                 && let Some(dir) = rfd::FileDialog::new().pick_folder()
             {
                 state.out_dir = dir.to_string_lossy().into_owned();
             }
             ui.end_row();
-            ui.label("Templates");
+            ui.label(texts.t("export.templates"));
             ui.add(
                 TextEdit::singleline(&mut state.templates_dir)
-                    .hint_text("à côté de l'éditeur (par défaut)")
+                    .hint_text(texts.t("export.templates_default"))
                     .desired_width(260.0),
             )
-            .on_hover_text("Dossier des templates de player (windows/, linux/, web/). Vide : le dossier `templates` à côté de l'éditeur.");
-            if ui.button(icons::FOLDER_OPEN).on_hover_text("Choisir un dossier").clicked()
+            .on_hover_text(texts.t("export.templates_hint"));
+            if ui
+                .button(icons::FOLDER_OPEN)
+                .on_hover_text(texts.t("export.pick_folder"))
+                .clicked()
                 && let Some(dir) = rfd::FileDialog::new().pick_folder()
             {
                 state.templates_dir = dir.to_string_lossy().into_owned();
@@ -563,7 +614,7 @@ fn start_export(
     state.log.clear();
     state.result = None;
     state.fraction = 0.0;
-    state.label = "Démarrage".to_owned();
+    state.label = ctx.t("export.starting");
     state.server = None;
     let targets = profile.targets.clone();
     state.job = Some(ExportJob::start(
@@ -573,8 +624,10 @@ fn start_export(
         PathBuf::from(state.out_dir.trim()),
         state.templates(),
         ctx.state().waker.clone(),
+        &ctx.translator(),
     ));
-    ctx.info("Export du jeu démarré.");
+    let message = ctx.t("export.started");
+    ctx.info(message);
 }
 
 fn run_controls(
@@ -584,6 +637,7 @@ fn run_controls(
     info: &orbit_editor_api::ProjectInfo,
     messages: &mut Vec<(bool, String)>,
 ) {
+    let texts = ui.texts();
     if state.running() {
         ui.horizontal(|ui| {
             ui.add(
@@ -591,11 +645,13 @@ fn run_controls(
                     .desired_width(ui.available_width() - 110.0)
                     .show_percentage(),
             );
-            if ui.button(format!("{}  Annuler", icons::X)).clicked()
+            if ui
+                .button(format!("{}  {}", icons::X, texts.t("common.cancel")))
+                .clicked()
                 && let Some(job) = &state.job
             {
                 job.cancel();
-                messages.push((false, "Annulation de l'export demandée.".to_owned()));
+                messages.push((false, texts.t("export.cancel_requested")));
             }
         });
         ui.label(RichText::new(&state.label).color(weak(ui)));
@@ -604,8 +660,9 @@ fn run_controls(
     if info.modified {
         ui.label(
             RichText::new(format!(
-                "{}  L'histoire a des modifications non enregistrées : elles seront enregistrées avant l'export.",
-                icons::WARNING
+                "{}  {}",
+                icons::WARNING,
+                texts.t("export.unsaved_warning")
             ))
             .color(warning(ui)),
         );
@@ -614,7 +671,9 @@ fn run_controls(
     if ui
         .add_enabled(
             ready,
-            egui::Button::new(RichText::new(format!("{}  Exporter", icons::EXPORT)).strong()),
+            egui::Button::new(
+                RichText::new(format!("{}  {}", icons::EXPORT, texts.t("export.run"))).strong(),
+            ),
         )
         .clicked()
     {
@@ -626,19 +685,24 @@ fn run_controls(
         }
     }
     if !ready {
-        ui.label(RichText::new("Choisissez au moins une cible.").color(faint(ui)));
+        ui.label(RichText::new(texts.t("export.pick_target")).color(faint(ui)));
     }
 }
 
 fn journal(ui: &mut Ui, state: &mut ExportUi, messages: &mut Vec<(bool, String)>) {
+    let texts = ui.texts();
     if let Some(result) = &state.result {
         match result {
             Err(message) => {
                 card(ui, |ui| {
                     ui.label(
-                        RichText::new(format!("{}  Export échoué", icons::WARNING_CIRCLE))
-                            .color(danger(ui))
-                            .strong(),
+                        RichText::new(format!(
+                            "{}  {}",
+                            icons::WARNING_CIRCLE,
+                            texts.t("export.failed")
+                        ))
+                        .color(danger(ui))
+                        .strong(),
                     );
                     ui.label(RichText::new(message).color(danger(ui)));
                 });
@@ -647,21 +711,31 @@ fn journal(ui: &mut Ui, state: &mut ExportUi, messages: &mut Vec<(bool, String)>
                 let reports = reports.clone();
                 card(ui, |ui| {
                     ui.label(
-                        RichText::new(format!("{}  Export terminé", icons::CHECK_CIRCLE))
-                            .color(success())
-                            .strong(),
+                        RichText::new(format!(
+                            "{}  {}",
+                            icons::CHECK_CIRCLE,
+                            texts.t("export.done")
+                        ))
+                        .color(success())
+                        .strong(),
                     );
                     for report in &reports {
-                        ui.label(format!(
-                            "{} : {} ({})",
-                            report.target.label(),
-                            report.output.display(),
-                            human_size(report.bytes)
+                        ui.label(texts.tf(
+                            "export.report_line",
+                            &[
+                                ("target", &report.target.label()),
+                                ("path", &report.output.display()),
+                                ("size", &human_size(&texts, report.bytes)),
+                            ],
                         ));
                     }
                     ui.horizontal(|ui| {
                         if ui
-                            .button(format!("{}  Ouvrir le dossier", icons::FOLDER_OPEN))
+                            .button(format!(
+                                "{}  {}",
+                                icons::FOLDER_OPEN,
+                                texts.t("export.open_folder")
+                            ))
                             .clicked()
                         {
                             let dir = reports
@@ -677,24 +751,33 @@ fn journal(ui: &mut Ui, state: &mut ExportUi, messages: &mut Vec<(bool, String)>
                             if let Err(e) = orbit_export::open_path(&dir) {
                                 messages.push((
                                     true,
-                                    format!("Impossible d'ouvrir {} : {e}", dir.display()),
+                                    texts.tf(
+                                        "export.open_failed",
+                                        &[("path", &dir.display()), ("error", &e)],
+                                    ),
                                 ));
                             }
                         }
                         if let Some(web) = reports.iter().find(|r| r.target == ExportTarget::Web)
                             && ui
-                                .button(format!("{}  Tester dans le navigateur", icons::GLOBE))
+                                .button(format!(
+                                    "{}  {}",
+                                    icons::GLOBE,
+                                    texts.t("export.test_browser")
+                                ))
                                 .clicked()
                         {
-                            test_in_browser(state, &web.output, messages);
+                            test_in_browser(state, &web.output, &texts, messages);
                         }
                     });
                     if let Some(server) = &state.server {
                         ui.label(
-                            RichText::new(format!("Serveur local : {}", server.url()))
-                                .color(weak(ui)),
+                            RichText::new(
+                                texts.tf("export.local_server", &[("url", &server.url())]),
+                            )
+                            .color(weak(ui)),
                         );
-                        if ui.small_button("Arrêter le serveur").clicked() {
+                        if ui.small_button(texts.t("export.stop_server")).clicked() {
                             state.server = None;
                         }
                     }
@@ -706,7 +789,7 @@ fn journal(ui: &mut Ui, state: &mut ExportUi, messages: &mut Vec<(bool, String)>
     if state.log.is_empty() {
         return;
     }
-    section_title(ui, "Journal");
+    section_title(ui, &texts.t("export.log"));
     ScrollArea::vertical()
         .id_salt("export_log")
         .max_height(220.0)
@@ -717,22 +800,23 @@ fn journal(ui: &mut Ui, state: &mut ExportUi, messages: &mut Vec<(bool, String)>
                     LogLevel::Warning => warning(ui),
                     LogLevel::Info => weak(ui),
                 };
-                let prefix = if line.level == LogLevel::Warning {
-                    "avertissement : "
+                let text = if line.level == LogLevel::Warning {
+                    texts.tf("export.log_warning", &[("text", &line.text)])
                 } else {
-                    ""
+                    line.text.clone()
                 };
-                ui.label(
-                    RichText::new(format!("{prefix}{}", line.text))
-                        .color(color)
-                        .small(),
-                );
+                ui.label(RichText::new(text).color(color).small());
             }
         });
 }
 
 /// Serves the web export on a free local port and opens it.
-fn test_in_browser(state: &mut ExportUi, dir: &Path, messages: &mut Vec<(bool, String)>) {
+fn test_in_browser(
+    state: &mut ExportUi,
+    dir: &Path,
+    texts: &Translator,
+    messages: &mut Vec<(bool, String)>,
+) {
     state.server = None;
     match Server::start(dir.to_owned(), None, None) {
         Ok(server) => {
@@ -740,26 +824,29 @@ fn test_in_browser(state: &mut ExportUi, dir: &Path, messages: &mut Vec<(bool, S
             if let Err(e) = orbit_export::open_in_browser(&url) {
                 messages.push((
                     true,
-                    format!("Le navigateur ne s'ouvre pas ({e}) : ouvrez {url} à la main."),
+                    texts.tf("export.browser_failed", &[("error", &e), ("url", &url)]),
                 ));
             } else {
-                messages.push((false, format!("Jeu servi sur {url}.")));
+                messages.push((false, texts.tf("export.served", &[("url", &url)])));
             }
             state.server = Some(server);
         }
-        Err(e) => messages.push((
-            true,
-            format!("Impossible de démarrer le serveur local : {e}"),
-        )),
+        Err(e) => messages.push((true, texts.tf("export.server_failed", &[("error", &e)]))),
     }
 }
 
-fn human_size(bytes: u64) -> String {
+fn human_size(texts: &Translator, bytes: u64) -> String {
     const MIB: f64 = 1024.0 * 1024.0;
     if bytes as f64 >= MIB {
-        format!("{:.1} Mio", bytes as f64 / MIB)
+        texts.tf(
+            "export.size_mib",
+            &[("n", &format!("{:.1}", bytes as f64 / MIB))],
+        )
     } else {
-        format!("{:.0} Kio", bytes as f64 / 1024.0)
+        texts.tf(
+            "export.size_kib",
+            &[("n", &format!("{:.0}", bytes as f64 / 1024.0))],
+        )
     }
 }
 
@@ -776,6 +863,20 @@ mod tests {
     use orbit_export::testing::{TempDir, demo_project};
 
     use super::*;
+
+    fn texts() -> Translator {
+        crate::i18n::translator(orbit_editor_api::Lang::Fr)
+    }
+
+    #[test]
+    fn sizes_are_written_in_the_language_of_the_editor() {
+        let fr = texts();
+        assert_eq!(human_size(&fr, 2048), "2 Kio");
+        assert_eq!(human_size(&fr, 3 * 1024 * 1024), "3.0 Mio");
+        let en = crate::i18n::translator(orbit_editor_api::Lang::En);
+        assert_eq!(human_size(&en, 2048), "2 KiB");
+        assert_eq!(human_size(&en, 3 * 1024 * 1024), "3.0 MiB");
+    }
 
     fn wait(job: &mut ExportJob) -> (Vec<LogLine>, Result<Vec<ExportReport>, String>) {
         let started = Instant::now();
@@ -818,6 +919,7 @@ mod tests {
             out.path().to_owned(),
             fake_templates(templates_dir.path()),
             waker,
+            &texts(),
         );
         let (log, outcome) = wait(&mut job);
         let reports = outcome.expect("export succeeds");
@@ -840,6 +942,7 @@ mod tests {
             out.path().to_owned(),
             Templates::new(vec![out.path().join("nowhere")]),
             Waker::default(),
+            &texts(),
         );
         let (_, outcome) = wait(&mut job);
         assert!(outcome.unwrap_err().contains("template"));
@@ -851,6 +954,7 @@ mod tests {
             out.path().to_owned(),
             Templates::default(),
             Waker::default(),
+            &texts(),
         );
         assert!(wait(&mut job).1.is_err());
     }

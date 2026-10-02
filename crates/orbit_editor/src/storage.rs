@@ -11,6 +11,7 @@ use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 
 use orbit_core::{Node, NodeId, NodeKind, Scene, SceneId, Story};
+use orbit_editor_api::Translator;
 use orbit_project::{
     DEFAULT_STORY_FILE, MANIFEST_FILE, ProjectManifest, ProjectStorage, STATE_DIR, load_manifest,
 };
@@ -112,7 +113,7 @@ impl ProjectLocation {
 
     /// Opens a project folder, its `orbit.project.ron`, a folder holding a
     /// `story.ron`, or a bare story `.ron` file.
-    pub fn resolve(path: &Path) -> Result<Self, String> {
+    pub fn resolve(path: &Path, texts: &Translator) -> Result<Self, String> {
         let from_manifest = |root: &Path| -> Result<Self, String> {
             let storage = FsStorage::new(root);
             let manifest = load_manifest(&storage).map_err(|e| e.to_string())?;
@@ -133,13 +134,17 @@ impl ProjectLocation {
                     manifest: None,
                 });
             }
-            return Err(format!(
-                "{} ne contient ni {MANIFEST_FILE} ni {DEFAULT_STORY_FILE}",
-                path.display()
+            return Err(texts.tf(
+                "project.no_story",
+                &[
+                    ("path", &path.display()),
+                    ("manifest", &MANIFEST_FILE),
+                    ("story", &DEFAULT_STORY_FILE),
+                ],
             ));
         }
         if !path.is_file() {
-            return Err(format!("{} n'existe pas", path.display()));
+            return Err(texts.tf("project.not_found", &[("path", &path.display())]));
         }
         let parent = path
             .parent()
@@ -206,13 +211,14 @@ pub fn folder_name(name: &str) -> String {
     cleaned.trim_matches(|c| c == '.' || c == ' ').to_owned()
 }
 
-/// The story of a freshly created project: one scene, two lines.
-pub fn minimal_story(name: &str) -> Story {
+/// The story of a freshly created project: one scene, two lines, in the
+/// editor's language (the template is the author's to rewrite).
+pub fn minimal_story(name: &str, texts: &Translator) -> Story {
     let mut story = Story::new(name);
-    let first = story.strings.add(format!("Bienvenue dans « {name} »."));
-    let second = story
+    let first = story
         .strings
-        .add("Sélectionnez cette réplique dans l'explorateur pour la modifier.");
+        .add(texts.tf("project.template.welcome", &[("name", &name)]));
+    let second = story.strings.add(texts.get("project.template.hint"));
     let say = |text_id| Node {
         id: NodeId::new(),
         kind: NodeKind::Say {
@@ -222,7 +228,7 @@ pub fn minimal_story(name: &str) -> Story {
     };
     story.scenes.push(Scene {
         id: SceneId::new(),
-        name: "Introduction".to_owned(),
+        name: texts.get("project.template.scene"),
         nodes: vec![say(first), say(second)],
     });
     story
@@ -231,22 +237,22 @@ pub fn minimal_story(name: &str) -> Story {
 /// Creates `parent/<folder_name(name)>` with a manifest, a minimal story and
 /// an `assets/` folder. Refuses a non-empty existing folder. Returns the
 /// project folder.
-pub fn create_project(parent: &Path, name: &str) -> Result<PathBuf, String> {
+pub fn create_project(parent: &Path, name: &str, texts: &Translator) -> Result<PathBuf, String> {
     let name = name.trim();
     let folder = folder_name(name);
     if folder.is_empty() {
-        return Err("le nom du projet est vide".to_owned());
+        return Err(texts.get("project.name_empty"));
     }
     let root = parent.join(&folder);
     if root.exists() && root.read_dir().map_err(|e| e.to_string())?.next().is_some() {
-        return Err(format!("{} existe déjà et n'est pas vide", root.display()));
+        return Err(texts.tf("project.folder_not_empty", &[("path", &root.display())]));
     }
     let io = |e: io::Error| format!("{}: {e}", root.display());
     fs::create_dir_all(root.join("assets")).map_err(io)?;
     let storage = FsStorage::new(&root);
     let manifest = ProjectManifest::new(name);
     orbit_project::save_manifest(&storage, &manifest).map_err(|e| e.to_string())?;
-    orbit_project::save_story(&storage, &manifest.story, &minimal_story(name))
+    orbit_project::save_story(&storage, &manifest.story, &minimal_story(name, texts))
         .map_err(|e| e.to_string())?;
     write_atomic(
         &root.join(".gitignore"),
@@ -350,6 +356,10 @@ mod tests {
     use super::testing::TempDir;
     use super::*;
 
+    fn texts() -> Translator {
+        crate::i18n::translator(orbit_editor_api::Lang::En)
+    }
+
     #[test]
     fn atomic_write_replaces_and_leaves_no_temp_file() {
         let dir = TempDir::new("atomic");
@@ -376,19 +386,19 @@ mod tests {
     #[test]
     fn created_project_is_valid_and_resolvable() {
         let dir = TempDir::new("create");
-        let root = create_project(dir.path(), "Mon jeu: v1").unwrap();
+        let root = create_project(dir.path(), "Mon jeu: v1", &texts()).unwrap();
         assert_eq!(root.file_name().unwrap(), "Mon jeu- v1");
 
-        let location = ProjectLocation::resolve(&root).unwrap();
+        let location = ProjectLocation::resolve(&root, &texts()).unwrap();
         assert_eq!(location.story_file, "story.ron");
         assert_eq!(location.manifest.as_ref().unwrap().name, "Mon jeu: v1");
         // Same project whichever path is given.
         assert_eq!(
-            ProjectLocation::resolve(&root.join(MANIFEST_FILE)).unwrap(),
+            ProjectLocation::resolve(&root.join(MANIFEST_FILE), &texts()).unwrap(),
             location
         );
         assert_eq!(
-            ProjectLocation::resolve(&root.join("story.ron")).unwrap(),
+            ProjectLocation::resolve(&root.join("story.ron"), &texts()).unwrap(),
             location
         );
 
@@ -397,8 +407,8 @@ mod tests {
         assert!(report.errors.is_empty(), "{:?}", report.errors);
 
         // A second project in the same place is refused, an empty name too.
-        assert!(create_project(dir.path(), "Mon jeu: v1").is_err());
-        assert!(create_project(dir.path(), "  ").is_err());
+        assert!(create_project(dir.path(), "Mon jeu: v1", &texts()).is_err());
+        assert!(create_project(dir.path(), "  ", &texts()).is_err());
     }
 
     #[test]
@@ -406,7 +416,7 @@ mod tests {
         let dir = TempDir::new("bare");
         let file = dir.path().join("demo.ron");
         fs::write(&file, Story::new("t").to_ron().unwrap()).unwrap();
-        let location = ProjectLocation::resolve(&file).unwrap();
+        let location = ProjectLocation::resolve(&file, &texts()).unwrap();
         assert!(location.manifest.is_none());
         assert_eq!(location.story_file, "demo.ron");
         assert_eq!(location.root, dir.path());
@@ -417,8 +427,8 @@ mod tests {
         let rec = location.recovery_dir(None);
         assert!(rec.starts_with(dir.path()));
 
-        assert!(ProjectLocation::resolve(&dir.path().join("nope.ron")).is_err());
-        assert!(ProjectLocation::resolve(&dir.path().join("x")).is_err());
+        assert!(ProjectLocation::resolve(&dir.path().join("nope.ron"), &texts()).is_err());
+        assert!(ProjectLocation::resolve(&dir.path().join("x"), &texts()).is_err());
     }
 
     #[test]
@@ -426,7 +436,7 @@ mod tests {
         let dir = TempDir::new("recovery");
         let recovery = Recovery::new(dir.path().join(".orbit").join("recovery"));
         assert!(recovery.pending().is_none());
-        let story = minimal_story("t");
+        let story = minimal_story("t", &texts());
         let meta = RecoveryMeta {
             story_file: "story.ron".into(),
             saved_at_ms: 42,

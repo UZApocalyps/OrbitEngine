@@ -25,7 +25,9 @@ pub use assets_root::find_assets_root;
 pub use command::{Command, CommandError};
 pub use export::{ExportProfile, ExportTarget, PakCompression, slugify};
 pub use ext::{AssetUser, asset_users};
-pub use project::{ChangeEvent, ChangeKind, Project, ProjectError, SubscriptionId, Transaction};
+pub use project::{
+    ChangeEvent, ChangeKind, Project, ProjectError, Rejection, SubscriptionId, Transaction,
+};
 pub use storage::{
     DEFAULT_STORY_FILE, MANIFEST_FILE, MANIFEST_FORMAT, PluginRequirement, ProjectFileError,
     ProjectManifest, ProjectStorage, STATE_DIR, load_manifest, load_story, save_manifest,

@@ -19,7 +19,7 @@ use egui_snarl::ui::{
     SnarlViewer, SnarlWidget,
 };
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
-use orbit_editor_api::Level;
+use orbit_editor_api::{Level, UiText};
 use orbit_project::graph::{BlockId, SlotKind};
 use orbit_project::graph_layout::BLOCK_WIDTH;
 
@@ -248,12 +248,12 @@ struct Viewer<'a> {
     nudge: &'a mut (egui::Vec2, f32),
 }
 
-fn kind_text(slot: &super::view::ViewSlot) -> String {
+fn kind_text(texts: &orbit_editor_api::Translator, slot: &super::view::ViewSlot) -> String {
     let mut text = slot.label.clone();
     if text.is_empty() {
         text = match slot.slot.kind {
-            SlotKind::Jump => "saut".to_owned(),
-            SlotKind::Call => "appel".to_owned(),
+            SlotKind::Jump => texts.t("graph.slot.jump"),
+            SlotKind::Call => texts.t("graph.slot.call"),
             _ => String::new(),
         };
     }
@@ -264,11 +264,11 @@ impl Viewer<'_> {
     /// Menu entries shared by the block menu.
     fn block_menu(&mut self, node: &ViewNode, ui: &mut Ui) {
         let id = node.id;
-        if ui.button("Ouvrir dans l'éditeur de scène").clicked() {
+        if ui.button(ui.t("graph.menu.open")).clicked() {
             self.events.push(GraphEvent::Open(id));
             ui.close();
         }
-        if ui.button("Jouer depuis ici").clicked() {
+        if ui.button(ui.t("graph.menu.play")).clicked() {
             self.events.push(GraphEvent::PlayFrom(id));
             ui.close();
         }
@@ -278,22 +278,22 @@ impl Viewer<'_> {
             .last()
             .is_some_and(|s| s.slot.kind == SlotKind::Next);
         ui.add_enabled_ui(open, |ui| {
-            if ui.button("Ajouter un choix (2 branches)").clicked() {
+            if ui.button(ui.t("graph.menu.add_choice")).clicked() {
                 self.events.push(GraphEvent::AddChoice(id));
                 ui.close();
             }
-            if ui.button("Ajouter une condition").clicked() {
+            if ui.button(ui.t("graph.menu.add_condition")).clicked() {
                 self.events.push(GraphEvent::AddCondition(id));
                 ui.close();
             }
-            if ui.button("Terminer la partie ici").clicked() {
+            if ui.button(ui.t("graph.menu.end_here")).clicked() {
                 self.events.push(GraphEvent::AddEnd(id));
                 ui.close();
             }
         })
         .response
-        .on_disabled_hover_text("Ce bloc se termine déjà : retirez d'abord sa fin.");
-        if !open && ui.button("Retirer la fin du bloc").clicked() {
+        .on_disabled_hover_text(ui.t("graph.menu.already_ends"));
+        if !open && ui.button(ui.t("graph.menu.remove_end")).clicked() {
             self.events.push(GraphEvent::RemoveEnd(id));
             ui.close();
         }
@@ -302,7 +302,7 @@ impl Viewer<'_> {
             *self.edit_for = Some(EditTarget::Block(id));
             *self.edit = node.title.clone();
         }
-        ui.label(RichText::new("Renommer").font(bold(11.0)));
+        ui.label(RichText::new(ui.t("common.rename")).font(bold(11.0)));
         let response = ui.add(egui::TextEdit::singleline(self.edit).desired_width(160.0));
         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             self.events
@@ -312,7 +312,7 @@ impl Viewer<'_> {
         }
         ui.separator();
         if ui
-            .button(RichText::new("Supprimer le bloc…").color(danger(ui)))
+            .button(RichText::new(ui.t("graph.menu.delete_block")).color(danger(ui)))
             .clicked()
         {
             self.events.push(GraphEvent::Delete(id));
@@ -411,7 +411,7 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
                             egui::Label::new(RichText::new(icon).size(15.0).color(color))
                                 .sense(egui::Sense::click()),
                         )
-                        .on_hover_text(format!("{text}\nClic : afficher le nœud"));
+                        .on_hover_text(ui.tf("graph.pin.problem_tip", &[("text", text)]));
                     if badge.clicked()
                         && let Some(node) = n.problem_node
                     {
@@ -429,7 +429,11 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
     fn show_input(&mut self, pin: &InPin, ui: &mut Ui, snarl: &mut Snarl<ViewNode>) -> PinInfo {
         let n = &snarl[pin.id.node];
         ui.add_space(0.0);
-        ui.label(RichText::new("entrée").size(10.0).color(faint(ui)));
+        ui.label(
+            RichText::new(ui.t("graph.pin.input"))
+                .size(10.0)
+                .color(faint(ui)),
+        );
         PinInfo::circle()
             .with_fill(n.accent)
             .with_stroke(Stroke::new(1.5, Color32::from_rgb(24, 26, 32)))
@@ -442,7 +446,7 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
     fn show_output(&mut self, pin: &OutPin, ui: &mut Ui, snarl: &mut Snarl<ViewNode>) -> PinInfo {
         let node = snarl[pin.id.node].clone();
         let slot = &node.slots[pin.id.output];
-        let text = kind_text(slot);
+        let text = kind_text(&ui.texts(), slot);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.set_width(BLOCK_WIDTH - 24.0);
             let mut label = RichText::new(truncate(&text, 34)).size(12.0);
@@ -455,7 +459,7 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
             };
             let response = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
             let response = if slot.broken {
-                response.on_hover_text("La cible n'est pas une étiquette : reliez ce lien.")
+                response.on_hover_text(ui.t("graph.pin.broken"))
             } else {
                 response
             };
@@ -465,7 +469,7 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
                         .size(11.0)
                         .color(faint(ui)),
                 )
-                .on_hover_text("Option conditionnelle");
+                .on_hover_text(ui.t("graph.pin.conditional"));
             }
             response.context_menu(|ui| {
                 if let SlotKind::Option(i) = slot.slot.kind {
@@ -474,7 +478,7 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
                         *self.edit_for = Some(target);
                         *self.edit = slot.label.clone();
                     }
-                    ui.label(RichText::new("Texte de l'option").font(bold(11.0)));
+                    ui.label(RichText::new(ui.t("graph.menu.option_text")).font(bold(11.0)));
                     let field = ui.add(egui::TextEdit::singleline(self.edit).desired_width(200.0));
                     if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         self.events.push(GraphEvent::SetOptionText(
@@ -484,7 +488,7 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
                         *self.edit_for = None;
                         ui.close();
                     }
-                    if ui.button("Ajouter une option").clicked() {
+                    if ui.button(ui.t("graph.menu.add_option")).clicked() {
                         self.events.push(GraphEvent::AddOption(slot.slot));
                         ui.close();
                     }
@@ -492,17 +496,14 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
                 }
                 if slot.slot.kind != SlotKind::Next
                     && ui
-                        .button(RichText::new("Supprimer le lien").color(danger(ui)))
+                        .button(RichText::new(ui.t("graph.menu.remove_link")).color(danger(ui)))
                         .clicked()
                 {
                     self.events.push(GraphEvent::Disconnect(slot.slot));
                     ui.close();
                 }
                 if slot.slot.kind == SlotKind::Next {
-                    ui.label(
-                        RichText::new("Tirez un lien depuis le point pour relier la suite.")
-                            .color(weak(ui)),
-                    );
+                    ui.label(RichText::new(ui.t("graph.menu.next_hint")).color(weak(ui)));
                 }
             });
         });
@@ -555,14 +556,14 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
             }
             if n.orphan {
                 ui.label(
-                    RichText::new("Orphelin : aucun chemin n'y mène")
+                    RichText::new(ui.t("graph.orphan"))
                         .size(10.5)
                         .color(warning(ui)),
                 );
             }
             if n.dead_nodes > 0 {
                 ui.label(
-                    RichText::new(format!("{} nœud(s) jamais exécuté(s)", n.dead_nodes))
+                    RichText::new(ui.tn("graph.dead_nodes", n.dead_nodes, &[]))
                         .size(10.5)
                         .color(warning(ui)),
                 );
@@ -592,11 +593,11 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
     }
 
     fn show_graph_menu(&mut self, pos: Pos2, ui: &mut Ui, _snarl: &mut Snarl<ViewNode>) {
-        if ui.button("Nouvelle scène ici").clicked() {
+        if ui.button(ui.t("graph.menu.new_scene_here")).clicked() {
             self.events.push(GraphEvent::NewScene((pos.x, pos.y)));
             ui.close();
         }
-        if ui.button("Nouvelle étiquette ici").clicked() {
+        if ui.button(ui.t("graph.menu.new_label_here")).clicked() {
             self.events.push(GraphEvent::NewLabel((pos.x, pos.y)));
             ui.close();
         }
@@ -619,7 +620,10 @@ impl SnarlViewer<ViewNode> for Viewer<'_> {
             .filter_map(|p| snarl.get_node(p.node).and_then(|n| n.slots.get(p.output)))
             .map(|s| s.slot)
             .collect();
-        if ui.button("Nouvelle scène liée ici").clicked() {
+        if ui
+            .button(ui.t("graph.menu.new_linked_scene_here"))
+            .clicked()
+        {
             for slot in slots {
                 self.events
                     .push(GraphEvent::ConnectNew(slot, (pos.x, pos.y)));

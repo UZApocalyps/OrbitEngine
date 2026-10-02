@@ -24,17 +24,17 @@ impl EditorPlugin for ConsolePlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
         reg.panel(PanelDef::new(
             "console",
-            "Console",
+            "console.title",
             icons::TERMINAL_WINDOW,
             DockSlot::Bottom,
             panel,
         ));
         reg.action(
-            ActionDef::new("clear", "Effacer la console", |c| {
+            ActionDef::new("clear", "console.clear", |c| {
                 c.state_mut().console.clear();
             })
             .icon(icons::BROOM)
-            .category("Affichage")
+            .category("category.view")
             .menu("view", 200),
         );
     }
@@ -63,7 +63,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             format!("{}  {errors}", icons::WARNING_CIRCLE),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icon_button(ui, icons::BROOM, "Effacer la console").clicked() {
+            if icon_button(ui, icons::BROOM, &ctx.t("console.clear")).clicked() {
                 ctx.state_mut().console.clear();
             }
         });
@@ -85,7 +85,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     if entries.is_empty() {
         ui.add_space(12.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("Rien à afficher.").color(faint(ui)));
+            ui.label(RichText::new(ctx.t("console.empty")).color(faint(ui)));
         });
         return;
     }

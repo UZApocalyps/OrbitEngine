@@ -8,6 +8,10 @@ use orbit_core::AssetKind;
 use orbit_plugin_api::{AssetImporter, ImportedAsset, Plugin, PluginManifest, ProjectRegistry};
 
 use super::ids;
+use crate::assets::refusal::{
+    ERR_AUDIO_UNREADABLE, ERR_EMPTY_AUDIO, ERR_EMPTY_IMAGE, ERR_FORMAT, ERR_IMAGE_UNREADABLE,
+    ERR_NOT_IMAGE, ERR_TOO_LARGE,
+};
 
 pub struct ImportersPlugin;
 
@@ -18,23 +22,22 @@ pub const MUSIC_MIN_SECONDS: f32 = 20.0;
 
 /// Validates a PNG / JPEG by decoding it.
 pub fn import_image(bytes: &[u8]) -> Result<ImportedAsset, String> {
-    let format =
-        image::guess_format(bytes).map_err(|_| "ce n'est pas une image PNG ou JPEG".to_owned())?;
+    let format = image::guess_format(bytes).map_err(|_| ERR_NOT_IMAGE.to_owned())?;
     if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
-        return Err(format!(
-            "format d'image {format:?} non pris en charge (PNG ou JPEG)"
-        ));
+        return Err(format!("{}{format:?}{}", ERR_FORMAT.0, ERR_FORMAT.1));
     }
     let img = image::load_from_memory_with_format(bytes, format)
-        .map_err(|e| format!("image illisible ({e})"))?;
+        .map_err(|e| format!("{}{e}{}", ERR_IMAGE_UNREADABLE.0, ERR_IMAGE_UNREADABLE.1))?;
     if img.width() == 0 || img.height() == 0 {
-        return Err("image vide".to_owned());
+        return Err(ERR_EMPTY_IMAGE.to_owned());
     }
     if img.width() > MAX_IMAGE_SIDE || img.height() > MAX_IMAGE_SIDE {
         return Err(format!(
-            "image trop grande ({}×{} px, {MAX_IMAGE_SIDE} px au plus)",
+            "{}{}×{} px, {MAX_IMAGE_SIDE}{}",
+            ERR_TOO_LARGE.0,
             img.width(),
-            img.height()
+            img.height(),
+            ERR_TOO_LARGE.1
         ));
     }
     Ok(ImportedAsset {
@@ -46,10 +49,10 @@ pub fn import_image(bytes: &[u8]) -> Result<ImportedAsset, String> {
 /// Validates a WAV / OGG Vorbis file by decoding it. Long files become
 /// music, short ones sounds.
 pub fn import_audio(bytes: &[u8]) -> Result<ImportedAsset, String> {
-    let pcm =
-        orbit_assets::decode_audio("", bytes).map_err(|e| format!("audio illisible ({e})"))?;
+    let pcm = orbit_assets::decode_audio("", bytes)
+        .map_err(|e| format!("{}{e}{}", ERR_AUDIO_UNREADABLE.0, ERR_AUDIO_UNREADABLE.1))?;
     if pcm.frames() == 0 {
-        return Err("audio vide".to_owned());
+        return Err(ERR_EMPTY_AUDIO.to_owned());
     }
     let kind = if pcm.duration_secs() >= MUSIC_MIN_SECONDS {
         AssetKind::Music
@@ -130,5 +133,36 @@ mod tests {
         assert_eq!(import_audio(&wav(25.0)).unwrap().kind, AssetKind::Music);
         assert!(import_audio(b"RIFFxxxxnot really a wav").is_err());
         assert!(import_audio(&[]).is_err());
+    }
+
+    #[test]
+    fn refusals_are_shown_in_the_editor_language() {
+        use orbit_editor_api::Lang;
+        let fr = crate::i18n::translator(Lang::Fr);
+        let en = crate::i18n::translator(Lang::En);
+        let reason = import_image(b"hello, I am a text file").unwrap_err();
+        assert_eq!(
+            crate::assets::refusal::localize(&fr, &reason),
+            "ce n'est pas une image PNG ou JPEG"
+        );
+        assert_eq!(
+            crate::assets::refusal::localize(&en, &reason),
+            "not a PNG or JPEG image"
+        );
+        let reason = import_audio(&[]).unwrap_err();
+        assert!(crate::assets::refusal::localize(&fr, &reason).starts_with("audio illisible ("));
+        let big = format!(
+            "{}20000×5 px, {MAX_IMAGE_SIDE}{}",
+            ERR_TOO_LARGE.0, ERR_TOO_LARGE.1
+        );
+        assert_eq!(
+            crate::assets::refusal::localize(&fr, &big),
+            "image trop grande (20000×5 px, 16384 px au plus)"
+        );
+        // A plugin's own reason is left alone.
+        assert_eq!(
+            crate::assets::refusal::localize(&fr, "whatever"),
+            "whatever"
+        );
     }
 }

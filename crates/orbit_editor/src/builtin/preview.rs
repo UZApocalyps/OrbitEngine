@@ -13,7 +13,7 @@ use egui::{
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, PanelDef,
     Plugin, PluginManifest, PreviewCommand, PreviewInput, PreviewSpeed, PreviewStatus, Selection,
-    icons,
+    Translator, icons,
 };
 
 use super::ids;
@@ -34,16 +34,16 @@ impl Plugin for PreviewPlugin {
 
 impl EditorPlugin for PreviewPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
-        reg.menu("preview", "Preview", 35);
+        reg.menu("preview", "menu.preview", 35);
         reg.panel(PanelDef::new(
             "preview",
-            "Preview",
+            "preview.title",
             icons::PLAY_CIRCLE,
             DockSlot::RightTop,
             panel,
         ));
         reg.action(
-            ActionDef::new("play_pause", "Lecture / pause", |ctx| {
+            ActionDef::new("play_pause", "preview.action.play_pause", |ctx| {
                 let status = ctx.state().preview.status;
                 ctx.preview_command(match status {
                     PreviewStatus::Playing => PreviewCommand::Pause,
@@ -53,77 +53,77 @@ impl EditorPlugin for PreviewPlugin {
             })
             .label_with(|ctx| {
                 if ctx.state().preview.status == PreviewStatus::Playing {
-                    "Preview : pause".to_owned()
+                    ctx.t("preview.action.pause")
                 } else {
-                    "Preview : lecture".to_owned()
+                    ctx.t("preview.action.play")
                 }
             })
             .icon(icons::PLAY)
-            .category("Preview")
+            .category("category.preview")
             .shortcut(Modifiers::NONE, Key::F6)
             .menu("preview", 100)
             .enabled(|c| c.has_project()),
         );
         reg.action(
-            ActionDef::new("stop", "Preview : arrêter", |ctx| {
+            ActionDef::new("stop", "preview.action.stop", |ctx| {
                 ctx.preview_command(PreviewCommand::Stop);
             })
             .icon(icons::STOP)
-            .category("Preview")
+            .category("category.preview")
             .shortcut(Modifiers::SHIFT, Key::F6)
             .menu("preview", 110)
             .enabled(|c| c.state().preview.status != PreviewStatus::Stopped),
         );
         reg.action(
-            ActionDef::new("restart", "Preview : recommencer", |ctx| {
+            ActionDef::new("restart", "preview.action.restart", |ctx| {
                 ctx.preview_command(PreviewCommand::Restart);
                 ctx.request(EditorRequest::ShowPanel(super::panels::PREVIEW.to_owned()));
             })
             .icon(icons::ARROW_COUNTER_CLOCKWISE)
-            .category("Preview")
+            .category("category.preview")
             .shortcut(Modifiers::COMMAND, Key::F6)
             .menu("preview", 120)
             .enabled(|c| c.has_project()),
         );
         reg.action(
-            ActionDef::new("play_from_here", "Preview : jouer depuis ici", |ctx| {
+            ActionDef::new("play_from_here", "preview.action.play_from_here", |ctx| {
                 if let Some(Selection::Node(id)) = ctx.selection() {
                     ctx.play_from(id);
                     ctx.request(EditorRequest::ShowPanel(super::panels::PREVIEW.to_owned()));
                 }
             })
             .icon(icons::CROSSHAIR)
-            .category("Preview")
+            .category("category.preview")
             .shortcut(Modifiers::NONE, Key::F7)
             .menu("preview", 200)
             .enabled(|c| matches!(c.selection(), Some(Selection::Node(_)))),
         );
         reg.action(
-            ActionDef::new("mute", "Preview : couper le son", |ctx| {
+            ActionDef::new("mute", "preview.action.mute", |ctx| {
                 let muted = ctx.state().preview.muted;
                 ctx.preview_command(PreviewCommand::SetMuted(!muted));
             })
             .icon(icons::SPEAKER_X)
-            .category("Preview")
+            .category("category.preview")
             .menu("preview", 300),
         );
         reg.action(
-            ActionDef::new("follow", "Preview : suivre la lecture", |ctx| {
+            ActionDef::new("follow", "preview.action.follow", |ctx| {
                 let preview = &mut ctx.state_mut().preview;
                 preview.follow_playback = !preview.follow_playback;
             })
             .icon(icons::CROSSHAIR_SIMPLE)
-            .category("Preview")
+            .category("category.preview")
             .menu("preview", 310),
         );
         reg.action(
-            ActionDef::new("fullscreen", "Preview : plein panneau", |ctx| {
+            ActionDef::new("fullscreen", "preview.action.fullscreen", |ctx| {
                 ctx.request(EditorRequest::ToggleMaximizePanel(
                     super::panels::PREVIEW.to_owned(),
                 ));
             })
             .icon(icons::CORNERS_OUT)
-            .category("Preview")
+            .category("category.preview")
             .menu("preview", 320),
         );
     }
@@ -148,12 +148,12 @@ pub fn to_virtual(picture: Rect, pos: Pos2) -> [f32; 2] {
     [u * CANVAS[0], v * CANVAS[1]]
 }
 
-fn status_text(status: PreviewStatus) -> &'static str {
-    match status {
-        PreviewStatus::Stopped => "Arrêtée",
-        PreviewStatus::Playing => "Lecture",
-        PreviewStatus::Paused => "En pause",
-    }
+fn status_text(texts: &Translator, status: PreviewStatus) -> String {
+    texts.t(match status {
+        PreviewStatus::Stopped => "preview.status.stopped",
+        PreviewStatus::Playing => "preview.status.playing",
+        PreviewStatus::Paused => "preview.status.paused",
+    })
 }
 
 fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
@@ -217,12 +217,12 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         let (icon, tip) = if status == PreviewStatus::Playing {
-            (icons::PAUSE, "Pause (F6)")
+            (icons::PAUSE, ctx.t("preview.tip.pause"))
         } else {
-            (icons::PLAY, "Lecture (F6)")
+            (icons::PLAY, ctx.t("preview.tip.play"))
         };
         if ui
-            .add_enabled_ui(can_play, |ui| icon_button(ui, icon, tip))
+            .add_enabled_ui(can_play, |ui| icon_button(ui, icon, &tip))
             .inner
             .clicked()
         {
@@ -230,7 +230,7 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         }
         if ui
             .add_enabled_ui(status != PreviewStatus::Stopped, |ui| {
-                icon_button(ui, icons::STOP, "Arrêter (Maj+F6)")
+                icon_button(ui, icons::STOP, &ctx.t("preview.tip.stop"))
             })
             .inner
             .clicked()
@@ -239,7 +239,11 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         }
         if ui
             .add_enabled_ui(can_play, |ui| {
-                icon_button(ui, icons::ARROW_COUNTER_CLOCKWISE, "Recommencer (Ctrl+F6)")
+                icon_button(
+                    ui,
+                    icons::ARROW_COUNTER_CLOCKWISE,
+                    &ctx.t("preview.tip.restart"),
+                )
             })
             .inner
             .clicked()
@@ -250,10 +254,13 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         if ui
             .add_enabled(
                 can_play && selected_node.is_some(),
-                egui::Button::new(RichText::new(format!("{}  Ici", icons::CROSSHAIR)).size(12.5))
-                    .min_size(vec2(0.0, 26.0)),
+                egui::Button::new(
+                    RichText::new(format!("{}  {}", icons::CROSSHAIR, ctx.t("preview.here")))
+                        .size(12.5),
+                )
+                .min_size(vec2(0.0, 26.0)),
             )
-            .on_hover_text("Jouer depuis le nœud sélectionné (F7)")
+            .on_hover_text(ctx.t("preview.tip.here"))
             .clicked()
             && let Some(id) = selected_node
         {
@@ -261,8 +268,16 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         }
         ui.separator();
         for (label, value, tip) in [
-            ("1×", PreviewSpeed::Normal, "Vitesse normale"),
-            ("2×", PreviewSpeed::Double, "Vitesse double"),
+            (
+                "1×",
+                PreviewSpeed::Normal,
+                ctx.t("preview.tip.speed_normal"),
+            ),
+            (
+                "2×",
+                PreviewSpeed::Double,
+                ctx.t("preview.tip.speed_double"),
+            ),
         ] {
             let on = speed == value && !skipping;
             if ui
@@ -271,7 +286,7 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                     egui::Button::selectable(on, RichText::new(label).size(12.5))
                         .min_size(vec2(26.0, 26.0)),
                 )
-                .on_hover_text(tip)
+                .on_hover_text(&tip)
                 .clicked()
             {
                 ctx.preview_command(PreviewCommand::SetSpeed(value));
@@ -284,18 +299,18 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                 egui::Button::selectable(skipping, RichText::new(icons::FAST_FORWARD).size(14.0))
                     .min_size(vec2(26.0, 26.0)),
             )
-            .on_hover_text("Passer les répliques (s'arrête aux choix)")
+            .on_hover_text(ctx.t("preview.tip.skip"))
             .clicked()
         {
             ctx.preview_command(PreviewCommand::SetSkip(!skipping));
         }
         ui.separator();
         let (mute_icon, mute_tip) = if muted {
-            (icons::SPEAKER_X, "Réactiver le son")
+            (icons::SPEAKER_X, ctx.t("preview.tip.unmute"))
         } else {
-            (icons::SPEAKER_HIGH, "Couper le son")
+            (icons::SPEAKER_HIGH, ctx.t("preview.tip.mute"))
         };
-        if icon_button(ui, mute_icon, mute_tip).clicked() {
+        if icon_button(ui, mute_icon, &mute_tip).clicked() {
             ctx.preview_command(PreviewCommand::SetMuted(!muted));
         }
         if ui
@@ -303,23 +318,24 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                 egui::Button::selectable(follow, RichText::new(icons::CROSSHAIR_SIMPLE).size(14.0))
                     .min_size(vec2(26.0, 26.0)),
             )
-            .on_hover_text("Suivre la lecture dans l'explorateur")
+            .on_hover_text(ctx.t("preview.tip.follow"))
             .clicked()
         {
             ctx.run_action("orbit.preview.follow");
         }
         let (max_icon, max_tip) = if maximized {
-            (icons::CORNERS_IN, "Revenir à la disposition")
+            (icons::CORNERS_IN, ctx.t("preview.tip.restore"))
         } else {
-            (icons::CORNERS_OUT, "Plein panneau")
+            (icons::CORNERS_OUT, ctx.t("preview.tip.maximize"))
         };
-        if icon_button(ui, max_icon, max_tip).clicked() {
+        if icon_button(ui, max_icon, &max_tip).clicked() {
             ctx.run_action("orbit.preview.fullscreen");
         }
     });
 }
 
 fn draw_picture(ui: &mut Ui, ctx: &mut EditorContext<'_>, area: Rect, picture: Rect) {
+    let texts = ctx.translator();
     let painter = ui.painter_at(area);
     painter.rect_filled(area, CornerRadius::same(4), ui.visuals().extreme_bg_color);
     let preview = &ctx.state().preview;
@@ -371,19 +387,22 @@ fn draw_picture(ui: &mut Ui, ctx: &mut EditorContext<'_>, area: Rect, picture: R
     };
     if !preview.available {
         centered(
-            "Preview indisponible",
-            "Aucun GPU n'a pu être initialisé pour la preview.",
+            &texts.t("preview.unavailable"),
+            &texts.t("preview.unavailable_hint"),
         );
     } else if !has_project {
-        centered("Aucun projet ouvert", "Ouvrez un projet pour le jouer ici.");
+        centered(
+            &texts.t("preview.no_project"),
+            &texts.t("preview.no_project_hint"),
+        );
     } else if preview.status == PreviewStatus::Stopped {
         centered(
-            &format!("{}  Appuyez sur Lecture (F6)", icons::PLAY),
-            "Sélectionnez un nœud puis « Ici » pour jouer depuis là.",
+            &format!("{}  {}", icons::PLAY, texts.t("preview.press_play")),
+            &texts.t("preview.select_node_hint"),
         );
     }
     if let Some(error) = preview.error.clone() {
-        let header = "Erreur dans l'histoire : la preview garde la dernière version valide";
+        let header = texts.t("preview.story_error");
         let galley = painter.layout(
             format!("{header}\n{error}"),
             FontId::proportional(11.5),
@@ -409,6 +428,7 @@ fn draw_picture(ui: &mut Ui, ctx: &mut EditorContext<'_>, area: Rect, picture: R
 }
 
 fn status_line(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
+    let texts = ctx.translator();
     let preview = &ctx.state().preview;
     let (color, dot) = match preview.status {
         PreviewStatus::Playing => (success(), icons::CIRCLE),
@@ -416,9 +436,13 @@ fn status_line(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         PreviewStatus::Stopped => (faint(ui), icons::STOP),
     };
     let text = if preview.flow.is_empty() {
-        status_text(preview.status).to_owned()
+        status_text(&texts, preview.status)
     } else {
-        format!("{} · {}", status_text(preview.status), preview.flow)
+        format!(
+            "{} · {}",
+            status_text(&texts, preview.status),
+            texts.t(&preview.flow)
+        )
     };
     let focus_hint = preview.focused && preview.status == PreviewStatus::Playing;
     let failed = preview.error.is_some();
@@ -430,9 +454,9 @@ fn status_line(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let hint = if focus_hint {
-                "clavier et souris envoyés au jeu"
+                texts.t("preview.input_sent")
             } else {
-                "cliquez dans l'image pour jouer"
+                texts.t("preview.click_to_play")
             };
             ui.label(RichText::new(hint).size(11.0).color(faint(ui)));
         });

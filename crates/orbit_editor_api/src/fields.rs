@@ -7,6 +7,7 @@
 use std::fmt::Debug;
 use std::hash::Hash;
 
+use crate::UiText;
 use egui::{Color32, ComboBox, DragValue, RichText, TextEdit, Ui};
 use orbit_core::{
     AssetId, AssetKind, BinOp, CharacterId, Color, CustomData, Expr, NodeId, NodeKind, Position,
@@ -128,7 +129,7 @@ pub fn expression_picker(
     let text = if known {
         RichText::new(current)
     } else {
-        RichText::new(format!("{current} (inconnue)")).color(danger(ui))
+        RichText::new(ui.tf("field.expression_unknown", &[("name", &current)])).color(danger(ui))
     };
     let mut chosen = current.to_owned();
     ComboBox::from_id_salt(salt)
@@ -136,7 +137,7 @@ pub fn expression_picker(
         .width(ui.available_width())
         .show_ui(ui, |ui| {
             if names.is_empty() {
-                ui.label(RichText::new("Ce personnage n'a aucune expression.").color(weak(ui)));
+                ui.label(RichText::new(ui.t("field.no_expressions")).color(weak(ui)));
             }
             for name in names {
                 ui.selectable_value(&mut chosen, name.to_owned(), name);
@@ -154,13 +155,17 @@ pub fn position_picker(
     story: &Story,
     current: &Position,
 ) -> Option<Position> {
+    let texts = ui.texts();
     let name = |p: &Position| match p {
-        Position::Left => "Gauche".to_owned(),
-        Position::Center => "Centre".to_owned(),
-        Position::Right => "Droite".to_owned(),
+        Position::Left => texts.get("field.position.left"),
+        Position::Center => texts.get("field.position.center"),
+        Position::Right => texts.get("field.position.right"),
         Position::Custom(n) if story.resolve_position(p).is_some() => n.clone(),
-        Position::Custom(n) => format!("{n} (inconnue)"),
-        Position::Free { x, y } => format!("Libre  ({x:.2}, {y:.2})"),
+        Position::Custom(n) => texts.format("field.position.unknown", &[("name", n)]),
+        Position::Free { x, y } => texts.format(
+            "field.position.free",
+            &[("x", &format!("{x:.2}")), ("y", &format!("{y:.2}"))],
+        ),
     };
     let mut chosen = current.clone();
     ComboBox::from_id_salt(salt)
@@ -180,7 +185,11 @@ pub fn position_picker(
             }
             if !matches!(current, Position::Free { .. }) {
                 let (x, y) = story.resolve_position(current).unwrap_or((0.5, 1.0));
-                ui.selectable_value(&mut chosen, Position::Free { x, y }, "Libre…");
+                ui.selectable_value(
+                    &mut chosen,
+                    Position::Free { x, y },
+                    texts.get("field.position.free_choice"),
+                );
             }
         });
     (chosen != *current).then_some(chosen)
@@ -228,7 +237,7 @@ pub fn asset_picker(
     let known = story.assets.get(current);
     let text = match known {
         Some(a) => RichText::new(&a.path),
-        None => RichText::new("(ressource inconnue)").color(danger(ui)),
+        None => RichText::new(ui.t("field.asset_unknown")).color(danger(ui)),
     };
     let mut chosen = current;
     let combo = ComboBox::from_id_salt(salt)
@@ -242,10 +251,8 @@ pub fn asset_picker(
             }
             if !any {
                 ui.label(
-                    RichText::new(format!(
-                        "Aucune ressource de type « {kind} » dans le projet."
-                    ))
-                    .color(weak(ui)),
+                    RichText::new(ui.tf("field.asset_none_of_kind", &[("kind", &kind)]))
+                        .color(weak(ui)),
                 );
             }
         });
@@ -256,7 +263,7 @@ pub fn asset_picker(
     }
     if known.is_some_and(|a| a.kind != kind) {
         ui.label(
-            RichText::new(format!("Cette ressource n'est pas de type « {kind} »."))
+            RichText::new(ui.tf("field.asset_wrong_kind", &[("kind", &kind)]))
                 .small()
                 .color(danger(ui)),
         );
@@ -272,13 +279,14 @@ pub fn label_picker(
     current: Option<NodeId>,
     none_label: Option<&str>,
 ) -> Option<Option<NodeId>> {
+    let texts = ui.texts();
     let describe = |id: NodeId| -> String {
         match story.locate(id) {
             Some((si, ni)) => match &story.scenes[si].nodes[ni].kind {
                 NodeKind::Label { name } => format!("{name}  ·  {}", story.scenes[si].name),
-                _ => "(pas une étiquette)".to_owned(),
+                _ => texts.get("field.label_not_label"),
             },
-            None => "(étiquette supprimée)".to_owned(),
+            None => texts.get("field.label_deleted"),
         }
     };
     let selected = match current {
@@ -326,7 +334,7 @@ pub fn scene_picker(
     current: SceneId,
 ) -> Option<SceneId> {
     let known = story.scene(current);
-    let selected = known.map_or("(scène supprimée)".to_owned(), |s| s.name.clone());
+    let selected = known.map_or_else(|| ui.t("field.scene_deleted"), |s| s.name.clone());
     let mut chosen = current;
     ComboBox::from_id_salt(salt)
         .selected_text(if known.is_some() {
@@ -368,12 +376,10 @@ pub fn scene_label_picker(
     let known = current.is_none_or(|c| labels.iter().any(|(id, _)| *id == c));
     let selected = match current {
         None => none_label.to_owned(),
-        Some(c) => labels
-            .iter()
-            .find(|(id, _)| *id == c)
-            .map_or("(étiquette absente de la scène)".to_owned(), |(_, n)| {
-                (*n).to_owned()
-            }),
+        Some(c) => labels.iter().find(|(id, _)| *id == c).map_or_else(
+            || ui.t("field.label_absent_from_scene"),
+            |(_, n)| (*n).to_owned(),
+        ),
     };
     let mut chosen = current;
     ComboBox::from_id_salt(salt)
@@ -508,17 +514,21 @@ pub fn transition_editor(
         Some(_) => Mode::Fade,
     };
     let mut new_mode = mode;
-    ComboBox::from_id_salt(salt)
-        .selected_text(match mode {
-            Mode::Cut => "Aucune (coupe)",
-            Mode::Dissolve => "Fondu enchaîné",
-            Mode::Fade => "Fondu vers une couleur",
+    let label_of = |ui: &Ui, mode: Mode| {
+        ui.t(match mode {
+            Mode::Cut => "field.transition.none",
+            Mode::Dissolve => "field.transition.dissolve",
+            Mode::Fade => "field.transition.fade",
         })
+    };
+    ComboBox::from_id_salt(salt)
+        .selected_text(label_of(ui, mode))
         .width(ui.available_width())
         .show_ui(ui, |ui| {
-            ui.selectable_value(&mut new_mode, Mode::Cut, "Aucune (coupe)");
-            ui.selectable_value(&mut new_mode, Mode::Dissolve, "Fondu enchaîné");
-            ui.selectable_value(&mut new_mode, Mode::Fade, "Fondu vers une couleur");
+            for m in [Mode::Cut, Mode::Dissolve, Mode::Fade] {
+                let label = label_of(ui, m);
+                ui.selectable_value(&mut new_mode, m, label);
+            }
         });
     let duration = current.map_or(0.5, |t| t.duration);
     if new_mode != mode {
@@ -531,12 +541,16 @@ pub fn transition_editor(
     let t = current?;
     let mut out = t;
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Durée").small().color(weak(ui)));
+        ui.label(
+            RichText::new(ui.t("field.duration"))
+                .small()
+                .color(weak(ui)),
+        );
         if let Some(d) = seconds_field(ui, t.duration) {
             out.duration = d;
         }
         if let TransitionKind::Fade(c) = t.kind {
-            ui.label(RichText::new("Couleur").small().color(weak(ui)));
+            ui.label(RichText::new(ui.t("field.color")).small().color(weak(ui)));
             let mut rgb = [c.r, c.g, c.b];
             if ui.color_edit_button_srgb(&mut rgb).changed() {
                 out.kind = TransitionKind::Fade(Color::rgb(rgb[0], rgb[1], rgb[2]));
@@ -559,7 +573,10 @@ pub fn color_field(ui: &mut Ui, color: Color) -> Option<Color> {
 /// A variable value editor (type chosen by the value itself).
 pub fn value_editor(ui: &mut Ui, value: &Value) -> Option<Value> {
     match value {
-        Value::Bool(b) => checkbox(ui, *b, if *b { "vrai" } else { "faux" }).map(Value::Bool),
+        Value::Bool(b) => {
+            let label = ui.t(if *b { "field.true" } else { "field.false" });
+            checkbox(ui, *b, &label).map(Value::Bool)
+        }
         Value::Int(i) => {
             let mut v = *i;
             ui.add(DragValue::new(&mut v).speed(0.2));
@@ -589,13 +606,13 @@ pub fn default_value(ty: ValueType) -> Value {
 }
 
 /// Human name of a value type.
-pub fn type_name(ty: ValueType) -> &'static str {
-    match ty {
-        ValueType::Bool => "Oui / non",
-        ValueType::Int => "Nombre entier",
-        ValueType::Float => "Nombre décimal",
-        ValueType::Str => "Texte",
-    }
+pub fn type_name(ui: &Ui, ty: ValueType) -> String {
+    ui.t(match ty {
+        ValueType::Bool => "field.type.bool",
+        ValueType::Int => "field.type.int",
+        ValueType::Float => "field.type.float",
+        ValueType::Str => "field.type.str",
+    })
 }
 
 #[derive(Clone)]
@@ -638,7 +655,7 @@ pub fn expr_editor(
             .id_salt(id)
             .desired_width(f32::INFINITY)
             .font(egui::TextStyle::Monospace)
-            .hint_text("ex. affinité > 2 && !vu"),
+            .hint_text(ui.t("field.expr_hint")),
     );
     let mut out = None;
     if response.changed() {
@@ -650,7 +667,12 @@ pub fn expr_editor(
                     out = Some(parsed);
                 }
             }
-            Err(e) => buf.error = Some(format!("{} (position {})", e.message, e.pos)),
+            Err(e) => {
+                buf.error = Some(ui.tf(
+                    "field.expr_error",
+                    &[("message", &e.message), ("pos", &e.pos)],
+                ))
+            }
         }
     }
     if !response.has_focus() && buf.error.is_some() && !response.changed() {
@@ -668,7 +690,7 @@ pub fn expr_editor(
             }
             Ok(Some(t)) if want_bool && t != ValueType::Bool => {
                 ui.label(
-                    RichText::new(format!("Une condition doit être vrai / faux (ici : {t})."))
+                    RichText::new(ui.tf("field.expr_not_bool", &[("type", &t)]))
                         .small()
                         .color(danger(ui)),
                 );
@@ -677,7 +699,7 @@ pub fn expr_editor(
                 for v in shown.variables() {
                     if !story.variables.iter().any(|d| d.name == v) {
                         ui.label(
-                            RichText::new(format!("Variable « {v} » non déclarée."))
+                            RichText::new(ui.tf("field.var_undeclared", &[("name", &v)]))
                                 .small()
                                 .color(warning(ui)),
                         );
@@ -700,13 +722,14 @@ pub fn var_type(story: &Story, name: &str) -> Option<ValueType> {
         .map(|v| v.initial.value_type())
 }
 
+/// Comparison operators with the key of their label.
 const COMPARISONS: [(BinOp, &str); 6] = [
-    (BinOp::Eq, "est égal à"),
-    (BinOp::Ne, "est différent de"),
-    (BinOp::Gt, "est supérieur à"),
-    (BinOp::Ge, "est supérieur ou égal à"),
-    (BinOp::Lt, "est inférieur à"),
-    (BinOp::Le, "est inférieur ou égal à"),
+    (BinOp::Eq, "field.cmp.eq"),
+    (BinOp::Ne, "field.cmp.ne"),
+    (BinOp::Gt, "field.cmp.gt"),
+    (BinOp::Ge, "field.cmp.ge"),
+    (BinOp::Lt, "field.cmp.lt"),
+    (BinOp::Le, "field.cmp.le"),
 ];
 
 /// Whether `expr` has the shape the simple builder understands:
@@ -753,7 +776,11 @@ pub fn simple_condition_editor(
 
     ui.horizontal_wrapped(|ui| {
         ComboBox::from_id_salt((salt, "var"))
-            .selected_text(if var.is_empty() { "variable…" } else { &var })
+            .selected_text(if var.is_empty() {
+                ui.t("field.variable_hint")
+            } else {
+                var.clone()
+            })
             .show_ui(ui, |ui| {
                 for v in &story.variables {
                     ui.selectable_value(&mut new_var, v.name.clone(), &v.name);
@@ -761,11 +788,12 @@ pub fn simple_condition_editor(
             });
         if ty == Some(ValueType::Bool) {
             let mut is_true = !negated;
+            let (yes, no) = (ui.t("field.is_true"), ui.t("field.is_false"));
             ComboBox::from_id_salt((salt, "bool"))
-                .selected_text(if is_true { "est vrai" } else { "est faux" })
+                .selected_text(if is_true { &yes } else { &no })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut is_true, true, "est vrai");
-                    ui.selectable_value(&mut is_true, false, "est faux");
+                    ui.selectable_value(&mut is_true, true, &yes);
+                    ui.selectable_value(&mut is_true, false, &no);
                 });
             negated = !is_true;
             new_op = None;
@@ -777,10 +805,11 @@ pub fn simple_condition_editor(
                     COMPARISONS
                         .iter()
                         .find(|(o, _)| *o == current)
-                        .map_or("?", |(_, n)| n),
+                        .map_or("?".to_owned(), |(_, key)| ui.t(key)),
                 )
                 .show_ui(ui, |ui| {
-                    for (o, name) in COMPARISONS {
+                    for (o, key) in COMPARISONS {
+                        let name = ui.t(key);
                         ui.selectable_value(&mut chosen, o, name);
                     }
                 });
@@ -819,17 +848,17 @@ pub fn custom_data_editor(ui: &mut Ui, salt: egui::Id, data: &CustomData) -> Opt
         CustomData::Null => {
             let mut out = None;
             ui.horizontal(|ui| {
-                ui.label(RichText::new("vide").color(weak(ui)));
-                ui.menu_button("Définir…", |ui| {
+                ui.label(RichText::new(ui.t("field.empty")).color(weak(ui)));
+                ui.menu_button(ui.t("field.define"), |ui| {
                     for (name, value) in [
-                        ("Texte", CustomData::Str(String::new())),
-                        ("Entier", CustomData::Int(0)),
-                        ("Décimal", CustomData::Float(0.0)),
-                        ("Oui / non", CustomData::Bool(false)),
-                        ("Liste", CustomData::List(Vec::new())),
-                        ("Table", CustomData::Map(Vec::new())),
+                        ("field.custom.text", CustomData::Str(String::new())),
+                        ("field.custom.int", CustomData::Int(0)),
+                        ("field.custom.float", CustomData::Float(0.0)),
+                        ("field.custom.bool", CustomData::Bool(false)),
+                        ("field.custom.list", CustomData::List(Vec::new())),
+                        ("field.custom.table", CustomData::Map(Vec::new())),
                     ] {
-                        if ui.button(name).clicked() {
+                        if ui.button(ui.t(name)).clicked() {
                             out = Some(value);
                             ui.close();
                         }
@@ -879,7 +908,7 @@ pub fn custom_data_editor(ui: &mut Ui, salt: egui::Id, data: &CustomData) -> Opt
                 list.remove(i);
                 out = Some(CustomData::List(list));
             }
-            if ui.small_button("+ élément").clicked() {
+            if ui.small_button(ui.t("field.add_item")).clicked() {
                 let mut list = items.clone();
                 list.push(CustomData::Null);
                 out = Some(CustomData::List(list));
@@ -907,7 +936,7 @@ pub fn custom_data_editor(ui: &mut Ui, salt: egui::Id, data: &CustomData) -> Opt
                 map.remove(i);
                 out = Some(CustomData::Map(map));
             }
-            if ui.small_button("+ entrée").clicked() {
+            if ui.small_button(ui.t("field.add_entry")).clicked() {
                 let mut map = entries.clone();
                 let mut n = 1;
                 let key = loop {

@@ -74,8 +74,14 @@ impl Fixture {
     fn new(tag: &str) -> Self {
         let dir = TempDir::new(tag);
         let ctx = Context::default();
-        let mut core = EditorCore::new(CoreOptions::default(), &ctx);
-        let root = orbit_editor::storage::create_project(dir.path(), "Projet").unwrap();
+        let mut core =
+            EditorCore::new(CoreOptions::with_language(orbit_editor_api::Lang::Fr), &ctx);
+        let root = orbit_editor::storage::create_project(
+            dir.path(),
+            "Projet",
+            &orbit_editor::i18n::translator(orbit_editor_api::Lang::Fr),
+        )
+        .unwrap();
         core.open_project(&root);
         let (scene, ana, bob, show_ana, show_bob) = with_ctx(&mut core, |c| {
             // The scene of the new project: the only one the story starts in.

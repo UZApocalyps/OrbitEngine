@@ -43,7 +43,7 @@ impl Drop for TempDir {
 fn options() -> CoreOptions {
     CoreOptions {
         watch_interval: Duration::from_millis(20),
-        ..CoreOptions::default()
+        ..CoreOptions::with_language(orbit_editor_api::Lang::Fr)
     }
 }
 
@@ -51,7 +51,12 @@ fn new_project(tag: &str) -> (EditorCore, Context, TempDir, PathBuf) {
     let dir = TempDir::new(tag);
     let ctx = Context::default();
     let mut core = EditorCore::new(options(), &ctx);
-    let root = orbit_editor::storage::create_project(dir.path(), "Projet").unwrap();
+    let root = orbit_editor::storage::create_project(
+        dir.path(),
+        "Projet",
+        &orbit_editor::i18n::translator(orbit_editor_api::Lang::Fr),
+    )
+    .unwrap();
     core.open_project(&root);
     assert!(core.has_project());
     (core, ctx, dir, root)
@@ -178,6 +183,7 @@ fn dropping_a_png_and_a_wav_imports_them_with_stable_ids_as_one_undo_step() {
 #[test]
 fn a_file_with_the_wrong_content_or_format_is_refused_without_a_trace() {
     let (mut core, ctx, dir, root) = new_project("refuse");
+    let texts = orbit_editor::i18n::translator(orbit_editor_api::Lang::Fr);
     let outside = dir.path().join("outside");
     std::fs::create_dir_all(&outside).unwrap();
     std::fs::write(outside.join("fake.png"), b"definitely not a png").unwrap();
@@ -208,13 +214,14 @@ fn a_file_with_the_wrong_content_or_format_is_refused_without_a_trace() {
         report
             .failed
             .iter()
-            .any(|(p, e)| p.ends_with("notes.txt") && e.to_string().contains("non pris en charge"))
+            .any(|(p, e)| p.ends_with("notes.txt")
+                && e.message(&texts).contains("non pris en charge"))
     );
     assert!(
         report
             .failed
             .iter()
-            .any(|(p, e)| p.ends_with("fake.png") && e.to_string().contains("contenu invalide"))
+            .any(|(p, e)| p.ends_with("fake.png") && e.message(&texts).contains("contenu invalide"))
     );
     assert_eq!(story(&core).assets.assets.len(), 1);
     let images: Vec<_> = std::fs::read_dir(root.join("assets/images"))
@@ -283,6 +290,7 @@ fn a_file_already_in_assets_is_declared_in_place_and_never_twice() {
 #[test]
 fn destinations_cannot_leave_the_project() {
     let (mut core, _ctx, dir, root) = new_project("sandbox");
+    let texts = orbit_editor::i18n::translator(orbit_editor_api::Lang::Fr);
     write_png(&root.join("assets/images/a.png"), 8, 8);
     core.import_dropped(vec![root.join("assets/images/a.png")]);
     let id = story(&core).assets.assets[0].id;
@@ -295,7 +303,7 @@ fn destinations_cannot_leave_the_project() {
         "assets\\images\\x.png",
     ] {
         let result = with_ctx(&mut core, |c| {
-            c.ops(|p| assets::move_asset(p, &root, &mut journal, id, evil))
+            c.ops(|p| assets::move_asset(p, &root, &mut journal, id, evil, &texts))
         });
         assert!(result.is_err(), "{evil} must be refused");
     }
@@ -304,7 +312,7 @@ fn destinations_cannot_leave_the_project() {
     assert_eq!(story(&core).assets.assets[0].path, "assets/images/a.png");
     // A changed extension is refused as well.
     let result = with_ctx(&mut core, |c| {
-        c.ops(|p| assets::move_asset(p, &root, &mut journal, id, "assets/images/a.jpg"))
+        c.ops(|p| assets::move_asset(p, &root, &mut journal, id, "assets/images/a.jpg", &texts))
     });
     assert!(result.is_err());
 }
@@ -328,6 +336,7 @@ fn background_using(core: &mut EditorCore, asset: AssetId) -> NodeId {
 #[test]
 fn renaming_an_asset_moves_the_file_keeps_references_and_undo_moves_it_back() {
     let (mut core, ctx, _dir, root) = new_project("rename");
+    let texts = orbit_editor::i18n::translator(orbit_editor_api::Lang::Fr);
     write_png(&root.join("assets/images/old.png"), 8, 8);
     core.import_dropped(vec![root.join("assets/images/old.png")]);
     let id = story(&core).assets.assets[0].id;
@@ -343,6 +352,7 @@ fn renaming_an_asset_moves_the_file_keeps_references_and_undo_moves_it_back() {
                 &mut moves.borrow_mut(),
                 id,
                 "assets/images/new.png",
+                &texts,
             )
         })
         .unwrap();
@@ -575,7 +585,12 @@ fn an_error_is_displayed_within_300_ms_on_a_ten_thousand_node_story() {
     let dir = TempDir::new("latency");
     let ctx = Context::default();
     let mut core = EditorCore::new(options(), &ctx);
-    let root = orbit_editor::storage::create_project(dir.path(), "Grand").unwrap();
+    let root = orbit_editor::storage::create_project(
+        dir.path(),
+        "Grand",
+        &orbit_editor::i18n::translator(orbit_editor_api::Lang::Fr),
+    )
+    .unwrap();
     let story_file = root.join("story.ron");
     let big = orbit_editor::bench::generate_story(10_000);
     std::fs::write(&story_file, big.to_ron().unwrap()).unwrap();
@@ -764,7 +779,7 @@ fn no_two_actions_share_a_shortcut() {
     let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for action in core.registry.actions() {
         for shortcut in action.shortcuts() {
-            let key = orbit_editor_api::shortcut_text(shortcut);
+            let key = orbit_editor_api::shortcut_text(&core.state.i18n, shortcut);
             if let Some(other) = seen.insert(key.clone(), action.def.id.clone()) {
                 panic!("{key} is bound to both {other} and {}", action.def.id);
             }

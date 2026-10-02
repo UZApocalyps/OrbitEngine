@@ -3,8 +3,8 @@
 
 use egui::{Key, Modifiers};
 use orbit_editor_api::{
-    ActionDef, EditorPlugin, EditorRegistry, EditorRequest, Plugin, PluginManifest, ThemeMode,
-    icons,
+    ActionDef, EditorPlugin, EditorRegistry, EditorRequest, Lang, Plugin, PluginManifest,
+    ThemeMode, icons,
 };
 
 use super::ids;
@@ -13,7 +13,7 @@ pub struct CorePlugin;
 
 impl Plugin for CorePlugin {
     fn manifest(&self) -> PluginManifest {
-        PluginManifest::new(ids::CORE, "Actions de base", "0.1.0")
+        PluginManifest::new(ids::CORE, "Core actions", "0.1.0")
     }
 }
 
@@ -26,94 +26,96 @@ const CTRL_SHIFT: Modifiers = Modifiers {
 
 impl EditorPlugin for CorePlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
-        reg.menu("file", "Fichier", 10);
-        reg.menu("edit", "Édition", 20);
-        reg.menu("view", "Affichage", 30);
-        reg.menu("tools", "Outils", 40);
+        reg.menu("file", "menu.file", 10);
+        reg.menu("edit", "menu.edit", 20);
+        reg.menu("view", "menu.view", 30);
+        reg.menu("tools", "menu.tools", 40);
 
         // ---- File
         reg.action(
-            ActionDef::new("new", "Nouveau projet…", |c| {
+            ActionDef::new("new", "action.new_project", |c| {
                 c.request(EditorRequest::NewProjectDialog);
             })
             .icon(icons::FILE_PLUS)
-            .category("Fichier")
+            .category("category.file")
             .shortcut(CTRL, Key::N)
             .menu("file", 100),
         );
         reg.action(
-            ActionDef::new("open", "Ouvrir un projet…", |c| {
+            ActionDef::new("open", "action.open_project", |c| {
                 c.request(EditorRequest::PickOpenProject);
             })
             .icon(icons::FOLDER_OPEN)
-            .category("Fichier")
+            .category("category.file")
             .shortcut(CTRL, Key::O)
             .menu("file", 110),
         );
         reg.action(
-            ActionDef::new("open_story", "Ouvrir une histoire (.ron)…", |c| {
+            ActionDef::new("open_story", "action.open_story", |c| {
                 c.request(EditorRequest::PickOpenStory);
             })
             .icon(icons::FILM_SLATE)
-            .category("Fichier")
+            .category("category.file")
             .shortcut(CTRL_SHIFT, Key::O)
             .menu("file", 120),
         );
         reg.action(
-            ActionDef::new("save", "Enregistrer", |c| c.request(EditorRequest::Save))
+            ActionDef::new("save", "action.save", |c| c.request(EditorRequest::Save))
                 .icon(icons::FLOPPY_DISK)
-                .category("Fichier")
+                .category("category.file")
                 .shortcut(CTRL, Key::S)
                 .menu("file", 200)
                 .enabled(|c| c.project_info().is_some_and(|p| p.modified)),
         );
         reg.action(
-            ActionDef::new("close", "Fermer le projet", |c| {
+            ActionDef::new("close", "action.close_project", |c| {
                 c.request(EditorRequest::CloseProject);
             })
             .icon(icons::X_CIRCLE)
-            .category("Fichier")
+            .category("category.file")
             .shortcut(CTRL, Key::W)
             .menu("file", 210)
             .enabled(|c| c.has_project()),
         );
         reg.action(
-            ActionDef::new("quit", "Quitter", |c| c.request(EditorRequest::Quit))
+            ActionDef::new("quit", "action.quit", |c| c.request(EditorRequest::Quit))
                 .icon(icons::SIGN_OUT)
-                .category("Fichier")
+                .category("category.file")
                 .shortcut(CTRL, Key::Q)
                 .menu("file", 900),
         );
 
         // ---- Edit
         reg.action(
-            ActionDef::new("undo", "Annuler", |c| {
+            ActionDef::new("undo", "action.undo", |c| {
                 if let Err(e) = c.undo() {
-                    c.error(e.to_string());
+                    let message = c.describe(&e);
+                    c.error(message);
                 }
             })
             .label_with(|c| match c.undo_label() {
-                Some(label) => format!("Annuler : {label}"),
-                None => "Annuler".to_owned(),
+                Some(label) => c.tf("action.undo_label", &[("label", &c.undo_text(label))]),
+                None => c.t("action.undo"),
             })
             .icon(icons::ARROW_COUNTER_CLOCKWISE)
-            .category("Édition")
+            .category("category.edit")
             .shortcut(CTRL, Key::Z)
             .menu("edit", 100)
             .enabled(|c| c.can_undo()),
         );
         reg.action(
-            ActionDef::new("redo", "Rétablir", |c| {
+            ActionDef::new("redo", "action.redo", |c| {
                 if let Err(e) = c.redo() {
-                    c.error(e.to_string());
+                    let message = c.describe(&e);
+                    c.error(message);
                 }
             })
             .label_with(|c| match c.redo_label() {
-                Some(label) => format!("Rétablir : {label}"),
-                None => "Rétablir".to_owned(),
+                Some(label) => c.tf("action.redo_label", &[("label", &c.undo_text(label))]),
+                None => c.t("action.redo"),
             })
             .icon(icons::ARROW_CLOCKWISE)
-            .category("Édition")
+            .category("category.edit")
             .shortcut(CTRL, Key::Y)
             .also_shortcut(CTRL_SHIFT, Key::Z)
             .menu("edit", 110)
@@ -122,17 +124,17 @@ impl EditorPlugin for CorePlugin {
 
         // ---- View
         reg.action(
-            ActionDef::new("palette", "Palette de commandes", |c| {
+            ActionDef::new("palette", "action.palette", |c| {
                 c.request(EditorRequest::OpenPalette);
             })
             .icon(icons::COMMAND)
-            .category("Affichage")
+            .category("category.view")
             .shortcut(CTRL, Key::K)
             .also_shortcut(CTRL_SHIFT, Key::P)
             .menu("view", 100),
         );
         reg.action(
-            ActionDef::new("toggle_theme", "Basculer le thème clair / sombre", |c| {
+            ActionDef::new("toggle_theme", "action.toggle_theme", |c| {
                 let next = match c.state().theme {
                     ThemeMode::Dark => ThemeMode::Light,
                     ThemeMode::Light => ThemeMode::Dark,
@@ -140,15 +142,31 @@ impl EditorPlugin for CorePlugin {
                 c.request(EditorRequest::SetTheme(next));
             })
             .icon(icons::PALETTE)
-            .category("Affichage")
+            .category("category.view")
             .menu("view", 110),
         );
+        for lang in Lang::ALL {
+            reg.action(
+                ActionDef::new(
+                    format!("language.{}", lang.code()),
+                    "action.language",
+                    move |c| c.request(EditorRequest::SetLanguage(lang)),
+                )
+                .label_with(move |c| c.tf("action.language", &[("language", &lang.native_name())]))
+                .menu_group("menu.language")
+                .menu_label(lang.native_name())
+                .checked(move |c| c.lang() == lang)
+                .icon(icons::TRANSLATE)
+                .category("category.view")
+                .menu("view", 130 + lang as i32),
+            );
+        }
         reg.action(
-            ActionDef::new("reset_layout", "Réinitialiser la disposition", |c| {
+            ActionDef::new("reset_layout", "action.reset_layout", |c| {
                 c.request(EditorRequest::ResetLayout);
             })
             .icon(icons::LAYOUT)
-            .category("Affichage")
+            .category("category.view")
             .menu("view", 120),
         );
     }
