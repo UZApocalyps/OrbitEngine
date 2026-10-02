@@ -1,7 +1,7 @@
 //! The `SaveSlots` widget of a data screen: which slots a page shows, and
 //! the cards, tabs and page buttons that display them.
 
-use super::widget::SlotsMode;
+use orbit_ui_data::SlotsMode;
 use crate::screens::{page_count, page_range};
 use crate::texts::Texts;
 use crate::view::{CategoryView, SlotCategory, SlotId, SlotState, SlotView};

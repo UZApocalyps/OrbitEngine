@@ -4,7 +4,7 @@
 
 use std::borrow::Cow;
 
-use super::widget::UI_VERSION;
+use crate::widget::UI_VERSION;
 
 /// The `ui_version` of a document (1 when the field is missing).
 pub fn read_version(source: &str) -> Result<u32, String> {

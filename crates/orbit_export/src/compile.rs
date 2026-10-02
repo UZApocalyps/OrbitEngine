@@ -7,7 +7,7 @@ use orbit_core::{Story, validate};
 use orbit_i18n::Translation;
 use orbit_pak::{GameInfo, GamePack};
 use orbit_project::{ExportProfile, asset_users};
-use orbit_ui::{Severity, SplashContent, UiBundle};
+use orbit_ui_data::{Severity, SplashContent, UiBundle};
 
 use crate::error::{ExportError, Result};
 use crate::project::ExportProject;
@@ -372,7 +372,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("splash")).unwrap();
         std::fs::write(dir.path().join("splash/studio.png"), b"png").unwrap();
         let compiled = compile(&project, &profile).unwrap();
-        let bundle = orbit_ui::UiBundle::from_ron(
+        let bundle = orbit_ui_data::UiBundle::from_ron(
             std::str::from_utf8(compiled.pack.ui.as_ref().unwrap()).unwrap(),
         )
         .unwrap();

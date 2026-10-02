@@ -2560,7 +2560,7 @@ dependencies = [
  "orbit_i18n",
  "orbit_pak",
  "orbit_project",
- "orbit_ui",
+ "orbit_ui_data",
  "serde_json",
  "tar",
  "thiserror 2.0.21",
@@ -2744,6 +2744,16 @@ dependencies = [
  "orbit_core",
  "orbit_render2d",
  "orbit_text",
+ "orbit_ui_data",
+ "ron",
+ "serde",
+]
+
+[[package]]
+name = "orbit_ui_data"
+version = "0.1.0"
+dependencies = [
+ "orbit_core",
  "ron",
  "serde",
 ]

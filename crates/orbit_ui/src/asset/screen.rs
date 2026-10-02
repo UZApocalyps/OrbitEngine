@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, HashMap};
 use orbit_core::{Value, VarOp};
 use orbit_render2d::TextureId;
 
-use super::action::{BindPath, SettingKey, UiAction};
+use orbit_ui_data::{BindPath, SettingKey, UiAction};
 use super::slots::{SlotAction, build_slots, slots_page};
-use super::widget::{Cond, ScreenAsset, SlotsMode, TextRef, WidgetDef, WidgetKind};
+use orbit_ui_data::{Cond, ScreenAsset, SlotsMode, TextRef, WidgetDef, WidgetKind};
 use crate::input::UiInput;
 use crate::screens::{Confirm, Screen};
 use crate::texts::Texts;

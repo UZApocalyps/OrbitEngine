@@ -1,32 +1,46 @@
 //! Data-driven screens: a screen is a RON document ([`ScreenAsset`]) holding
 //! a tree of [`WidgetDef`]s instead of Rust code.
 //!
-//! * [`widget`]: the document model;
-//! * [`action`]: what a button does ([`UiAction`]) and what a control edits
-//!   ([`BindPath`]);
-//! * [`migrate`] / [`validate`]: versioning and checking of a document;
-//! * [`screen`]: [`DataScreen`], the [`crate::Screen`] that builds a widget
+//! The document model (widgets, actions, bindings, migration, validation,
+//! [`UiBundle`]) lives in the GPU-free `orbit_ui_data` crate and is
+//! re-exported here. What stays in this module needs widgets or the renderer:
+//!
+//! * `screen`: [`DataScreen`], the [`crate::Screen`] that builds a widget
 //!   [`crate::Ui`] from a document and maps actions to [`crate::UiEvent`]s;
-//! * [`bundle`]: [`UiBundle`], the theme + screens + splashes of a project.
+//! * `preview`: simulated navigation for the editor preview.
 //!
 //! Nothing here touches the GPU: documents are parsed, validated and
 //! turned into widgets in plain unit tests.
 
-mod action;
-mod bundle;
-pub mod migrate;
 mod preview;
 mod screen;
 mod slots;
-pub mod validate;
-mod widget;
 
-pub use action::{BindPath, SettingKey, UiAction};
-pub use bundle::{SYSTEM_SCREENS, SplashContent, SplashDef, UiBundle};
-pub use screen::{DataContext, DataScreen};
-pub use preview::{NavStep, PreviewNav, sample_saves};
-pub use slots::{SlotsPage, slots_page};
-pub use validate::{Issue, Severity, validate, validate_with_vars, variable_issues};
-pub use widget::{
-    Cond, LayoutDef, ScreenAsset, SlotsMode, TextRef, UI_VERSION, WidgetDef, WidgetKind, from_ron, to_ron,
+pub use orbit_ui_data::{
+    BindPath, Cond, Issue, LayoutDef, SYSTEM_SCREENS, ScreenAsset, SettingKey, Severity, SlotsMode,
+    SplashContent, SplashDef, TextRef, UI_VERSION, UiAction, UiBundle, WidgetDef, WidgetKind,
+    from_ron, migrate, to_ron, validate, validate_with_vars, variable_issues,
 };
+pub use preview::{NavStep, PreviewNav, sample_saves};
+pub use screen::{DataContext, DataScreen};
+pub use slots::{SlotsPage, slots_page};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_stock_screen_builds_into_widgets() {
+        let b = UiBundle::builtin();
+        let ctx = DataContext { show_quit: true, ..Default::default() };
+        for s in &b.screens {
+            let mut screen = DataScreen::new(
+                s.clone(),
+                b.theme.as_ref().unwrap(),
+                &crate::Texts::builtin("en"),
+                ctx.clone(),
+            );
+            assert!(screen.ui().focused().is_some(), "{} has a focusable widget", s.id);
+        }
+    }
+}

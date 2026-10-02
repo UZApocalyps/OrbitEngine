@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use orbit_core::Value;
 
-use super::action::UiAction;
+use orbit_ui_data::UiAction;
 use super::screen::DataContext;
 use crate::view::{
     CategoryView, LanguageView, PrefsView, SlotCategory, SlotId, SlotState, SlotView, UiEvent,
