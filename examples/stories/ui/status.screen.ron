@@ -1,0 +1,20 @@
+// A heads-up display opened by the story (`OpenScreen`, no wait): the
+// credits in the top right corner, under the textbox, never pausing.
+(
+    ui_version: 5,
+    id: "status",
+    root: (
+        kind: Panel(kind: Normal, dir: Horizontal),
+        layout: (
+            pad: (20.0, 10.0),
+            gap: 10.0,
+            anchor: Some((canvas: (1.0, 0.0), pivot: (1.0, 0.0), offset: (-24.0, 24.0))),
+        ),
+        children: [
+            (kind: Label(text: Literal("¤"))),
+            (kind: Label(text: Bind(Var("credits")))),
+        ],
+    ),
+    hud: true,
+    transition_in: Some((kind: Fade, duration: 0.4)),
+)

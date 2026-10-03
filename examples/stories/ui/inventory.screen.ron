@@ -1,0 +1,42 @@
+// Opened by the story (`OpenScreen`, wait): the bag, generated from the
+// `inventory` list. Picking an object closes the screen and hands it back to
+// the story (`CloseWith(Item)` -> `used_item`); Escape closes without a value.
+(
+    ui_version: 5,
+    id: "inventory",
+    modal: true,
+    pauses_game: true,
+    dim_background: true,
+    on_cancel: [Close],
+    root: (
+        kind: Panel(kind: Normal, dir: Vertical),
+        layout: (
+            width: Fixed(640.0),
+            pad: (48.0, 40.0),
+            gap: 16.0,
+            cross: Stretch,
+            anchor: Some((canvas: (0.5, 0.5), pivot: (0.5, 0.5), offset: (0.0, 0.0))),
+        ),
+        children: [
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 12.0),
+                children: [
+                    (kind: Label(text: Literal("*"))),
+                    (kind: Label(text: Bind(Param("owner"))), style: Some("heading")),
+                ],
+            ),
+            (
+                id: "items",
+                kind: Repeat(source: Var("inventory"), dir: Vertical, empty: Some(Literal("-"))),
+                layout: (gap: 10.0, cross: Stretch),
+                children: [
+                    (kind: Button(text: Bind(Item), action: [CloseWith(Item)])),
+                ],
+            ),
+            (id: "back", kind: Button(text: Key("ui.menu.back"), action: [Close])),
+        ],
+    ),
+    transition_in: Some((kind: SlideUp, duration: 0.35, ease: Some(Preset(OutCubic)))),
+    transition_out: Some((kind: Fade, duration: 0.2)),
+)

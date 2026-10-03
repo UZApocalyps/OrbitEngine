@@ -13,6 +13,7 @@ Add steps with the buttons of the Scene editor or the Explorer. The most common 
 - **Background**, **Show** / **Hide** a character, **Music**, **Sound**, **Wait**.
 - **Condition** (if): go one way or another depending on a variable.
 - **Call** / **Return**: reuse a small piece of story from several places.
+- **Open screen** / **Close screen**: show a screen of the project (an inventory, a HUD) from the story, optionally waiting for the player to close it. See the Interface chapter.
 - **End**: the story stops.
 
 Select a step to edit all its settings in the Inspector. Transitions (dissolve, fade) can be set on backgrounds and on showing or hiding characters.
