@@ -24,6 +24,7 @@ mod preview;
 mod problems;
 pub mod reveal;
 pub mod sample;
+mod rigedit;
 mod scene;
 mod scene3d;
 mod sceneview;
@@ -76,6 +77,7 @@ pub mod ids {
     pub const TEXTVIEW: &str = "orbit.textview";
     pub const MANUAL: &str = "orbit.manual";
     pub const TIMELINE: &str = "orbit.timeline";
+    pub const RIG: &str = "orbit.rig";
 }
 
 /// Full ids of the built-in panels.
@@ -103,6 +105,9 @@ pub mod panels {
     pub const UI_EDITOR: &str = "orbit.ui.editor";
     pub const TEXTVIEW: &str = "orbit.textview.textview";
     pub const MANUAL: &str = "orbit.manual.manual";
+    pub const RIG_VIEWPORT: &str = "orbit.rig.viewport";
+    pub const RIG_HIERARCHY: &str = "orbit.rig.hierarchy";
+    pub const RIG_INSPECTOR: &str = "orbit.rig.inspector";
 }
 
 /// State the built-in plugins share with the editor core.
@@ -114,6 +119,8 @@ pub struct Shared {
     pub moves: std::rc::Rc<std::cell::RefCell<crate::assets::MoveJournal>>,
     /// Link with the GPU host of the 3D editor (viewport textures).
     pub scene3d: crate::scene3d_host::SharedLink,
+    /// Link with the GPU host of the rig editor (viewport texture).
+    pub rig: crate::rig_host::SharedLink,
 }
 
 /// The built-in plugins, in registration order (menus first, then panels in
@@ -149,6 +156,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(textview::TextViewPlugin),
         Box::new(manual::ManualPlugin),
         Box::new(scene3d::Scene3dPlugin::new(shared.scene3d.clone())),
+        Box::new(rigedit::RigPlugin::new(shared.rig.clone())),
         Box::new(SamplePlugin::default()),
     ]
 }
