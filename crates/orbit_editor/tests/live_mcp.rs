@@ -384,7 +384,8 @@ fn an_ai_edit_over_http_is_live_unsaved_undoable_and_journaled() {
     let before = dialogue_texts(&core);
     let revision = core.session.as_ref().unwrap().project.revision();
 
-    // initialize + tools/list
+    // initialize + tools/list (the 3D tools are listed only with the switch on)
+    orbit_core::experimental::set_preference_3d(true);
     let tools = with_editor(&mut core, || {
         let mut client = Client::new(port, &token);
         let init = client.initialize();

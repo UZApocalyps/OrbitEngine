@@ -272,6 +272,9 @@ fn menu_bar(
                     let actions = registry.menu_actions(&menu.id);
                     let mut placed: Vec<&str> = Vec::new();
                     for action in &actions {
+                        if crate::builtin::hidden_experimental(&action.plugin_id) {
+                            continue;
+                        }
                         let order = action.def.menu.as_ref().map_or(0, |m| m.order);
                         let group = order.div_euclid(100);
                         if let Some(submenu) = action.def.menu_group.as_deref() {

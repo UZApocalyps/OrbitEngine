@@ -200,6 +200,7 @@ impl EditorCore {
             .unwrap_or_else(|| dock::default_layout(&registry));
         dock::sanitize(&mut dock, &registry);
 
+        builtin::apply_saved_prefs(&config.plugin_prefs);
         let mut state = EditorState {
             i18n: translator,
             theme: mode,

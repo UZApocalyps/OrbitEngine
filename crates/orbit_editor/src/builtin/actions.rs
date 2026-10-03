@@ -174,6 +174,21 @@ impl EditorPlugin for CorePlugin {
             );
         }
         reg.action(
+            ActionDef::new("experimental_3d", "action.experimental_3d", |c| {
+                let on = !orbit_core::experimental::preference_3d();
+                orbit_core::experimental::set_preference_3d(on);
+                c.set_pref(
+                    super::PREF_PLUGIN,
+                    super::PREF_3D,
+                    if on { "1" } else { "0" },
+                );
+            })
+            .checked(|_| orbit_core::experimental::enabled_3d())
+            .icon(icons::CUBE)
+            .category("category.view")
+            .menu("view", 125),
+        );
+        reg.action(
             ActionDef::new("reset_layout", "action.reset_layout", |c| {
                 c.request(EditorRequest::ResetLayout);
             })

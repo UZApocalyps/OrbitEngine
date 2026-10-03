@@ -493,6 +493,15 @@ fn scene3d_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, kind:
         NodeKind::HideScene3d { transition } => (None, None, transition.clone()),
         _ => return,
     };
+    if !orbit_core::experimental::enabled_3d() {
+        ui.label(
+            egui::RichText::new(ui.t("inspector.scene3d.hidden_notice"))
+                .small()
+                .italics()
+                .weak(),
+        );
+        ui.add_space(4.0);
+    }
     let rebuild = |scene_id: Option<orbit_core::AssetId>,
                    camera: Option<String>,
                    transition: Option<orbit_core::Transition>| match &kind {

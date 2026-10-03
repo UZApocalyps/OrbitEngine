@@ -137,6 +137,9 @@ impl ToolRunner {
                 idempotent: false,
             });
         }
+        if !orbit_core::experimental::enabled_3d() {
+            infos.retain(|i| !is_3d_tool(&i.name));
+        }
         infos
     }
 
@@ -443,6 +446,12 @@ fn truncate(text: &str, max: usize) -> String {
         let cut: String = flat.chars().take(max).collect();
         format!("{cut}...")
     }
+}
+
+/// The experimental 3D tools (hidden from the tool list unless the 3D switch is
+/// on; calling them by name keeps working).
+pub fn is_3d_tool(name: &str) -> bool {
+    name.contains("scene3d") || name.contains("scenes3d")
 }
 
 impl ProjectHost for HeadlessHost {
