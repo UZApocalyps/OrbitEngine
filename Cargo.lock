@@ -2971,6 +2971,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-dice"
+version = "0.1.0"
+dependencies = [
+ "orbit_core",
+ "orbit_plugin_api",
+ "orbit_vm",
+]
+
+[[package]]
 name = "orbit_anim"
 version = "0.1.0"
 dependencies = [
@@ -3227,6 +3236,7 @@ version = "0.1.0"
 dependencies = [
  "orbit_core",
  "orbit_project",
+ "orbit_vm",
  "thiserror 2.0.21",
 ]
 

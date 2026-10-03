@@ -57,6 +57,7 @@ impl Plugin for SamplePlugin {
             icon: icons::NOTE.to_owned(),
             default_data: note_default,
             validate: Some(note_validate),
+            fields: Vec::new(),
         });
         let changes = self.changes.clone();
         reg.on_project_event(move |event| {

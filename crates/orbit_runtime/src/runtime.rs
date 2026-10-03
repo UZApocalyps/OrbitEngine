@@ -120,6 +120,9 @@ pub struct RuntimeConfig {
     pub ui_dir: Option<String>,
     /// A UI bundle given directly (it wins over `ui_dir` and the pack).
     pub ui_bundle: Option<UiBundle>,
+    /// Runtime plugins (M8-04): custom nodes and custom UI actions. Set by a
+    /// player built "with plugins" (`orbit_player::run_with_plugins`).
+    pub plugins: Option<orbit_vm::SharedPluginHost>,
 }
 
 /// Where the fonts of the engine are inside a pak (`engine/<path>`).
@@ -156,6 +159,7 @@ impl RuntimeConfig {
             lazy_assets: false,
             ui_dir: None,
             ui_bundle: None,
+            plugins: None,
         }
     }
 }
@@ -920,6 +924,7 @@ impl Runtime {
             self.ctx.theme.clone(),
             cfg,
         ));
+        shell.set_plugin_host(self.config.plugins.clone());
         if let Some(bundle) = &ui {
             shell.set_ui_bundle(bundle);
         }
@@ -985,6 +990,8 @@ impl Runtime {
                     None => log::warn!("sound `{path}` is not available"),
                 },
                 Effect::Custom { name, args } => {
+                    // Plugins already had their chance (shell); this one
+                    // is for an embedding host.
                     log::info!("custom UI action `{name}` {args:?} has no handler");
                 }
                 Effect::Quit => self.host_requests.push(HostRequest::Quit),

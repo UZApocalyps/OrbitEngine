@@ -123,7 +123,7 @@ fn template_texts_exist_in_both_languages() {
 fn manual_is_complete_in_both_languages() {
     for lang in Lang::ALL {
         let chapters = manual::chapters(lang);
-        assert_eq!(chapters.len(), 12);
+        assert_eq!(chapters.len(), 13);
         for (name, md) in chapters {
             let blocks = manual::parse(md);
             assert!(blocks.len() > 5, "{name} ({})", lang.code());

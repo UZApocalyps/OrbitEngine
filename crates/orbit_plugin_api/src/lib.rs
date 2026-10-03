@@ -8,18 +8,28 @@
 //!
 //! This crate has no GPU, window or egui dependency and compiles to wasm.
 //! The API is versioned by [`API_VERSION`]: a host refuses a plugin built for
-//! another version. It stays at `0` (free to change) while only built-in
-//! plugins exist.
+//! another version. Version 1 (M8-04) is the first one third-party plugins
+//! may target; later changes are additive or bump it.
+//!
+//! The **runtime** half ([`runtime`]: [`RuntimePlugin`], [`NodeHandler`],
+//! [`UiActionHandler`], [`RuntimeRegistry`]) runs custom nodes and custom UI
+//! actions in the player (ADR 0015 §4). See that module for the rollback and
+//! save rules a plugin must follow.
 
 mod registry;
+pub mod runtime;
 
 pub use registry::{
-    AssetImporter, ImportedAsset, McpToolDef, NodeTypeDef, PluginError, ProjectEvent, ProjectHook,
-    ProjectRegistry, RegisteredNodeType,
+    AssetImporter, FieldDef, FieldKind, ImportedAsset, McpToolDef, NodeTypeDef, PluginError,
+    ProjectEvent, ProjectHook, ProjectRegistry, RegisteredNodeType, check_fields, default_data_of,
+};
+pub use runtime::{
+    CustomNode, Handled, NodeHandler, PluginContext, PluginEvent, PluginHost, PluginOutcome,
+    RuntimePlugin, RuntimeRegistry, SharedPluginHost, UiActionHandler,
 };
 
-/// Version of this API, checked at install time.
-pub const API_VERSION: u32 = 0;
+/// Version of this API, checked at install time (editor and player).
+pub const API_VERSION: u32 = 1;
 
 /// Identity of a plugin. Ids are lowercase dotted names (`orbit.core.explorer`,
 /// `acme.anim`); every element a plugin registers is keyed `plugin_id.name`.

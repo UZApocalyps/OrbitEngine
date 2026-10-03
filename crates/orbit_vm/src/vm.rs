@@ -69,6 +69,8 @@ pub struct Vm {
     persistent_names: HashSet<String>,
     pub(crate) warnings: Vec<String>,
     pub(crate) history: History,
+    /// Runtime plugins (M8-04); not part of the state.
+    plugins: Option<crate::plugin::SharedPluginHost>,
 }
 
 impl Vm {
@@ -120,6 +122,7 @@ impl Vm {
             persistent_names,
             warnings: Vec::new(),
             history: History::default(),
+            plugins: None,
         })
     }
 
@@ -593,19 +596,142 @@ impl Vm {
                 NodeKind::Custom {
                     plugin_id,
                     kind,
+                    version,
                     data,
-                    ..
                 } => {
                     self.state.pc = next;
-                    self.events.push(PresentationEvent::Custom {
-                        plugin_id: plugin_id.clone(),
-                        kind: kind.clone(),
-                        data: data.clone(),
-                    });
+                    let outcome = self.run_plugin_node(plugin_id, kind, *version, data);
+                    if let crate::plugin::PluginOutcome::Wait(secs) = outcome
+                        && secs.is_finite()
+                        && secs > 0.0
+                    {
+                        return Ok(Some(StepResult::WaitTime(secs)));
+                    }
                 }
             }
         }
         Err(VmError::StepLimit(MAX_NODES_PER_STEP))
+    }
+
+    // ------------------------------------------------------------ plugins
+
+    /// Attaches the runtime plugins (M8-04). Not part of the state: a host
+    /// sets it again on every VM it creates (new game, load).
+    pub fn set_plugin_host(&mut self, host: Option<crate::plugin::SharedPluginHost>) {
+        self.plugins = host;
+    }
+
+    pub fn plugin_host(&self) -> Option<&crate::plugin::SharedPluginHost> {
+        self.plugins.as_ref()
+    }
+
+    /// Commits what a handler produced (all or nothing). Returns `false`
+    /// when the handler failed and nothing was applied.
+    fn commit_plugin(
+        &mut self,
+        plugin_id: &str,
+        effects: crate::plugin::PluginEffects,
+        patch_history: bool,
+    ) -> bool {
+        self.warnings.extend(
+            effects
+                .warnings
+                .into_iter()
+                .map(|w| format!("plugin `{plugin_id}`: {w}")),
+        );
+        if let Some(err) = effects.error {
+            self.warnings
+                .push(format!("plugin `{plugin_id}` cancelled: {err}"));
+            return false;
+        }
+        self.state.rng = effects.rng;
+        for (name, value) in effects.values {
+            if self.variable(&name) == Some(&value) {
+                continue;
+            }
+            if patch_history && !self.persistent_names.contains(&name) {
+                self.history.patch_cursor_var(&name, &value);
+            }
+            self.store_var(&name, value);
+        }
+        for event in effects.events {
+            self.events.push(PresentationEvent::Custom {
+                plugin_id: plugin_id.to_owned(),
+                kind: event.name,
+                data: event.data,
+            });
+        }
+        true
+    }
+
+    fn run_plugin_node(
+        &mut self,
+        plugin_id: &str,
+        kind: &str,
+        version: u32,
+        data: &orbit_core::CustomData,
+    ) -> crate::plugin::PluginOutcome {
+        use crate::plugin::{Handled, PluginContext, PluginOutcome};
+        // The generic event comes first: hosts that present plugin nodes
+        // themselves (editor preview) keep working.
+        self.events.push(PresentationEvent::Custom {
+            plugin_id: plugin_id.to_owned(),
+            kind: kind.to_owned(),
+            data: data.clone(),
+        });
+        let Some(host) = self.plugins.clone() else {
+            self.warnings.push(format!(
+                "plugin `{plugin_id}` is not available: custom node `{kind}` skipped"
+            ));
+            return PluginOutcome::Continue;
+        };
+        let mut ctx = PluginContext::new(&self.state.vars, &self.persistent, self.state.rng);
+        let handled = host.run_node(plugin_id, kind, version, data, &mut ctx);
+        let effects = ctx.finish();
+        match handled {
+            Handled::Unhandled => {
+                self.warnings.push(format!(
+                    "plugin `{plugin_id}` is not available: custom node `{kind}` skipped"
+                ));
+                PluginOutcome::Continue
+            }
+            Handled::Done(outcome) => {
+                if self.commit_plugin(plugin_id, effects, false) {
+                    outcome
+                } else {
+                    PluginOutcome::Continue
+                }
+            }
+        }
+    }
+
+    /// Runs a `UiAction::Custom { name, args }` through the plugins (UI-18).
+    /// Its variable writes are applied like [`Vm::apply_var_op`] (kept by
+    /// the rollback checkpoint on screen). Returns `false` (with a warning)
+    /// when no plugin handles `name` or the handler failed.
+    pub fn run_ui_action(&mut self, name: &str, args: &[String]) -> bool {
+        use crate::plugin::{Handled, PluginContext};
+        let Some(host) = self.plugins.clone() else {
+            self.warnings
+                .push(format!("custom UI action `{name}` has no handler"));
+            return false;
+        };
+        let mut ctx = PluginContext::new(&self.state.vars, &self.persistent, self.state.rng);
+        let handled = host.run_action(name, args, &mut ctx);
+        let effects = ctx.finish();
+        match handled {
+            Handled::Unhandled => {
+                self.warnings
+                    .push(format!("custom UI action `{name}` has no handler"));
+                false
+            }
+            Handled::Done(()) => {
+                // Plugin ids are dotted names; the action name is
+                // `<plugin id>.<action>`.
+                let owner = name.rsplit_once('.').map_or(name, |(p, _)| p).to_owned();
+                self.commit_plugin(&owner, effects, true)
+            }
+        }
     }
 
     // -------------------------------------------------------- observation

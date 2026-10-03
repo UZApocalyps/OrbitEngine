@@ -61,6 +61,9 @@ pub enum ExportError {
     Package(String),
     #[error("the export was cancelled")]
     Cancelled,
+    /// Rust plugins (M8-04): a missing plugin, no toolchain, a failed build.
+    #[error("plugins: {0}")]
+    Plugins(String),
 }
 
 impl ExportError {

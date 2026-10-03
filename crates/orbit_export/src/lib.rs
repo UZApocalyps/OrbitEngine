@@ -42,6 +42,7 @@ mod compile;
 mod error;
 mod native;
 mod pakbuild;
+pub mod plugins;
 mod project;
 mod report;
 pub mod serve;
@@ -180,8 +181,27 @@ pub fn export_many(
     if targets.is_empty() {
         return Err(ExportError::Profile(vec!["no target to export".to_owned()]));
     }
+    // Rust plugins (M8-04): a native player is built with them instead of
+    // the precompiled template; other targets are not supported yet.
+    let plugin_crates = plugins::discover(&project.root)?;
+    if !plugin_crates.is_empty() {
+        for target in targets {
+            if !native::is_host_target(*target) {
+                return Err(ExportError::Plugins(format!(
+                    "this project has Rust plugins: it can only be exported for the platform \
+                     the editor runs on (not {}) for now",
+                    target.label()
+                )));
+            }
+        }
+        plugins::cargo_version()?;
+        plugins::engine_source()?;
+    }
     // Fail fast on a missing template, before compiling anything.
     for target in targets {
+        if !plugin_crates.is_empty() {
+            continue;
+        }
         match target {
             ExportTarget::Web => {
                 options.templates.web()?;
@@ -196,6 +216,17 @@ pub fn export_many(
     }
     let mut rep = Reporter::new(progress, options.cancel.clone());
     let prepared = prepare(project, profile, 0.4, &mut rep)?;
+    plugins::check_story(&prepared.compiled.pack.story, &plugin_crates)?;
+    let plugin_player = if plugin_crates.is_empty() {
+        None
+    } else {
+        rep.info(format!(
+            "Building the player with {} plugin crate(s) (cargo, this can take a few minutes)",
+            plugin_crates.len()
+        ));
+        let work = out_dir.join(".orbit-plugin-player");
+        Some(plugins::build_player(&plugin_crates, &work)?)
+    };
     let share = 0.6 / targets.len() as f32;
     let mut reports = Vec::new();
     for (i, target) in targets.iter().enumerate() {
@@ -236,7 +267,10 @@ pub fn export_many(
                 (written.output, written.files)
             }
             native => {
-                let template = options.templates.native(*native)?;
+                let template = match &plugin_player {
+                    Some(exe) => exe.clone(),
+                    None => options.templates.native(*native)?,
+                };
                 let written = native::export(
                     &prepared.pak,
                     profile,

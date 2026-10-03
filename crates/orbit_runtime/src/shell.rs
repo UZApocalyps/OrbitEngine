@@ -237,6 +237,8 @@ fn from_ui_skip(mode: UiSkipMode) -> orbit_save::SkipMode {
 
 pub(crate) struct Shell {
     story: Arc<Story>,
+    /// Runtime plugins (M8-04), attached to every VM the shell creates.
+    plugins: Option<orbit_vm::SharedPluginHost>,
     /// The theme as the project wrote it.
     base_theme: Theme,
     /// What the shell draws with: `base_theme` with the text scale and the
@@ -430,6 +432,7 @@ impl Shell {
             announcer: Announcer::default(),
             last_toast: None,
             toast_announcer: Announcer::default(),
+            plugins: None,
         };
         shell.apply_prefs_effects();
         shell.refresh_slots();
@@ -563,6 +566,7 @@ impl Shell {
     /// A VM at the start of the story with the persistent data applied.
     fn fresh_vm(&self) -> Result<Vm, String> {
         let mut vm = Vm::from_start(self.story.clone()).map_err(|e| e.to_string())?;
+        vm.set_plugin_host(self.plugins.clone());
         self.persistent.apply_to(&mut vm);
         Ok(vm)
     }
@@ -1391,6 +1395,58 @@ impl Shell {
         }
     }
 
+    /// Attaches the runtime plugins (M8-04): every VM created from now on
+    /// (new game, load) runs custom nodes and UI actions through them.
+    pub fn set_plugin_host(&mut self, host: Option<orbit_vm::SharedPluginHost>) {
+        if let Some(game) = &mut self.game {
+            game.director.vm_mut().set_plugin_host(host.clone());
+        }
+        self.plugins = host;
+    }
+
+    /// A `UiAction::Custom` (UI-18): run by the plugin that owns `name`
+    /// (`<plugin id>.<action>`) through the VM, so its variable writes are
+    /// saved and rolled back like any other; at the title only persistent
+    /// variables exist. Without a handler, it goes to the host as an
+    /// [`Effect::Custom`].
+    fn custom_action(&mut self, name: String, args: Vec<String>) {
+        let mut handled = false;
+        let mut persistent: Option<PersistentData> = None;
+        if self.plugins.is_some() {
+            if let Some(game) = &mut self.game {
+                let vm = game.director.vm_mut();
+                let before = vm.persistent_vars().clone();
+                handled = vm.run_ui_action(&name, &args);
+                for w in vm.take_warnings() {
+                    log::warn!("{w}");
+                }
+                if handled && &before != vm.persistent_vars() {
+                    persistent = Some(PersistentData::from_vm(vm));
+                }
+            } else {
+                match self.fresh_vm() {
+                    Ok(mut vm) => {
+                        handled = vm.run_ui_action(&name, &args);
+                        for w in vm.take_warnings() {
+                            log::warn!("{w}");
+                        }
+                        if handled {
+                            persistent = Some(PersistentData::from_vm(&vm));
+                        }
+                    }
+                    Err(message) => log::warn!("custom UI action `{name}` ignored: {message}"),
+                }
+            }
+        }
+        if let Some(data) = persistent {
+            self.persistent = data;
+            self.flush_persistent();
+        }
+        if !handled {
+            self.effects.push(Effect::Custom { name, args });
+        }
+    }
+
     /// Hands the current game / settings state to the data screens that are
     /// showing (they rebuild only when it changed).
     fn sync_data(&mut self) {
@@ -1556,7 +1612,7 @@ impl Shell {
                 self.open_screen(&id);
             }
             UiEvent::PlaySound(path) => self.effects.push(Effect::PlayAsset(path)),
-            UiEvent::Custom { name, args } => self.effects.push(Effect::Custom { name, args }),
+            UiEvent::Custom { name, args } => self.custom_action(name, args),
             UiEvent::VarOp(op) => self.apply_var_op(&op),
             UiEvent::SceneGoto(scene) => self.goto_scene(&scene),
             UiEvent::Back => self.close_top(),

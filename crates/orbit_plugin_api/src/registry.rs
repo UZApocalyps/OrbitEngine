@@ -42,6 +42,105 @@ pub struct NodeTypeDef {
     pub default_data: fn() -> CustomData,
     /// Problems of one node's data, empty when valid.
     pub validate: Option<fn(&CustomData) -> Vec<String>>,
+    /// Fields of the node's data (a `CustomData::Map`), shown by the
+    /// editor's inspector as typed widgets. Empty: the generic data editor.
+    pub fields: Vec<FieldDef>,
+}
+
+/// One field of a custom node's data, declared by its plugin (M8-04).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldDef {
+    /// Key in the data map.
+    pub key: String,
+    /// Label (a text key of the plugin, or plain text).
+    pub label: String,
+    pub kind: FieldKind,
+    /// Optional help shown on hover.
+    pub help: String,
+}
+
+impl FieldDef {
+    pub fn new(key: impl Into<String>, label: impl Into<String>, kind: FieldKind) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            kind,
+            help: String::new(),
+        }
+    }
+
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help = help.into();
+        self
+    }
+}
+
+/// Type and editing widget of a [`FieldDef`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum FieldKind {
+    /// `CustomData::Int` within `min..=max`.
+    Int { min: i64, max: i64 },
+    Float { min: f64, max: f64 },
+    Bool,
+    Text,
+    /// Name of a story variable (a `CustomData::Str`), optionally of one
+    /// type: the inspector offers the declared variables. This is how a
+    /// plugin node says where it stores its state (saves, rollback).
+    Variable(Option<orbit_core::ValueType>),
+    /// One of these strings.
+    Choice(Vec<String>),
+}
+
+impl FieldKind {
+    /// Default value of a field of this kind.
+    pub fn default_data(&self) -> CustomData {
+        match self {
+            FieldKind::Int { min, max } => CustomData::Int(0.clamp(*min, (*max).max(*min))),
+            FieldKind::Float { min, max } => CustomData::Float(0.0f64.clamp(*min, max.max(*min))),
+            FieldKind::Bool => CustomData::Bool(false),
+            FieldKind::Text | FieldKind::Variable(_) => CustomData::Str(String::new()),
+            FieldKind::Choice(options) => {
+                CustomData::Str(options.first().cloned().unwrap_or_default())
+            }
+        }
+    }
+
+    /// Problem of a value of this field, if any (English, for validators).
+    pub fn check(&self, key: &str, value: Option<&CustomData>) -> Option<String> {
+        match (self, value) {
+            (_, None) => Some(format!("`{key}` is missing")),
+            (FieldKind::Int { min, max }, Some(CustomData::Int(i))) => {
+                (i < min || i > max).then(|| format!("`{key}` must be between {min} and {max}"))
+            }
+            (FieldKind::Float { min, max }, Some(CustomData::Float(f))) => (!(f >= min && f <= max))
+                .then(|| format!("`{key}` must be between {min} and {max}")),
+            (FieldKind::Bool, Some(CustomData::Bool(_))) | (FieldKind::Text, Some(CustomData::Str(_))) => None,
+            (FieldKind::Variable(_), Some(CustomData::Str(s))) => {
+                s.is_empty().then(|| format!("`{key}`: no variable chosen"))
+            }
+            (FieldKind::Choice(options), Some(CustomData::Str(s))) => (!options.contains(s))
+                .then(|| format!("`{key}`: `{s}` is not one of {}", options.join(", "))),
+            _ => Some(format!("`{key}` has the wrong type")),
+        }
+    }
+}
+
+/// Default data made from a field list (a map of each field's default).
+pub fn default_data_of(fields: &[FieldDef]) -> CustomData {
+    CustomData::Map(
+        fields
+            .iter()
+            .map(|f| (f.key.clone(), f.kind.default_data()))
+            .collect(),
+    )
+}
+
+/// Problems of `data` against `fields` (missing keys, out of range values).
+pub fn check_fields(fields: &[FieldDef], data: &CustomData) -> Vec<String> {
+    fields
+        .iter()
+        .filter_map(|f| f.kind.check(&f.key, data.get(&f.key)))
+        .collect()
 }
 
 /// A node type together with the plugin that owns it.
@@ -101,6 +200,24 @@ fn valid_plugin_id(id: &str) -> bool {
         })
 }
 
+/// The checks every host runs before installing a plugin: API version,
+/// id syntax, not installed twice.
+pub(crate) fn check_manifest(manifest: &PluginManifest, installed: bool) -> Result<(), PluginError> {
+    if manifest.api_version != API_VERSION {
+        return Err(PluginError::IncompatibleApi {
+            id: manifest.id.clone(),
+            found: manifest.api_version,
+        });
+    }
+    if !valid_plugin_id(&manifest.id) {
+        return Err(PluginError::InvalidId(manifest.id.clone()));
+    }
+    if installed {
+        return Err(PluginError::DuplicatePlugin(manifest.id.clone()));
+    }
+    Ok(())
+}
+
 impl ProjectRegistry {
     pub fn new() -> Self {
         Self::default()
@@ -117,18 +234,7 @@ impl ProjectRegistry {
     /// Checks `manifest` and makes it the owner of what is registered next.
     /// Used by hosts that drive several registries (editor).
     pub fn begin(&mut self, manifest: &PluginManifest) -> Result<(), PluginError> {
-        if manifest.api_version != API_VERSION {
-            return Err(PluginError::IncompatibleApi {
-                id: manifest.id.clone(),
-                found: manifest.api_version,
-            });
-        }
-        if !valid_plugin_id(&manifest.id) {
-            return Err(PluginError::InvalidId(manifest.id.clone()));
-        }
-        if self.plugins.iter().any(|p| p.id == manifest.id) {
-            return Err(PluginError::DuplicatePlugin(manifest.id.clone()));
-        }
+        check_manifest(manifest, self.plugins.iter().any(|p| p.id == manifest.id))?;
         self.current = manifest.id.clone();
         self.plugins.push(manifest.clone());
         Ok(())
@@ -266,9 +372,34 @@ impl ProjectRegistry {
                 data,
                 ..
             } = &node.kind
-                && let Some(validate) = self.node_type(plugin_id, kind).and_then(|t| t.def.validate)
+                && let Some(def) = self.node_type(plugin_id, kind).map(|t| &t.def)
             {
-                problems.extend(validate(data).into_iter().map(|m| (node.id, m)));
+                if let Some(validate) = def.validate {
+                    problems.extend(validate(data).into_iter().map(|m| (node.id, m)));
+                }
+                problems.extend(check_fields(&def.fields, data).into_iter().map(|m| (node.id, m)));
+                // Variable fields must name a declared variable (of the
+                // declared type): that is where the plugin keeps its state.
+                for field in &def.fields {
+                    let FieldKind::Variable(ty) = &field.kind else { continue };
+                    let Some(name) = data.get(&field.key).and_then(CustomData::as_str) else {
+                        continue;
+                    };
+                    if name.is_empty() {
+                        continue;
+                    }
+                    match story.variables.iter().find(|v| v.name == name) {
+                        None => problems.push((
+                            node.id,
+                            format!("`{}`: unknown variable `{name}`", field.key),
+                        )),
+                        Some(v) if ty.is_some_and(|t| v.initial.value_type() != t) => problems.push((
+                            node.id,
+                            format!("`{}`: variable `{name}` has the wrong type", field.key),
+                        )),
+                        Some(_) => {}
+                    }
+                }
             }
         }
         problems
@@ -309,6 +440,7 @@ mod tests {
                 icon: "play".into(),
                 default_data: clip_default,
                 validate: Some(clip_validate),
+                fields: Vec::new(),
             })
             .unwrap();
             reg.register_importer(AssetImporter {
@@ -400,6 +532,7 @@ mod tests {
                     icon: String::new(),
                     default_data: CustomData::default,
                     validate: None,
+                    fields: Vec::new(),
                 };
                 assert!(reg.register_node_type(def.clone()).is_ok());
                 assert!(matches!(

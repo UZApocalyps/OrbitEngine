@@ -231,6 +231,70 @@ struct ExportUi {
     /// The export was asked while the story had unsaved edits: it starts
     /// once the save went through.
     after_save: bool,
+    /// Rust plugin crates of the project and the toolchain (M8-04).
+    plugins: PluginStatus,
+}
+
+/// What the panel tells about an export "with plugins".
+#[derive(Default)]
+struct PluginStatus {
+    /// Crate names in `plugins/`.
+    crates: Vec<String>,
+    /// Why `plugins/` could not be read.
+    error: Option<String>,
+    /// `cargo --version`, or why it is unusable. Only probed when there are
+    /// plugin crates.
+    toolchain: Option<Result<String, String>>,
+}
+
+impl PluginStatus {
+    fn detect(root: &Path) -> Self {
+        let (crates, error) = match orbit_export::plugins::discover(root) {
+            Ok(c) => (c.into_iter().map(|c| c.name).collect::<Vec<_>>(), None),
+            Err(e) => (Vec::new(), Some(e.to_string())),
+        };
+        let toolchain = (!crates.is_empty()).then(|| {
+            orbit_export::plugins::cargo_version()
+                .and_then(|v| orbit_export::plugins::engine_source().map(|_| v))
+                .map_err(|e| e.to_string())
+        });
+        Self {
+            crates,
+            error,
+            toolchain,
+        }
+    }
+}
+
+/// The "Plugins" note of the panel: shown only for projects with plugins.
+fn plugins_section(ui: &mut Ui, state: &ExportUi) {
+    let status = &state.plugins;
+    if let Some(e) = &status.error {
+        ui.label(RichText::new(e).color(danger(ui)));
+        return;
+    }
+    let crates = &status.crates;
+    if crates.is_empty() {
+        return;
+    }
+    card(ui, |ui| {
+        ui.set_width(ui.available_width());
+        section_title(ui, &ui.t("export.plugins.title"));
+        ui.label(ui.tf("export.plugins.crates", &[("crates", &crates.join(", "))]));
+        match &status.toolchain {
+            Some(Ok(version)) => {
+                ui.label(
+                    RichText::new(ui.tf("export.plugins.toolchain_ok", &[("version", version)]))
+                        .color(success()),
+                );
+            }
+            Some(Err(e)) => {
+                ui.label(RichText::new(e).color(danger(ui)));
+            }
+            None => {}
+        }
+        ui.label(RichText::new(ui.t("export.plugins.note")).small().color(weak(ui)));
+    });
 }
 
 type SharedUi = Arc<Mutex<ExportUi>>;
@@ -273,6 +337,7 @@ impl ExportUi {
             Err(_) => vec![ExportProfile::new("release", name)],
         };
         self.has_manifest = has_manifest;
+        self.plugins = PluginStatus::detect(root);
         self.out_dir = default_out_dir(root);
         self.loaded_root = Some(root.to_owned());
     }
@@ -403,6 +468,10 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             profile_form(ui, &mut state, &info.root, &mut messages);
             ui.add_space(6.0);
             targets_and_output(ui, &mut state);
+            if !state.plugins.crates.is_empty() || state.plugins.error.is_some() {
+                ui.add_space(6.0);
+                plugins_section(ui, &state);
+            }
             if state.wants_android() {
                 ui.add_space(6.0);
                 android_section(ui, &mut state);

@@ -1,0 +1,23 @@
+[package]
+name = "orbit-dice"
+description = "Example OrbitEngine plugin (M8-04/05): a `roll` custom node that rolls dice into a story variable, and a `reroll` custom UI action."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Plugin ids this crate provides: read by the exporter (`orbit_export::plugins`)
+# to check the story and to build the player "with plugins".
+[package.metadata.orbit]
+plugins = ["orbit.dice"]
+
+[dependencies]
+# Must be the engine's own crate (by path), so the trait types match.
+orbit_plugin_api = { path = "../../../crates/orbit_plugin_api" }
+orbit_core = { path = "../../../crates/orbit_core" }
+
+[dev-dependencies]
+orbit_vm = { path = "../../../crates/orbit_vm" }
+
+[lints]
+workspace = true
