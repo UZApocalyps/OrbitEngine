@@ -24,6 +24,9 @@ mod tests;
 mod anim_tests;
 
 #[cfg(test)]
+mod stage_tests;
+
+#[cfg(test)]
 mod collection_tests;
 
 #[cfg(test)]

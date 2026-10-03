@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use orbit_core::{NodeId, Value};
 use orbit_vm::{
-    ActiveAnim, BacklogEntry, Checkpoint, Interaction, Pending, Rng, RollbackHistory, SceneState,
+    ActiveAnim, BacklogEntry, Checkpoint, Interaction, Pending, Rng, RollbackHistory,
     VmState,
 };
 use serde::Deserialize;
@@ -25,7 +25,7 @@ struct VmStateV4 {
     pending: Pending,
     call_stack: Vec<Option<NodeId>>,
     vars: BTreeMap<String, Value>,
-    scene: SceneState,
+    scene: crate::legacy_v5::SceneStateV5,
     rng: Rng,
     shown: Option<Interaction>,
     active_anims: Vec<ActiveAnim>,
@@ -60,7 +60,7 @@ impl From<VmStateV4> for VmState {
             pending: old.pending,
             call_stack: old.call_stack,
             vars: old.vars,
-            scene: old.scene,
+            scene: old.scene.into(),
             rng: old.rng,
             shown: old.shown,
             active_anims: old.active_anims,

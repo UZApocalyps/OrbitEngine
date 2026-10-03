@@ -1,5 +1,5 @@
 (
-    schema_version: 12,
+    schema_version: 13,
     title: "Demo",
     strings: (
         source_lang: "en",
@@ -170,6 +170,11 @@
                 id: "01JBX0A0000000000000000015",
                 kind: Image,
                 path: "assets/demo/bob_mad_4.png",
+            ),
+            (
+                id: "01JBX0A0000000000000000016",
+                kind: Image,
+                path: "assets/demo/fg_skyline.png",
             ),
         ],
     ),
@@ -808,8 +813,17 @@
             nodes: [
                 (
                     id: "01JBX0N0000000000000000061",
-                    kind: Background(
-                        asset: "01JBX0A0000000000000000002",
+                    kind: BackgroundLayers(
+                        layers: [
+                            (
+                                asset: "01JBX0A0000000000000000002",
+                                depth: 0.25,
+                            ),
+                            (
+                                asset: "01JBX0A0000000000000000016",
+                                depth: 0.6,
+                            ),
+                        ],
                         transition: Some((
                             kind: Fade((
                                 r: 255,
@@ -818,6 +832,71 @@
                             )),
                             duration: 0.8,
                         )),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000950",
+                    kind: Particles((
+                        name: "rain",
+                        preset: Rain,
+                        seed: 2087,
+                        rate: 120.0,
+                        lifetime: 0.9,
+                        lifetime_jitter: 0.25,
+                        spawn: (-0.1, -0.12, 1.1, -0.04),
+                        direction: 98.0,
+                        spread: 2.0,
+                        speed: (1.1, 1.5),
+                        gravity: (0.0, 0.0),
+                        sway: (0.0, 0.0),
+                        size: (0.0035, 0.006),
+                        stretch: 7.0,
+                        spin: 0.0,
+                        color: (
+                            r: 190,
+                            g: 210,
+                            b: 255,
+                        ),
+                        color_end: (
+                            r: 170,
+                            g: 190,
+                            b: 240,
+                        ),
+                        opacity: 0.3,
+                        fade: 0.05,
+                        front: true,
+                        prewarm: true,
+                    )),
+                ),
+                (
+                    id: "01JBX0N0000000000000000951",
+                    kind: Timeline(
+                        duration: 40.0,
+                        looping: Once,
+                        wait: false,
+                        tracks: [
+                            (
+                                target: Camera,
+                                prop: Pan,
+                                data: Vec2([
+                                    (
+                                        t: 0.0,
+                                        value: (
+                                            x: 0.0,
+                                            y: 0.0,
+                                        ),
+                                        ease: Preset(InOutSine),
+                                    ),
+                                    (
+                                        t: 40.0,
+                                        value: (
+                                            x: 0.02,
+                                            y: 0.0,
+                                        ),
+                                    ),
+                                ]),
+                            ),
+                        ],
                     ),
                 ),
                 (

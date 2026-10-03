@@ -26,6 +26,7 @@ mod legacy_v1;
 mod legacy_v2;
 mod legacy_v3;
 mod legacy_v4;
+mod legacy_v5;
 
 #[cfg(test)]
 mod anim_save_tests;
@@ -33,6 +34,8 @@ mod anim_save_tests;
 mod collection_save_tests;
 #[cfg(test)]
 mod screen_save_tests;
+#[cfg(test)]
+mod stage_save_tests;
 pub mod manager;
 pub mod persistent;
 pub mod storage;

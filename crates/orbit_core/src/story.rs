@@ -18,7 +18,7 @@ use crate::migrate;
 use crate::validate;
 
 /// Version of the on-disk schema produced by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 12;
+pub const CURRENT_SCHEMA_VERSION: u32 = 13;
 
 /// A whole story: definitions (characters, assets, strings...) and an ordered
 /// list of scenes. Execution starts at the first node of the first non-empty
@@ -247,6 +247,25 @@ pub enum NodeKind {
     /// screen that is not open does nothing.
     CloseScreen {
         screen: String,
+    },
+    /// A background made of several layers with a depth factor (parallax,
+    /// schema v13, M5A-07), back to front. Replaces the background (a later
+    /// `Background` replaces the layers). The camera pan and zoom tracks move
+    /// each layer by its depth. `transition` is the one of `Background`.
+    BackgroundLayers {
+        layers: Vec<crate::particles::BgLayer>,
+        #[serde(default)]
+        transition: Option<Transition>,
+    },
+    /// Starts a particle emitter (schema v13, M5A-08). It runs until
+    /// `StopParticles`, a `Particles` node with the same name, or the next
+    /// scene. Particles are recomputed from the start time, never stored.
+    Particles(crate::particles::Emitter),
+    /// Stops the births of the emitter called `name` (all emitters when the
+    /// name is empty); particles already alive finish their life.
+    StopParticles {
+        #[serde(default)]
+        name: String,
     },
 }
 

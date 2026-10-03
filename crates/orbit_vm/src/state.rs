@@ -54,6 +54,12 @@ pub struct SceneState {
     /// Missing in format-2 saves (decoded by `orbit_save::legacy_v2`).
     #[serde(default)]
     pub scene3d: Option<Scene3dState>,
+    /// Parallax layers of the background, back to front (save format 6,
+    /// M5A-07). Empty for a plain `Background`; when set, `background` is
+    /// the first layer. Missing in format-5 saves (decoded by
+    /// `orbit_save::legacy_v5`).
+    #[serde(default)]
+    pub bg_layers: Vec<orbit_core::BgLayer>,
 }
 
 /// A 3D scene on screen: which `.scene3d.ron` asset, from which camera.

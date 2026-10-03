@@ -15,6 +15,9 @@ use crate::ids::{AssetId, NodeId};
 use crate::story::{Node, NodeKind, Story};
 use crate::value::{Value, ValueType};
 
+/// Most layers of a `BackgroundLayers` node.
+pub const MAX_BG_LAYERS: usize = 8;
+
 /// Result of [`validate`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ValidationReport {
@@ -315,6 +318,13 @@ impl Cx<'_> {
         }
     }
 
+    fn stage_problem(&mut self, node: NodeId, message: impl Into<String>) {
+        self.errors.push(ValidationError::InvalidStageNode {
+            node,
+            message: message.into(),
+        });
+    }
+
     /// Effects and timelines: finite numbers, known targets, properties that
     /// fit their target and value type, sorted keys, no blocking infinite
     /// loop.
@@ -558,6 +568,45 @@ impl Cx<'_> {
                 }
                 NodeKind::Wait { seconds } => self.check_duration(id, *seconds),
                 NodeKind::Effect(_) | NodeKind::Timeline { .. } => self.check_animation(id, &node.kind),
+                NodeKind::BackgroundLayers { layers, transition } => {
+                    if layers.is_empty() {
+                        self.stage_problem(id, "no layer");
+                    }
+                    if layers.len() > MAX_BG_LAYERS {
+                        self.stage_problem(id, format!("more than {MAX_BG_LAYERS} layers"));
+                    }
+                    for layer in layers {
+                        self.check_asset(Some(id), layer.asset, AssetKind::Image);
+                        if !layer.depth.is_finite() || !(-4.0..=4.0).contains(&layer.depth) {
+                            self.stage_problem(id, "a layer depth must be between -4 and 4");
+                        }
+                    }
+                    if let Some(t) = transition {
+                        self.check_duration(id, t.duration);
+                        if let Some(c) = &t.ease {
+                            self.check_curve(CurveOwner::Node(id), c);
+                        }
+                    }
+                }
+                NodeKind::Particles(emitter) => {
+                    if let Some(message) = emitter.problem() {
+                        self.stage_problem(id, message);
+                    }
+                    if let Some(sprite) = emitter.sprite {
+                        self.check_asset(Some(id), sprite, AssetKind::Image);
+                    }
+                }
+                NodeKind::StopParticles { name } if !name.is_empty() => {
+                    let known = story.scenes.iter().flat_map(|s| &s.nodes).any(|n| {
+                        matches!(&n.kind, NodeKind::Particles(e) if e.name == *name)
+                    });
+                    if !known {
+                        self.warnings.push(ValidationWarning::UnknownEmitter {
+                            node: id,
+                            name: name.clone(),
+                        });
+                    }
+                }
                 NodeKind::OpenScreen { screen, params, .. } => {
                     let mut problems = Vec::new();
                     if screen.trim().is_empty() {

@@ -22,7 +22,7 @@ Three more options are in the preferences screen. All of them are off by default
 
 - **Text size** scales the dialogue, the choices and the menu text from 100% to 160%, in steps of 10%. The dialogue box grows upward and the choice buttons grow with the text, so lines never run out of their box.
 - **High contrast** replaces the colors of your theme with white text on black backgrounds, yellow highlights and thick borders. Your sizes, fonts and layout are kept, and so are your style names. The mode is applied on top of your theme: it never changes your files.
-- **Reduce motion** skips the animations. Transitions between backgrounds become cuts, and effects such as moves, shakes, zooms and flashes, as well as timelines, jump straight to their end state, so the scene is exactly the same as if the animation had played out. The story does not wait for them. Timed pauses that you wrote with a wait are kept. The blinking "continue" marker stops blinking.
+- **Reduce motion** skips the animations. Transitions between backgrounds become cuts, and effects such as moves, shakes, zooms and flashes, as well as timelines, jump straight to their end state, so the scene is exactly the same as if the animation had played out. The story does not wait for them. Timed pauses that you wrote with a wait are kept. Particles (rain, snow...) are not drawn. The blinking "continue" marker stops blinking.
 
 Your own preferences screen can offer the same options: in the Interface editor, bind a slider to **Text size**, and toggles to **High contrast**, **Reduce motion** and **Screen reader**. The stock preferences screen already has them. A screen made before these options existed keeps working; it just does not show them until you add the controls.
 

@@ -1166,6 +1166,68 @@ fn effects_and_timelines_are_added_checked_and_described() {
 }
 
 #[test]
+fn parallax_layers_and_particles_are_added_checked_and_sampled() {
+    use orbit_core::{NodeKind, ParticlePreset};
+    let mut f = Fixture::new("stage_fx");
+    f.write_asset_source("incoming/sky.png");
+    f.write_asset_source("incoming/hills.png");
+    f.ok("import_asset", json!({"source": "incoming/sky.png"}));
+    f.ok("import_asset", json!({"source": "incoming/hills.png"}));
+    f.ok("create_scene", json!({"name": "s"}));
+    let add = |f: &mut Fixture, command: Value| {
+        f.call("add_command", json!({"scene": "s", "command": command}))
+    };
+    add(&mut f, json!({"type": "background_layers", "layers": [
+        {"asset": "sky.png", "depth": 0.0},
+        {"asset": "hills.png", "depth": 0.6, "repeat_x": true}]}))
+    .unwrap();
+    let rain = f.ok(
+        "add_command",
+        json!({"scene": "s", "command": {"type": "particles", "name": "rain", "preset": "rain", "rate": 120.0, "color": "#aaccff"}}),
+    );
+    add(&mut f, json!({"type": "stop_particles", "name": "rain"})).unwrap();
+    add(&mut f, json!({"type": "stop_particles"})).unwrap();
+
+    let nodes = &f.story().scenes[0].nodes;
+    assert!(matches!(&nodes[0].kind, NodeKind::BackgroundLayers { layers, .. } if layers.len() == 2 && layers[1].repeat_x));
+    let NodeKind::Particles(e) = &nodes[1].kind else { panic!("particles") };
+    assert_eq!((e.preset, e.rate, e.name.as_str()), (ParticlePreset::Rain, 120.0, "rain"));
+    assert_eq!(e.color, e.color_end);
+    assert!(matches!(&nodes[3].kind, NodeKind::StopParticles { name } if name.is_empty()));
+    assert!(orbit_core::validate(f.story()).errors.is_empty());
+    let text = f.call("read_scene", json!({"scene": "s"})).unwrap();
+    assert!(text.contains("parallax background"), "{text}");
+    assert!(text.contains("particles \"rain\""), "{text}");
+
+    // Sampling: a prewarmed rain is already falling at t = 0.
+    let node = id_of(&rain, "/node/id");
+    let at = |f: &mut Fixture, t: f64| f.ok("particles_sample", json!({"node": node, "time": t}));
+    let now = at(&mut f, 0.0);
+    assert!(now["alive"].as_u64().unwrap() > 50, "{now}");
+    assert_eq!(now["problem"], Value::Null);
+    assert_eq!(at(&mut f, 3.0)["alive"], at(&mut f, 3.0)["alive"], "deterministic");
+
+    // Refused: no layers, a bad depth, a non-image layer, absurd rates,
+    // unknown preset keys, sampling a node that is not an emitter.
+    for bad in [
+        json!({"type": "background_layers", "layers": []}),
+        json!({"type": "background_layers", "layers": [{"asset": "sky.png", "depth": 9.0}]}),
+        json!({"type": "background_layers", "layers": [{"asset": "nope.png", "depth": 1.0}]}),
+        json!({"type": "particles", "name": "x", "rate": 1.0e6}),
+        json!({"type": "particles", "name": " "}),
+        json!({"type": "particles", "name": "x", "size": [0.5, 0.1]}),
+        json!({"type": "particles", "name": "x", "colour": "red"}),
+    ] {
+        assert!(add(&mut f, bad.clone()).is_err(), "{bad}");
+    }
+    assert_eq!(f.story().scenes[0].nodes.len(), 4, "refused calls change nothing");
+    let layers_id = f.story().scenes[0].nodes[0].id.to_string();
+    f.err("particles_sample", json!({"node": layers_id, "time": 0.0}));
+    f.ok("save", json!({}));
+    assert_eq!(&f.on_disk(), f.story());
+}
+
+#[test]
 fn timeline_sample_reads_the_animated_values() {
     let mut f = Fixture::new("timeline_sample");
     f.ok("create_scene", json!({"name": "s"}));

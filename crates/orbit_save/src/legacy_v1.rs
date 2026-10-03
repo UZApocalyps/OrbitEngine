@@ -82,6 +82,7 @@ impl From<SceneStateV1> for SceneState {
                 .collect(),
             music: old.music,
             scene3d: None,
+            bg_layers: Vec::new(),
         }
     }
 }

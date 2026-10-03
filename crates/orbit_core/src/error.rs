@@ -111,6 +111,11 @@ pub enum ValidationError {
     /// parameter, undeclared result variable); `message` says what.
     #[error("node {node} opens or closes a screen incorrectly: {message}")]
     InvalidScreenNode { node: NodeId, message: String },
+    /// A `BackgroundLayers` / `Particles` node is malformed (no layer, bad
+    /// asset, depth or emitter parameter, too many particles); `message`
+    /// says what.
+    #[error("node {node} has invalid background layers or particles: {message}")]
+    InvalidStageNode { node: NodeId, message: String },
 }
 
 /// Where a curve lives.
@@ -174,6 +179,9 @@ pub enum ValidationWarning {
     /// A key of a timeline lies after its duration: it is never reached.
     #[error("node {0} has a timeline key after the end of the timeline: it is never reached")]
     TimelineKeyAfterEnd(NodeId),
+    /// A `StopParticles` node names an emitter no `Particles` node defines.
+    #[error("node {node} stops the emitter `{name}`, which no Particles node defines")]
+    UnknownEmitter { node: NodeId, name: String },
 }
 
 /// Errors from loading / saving / migrating a story.

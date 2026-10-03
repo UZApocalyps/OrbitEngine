@@ -12,12 +12,17 @@ pub mod error;
 pub mod expr;
 pub mod ids;
 pub mod migrate;
+pub mod particles;
 pub mod story;
 pub mod validate;
 pub mod value;
 pub mod varops;
 
 pub use custom::CustomData;
+pub use particles::{
+    BgLayer, Emitter, EmitterInstance, MAX_PARTICLES_PER_EMITTER, MAX_PARTICLES_TOTAL, Particle,
+    ParticlePreset, hash01,
+};
 pub use effects::{
     AnimProp, AnimSpec, AnimTarget, CameraFx, Effect, EntityFx, StageFx, StoryTrack, shake_wave,
 };
@@ -34,7 +39,7 @@ pub use error::{AnimationIssue, CoreError, CurveOwner, ValidationError, Validati
 pub use expr::{BinOp, EvalError, Expr, Func, ParseError, TypeError, UnOp, fold_list, fold_map};
 pub use ids::{AssetId, CharacterId, Node3dId, NodeId, SceneId, StringId};
 pub use story::{CURRENT_SCHEMA_VERSION, ChoiceOption, Node, NodeKind, Scene, ScreenParam, Story};
-pub use validate::{ValidationReport, check_asset_files, validate};
+pub use validate::{MAX_BG_LAYERS, ValidationReport, check_asset_files, validate};
 pub use value::{MAX_COLLECTION_LEN, MAX_COLLECTION_TEXT, ScalarType, Value, ValueType};
 pub use varops::{
     Cmp, Condition, ITEM_INDEX_VAR, ITEM_KEY_VAR, ITEM_VAR, OpError, OpKind, Operand, PARAM_VAR_PREFIX,

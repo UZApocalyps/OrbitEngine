@@ -971,6 +971,7 @@ pub fn delete_variable(project: &mut Project, name: &str) -> Result<(), ProjectE
 fn transition_mut(kind: &mut NodeKind) -> Option<&mut orbit_core::Transition> {
     match kind {
         NodeKind::Background { transition, .. }
+        | NodeKind::BackgroundLayers { transition, .. }
         | NodeKind::Show { transition, .. }
         | NodeKind::Hide { transition, .. }
         | NodeKind::ShowScene3d { transition, .. }

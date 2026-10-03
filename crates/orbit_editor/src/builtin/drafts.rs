@@ -121,6 +121,24 @@ pub fn builtin_insertables() -> Vec<Insertable> {
             "draft.group.scene",
         ),
         item(
+            "BackgroundLayers",
+            "draft.label.background_layers",
+            icons::STACK,
+            "draft.group.scene",
+        ),
+        item(
+            "Particles",
+            "draft.label.particles",
+            icons::CLOUD_RAIN,
+            "draft.group.scene",
+        ),
+        item(
+            "StopParticles",
+            "draft.label.stop_particles",
+            icons::STOP_CIRCLE,
+            "draft.group.scene",
+        ),
+        item(
             "OpenScreen",
             "draft.label.open_screen",
             icons::BROWSER,
@@ -363,6 +381,20 @@ pub fn drafts_for(
             ease: None,
             wait: false,
         }))],
+        "BackgroundLayers" => {
+            let image = first_asset(story, AssetKind::Image)?;
+            vec![NodeDraft::plain(NodeKind::BackgroundLayers {
+                layers: vec![
+                    orbit_core::BgLayer::new(image, 0.0),
+                    orbit_core::BgLayer::new(image, 0.5),
+                ],
+                transition: None,
+            })]
+        }
+        "Particles" => vec![NodeDraft::plain(NodeKind::Particles(orbit_core::Emitter::preset(
+            orbit_core::ParticlePreset::Rain,
+        )))],
+        "StopParticles" => vec![NodeDraft::plain(NodeKind::StopParticles { name: String::new() })],
         "OpenScreen" => vec![NodeDraft::plain(NodeKind::OpenScreen {
             screen: String::new(),
             wait: false,

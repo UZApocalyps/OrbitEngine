@@ -182,6 +182,10 @@ pub fn describe_error(
             Some(*node),
             texts.format("problem.invalid_screen_node", &[("message", message)]),
         ),
+        E::InvalidStageNode { node, message } => (
+            Some(*node),
+            texts.format("problem.invalid_stage_node", &[("message", message)]),
+        ),
         other => (None, other.to_string()),
     }
 }
@@ -246,6 +250,10 @@ pub fn describe_warning(
         ),
         W::AllOptionsConditional(n) => (Some(*n), texts.get("problem.all_options_conditional")),
         W::TimelineKeyAfterEnd(n) => (Some(*n), texts.get("problem.timeline_key_after_end")),
+        W::UnknownEmitter { node, name } => (
+            Some(*node),
+            texts.format("problem.unknown_emitter", &[("name", name)]),
+        ),
     }
 }
 

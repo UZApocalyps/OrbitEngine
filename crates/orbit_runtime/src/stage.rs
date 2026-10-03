@@ -1,6 +1,9 @@
 //! The stage: what is on screen, as plain data (no GPU).
 
-use orbit_core::{AssetId, CameraFx, CharacterId, EntityFx, StageFx, Transition};
+use orbit_core::{
+    AssetId, BgLayer, CameraFx, CharacterId, EntityFx, MAX_PARTICLES_TOTAL, Particle, StageFx,
+    Transition,
+};
 use orbit_vm::PresentationEvent;
 
 /// Virtual canvas the stage is laid out in.
@@ -93,6 +96,10 @@ pub struct Stage3d {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StageState {
     pub background: Option<AssetId>,
+    /// Parallax layers of the background, back to front (M5A-07). When not
+    /// empty they are drawn instead of `background` (which is the first
+    /// layer, kept for the code that only knows a single background).
+    pub bg_layers: Vec<BgLayer>,
     /// Back to front.
     pub characters: Vec<StageCharacter>,
     /// When set, the 3D scene takes the background layer's place (the 2D
@@ -116,7 +123,14 @@ impl StageState {
         match event {
             PresentationEvent::Background { asset, transition } => {
                 self.background = Some(*asset);
+                self.bg_layers.clear();
                 // A 2D background replaces a 3D scene (ADR 0014).
+                self.scene3d = None;
+                StageEffect::Visual(transition.clone())
+            }
+            PresentationEvent::BackgroundLayers { layers, transition } => {
+                self.background = layers.first().map(|l| l.asset);
+                self.bg_layers = layers.clone();
                 self.scene3d = None;
                 StageEffect::Visual(transition.clone())
             }
@@ -362,6 +376,95 @@ pub fn animate_background(size: [f32; 2], fx: &StageFx) -> ([f32; 2], [f32; 2], 
         [size[0] * e.scale[0] * z, size[1] * e.scale[1] * z],
         entity_tint(&e),
     )
+}
+
+/// Parallax layers are drawn this much larger than the screen (a cover fit
+/// times this), so a gentle pan never shows their edge.
+pub const LAYER_OVERSCAN: f32 = 1.08;
+
+/// One layer of a parallax background after the animations: it follows the
+/// camera by `depth` (`1` = like the stage, `0` = fixed on the screen), and
+/// otherwise takes the animations of the background. Center, size, tint.
+pub fn animate_layer(
+    size: [f32; 2],
+    depth: f32,
+    fx: &StageFx,
+) -> ([f32; 2], [f32; 2], [f32; 4]) {
+    let camera = CameraFx {
+        offset: [fx.camera.offset[0] * depth, fx.camera.offset[1] * depth],
+        zoom: (1.0 + (fx.camera.zoom - 1.0) * depth).max(0.01),
+    };
+    let e = fx.background;
+    let center = camera_point(
+        [
+            CANVAS[0] * 0.5 + e.offset[0] * CANVAS[0],
+            CANVAS[1] * 0.5 + e.offset[1] * CANVAS[1],
+        ],
+        &camera,
+    );
+    (
+        center,
+        [size[0] * e.scale[0] * camera.zoom, size[1] * e.scale[1] * camera.zoom],
+        entity_tint(&e),
+    )
+}
+
+/// The horizontal centers a repeating layer of width `width` is drawn at, so
+/// that the canvas is covered: the tile that wraps around the center, and
+/// its neighbours.
+pub fn tiled_centers(center_x: f32, width: f32) -> Vec<f32> {
+    if !(width > 1.0) {
+        return vec![center_x];
+    }
+    let canvas_center = CANVAS[0] * 0.5;
+    let wrapped = center_x - ((center_x - canvas_center) / width).round() * width;
+    [-1.0, 0.0, 1.0].iter().map(|k| wrapped + k * width).collect()
+}
+
+/// A particle ready for the sprite batch: virtual pixels, radians, linear tint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParticleQuad {
+    pub position: [f32; 2],
+    /// Unrotated width and height.
+    pub size: [f32; 2],
+    pub rotation: f32,
+    pub tint: [f32; 4],
+}
+
+/// Every live particle of the running emitters, in drawing order, split by
+/// layer: `(behind the characters, over them)` plus the sprite of each emitter
+/// (`None`: a plain quad). Capped at [`MAX_PARTICLES_TOTAL`] in all; screen
+/// space (the camera does not move weather).
+pub fn particle_quads(fx: &StageFx) -> Vec<(Option<AssetId>, bool, Vec<ParticleQuad>)> {
+    let mut budget = MAX_PARTICLES_TOTAL;
+    let mut out = Vec::new();
+    let mut live: Vec<Particle> = Vec::new();
+    for inst in &fx.emitters {
+        if budget == 0 {
+            break;
+        }
+        live.clear();
+        inst.sample(&mut live);
+        live.truncate(budget);
+        budget -= live.len();
+        let quads: Vec<ParticleQuad> = live
+            .iter()
+            .map(|p| {
+                let width = p.size * CANVAS[1];
+                let [r, g, b, a] = p.color;
+                ParticleQuad {
+                    position: [p.pos[0] * CANVAS[0], p.pos[1] * CANVAS[1]],
+                    size: [width, width * p.stretch],
+                    rotation: p.rotation.to_radians(),
+                    tint: [srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b), a],
+                }
+            })
+            .collect();
+        if !quads.is_empty() {
+            out.push((inst.emitter.sprite, inst.emitter.front, quads));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -698,5 +801,89 @@ mod tests {
         stage.apply(&show(1, 10, 0.5, None));
         clock.sync([&stage]);
         assert_eq!(clock.elapsed(who(1), "neutral"), 0.0);
+    }
+
+    #[test]
+    fn layers_replace_the_background_and_a_plain_background_replaces_the_layers() {
+        let mut stage = StageState::default();
+        let layers = vec![BgLayer::new(asset(1), 0.0), BgLayer::new(asset(2), 0.5)];
+        let effect = stage.apply(&PresentationEvent::BackgroundLayers {
+            layers: layers.clone(),
+            transition: Some(Transition::dissolve(0.5)),
+        });
+        assert!(matches!(effect, StageEffect::Visual(Some(_))));
+        assert_eq!(stage.bg_layers, layers);
+        assert_eq!(stage.background, Some(asset(1)));
+        stage.apply(&PresentationEvent::Background { asset: asset(3), transition: None });
+        assert!(stage.bg_layers.is_empty());
+        assert_eq!(stage.background, Some(asset(3)));
+        // A 3D scene hides the layers' slot, then a 2D one gives it back.
+        stage.apply(&PresentationEvent::BackgroundLayers { layers, transition: None });
+        stage.apply(&PresentationEvent::Scene3d { scene: asset(9), camera: None, transition: None });
+        assert!(stage.scene3d.is_some());
+        stage.apply(&PresentationEvent::BackgroundLayers {
+            layers: vec![BgLayer::new(asset(4), 1.0)],
+            transition: None,
+        });
+        assert!(stage.scene3d.is_none());
+    }
+
+    #[test]
+    fn a_layer_follows_the_camera_by_its_depth() {
+        let mut fx = StageFx::default();
+        fx.camera.offset = [0.1, 0.0];
+        fx.camera.zoom = 1.5;
+        let size = [1920.0, 1080.0];
+        let (full, full_size, _) = animate_layer(size, 1.0, &fx);
+        let (_, plain, _) = animate_background(size, &fx);
+        assert_eq!(full_size, plain, "depth 1 is the plain background");
+        assert_eq!(full[0], animate_background(size, &fx).0[0]);
+        let (far, far_size, _) = animate_layer(size, 0.0, &fx);
+        assert_eq!(far, [960.0, 540.0], "depth 0 stays glued to the screen");
+        assert_eq!(far_size, size);
+        let (mid, mid_size, _) = animate_layer(size, 0.5, &fx);
+        assert!((mid[0] - (960.0 + 0.05 * 1920.0)).abs() < 1e-3);
+        assert!((mid_size[0] - 1920.0 * 1.25).abs() < 1e-3);
+        // A foreground layer moves faster than the stage.
+        assert!(animate_layer(size, 2.0, &fx).0[0] > full[0]);
+    }
+
+    #[test]
+    fn a_repeating_layer_is_tiled_around_the_canvas() {
+        let centers = tiled_centers(960.0, 2000.0);
+        assert_eq!(centers, vec![-1040.0, 960.0, 2960.0]);
+        // Panned far to the right it wraps back: still one tile on the canvas center.
+        let panned = tiled_centers(960.0 + 2000.0 * 7.0 + 300.0, 2000.0);
+        assert!((panned[1] - 1260.0).abs() < 1e-2, "{panned:?}");
+        assert_eq!(tiled_centers(100.0, 0.0), vec![100.0]);
+    }
+
+    #[test]
+    fn particles_become_quads_in_virtual_pixels_within_the_budget() {
+        use orbit_core::{Emitter, EmitterInstance, ParticlePreset};
+        let mut fx = StageFx::default();
+        assert!(particle_quads(&fx).is_empty());
+        let rain = Emitter::preset(ParticlePreset::Rain);
+        fx.emitters.push(EmitterInstance { emitter: rain.clone(), elapsed: 2.0, ends_at: None });
+        let groups = particle_quads(&fx);
+        assert_eq!(groups.len(), 1);
+        let (sprite, front, quads) = &groups[0];
+        assert!(sprite.is_none() && *front);
+        assert!(quads.len() > 100);
+        for q in quads {
+            assert!(q.tint.iter().all(|c| (0.0..=1.0).contains(c)));
+            assert!(q.size[1] > q.size[0], "rain streaks are long");
+        }
+        // The total is capped whatever the emitters ask for.
+        let mut snow = Emitter::preset(ParticlePreset::Snow);
+        snow.rate = 100.0;
+        snow.lifetime = 9.0;
+        for i in 0..6 {
+            let mut e = snow.clone();
+            e.seed = i;
+            fx.emitters.push(EmitterInstance { emitter: e, elapsed: 30.0, ends_at: None });
+        }
+        let total: usize = particle_quads(&fx).iter().map(|(_, _, q)| q.len()).sum();
+        assert_eq!(total, MAX_PARTICLES_TOTAL);
     }
 }

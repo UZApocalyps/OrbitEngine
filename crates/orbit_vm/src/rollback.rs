@@ -174,7 +174,12 @@ impl Vm {
 /// story cannot resolve are skipped.
 pub fn scene_events(story: &Story, scene: &SceneState) -> Vec<PresentationEvent> {
     let mut events = Vec::new();
-    if let Some(asset) = scene.background {
+    if !scene.bg_layers.is_empty() {
+        events.push(PresentationEvent::BackgroundLayers {
+            layers: scene.bg_layers.clone(),
+            transition: None,
+        });
+    } else if let Some(asset) = scene.background {
         events.push(PresentationEvent::Background {
             asset,
             transition: None,

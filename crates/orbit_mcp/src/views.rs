@@ -266,6 +266,36 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
             s
         }
         NodeKind::CloseScreen { screen } => format!("close screen {}", quote(screen)),
+        NodeKind::BackgroundLayers { layers, transition } => {
+            let items: Vec<String> = layers
+                .iter()
+                .map(|l| {
+                    format!(
+                        "{} (depth {}{})",
+                        asset_label(story, l.asset),
+                        l.depth,
+                        if l.repeat_x { ", repeats" } else { "" }
+                    )
+                })
+                .collect();
+            format!(
+                "parallax background, back to front: {}{}",
+                items.join(", "),
+                describe_transition(transition)
+            )
+        }
+        NodeKind::Particles(e) => format!(
+            "particles {} ({}): {}/s, lives {}s, {}{}",
+            quote(&e.name),
+            e.preset.name(),
+            e.rate,
+            e.lifetime,
+            if e.front { "over the characters" } else { "behind the characters" },
+            e.sprite
+                .map_or_else(String::new, |a| format!(", sprite {}", asset_label(story, a)))
+        ),
+        NodeKind::StopParticles { name } if name.is_empty() => "stop all particles".to_owned(),
+        NodeKind::StopParticles { name } => format!("stop particles {}", quote(name)),
         NodeKind::Effect(e) => describe_effect(story, e),
         NodeKind::Timeline {
             duration,
@@ -711,6 +741,11 @@ fn describe_event(story: &Story, event: &PresentationEvent) -> String {
         PresentationEvent::HideScene3d { transition } => {
             format!("hide 3d scene{}", describe_transition(transition))
         }
+        PresentationEvent::BackgroundLayers { layers, transition } => format!(
+            "parallax background of {} layer(s){}",
+            layers.len(),
+            describe_transition(transition)
+        ),
     }
 }
 

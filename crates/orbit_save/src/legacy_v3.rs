@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use orbit_core::{NodeId, Value};
 use orbit_vm::{
-    BacklogEntry, Checkpoint, Interaction, Pending, Rng, RollbackHistory, SceneState, VmState,
+    BacklogEntry, Checkpoint, Interaction, Pending, Rng, RollbackHistory, VmState,
 };
 use serde::Deserialize;
 
@@ -22,7 +22,7 @@ struct VmStateV3 {
     pending: Pending,
     call_stack: Vec<Option<NodeId>>,
     vars: BTreeMap<String, Value>,
-    scene: SceneState,
+    scene: crate::legacy_v5::SceneStateV5,
     rng: Rng,
     shown: Option<Interaction>,
 }
@@ -55,7 +55,7 @@ impl From<VmStateV3> for VmState {
             pending: old.pending,
             call_stack: old.call_stack,
             vars: old.vars,
-            scene: old.scene,
+            scene: old.scene.into(),
             rng: old.rng,
             shown: old.shown,
             active_anims: Vec::new(),
@@ -97,7 +97,7 @@ pub(crate) fn encode_body_for_tests(vm: &VmState, history: Option<&RollbackHisto
         pending: &'a Pending,
         call_stack: &'a Vec<Option<NodeId>>,
         vars: &'a BTreeMap<String, Value>,
-        scene: &'a SceneState,
+        scene: crate::legacy_v5::SceneStateV5,
         rng: Rng,
         shown: &'a Option<Interaction>,
     }
@@ -125,7 +125,7 @@ pub(crate) fn encode_body_for_tests(vm: &VmState, history: Option<&RollbackHisto
             pending: &s.pending,
             call_stack: &s.call_stack,
             vars: &s.vars,
-            scene: &s.scene,
+            scene: (&s.scene).into(),
             rng: s.rng,
             shown: &s.shown,
         }
