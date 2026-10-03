@@ -110,6 +110,10 @@ fn native_template(out: &Path, triple: Option<&str>, host: &str) -> Result {
         "-p",
         "orbit_player",
         "--no-default-features",
+        // Desktop players show 3D scenes (ADR 0014); the web template stays
+        // 2D only so that 2D games keep the same wasm.
+        "--features",
+        "3d",
     ]);
     if let Some(triple) = triple {
         build.args(["--target", triple]);

@@ -24,6 +24,9 @@ pub fn kind_key(kind: &NodeKind) -> String {
         NodeKind::Call { .. } => "Call".into(),
         NodeKind::Return => "Return".into(),
         NodeKind::End => "End".into(),
+        NodeKind::ShowScene3d { .. } => "ShowScene3d".into(),
+        NodeKind::Camera3d { .. } => "Camera3d".into(),
+        NodeKind::HideScene3d { .. } => "HideScene3d".into(),
         NodeKind::Custom {
             plugin_id, kind, ..
         } => format!("{plugin_id}.{kind}"),
@@ -51,6 +54,9 @@ pub fn kind_label(texts: &Translator, kind: &NodeKind) -> String {
         NodeKind::Return => "node.kind.return",
         NodeKind::End => "node.kind.end",
         NodeKind::Custom { .. } => "node.kind.custom",
+        NodeKind::ShowScene3d { .. } => "node.kind.show_scene3d",
+        NodeKind::Camera3d { .. } => "node.kind.camera3d",
+        NodeKind::HideScene3d { .. } => "node.kind.hide_scene3d",
     })
 }
 
@@ -74,6 +80,9 @@ pub fn kind_icon(kind: &NodeKind) -> &'static str {
         NodeKind::Return => icons::ARROW_U_UP_LEFT,
         NodeKind::End => icons::STOP,
         NodeKind::Custom { .. } => icons::PUZZLE_PIECE,
+        NodeKind::ShowScene3d { .. } => icons::CUBE,
+        NodeKind::Camera3d { .. } => icons::VIDEO_CAMERA,
+        NodeKind::HideScene3d { .. } => icons::EYE_SLASH,
     }
 }
 
@@ -82,7 +91,12 @@ pub fn kind_color(kind: &NodeKind) -> egui::Color32 {
     use egui::Color32;
     match kind {
         NodeKind::Say { .. } => Color32::from_rgb(130, 140, 160),
-        NodeKind::Background { .. } | NodeKind::Show { .. } | NodeKind::Hide { .. } => {
+        NodeKind::Background { .. }
+        | NodeKind::Show { .. }
+        | NodeKind::Hide { .. }
+        | NodeKind::ShowScene3d { .. }
+        | NodeKind::Camera3d { .. }
+        | NodeKind::HideScene3d { .. } => {
             Color32::from_rgb(86, 156, 240)
         }
         NodeKind::PlayMusic { .. } | NodeKind::StopMusic { .. } | NodeKind::PlaySound { .. } => {
@@ -215,6 +229,12 @@ pub fn summary(texts: &Translator, story: &Story, node: &Node) -> String {
             ],
         ),
         NodeKind::Background { asset, .. } => asset_name(story, *asset),
+        NodeKind::ShowScene3d { scene, camera, .. } => match camera {
+            Some(c) => format!("{} · {c}", asset_name(story, *scene)),
+            None => asset_name(story, *scene),
+        },
+        NodeKind::Camera3d { camera, .. } => camera.clone(),
+        NodeKind::HideScene3d { .. } => String::new(),
         NodeKind::Show {
             character,
             expression,

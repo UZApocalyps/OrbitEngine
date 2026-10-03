@@ -569,6 +569,21 @@ fn describe_event(story: &Story, event: &PresentationEvent) -> String {
             .to_owned()
     };
     match event {
+        PresentationEvent::Scene3d {
+            scene,
+            camera,
+            transition,
+        } => format!(
+            "[3d scene {}{}{}]",
+            asset(*scene),
+            camera
+                .as_ref()
+                .map_or_else(String::new, |c| format!(" camera {c}")),
+            describe_transition(transition)
+        ),
+        PresentationEvent::HideScene3d { transition } => {
+            format!("[hide 3d scene{}]", describe_transition(transition))
+        }
         PresentationEvent::Background {
             asset: a,
             transition,

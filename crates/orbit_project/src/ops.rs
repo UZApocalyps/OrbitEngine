@@ -911,7 +911,10 @@ fn transition_mut(kind: &mut NodeKind) -> Option<&mut orbit_core::Transition> {
     match kind {
         NodeKind::Background { transition, .. }
         | NodeKind::Show { transition, .. }
-        | NodeKind::Hide { transition, .. } => transition.as_mut(),
+        | NodeKind::Hide { transition, .. }
+        | NodeKind::ShowScene3d { transition, .. }
+        | NodeKind::Camera3d { transition, .. }
+        | NodeKind::HideScene3d { transition } => transition.as_mut(),
         _ => None,
     }
 }

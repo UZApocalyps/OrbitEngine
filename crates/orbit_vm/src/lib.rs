@@ -27,5 +27,7 @@ pub use history::{
 };
 pub use rollback::scene_events;
 pub use seek::{ChoiceStep, SeekLimits, SeekOutcome, SeekPath, seek};
-pub use state::{CharacterOnStage, Interaction, MusicState, Pending, Rng, SceneState, VmState};
+pub use state::{
+    CharacterOnStage, Interaction, MusicState, Pending, Rng, Scene3dState, SceneState, VmState,
+};
 pub use vm::{MAX_CALL_DEPTH, MAX_NODES_PER_STEP, Vm};

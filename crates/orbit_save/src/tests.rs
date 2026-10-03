@@ -663,3 +663,55 @@ fn version_1_saves_still_load_unscaled() {
     let mut loaded = Vm::from_start(story).unwrap();
     assert!(decoded.apply_to(&mut loaded).unwrap());
 }
+
+#[test]
+fn the_3d_scene_survives_a_save() {
+    let story = demo();
+    let mut vm = Vm::from_start(story).unwrap();
+    play(&mut vm, 3, 0);
+    let mut save = SaveData::capture(&vm, info(3));
+    let shown = orbit_vm::Scene3dState {
+        scene: orbit_core::AssetId::new(),
+        camera: Some("close".into()),
+    };
+    save.vm_state.scene.scene3d = Some(shown.clone());
+    if let Some(h) = &mut save.history
+        && let Some(c) = h.checkpoints.last_mut()
+    {
+        c.state.scene.scene3d = Some(shown.clone());
+    }
+    let decoded = SaveData::decode(&save.encode().unwrap()).unwrap();
+    assert_eq!(decoded.meta.format_version, 3);
+    assert_eq!(decoded.vm_state.scene.scene3d, Some(shown.clone()));
+    assert_eq!(decoded, save);
+}
+
+#[test]
+fn version_2_saves_still_load_without_3d() {
+    let story = demo();
+    let mut vm = Vm::from_start(story.clone()).unwrap();
+    play(&mut vm, 8, 0);
+    let save = SaveData::capture(&vm, info(8));
+    assert!(save.meta.has_history);
+
+    // Hand-built v2 container: same meta, v2 body layout.
+    let mut meta = save.meta.clone();
+    meta.format_version = 2;
+    let meta_bytes = postcard::to_stdvec(&meta).unwrap();
+    let body = crate::legacy_v2::encode_body_for_tests(&save.vm_state, save.history.as_ref());
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"ORBS");
+    bytes.extend_from_slice(&2u32.to_le_bytes());
+    bytes.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&meta_bytes);
+    bytes.extend_from_slice(&body);
+
+    let decoded = SaveData::decode(&bytes).expect("v2 save must decode");
+    // Everything but the format version is the same (there was no 3D).
+    assert_eq!(decoded.vm_state, save.vm_state);
+    assert_eq!(decoded.history, save.history);
+    assert!(decoded.vm_state.scene.scene3d.is_none());
+    assert!(check_compat(&story, &decoded).is_loadable());
+    let mut loaded = Vm::from_start(story).unwrap();
+    assert!(decoded.apply_to(&mut loaded).unwrap());
+}

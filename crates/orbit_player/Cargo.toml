@@ -8,10 +8,14 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-default = ["showcase"]
+default = ["showcase", "3d"]
 # The renderer demo (`--demo`) and the UI gallery (`--ui-gallery`): development
 # tools, left out of the player templates used to export games.
 showcase = []
+# 3D scenes (ADR 0014): on in the desktop player and the editor. The export
+# templates are built without default features; the native one adds `3d`,
+# the web one keeps 2D games free of it (M6-13: 3D web template).
+3d = ["orbit_runtime/3d"]
 
 [dependencies]
 orbit_platform.workspace = true

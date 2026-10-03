@@ -37,6 +37,7 @@
 #[cfg(feature = "3d")]
 pub use orbit_render3d as render3d;
 
+pub mod compose3d;
 pub mod director;
 pub mod format;
 mod game;
@@ -61,4 +62,6 @@ pub use runtime::{
     parse_translation_index,
 };
 pub use shell::AutosaveConfig;
-pub use stage::{CharacterPlacement, StageCharacter, StageEffect, StageState, character_placement};
+pub use stage::{
+    CharacterPlacement, Stage3d, StageCharacter, StageEffect, StageState, character_placement,
+};

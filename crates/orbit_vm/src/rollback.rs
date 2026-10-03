@@ -180,6 +180,14 @@ pub fn scene_events(story: &Story, scene: &SceneState) -> Vec<PresentationEvent>
             transition: None,
         });
     }
+    // After the background: a `Background` event clears the 3D layer.
+    if let Some(s) = &scene.scene3d {
+        events.push(PresentationEvent::Scene3d {
+            scene: s.scene,
+            camera: s.camera.clone(),
+            transition: None,
+        });
+    }
     for c in &scene.characters {
         let Some(image) = story
             .character(c.character)

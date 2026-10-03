@@ -141,6 +141,10 @@ pub fn generate(req: &ThumbRequest) -> Result<Thumb, String> {
                 info,
             }
         }
+        AssetKind::Scene3d => Thumb {
+            image: None,
+            info: String::new(),
+        },
         AssetKind::Music | AssetKind::Sound => {
             let bytes = fs::read(&path).map_err(|e| e.to_string())?;
             let pcm = orbit_assets::decode_audio(&req.rel, &bytes)?;

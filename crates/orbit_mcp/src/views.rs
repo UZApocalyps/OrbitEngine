@@ -225,6 +225,24 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
             "custom {plugin_id}/{kind} v{version} {}",
             custom_to_json(data)
         ),
+        NodeKind::ShowScene3d {
+            scene,
+            camera,
+            transition,
+        } => format!(
+            "3d scene {}{}{}",
+            asset_label(story, *scene),
+            camera
+                .as_ref()
+                .map_or_else(String::new, |c| format!(" camera {c}")),
+            describe_transition(transition)
+        ),
+        NodeKind::Camera3d { camera, transition } => {
+            format!("3d camera {camera}{}", describe_transition(transition))
+        }
+        NodeKind::HideScene3d { transition } => {
+            format!("hide 3d scene{}", describe_transition(transition))
+        }
     }
 }
 
@@ -558,6 +576,21 @@ fn describe_event(story: &Story, event: &PresentationEvent) -> String {
         PresentationEvent::Custom {
             plugin_id, kind, ..
         } => format!("custom {plugin_id}/{kind}"),
+        PresentationEvent::Scene3d {
+            scene,
+            camera,
+            transition,
+        } => format!(
+            "3d scene {}{}{}",
+            asset_label(story, *scene),
+            camera
+                .as_ref()
+                .map_or_else(String::new, |c| format!(" camera {c}")),
+            describe_transition(transition)
+        ),
+        PresentationEvent::HideScene3d { transition } => {
+            format!("hide 3d scene{}", describe_transition(transition))
+        }
     }
 }
 

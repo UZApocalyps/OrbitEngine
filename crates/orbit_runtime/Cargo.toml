@@ -24,10 +24,14 @@ image.workspace = true
 log.workspace = true
 thiserror.workspace = true
 orbit_render3d = { workspace = true, optional = true }
+orbit_scene = { path = "../orbit_scene", default-features = false, optional = true }
 
 [features]
 # 3D scenes (ADR 0014). Off by default: 2D-only builds and wasm stay unchanged.
-3d = ["dep:orbit_render3d"]
+3d = ["dep:orbit_render3d", "dep:orbit_scene"]
+
+[dev-dependencies]
+pollster.workspace = true
 
 [lints]
 workspace = true

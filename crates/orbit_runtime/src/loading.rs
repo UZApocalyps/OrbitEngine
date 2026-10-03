@@ -113,7 +113,8 @@ pub fn scene_asset_paths(story: &Story, scene: usize) -> Vec<String> {
         match &node.kind {
             NodeKind::Background { asset, .. }
             | NodeKind::PlayMusic { asset, .. }
-            | NodeKind::PlaySound { asset } => add(*asset),
+            | NodeKind::PlaySound { asset }
+            | NodeKind::ShowScene3d { scene: asset, .. } => add(*asset),
             NodeKind::Show {
                 character,
                 expression,
@@ -164,6 +165,9 @@ pub fn successor_scenes(story: &Story, scene: usize) -> Vec<usize> {
 pub struct AssetStore {
     textures: HashMap<String, TextureId>,
     sounds: HashMap<String, Sound>,
+    /// Parsed `.scene3d.ron` documents (feature `3d`).
+    #[cfg(feature = "3d")]
+    scenes3d: HashMap<String, Arc<orbit_scene::Scene3d>>,
 }
 
 impl AssetStore {
@@ -175,7 +179,29 @@ impl AssetStore {
         self.sounds.get(path)
     }
 
+    #[cfg(test)]
+    pub(crate) fn insert_texture(&mut self, path: &str, texture: TextureId) {
+        self.textures.insert(path.to_owned(), texture);
+    }
+
+    /// A loaded 3D scene.
+    #[cfg(feature = "3d")]
+    pub fn scene3d(&self, path: &str) -> Option<&Arc<orbit_scene::Scene3d>> {
+        self.scenes3d.get(path)
+    }
+
+    /// Adds (or replaces) a 3D scene under `path` (hosts that build scenes
+    /// in memory, tests).
+    #[cfg(feature = "3d")]
+    pub fn insert_scene3d(&mut self, path: impl Into<String>, scene: orbit_scene::Scene3d) {
+        self.scenes3d.insert(path.into(), Arc::new(scene));
+    }
+
     pub fn contains(&self, path: &str) -> bool {
+        #[cfg(feature = "3d")]
+        if self.scenes3d.contains_key(path) {
+            return true;
+        }
         self.textures.contains_key(path) || self.sounds.contains_key(path)
     }
 
@@ -187,6 +213,10 @@ impl AssetStore {
             renderer.release_texture(texture);
         }
         let sound = self.sounds.remove(path);
+        #[cfg(feature = "3d")]
+        if self.scenes3d.remove(path).is_some() {
+            return true;
+        }
         texture.is_some() || sound.is_some()
     }
 
@@ -196,12 +226,16 @@ impl AssetStore {
             renderer.release_texture(texture);
         }
         self.sounds.clear();
+        #[cfg(feature = "3d")]
+        self.scenes3d.clear();
     }
 }
 
 enum Handle {
     Image(AssetHandle<ImageData>),
     Audio(AssetHandle<PcmAudio>),
+    #[cfg(feature = "3d")]
+    Scene3d(AssetHandle<orbit_scene::Scene3d>),
 }
 
 /// One manifest asset being loaded.
@@ -220,6 +254,8 @@ impl PendingAsset {
         match &self.handle {
             Handle::Image(h) => !matches!(h.poll(), AssetPoll::Loading),
             Handle::Audio(h) => !matches!(h.poll(), AssetPoll::Loading),
+            #[cfg(feature = "3d")]
+            Handle::Scene3d(h) => !matches!(h.poll(), AssetPoll::Loading),
         }
     }
 }
@@ -254,6 +290,20 @@ pub fn start_loading_only(
         let handle = match entry.kind {
             AssetKind::Image => Handle::Image(loader.load_image(&entry.path)),
             AssetKind::Music | AssetKind::Sound => Handle::Audio(loader.load_audio(&entry.path)),
+            #[cfg(feature = "3d")]
+            AssetKind::Scene3d => Handle::Scene3d(loader.load_with(&entry.path, |_, bytes| {
+                let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
+                orbit_scene::from_ron(&text)
+            })),
+            // Without the `3d` feature a 3D scene is never drawn: not loaded.
+            #[cfg(not(feature = "3d"))]
+            AssetKind::Scene3d => {
+                log::warn!(
+                    "`{}` is a 3D scene, but this player is built without 3D support",
+                    entry.path
+                );
+                continue;
+            }
         };
         pending.push(PendingAsset {
             path: entry.path.clone(),
@@ -308,6 +358,13 @@ pub fn finish_loading(
                     }
                     Err(err) => failures.push(format!("sound `{}`: {err}", asset.path)),
                 },
+                other => failures.push(describe_failure(&asset.path, &other)),
+            },
+            #[cfg(feature = "3d")]
+            Handle::Scene3d(h) => match h.poll() {
+                AssetPoll::Ready(scene) => {
+                    store.scenes3d.insert(asset.path, scene);
+                }
                 other => failures.push(describe_failure(&asset.path, &other)),
             },
         }

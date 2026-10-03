@@ -336,6 +336,25 @@ impl Cx<'_> {
                         }
                     }
                 },
+                NodeKind::ShowScene3d {
+                    scene, transition, ..
+                } => {
+                    self.check_asset(Some(id), *scene, AssetKind::Scene3d);
+                    if let Some(t) = transition {
+                        self.check_duration(id, t.duration);
+                        if let Some(c) = &t.ease {
+                            self.check_curve(CurveOwner::Node(id), c);
+                        }
+                    }
+                }
+                NodeKind::Camera3d { transition, .. } | NodeKind::HideScene3d { transition } => {
+                    if let Some(t) = transition {
+                        self.check_duration(id, t.duration);
+                        if let Some(c) = &t.ease {
+                            self.check_curve(CurveOwner::Node(id), c);
+                        }
+                    }
+                }
                 NodeKind::Background { asset, transition } => {
                     self.check_asset(Some(id), *asset, AssetKind::Image);
                     if let Some(t) = transition {
@@ -963,6 +982,39 @@ mod tests {
         assert!(matches!(errs[3], ValidationError::UnknownAsset { .. }));
         assert!(matches!(errs[4], ValidationError::AssetKindMismatch { .. }));
         assert!(matches!(errs[5], ValidationError::InvalidDuration { .. }));
+    }
+
+    #[test]
+    fn scene3d_commands_are_checked() {
+        let mut s = Story::new("t");
+        let (_, img) = character(&mut s);
+        let room = asset(&mut s, AssetKind::Scene3d, "assets/3d/room.scene3d.ron");
+        let ok = node(NodeKind::ShowScene3d {
+            scene: room,
+            camera: Some("a".into()),
+            transition: Some(Transition::dissolve(0.5)),
+        });
+        let image_as_scene = node(NodeKind::ShowScene3d {
+            scene: img,
+            camera: None,
+            transition: None,
+        });
+        let unknown = node(NodeKind::ShowScene3d {
+            scene: AssetId::new(),
+            camera: None,
+            transition: None,
+        });
+        let bad_time = node(NodeKind::Camera3d {
+            camera: "a".into(),
+            transition: Some(Transition::dissolve(-1.0)),
+        });
+        let hide = node(NodeKind::HideScene3d { transition: None });
+        let s = with_nodes(s, vec![ok, image_as_scene, unknown, bad_time, hide]);
+        let errs = validate(&s).errors;
+        assert_eq!(errs.len(), 3, "{errs:#?}");
+        assert!(matches!(errs[0], ValidationError::AssetKindMismatch { .. }));
+        assert!(matches!(errs[1], ValidationError::UnknownAsset { .. }));
+        assert!(matches!(errs[2], ValidationError::InvalidDuration { .. }));
     }
 
     #[test]

@@ -45,6 +45,9 @@ fn kind_tag(kind: &NodeKind) -> u8 {
         NodeKind::End => 16,
         NodeKind::Custom { .. } => 17,
         NodeKind::JumpScene { .. } => 18,
+        NodeKind::ShowScene3d { .. } => 19,
+        NodeKind::Camera3d { .. } => 20,
+        NodeKind::HideScene3d { .. } => 21,
     }
 }
 
