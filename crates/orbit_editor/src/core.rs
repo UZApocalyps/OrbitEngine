@@ -25,7 +25,8 @@ use crate::diagnostics::{Extras, Live};
 use crate::dock;
 use crate::palette::Palette;
 use crate::session::{AUTOSAVE_INTERVAL, Session};
-use crate::storage::{ProjectLocation, RecoveryMeta, create_project};
+use crate::storage::{ProjectLocation, RecoveryMeta};
+use crate::templates::create_project_from_template;
 use crate::theme::{Theme, install_fonts};
 use crate::watch::{ProjectWatcher, WatchEvent};
 
@@ -87,6 +88,8 @@ pub enum Pending {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NewProjectForm {
     pub name: String,
+    /// Id of the chosen template (empty: the first one, blank).
+    pub template: String,
     /// Folder that will contain the project folder.
     pub parent: String,
     pub error: Option<String>,
@@ -538,8 +541,13 @@ impl EditorCore {
     }
 
     /// Creates a project folder from the minimal template and opens it.
-    pub fn create_and_open(&mut self, parent: &Path, name: &str) -> Result<(), String> {
-        let root = create_project(parent, name, &self.state.i18n)?;
+    pub fn create_and_open(
+        &mut self,
+        parent: &Path,
+        name: &str,
+        template: &str,
+    ) -> Result<(), String> {
+        let root = create_project_from_template(parent, name, template, &self.state.i18n)?;
         self.open_project(&root);
         Ok(())
     }

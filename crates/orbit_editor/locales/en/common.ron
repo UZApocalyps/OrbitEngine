@@ -24,6 +24,7 @@
     "menu.edit": "Edit",
     "menu.view": "View",
     "menu.tools": "Tools",
+    "menu.help": "Help",
     "menu.preview": "Preview",
     "menu.language": "Language",
 
@@ -32,6 +33,7 @@
     "category.edit": "Edit",
     "category.view": "View",
     "category.tools": "Tools",
+    "category.help": "Help",
     "category.graph": "Graph",
     "category.preview": "Preview",
     "category.scene": "Scene",

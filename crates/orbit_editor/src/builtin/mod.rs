@@ -18,6 +18,7 @@ mod importers;
 mod inspector;
 mod inspector_fx;
 mod library;
+pub mod manual;
 mod nodeinfo;
 mod preview;
 mod problems;
@@ -71,6 +72,7 @@ pub mod ids {
     pub const ASSISTANT: &str = "orbit.assistant";
     pub const UI_EDITOR: &str = "orbit.ui";
     pub const TEXTVIEW: &str = "orbit.textview";
+    pub const MANUAL: &str = "orbit.manual";
 }
 
 /// Full ids of the built-in panels.
@@ -97,6 +99,7 @@ pub mod panels {
     pub const ASSISTANT: &str = "orbit.assistant.assistant";
     pub const UI_EDITOR: &str = "orbit.ui.editor";
     pub const TEXTVIEW: &str = "orbit.textview.textview";
+    pub const MANUAL: &str = "orbit.manual.manual";
 }
 
 /// State the built-in plugins share with the editor core.
@@ -140,6 +143,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(assistant::AssistantPlugin),
         Box::new(uied::UiEditorPlugin::default()),
         Box::new(textview::TextViewPlugin),
+        Box::new(manual::ManualPlugin),
         Box::new(scene3d::Scene3dPlugin::new(shared.scene3d.clone())),
         Box::new(SamplePlugin::default()),
     ]

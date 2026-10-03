@@ -39,6 +39,7 @@ Les installeurs sont écrits dans `target/packager/`. WiX et NSIS sont télécha
 ## Créer un projet
 
 1. Lancez l'éditeur : l'écran d'accueil propose **Nouveau projet…** (Ctrl+N). Choisissez un dossier et un nom : l'éditeur crée `orbit.project.ron` (le manifeste : nom, histoire, profils d'export), `story.orbit` (l'histoire ; l'ancienne extension `.ron` reste lue et l'éditeur propose de convertir) et le dossier des assets.
+   Le dialogue propose des **modèles** : *Vide* ou *Démarrage visual novel* (deux scènes, personnages, choix, écrans et splash). Le **manuel** de l'éditeur (Aide > Manuel, F1) suit la langue de l'éditeur ; ses sources sont dans `docs/manual/`.
 2. Pour essayer d'abord, ouvrez le projet de démonstration livré avec l'éditeur (`examples/stories/demo.ron`).
 
 Un projet est un dossier ; tous les chemins d'assets de l'histoire sont relatifs à lui :
