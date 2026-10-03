@@ -101,3 +101,67 @@ fn new_fields_round_trip_and_stay_out_of_old_documents() {
     // A default span is not written.
     assert!(!text.contains("row_span"));
 }
+
+const JOURNAL_V3: &str = include_str!("../../../examples/fixtures/compat/ui_v3/journal.screen.ron");
+
+/// UI-14 / UI-15 / UI-16 (`ui_version` 4): a frozen version 3 document
+/// (variables, collections, accessibility settings, plain `Close`) keeps
+/// loading, is stamped version 4, means the same and writes no new field.
+#[test]
+fn a_v3_screen_loads_unchanged_as_version_4() {
+    assert!(JOURNAL_V3.contains("ui_version: 3"));
+    let screen = from_ron(JOURNAL_V3).unwrap();
+    assert_eq!(screen.ui_version, UI_VERSION);
+    assert_eq!(UI_VERSION, 4);
+    assert!(!screen.hud);
+    assert!(screen.transition_in.is_none() && screen.transition_out.is_none());
+    assert_eq!(screen.on_cancel, vec![orbit_ui_data::UiAction::Close]);
+    assert!(orbit_ui_data::validate(&screen, None).is_empty());
+    let text = orbit_ui_data::to_ron(&screen).unwrap();
+    for new_field in ["hud", "transition_in", "transition_out", "CloseWith", "Repeat"] {
+        assert!(!text.contains(new_field), "{new_field}");
+    }
+    assert_eq!(from_ron(&text).unwrap(), screen);
+}
+
+#[test]
+fn version_4_fields_round_trip() {
+    let src = r#"(ui_version: 4, id: "bag", hud: true,
+        transition_in: Some((kind: SlideUp, duration: 0.25, ease: Some(Preset(OutCubic)))),
+        transition_out: Some((kind: Fade)),
+        root: (kind: Stack(dir: Vertical), children: [
+            (kind: Repeat(source: Var("bag"), dir: Grid(3), empty: Some(Literal("Empty"))), children: [
+                (kind: Button(text: Bind(Item), action: [
+                    VarSet((var: "bag", op: Remove, value: Item)),
+                    CloseWith(Item),
+                ])),
+                (kind: Label(text: Bind(ItemIndex))),
+            ]),
+            (kind: Label(text: Bind(Param("contact")))),
+            (kind: Button(text: Literal("x"), action: [CloseWith(Param("contact")), CloseWith(Lit(Int(3)))])),
+        ]))"#;
+    let screen = from_ron(src).unwrap();
+    assert!(screen.hud && !screen.effective_pauses_game());
+    let issues = orbit_ui_data::validate(&screen, None);
+    assert!(issues.is_empty(), "{issues:?}");
+    let text = orbit_ui_data::to_ron(&screen).unwrap();
+    assert_eq!(from_ron(&text).unwrap(), screen);
+}
+
+#[test]
+fn item_bindings_outside_a_repeat_and_hud_pauses_are_flagged() {
+    let src = r#"(id: "s", hud: true, pauses_game: true,
+        transition_in: Some((kind: Fade, duration: -1.0)),
+        root: (kind: Stack(dir: Vertical), children: [
+            (kind: Label(text: Bind(Item))),
+            (kind: Button(text: Literal("x"), action: [CloseWith(ItemKey)])),
+            (kind: Repeat(source: Setting(Language))),
+        ]))"#;
+    let screen = from_ron(src).unwrap();
+    let issues = orbit_ui_data::validate(&screen, None);
+    let has = |s: &str| issues.iter().any(|i| i.message.contains(s));
+    assert!(has("never pauses"), "{issues:?}");
+    assert!(has("outside a generated list"), "{issues:?}");
+    assert!(has("duration"), "{issues:?}");
+    assert!(has("list or map"), "{issues:?}");
+}

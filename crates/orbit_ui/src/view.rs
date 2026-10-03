@@ -205,6 +205,10 @@ pub enum UiEvent {
     Quit,
     /// Close the current screen and return to the previous one.
     Back,
+    /// Close the current screen handing a value to the story (`UiAction::CloseWith`):
+    /// a screen the story opened stores it in its result variable, any other
+    /// screen just closes (like `Back`).
+    BackWith(orbit_core::Value),
     /// Rewind one step ("Back" of the quick menu).
     Rollback,
     /// Rewind to a history entry.

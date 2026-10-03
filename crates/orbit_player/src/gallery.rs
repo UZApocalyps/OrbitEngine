@@ -409,7 +409,7 @@ impl Ready {
                 | UiEvent::Custom { .. }
                 | UiEvent::VarOp(_)
                 | UiEvent::SceneGoto(_) => {}
-                UiEvent::Back => self.pop(),
+                UiEvent::Back | UiEvent::BackWith(_) => self.pop(),
                 UiEvent::ReturnToMainMenu => self.jump(Which::Main),
                 UiEvent::Quit => self.toasts.push("Quit requested (ignored in the gallery)"),
                 UiEvent::Toast(text) => self.toasts.push(text),

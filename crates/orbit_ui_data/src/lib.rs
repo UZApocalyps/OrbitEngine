@@ -13,6 +13,7 @@ mod layout;
 pub mod migrate;
 mod sound;
 mod theme;
+mod transition;
 pub mod validate;
 mod widget;
 
@@ -23,6 +24,7 @@ pub use action::{BindPath, SettingKey, UiAction};
 pub use bundle::{SYSTEM_SCREENS, SplashContent, SplashDef, UiBundle};
 pub use layout::{Align, Anchor, Dir, PanelKind, Size};
 pub use sound::UiSound;
+pub use transition::{ScreenFx, ScreenTransition, ScreenTransitionKind};
 pub use theme::{
     Border, ButtonTheme, ChoiceTheme, ControlTheme, Fill, FontRef, ListTheme, PanelTheme, ScreenTheme,
     StateColors, Style, StyleSounds, TextBoxTheme, Theme, UiSounds, WidgetTheme,
@@ -30,6 +32,6 @@ pub use theme::{
 };
 pub use validate::{Issue, Severity, scene_issues, validate, validate_with_vars, variable_issues};
 pub use widget::{
-    Cond, LayoutDef, ScreenAsset, SlotsMode, TextRef, UI_VERSION, WidgetDef, WidgetKind, from_ron,
+    Cond, LayoutDef, MAX_REPEAT_ITEMS, ScreenAsset, SlotsMode, TextRef, UI_VERSION, WidgetDef, WidgetKind, from_ron,
     to_ron,
 };
