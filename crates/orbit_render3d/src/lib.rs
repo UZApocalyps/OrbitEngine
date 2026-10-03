@@ -144,6 +144,16 @@ pub struct RenderTarget3d {
 
 impl RenderTarget3d {
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        Self::create(device, width, height, false)
+    }
+
+    /// Like [`RenderTarget3d::new`], with a non-sRGB view available
+    /// ([`RenderTarget3d::gamma_view`]); native only (the editor).
+    pub fn new_viewable(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        Self::create(device, width, height, true)
+    }
+
+    fn create(device: &wgpu::Device, width: u32, height: u32, viewable: bool) -> Self {
         let max = device.limits().max_texture_dimension_2d;
         let (width, height) = (width.clamp(1, max), height.clamp(1, max));
         let size = wgpu::Extent3d {
@@ -151,6 +161,7 @@ impl RenderTarget3d {
             height,
             depth_or_array_layers: 1,
         };
+        let gamma_formats = [COLOR_FORMAT.remove_srgb_suffix()];
         let color = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("orbit3d color target"),
             size,
@@ -161,7 +172,11 @@ impl RenderTarget3d {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
+            view_formats: if viewable {
+                &gamma_formats[..]
+            } else {
+                &[]
+            },
         });
         let depth = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("orbit3d depth"),
@@ -192,6 +207,15 @@ impl RenderTarget3d {
 
     pub fn size(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// Non-sRGB view of the color target: what egui (gamma space) samples
+    /// to show the picture as is.
+    pub fn gamma_view(&self) -> wgpu::TextureView {
+        self.color.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(COLOR_FORMAT.remove_srgb_suffix()),
+            ..Default::default()
+        })
     }
 
     /// Copies the color target into a mappable buffer; returns the buffer
