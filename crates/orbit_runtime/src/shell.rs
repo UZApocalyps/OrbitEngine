@@ -33,13 +33,13 @@ use orbit_ui::{
     PreferencesScreen, PrefsView, QuickMenu, QuickMenuView, SaveLoadMode, SaveLoadScreen,
     SaveLoadView, Screen, SkipMode as UiSkipMode, SlotCategory, SlotId as UiSlot,
     SlotState as UiSlotState, SlotView, TEXT_SPEED_RANGE, TextTable, Texts, Theme, ToastStack,
-    UiBundle, UiEvent, UiInput, UiSound, tint,
+    UiBundle, UiEvent, UiInput, UiSound, apply_screen_fx, tint, transition_shown,
 };
 use orbit_ui::a11y::{
     A11yAction, A11yNode, A11yRole, A11yTarget, A11yTree, Announcer, CHOICE_BASE, CHOICES_ID,
     LINE_ID, ROOT_ID, TOAST_ID,
 };
-use orbit_vm::Vm;
+use orbit_vm::{OpenScreenState, Vm};
 
 use crate::director::{AudioCommand, Director, Flow};
 use crate::format::{format_timestamp, language_name, plain_text};
@@ -115,6 +115,27 @@ pub(crate) enum Overlay {
     History,
     /// A data-driven screen (index into the shell's screens).
     Custom(usize),
+}
+
+/// A screen the story opened (`OpenScreen`, UI-14), built from the VM state.
+pub(crate) struct StoryScreen {
+    pub state: OpenScreenState,
+    pub screen: DataScreen,
+    /// Seconds since it opened (its opening transition).
+    pub elapsed: f32,
+}
+
+/// A screen that closed and plays its closing transition (UI-16).
+struct Ghost {
+    screen: GhostScreen,
+    elapsed: f32,
+}
+
+enum GhostScreen {
+    /// A story screen (its own instance).
+    Story(Box<DataScreen>),
+    /// A data screen of the stack (index into `Shell::data`).
+    Data(usize),
 }
 
 /// What the shell asks the runtime to do.
@@ -301,6 +322,18 @@ pub(crate) struct Shell {
     announcer: Announcer,
     last_toast: Option<(u64, String)>,
     toast_announcer: Announcer,
+
+    /// Screens the story opened, in opening order (rebuilt from the VM).
+    story_screens: Vec<StoryScreen>,
+    /// The HUD that took the current press, to give it the release.
+    hud_pointer: Option<usize>,
+    /// Closing transitions still playing.
+    ghosts: Vec<Ghost>,
+    /// Data screens of the stack and the seconds since they opened.
+    stack_opened: HashMap<usize, f32>,
+    /// The next screens built from the VM appear without transition (a
+    /// rollback, a load).
+    cut_screen_fx: bool,
 }
 
 pub(crate) fn make_texts(language: &str, overrides: &HashMap<String, Vec<(String, String)>>) -> Texts {
@@ -430,6 +463,11 @@ impl Shell {
             announcer: Announcer::default(),
             last_toast: None,
             toast_announcer: Announcer::default(),
+            story_screens: Vec::new(),
+            hud_pointer: None,
+            ghosts: Vec::new(),
+            stack_opened: HashMap::new(),
+            cut_screen_fx: false,
         };
         shell.apply_prefs_effects();
         shell.refresh_slots();
@@ -607,6 +645,7 @@ impl Shell {
     /// instead of typing it out again.
     pub fn install_vm(&mut self, vm: Vm, instant: bool) {
         self.leave_music();
+        self.cut_screen_fx = true;
         let director = Director::resumed(vm, self.loc.clone());
         self.install_game(director);
         self.play_time = 0.0;
@@ -647,7 +686,25 @@ impl Shell {
     /// transitions, skip / auto, toasts): the host must keep drawing frames.
     /// `false` means a still image until the next input.
     pub fn is_animating(&self) -> bool {
-        if !self.toasts.is_empty() {
+        if !self.toasts.is_empty() || !self.ghosts.is_empty() {
+            return true;
+        }
+        // An opening transition still playing.
+        let opening = |asset: &orbit_ui::ScreenAsset, elapsed: f32| {
+            asset
+                .transition_in
+                .as_ref()
+                .is_some_and(|t| !self.prefs.reduced_motion && elapsed < t.seconds())
+        };
+        if self
+            .story_screens
+            .iter()
+            .any(|s| opening(s.screen.asset(), s.elapsed))
+            || self
+                .stack_opened
+                .iter()
+                .any(|(i, e)| self.data.get(*i).is_some_and(|d| opening(d.asset(), *e)))
+        {
             return true;
         }
         if self.top().is_some() {
@@ -689,6 +746,7 @@ impl Shell {
             return false;
         }
         self.leave_music();
+        self.cut_screen_fx = true;
         let director = Director::resumed(vm, self.loc.clone());
         self.install_game(director);
         self.play_time = loaded.data.meta.play_time_secs as f32;
@@ -730,6 +788,8 @@ impl Shell {
         self.flush_persistent();
         self.leave_music();
         self.game = None;
+        self.cut_screen_fx = true;
+        self.sync_story_screens();
         self.stack.clear();
         self.refresh_slots();
         self.refresh_main_menu();
@@ -1218,6 +1278,9 @@ impl Shell {
         for screen in &mut self.data {
             screen.set_texts(&texts);
         }
+        for s in &mut self.story_screens {
+            s.screen.set_texts(&texts);
+        }
         self.end_banner = None;
         if let Some(game) = &mut self.game {
             game.set_localizer(self.loc.clone(), &self.theme);
@@ -1262,6 +1325,9 @@ impl Shell {
         for screen in &mut self.data {
             screen.set_theme(&theme);
         }
+        for s in &mut self.story_screens {
+            s.screen.set_theme(&theme);
+        }
         if let Some(game) = &mut self.game {
             game.set_theme(&theme);
         }
@@ -1278,6 +1344,12 @@ impl Shell {
     pub fn set_ui_bundle(&mut self, bundle: &UiBundle) {
         self.data.clear();
         self.stack.clear();
+        // Story screens are rebuilt from the new assets at the next sync.
+        self.story_screens.clear();
+        self.ghosts.clear();
+        self.stack_opened.clear();
+        self.hud_pointer = None;
+        self.cut_screen_fx = true;
         let ctx = self.data_context();
         let texts = self.texts.clone();
         if let Some(project_theme) = &bundle.theme {
@@ -1398,6 +1470,9 @@ impl Shell {
             return;
         }
         let ctx = self.data_context();
+        for s in &mut self.story_screens {
+            s.screen.set_context(ctx.clone());
+        }
         let mut showing: Vec<usize> = self
             .stack
             .iter()
@@ -1427,8 +1502,11 @@ impl Shell {
     /// data screen with `pauses_game`.
     pub fn game_paused(&self) -> bool {
         match self.top() {
-            None => false,
-            Some(Overlay::Custom(i)) => self.data[i].pauses_game(),
+            // A story screen pauses the game when it asks to (a HUD never).
+            None => self
+                .story_modal()
+                .is_some_and(|i| self.story_screens[i].screen.asset().effective_pauses_game()),
+            Some(Overlay::Custom(i)) => self.data[i].asset().effective_pauses_game(),
             Some(_) => true,
         }
     }
@@ -1476,11 +1554,13 @@ impl Shell {
             }
             Overlay::Prefs => self.prefs_screen.set_view(self.prefs_view()),
             Overlay::History => self.history.set_view(self.history_view()),
-            Overlay::Custom(_) => {
+            Overlay::Custom(i) => {
                 if self.slots_wanted {
                     self.refresh_slots();
                 }
                 self.sync_data();
+                self.stack_opened.insert(i, 0.0);
+                self.ghosts.retain(|g| !matches!(g.screen, GhostScreen::Data(d) if d == i));
             }
         }
         self.stack.push(overlay);
@@ -1488,6 +1568,18 @@ impl Shell {
 
     fn close_top(&mut self) {
         let popped = self.stack.pop();
+        if let Some(Overlay::Custom(i)) = popped {
+            self.stack_opened.remove(&i);
+            if self.data[i].asset().transition_out.is_some()
+                && !self.prefs.reduced_motion
+                && !self.stack.contains(&Overlay::Custom(i))
+            {
+                self.ghosts.push(Ghost {
+                    screen: GhostScreen::Data(i),
+                    elapsed: 0.0,
+                });
+            }
+        }
         if (popped == Some(Overlay::Prefs) || matches!(popped, Some(Overlay::Custom(_))))
             && self.prefs_timer.is_some()
         {
@@ -1507,6 +1599,141 @@ impl Shell {
             Overlay::Prefs => &mut self.prefs_screen,
             Overlay::History => &mut self.history,
         }
+    }
+
+    // ------------------------------------------------------- story screens
+
+    /// Makes the story screens match the screens open in the VM (UI-14):
+    /// new ones are built with their parameters, gone ones play their
+    /// closing transition. A screen id the project does not have is closed
+    /// at once (with a warning) so the story never waits for it forever.
+    fn sync_story_screens(&mut self) {
+        for _ in 0..4 {
+            let wanted: Vec<OpenScreenState> = match &self.game {
+                Some(game) => game.director.vm().open_screens().to_vec(),
+                None => Vec::new(),
+            };
+            let same = wanted.len() == self.story_screens.len()
+                && wanted.iter().zip(&self.story_screens).all(|(w, s)| *w == s.state);
+            if same {
+                self.cut_screen_fx = false;
+                return;
+            }
+            let cut = std::mem::take(&mut self.cut_screen_fx) || self.prefs.reduced_motion;
+            if cut {
+                self.ghosts.clear();
+            }
+            let ctx = self.data_context();
+            let mut old = std::mem::take(&mut self.story_screens);
+            let mut unknown = Vec::new();
+            for state in wanted {
+                if let Some(at) = old.iter().position(|o| o.state == state) {
+                    self.story_screens.push(old.remove(at));
+                    continue;
+                }
+                let Some(asset) = self.data.iter().find(|d| d.id() == state.screen).map(|d| d.asset().clone())
+                else {
+                    unknown.push(state.screen.clone());
+                    continue;
+                };
+                let screen =
+                    DataScreen::with_params(asset, &self.theme, &self.texts, ctx.clone(), state.params.clone());
+                self.story_screens.push(StoryScreen {
+                    state,
+                    screen,
+                    elapsed: if cut { f32::INFINITY } else { 0.0 },
+                });
+            }
+            self.hud_pointer = None;
+            if !cut {
+                for o in old {
+                    if o.screen.asset().transition_out.is_some() {
+                        self.ghosts.push(Ghost {
+                            screen: GhostScreen::Story(Box::new(o.screen)),
+                            elapsed: 0.0,
+                        });
+                    }
+                }
+            }
+            if unknown.is_empty() {
+                return;
+            }
+            let theme = self.theme.clone();
+            for id in unknown {
+                log::warn!("the story opens the screen `{id}`, which the project does not have: closed");
+                if let Some(game) = &mut self.game {
+                    game.close_screen(&id, None, &theme);
+                }
+            }
+        }
+    }
+
+    /// The topmost story screen that is not a HUD: it takes the input.
+    fn story_modal(&self) -> Option<usize> {
+        self.story_screens.iter().rposition(|s| !s.screen.is_hud())
+    }
+
+    /// Runs the events of the story screen `screen`: closing it goes back
+    /// to the story (with the close value), anything else is a normal event.
+    fn apply_story_events(&mut self, screen: &str, events: Vec<UiEvent>) {
+        let mut closed = false;
+        for event in events {
+            match event {
+                UiEvent::Back | UiEvent::CloseAll | UiEvent::BackWith(_) if closed => {}
+                UiEvent::Back | UiEvent::CloseAll => {
+                    closed = true;
+                    self.close_story_screen(screen, None);
+                }
+                UiEvent::BackWith(value) => {
+                    closed = true;
+                    self.close_story_screen(screen, Some(value));
+                }
+                other => self.apply(other),
+            }
+        }
+        self.sync_story_screens();
+    }
+
+    fn close_story_screen(&mut self, screen: &str, value: Option<Value>) {
+        let theme = self.theme.clone();
+        if let Some(game) = &mut self.game {
+            game.close_screen(screen, value, &theme);
+        }
+        self.sync_story_screens();
+        self.pump_audio();
+        self.check_game_state();
+    }
+
+    /// The look of a screen `elapsed` seconds after it opened (`opening`) or
+    /// closed; `None` once a closing transition is over.
+    fn screen_fx(
+        &self,
+        asset: &orbit_ui::ScreenAsset,
+        elapsed: f32,
+        opening: bool,
+    ) -> Option<orbit_ui::ScreenFx> {
+        let t = if opening { &asset.transition_in } else { &asset.transition_out };
+        let Some(t) = t.as_ref().filter(|_| !self.prefs.reduced_motion) else {
+            return opening.then_some(orbit_ui::ScreenFx::NONE);
+        };
+        let story = &self.story;
+        match transition_shown(t, elapsed, opening, &|n| story.curves.get(n).cloned()) {
+            Some(shown) => Some(t.fx(shown, CANVAS)),
+            None => opening.then_some(orbit_ui::ScreenFx::NONE),
+        }
+    }
+
+    /// Draws `screen` through its transition state.
+    fn draw_with_fx(ctx: &mut DrawCtx, screen: &mut DataScreen, fx: orbit_ui::ScreenFx) {
+        let start = ctx.scene.len();
+        screen.draw(ctx);
+        apply_screen_fx(ctx.scene, start, fx, CANVAS);
+    }
+
+    /// Story screens, read only (tests, preview).
+    #[cfg(test)]
+    pub(crate) fn story_screens(&self) -> &[StoryScreen] {
+        &self.story_screens
     }
 
     // ---------------------------------------------------------------- events
@@ -1559,7 +1786,7 @@ impl Shell {
             UiEvent::Custom { name, args } => self.effects.push(Effect::Custom { name, args }),
             UiEvent::VarOp(op) => self.apply_var_op(&op),
             UiEvent::SceneGoto(scene) => self.goto_scene(&scene),
-            UiEvent::Back => self.close_top(),
+            UiEvent::Back | UiEvent::BackWith(_) => self.close_top(),
             UiEvent::ReturnToMainMenu => self.leave_game(),
             UiEvent::Quit => {
                 self.on_exit();
@@ -1567,6 +1794,7 @@ impl Shell {
             }
             UiEvent::Rollback => self.rollback(),
             UiEvent::RollbackTo(id) => {
+                self.cut_screen_fx = true;
                 let theme = self.theme.clone();
                 if let Some(game) = &mut self.game
                     && game.rollback_to(id as u64, &theme)
@@ -1659,6 +1887,7 @@ impl Shell {
             UiEvent::ResetPreferences => self.reset_preferences(),
         }
         self.sync_data();
+        self.sync_story_screens();
         self.pump_audio();
     }
 
@@ -1671,6 +1900,7 @@ impl Shell {
     }
 
     fn rollback(&mut self) {
+        self.cut_screen_fx = true;
         let theme = self.theme.clone();
         if let Some(game) = &mut self.game {
             game.rollback(&theme);
@@ -1682,6 +1912,7 @@ impl Shell {
     /// screens (the jump goes through the VM, so rollback, history and saves
     /// stay consistent). At the title there is no game: ignored.
     fn goto_scene(&mut self, scene: &str) {
+        self.cut_screen_fx = true;
         let theme = self.theme.clone();
         let Some(game) = &mut self.game else {
             log::warn!("scene jump to `{scene}` ignored: no game is running");
@@ -1697,6 +1928,7 @@ impl Shell {
     }
 
     fn roll_forward(&mut self) {
+        self.cut_screen_fx = true;
         let theme = self.theme.clone();
         if let Some(game) = &mut self.game {
             game.roll_forward(&theme);
@@ -1738,6 +1970,7 @@ impl Shell {
     fn after_input(&mut self) {
         self.pump_audio();
         self.check_game_state();
+        self.sync_story_screens();
     }
 
     fn hotkey(&mut self, key: Hotkey) {
@@ -1773,7 +2006,65 @@ impl Shell {
             self.apply_all(events);
             return;
         }
+        if self.story_input(input) {
+            return;
+        }
         self.game_input(input);
+    }
+
+    /// Input for the screens the story opened (UI-14): the topmost one that
+    /// is not a HUD takes everything (except clicks on the quick menu, so
+    /// rollback stays at hand); otherwise a HUD takes a press on one of its
+    /// controls and the release that follows, and the rest goes to the game.
+    /// Returns whether the input was used.
+    fn story_input(&mut self, input: UiInput) -> bool {
+        self.sync_story_screens();
+        let on_quick = |sh: &mut Self, p: [f32; 2]| sh.quick.wants_pointer(p);
+        if let Some(i) = self.story_modal() {
+            match input {
+                UiInput::PointerDown(p) | UiInput::PointerUp(p) if on_quick(self, p) => return false,
+                _ => {}
+            }
+            let id = self.story_screens[i].state.screen.clone();
+            let has_cancel = !self.story_screens[i].screen.asset().on_cancel.is_empty();
+            let events = self.story_screens[i].screen.handle(input);
+            if input == UiInput::Cancel && events.is_empty() && !has_cancel {
+                // A screen that cannot be cancelled: the pause menu still opens.
+                self.apply(UiEvent::OpenPause);
+                return true;
+            }
+            self.apply_story_events(&id, events);
+            return true;
+        }
+        match input {
+            UiInput::PointerMove(_) => {
+                for s in &mut self.story_screens {
+                    s.screen.handle(input);
+                }
+                false
+            }
+            UiInput::PointerDown(p) => {
+                let hit = self
+                    .story_screens
+                    .iter_mut()
+                    .rposition(|s| s.screen.ui().wants_pointer(p));
+                let Some(i) = hit else { return false };
+                self.hud_pointer = Some(i);
+                let id = self.story_screens[i].state.screen.clone();
+                let events = self.story_screens[i].screen.handle(input);
+                self.apply_story_events(&id, events);
+                true
+            }
+            UiInput::PointerUp(_) => {
+                let Some(i) = self.hud_pointer.take() else { return false };
+                let Some(s) = self.story_screens.get_mut(i) else { return false };
+                let id = s.state.screen.clone();
+                let events = s.screen.handle(input);
+                self.apply_story_events(&id, events);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Input on the bare game view (no screen on top).
@@ -1841,6 +2132,28 @@ impl Shell {
         if let Some(top) = top {
             self.screen(top).update(dt);
         }
+        // Screen transitions (UI-16) run on real time, paused game or not.
+        for s in &mut self.story_screens {
+            s.elapsed += dt;
+            s.screen.update(dt);
+        }
+        for t in self.stack_opened.values_mut() {
+            *t += dt;
+        }
+        for g in &mut self.ghosts {
+            g.elapsed += dt;
+        }
+        let ghosts = std::mem::take(&mut self.ghosts);
+        self.ghosts = ghosts
+            .into_iter()
+            .filter(|g| {
+                let asset = match &g.screen {
+                    GhostScreen::Story(s) => s.asset(),
+                    GhostScreen::Data(i) => self.data[*i].asset(),
+                };
+                self.screen_fx(asset, g.elapsed, false).is_some()
+            })
+            .collect();
 
         if !self.game_paused() && self.game.is_some() {
             self.play_time += dt;
@@ -1852,6 +2165,7 @@ impl Shell {
             self.check_game_state();
             self.check_autosave(dt);
         }
+        self.sync_story_screens();
         self.autosave_cooldown = (self.autosave_cooldown - dt).max(0.0);
         self.sync_quick_view();
 
@@ -2110,6 +2424,44 @@ impl Shell {
             }
             None => self.main_screen().draw(ctx),
         }
+        if self.game.is_some() && !covered {
+            // Story screens (UI-14): HUDs sit on their own layer under the
+            // textbox and hide with the interface or behind a menu; the
+            // others are drawn over the game, below the menus.
+            let menus = self.top().is_some();
+            let fxs: Vec<Option<orbit_ui::ScreenFx>> = self
+                .story_screens
+                .iter()
+                .map(|s| self.screen_fx(s.screen.asset(), s.elapsed, true))
+                .collect();
+            for (s, fx) in self.story_screens.iter_mut().zip(fxs) {
+                if s.screen.is_hud() && (menus || !show_dialogue) {
+                    continue;
+                }
+                Self::draw_with_fx(ctx, &mut s.screen, fx.unwrap_or(orbit_ui::ScreenFx::NONE));
+            }
+        }
+        // Closing transitions.
+        let ghost_fx: Vec<Option<orbit_ui::ScreenFx>> = self
+            .ghosts
+            .iter()
+            .map(|g| {
+                let asset = match &g.screen {
+                    GhostScreen::Story(s) => s.asset(),
+                    GhostScreen::Data(i) => self.data[*i].asset(),
+                };
+                self.screen_fx(asset, g.elapsed, false)
+            })
+            .collect();
+        let mut ghosts = std::mem::take(&mut self.ghosts);
+        for (g, fx) in ghosts.iter_mut().zip(ghost_fx) {
+            let Some(fx) = fx else { continue };
+            match &mut g.screen {
+                GhostScreen::Story(s) => Self::draw_with_fx(ctx, s, fx),
+                GhostScreen::Data(i) => Self::draw_with_fx(ctx, &mut self.data[*i], fx),
+            }
+        }
+        self.ghosts = ghosts;
         // A modal data screen is drawn over the screen below it.
         if let Some(Overlay::Custom(i)) = self.top()
             && self.data[i].is_modal()
@@ -2119,7 +2471,16 @@ impl Shell {
             self.screen(below).draw(ctx);
         }
         if let Some(top) = self.top() {
-            self.screen(top).draw(ctx);
+            match top {
+                Overlay::Custom(i) => {
+                    let elapsed = self.stack_opened.get(&i).copied().unwrap_or(f32::INFINITY);
+                    let fx = self
+                        .screen_fx(self.data[i].asset(), elapsed, true)
+                        .unwrap_or(orbit_ui::ScreenFx::NONE);
+                    Self::draw_with_fx(ctx, &mut self.data[i], fx);
+                }
+                other => self.screen(other).draw(ctx),
+            }
         }
         self.toasts.draw(ctx);
     }

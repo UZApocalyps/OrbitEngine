@@ -47,6 +47,9 @@ pub enum Flow {
     Transition { elapsed: f32, duration: f32 },
     /// The story is over.
     Ended,
+    /// The story waits for the player to close the screen it opened (an
+    /// `OpenScreen { wait: true }` node, UI-14): see `Director::close_screen`.
+    Screen(String),
     /// The VM failed; the message is meant for the player/author.
     Failed(String),
 }
@@ -453,6 +456,29 @@ impl Director {
             Interaction::Choice { options, .. } => {
                 Flow::Choice(options.iter().map(|o| self.text(o.string_id)).collect())
             }
+            Interaction::Screen { screen, .. } => Flow::Screen(screen.clone()),
+        }
+    }
+
+    /// The player closed `screen`, a screen the story opened, with the value
+    /// of its `CloseWith` action (`None`: a plain close or Escape). When the
+    /// story was waiting for it, it runs on. Returns `false` (nothing
+    /// changed) for a screen the story did not open.
+    pub fn close_screen(&mut self, screen: &str, result: Option<orbit_core::Value>) -> bool {
+        match self.vm.close_screen(screen, result) {
+            Ok(waited) => {
+                for warning in self.vm.take_warnings() {
+                    log::warn!("{warning}");
+                }
+                if waited && matches!(self.flow, Flow::Screen(_)) {
+                    self.run();
+                }
+                true
+            }
+            Err(err) => {
+                log::warn!("{err}");
+                false
+            }
         }
     }
 
@@ -542,6 +568,11 @@ impl Director {
                 StepResult::Choice { node, options } => {
                     self.progress += 1;
                     self.present(Interaction::Choice { node, options }, false);
+                    return;
+                }
+                StepResult::Screen { node, screen } => {
+                    self.progress += 1;
+                    self.present(Interaction::Screen { node, screen }, false);
                     return;
                 }
                 StepResult::WaitTime(seconds) => {

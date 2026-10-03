@@ -913,10 +913,8 @@ impl DataScreen {
             // Row values were written in when the button was built.
             UiAction::CloseWith(operand) => Some(match operand.eval(&|n| self.lookup(n, None)) {
                 Some(value) => UiEvent::BackWith(value),
-                None => {
-                    log::warn!("screen `{}`: the close value {operand:?} has no value", self.asset.id);
-                    UiEvent::Back
-                }
+                // No value (e.g. an unknown variable): a plain close.
+                None => UiEvent::Back,
             }),
         });
     }
@@ -1667,5 +1665,76 @@ mod tests {
         let mut s = DataScreen::new(from_ron(A11Y_SCREEN).unwrap(), &Theme::default(), &Texts::builtin("en"), c);
         assert!(s.ui().find(5).is_none());
         assert!(s.ui().find(4).is_some());
+    }
+
+    const BAG_SCREEN: &str = r#"(id: "bag", root: (kind: Stack(dir: Vertical), children: [
+        (kind: Repeat(source: Var("bag"), empty: Some(Literal("Nothing"))), children: [
+            (kind: Button(text: Bind(Item), action: [
+                VarSet((var: "bag", op: Remove, value: Item)),
+                CloseWith(Item),
+            ])),
+            (kind: Label(text: Bind(ItemIndex))),
+        ]),
+        (kind: Button(text: Bind(Param("who")), action: [CloseWith(Param("who"))])),
+    ]))"#;
+
+    fn bag_screen(items: &[&str]) -> DataScreen {
+        let mut c = ctx();
+        c.vars.insert(
+            "bag".into(),
+            Value::list(orbit_core::ScalarType::Str, items.iter().map(|s| Value::from(*s))),
+        );
+        DataScreen::with_params(
+            from_ron(BAG_SCREEN).unwrap(),
+            &Theme::default(),
+            &Texts::builtin("en"),
+            c,
+            vec![("who".into(), Value::from("Aiko"))],
+        )
+    }
+
+    #[test]
+    fn a_repeat_builds_one_row_per_element_with_item_actions() {
+        let mut s = bag_screen(&["key", "map"]);
+        // Tags: row 0 button (1), row 1 button (2), the param button (3).
+        let remove = |v: &str| {
+            UiEvent::VarOp(VarOp::new(
+                "bag",
+                orbit_core::OpKind::Remove,
+                orbit_core::Operand::Lit(Value::from(v)),
+            ))
+        };
+        assert_eq!(
+            click(&mut s, 2),
+            vec![remove("map"), UiEvent::BackWith(Value::from("map"))]
+        );
+        // The local change rebuilt the list: one row left.
+        assert!(s.ui().find(3).is_none());
+        assert_eq!(
+            click(&mut s, 2),
+            vec![UiEvent::BackWith(Value::from("Aiko"))],
+            "parameters are read by bindings and close values"
+        );
+        let mut s = bag_screen(&["key", "map"]);
+        assert_eq!(
+            click(&mut s, 1),
+            vec![remove("key"), UiEvent::BackWith(Value::from("key"))]
+        );
+    }
+
+    #[test]
+    fn an_empty_repeat_shows_its_empty_text() {
+        let mut s = bag_screen(&[]);
+        // Only the parameter button remains.
+        assert!(s.ui().find(1).is_some() && s.ui().find(2).is_none());
+        assert_eq!(s.params(), &[("who".to_owned(), Value::from("Aiko"))]);
+        // A bigger list from the shell rebuilds the rows.
+        let mut c = ctx();
+        c.vars.insert(
+            "bag".into(),
+            Value::list(orbit_core::ScalarType::Str, [Value::from("x")]),
+        );
+        s.set_context(c);
+        assert!(s.ui().find(2).is_some());
     }
 }

@@ -10,6 +10,15 @@ use crate::RenderError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TextureId(pub(crate) u32);
 
+impl TextureId {
+    /// An id no renderer ever hands out, for GPU-free tests of code that
+    /// builds scenes.
+    #[doc(hidden)]
+    pub const fn placeholder() -> Self {
+        TextureId(u32::MAX)
+    }
+}
+
 /// How a texture is created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextureOptions {

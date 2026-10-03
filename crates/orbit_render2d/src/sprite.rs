@@ -299,6 +299,12 @@ impl Scene {
         &self.sprites
     }
 
+    /// The sprites pushed so far, to adjust them after the fact (a screen
+    /// transition fades or moves everything a screen drew).
+    pub fn sprites_mut(&mut self) -> &mut [Sprite2d] {
+        &mut self.sprites
+    }
+
     /// Adds a triangle mesh, clipped to the active clip stack. It is sorted
     /// with the sprites by (layer, `z`), then submission order.
     pub fn push_mesh(&mut self, mut mesh: Mesh2d) {

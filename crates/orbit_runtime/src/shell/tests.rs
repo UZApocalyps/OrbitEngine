@@ -9,6 +9,7 @@ use orbit_ui::UiBundle;
 
 mod a11y;
 mod splashes;
+mod story_screens;
 
 const DEMO: &str = include_str!("../../../../examples/stories/test_minimal.ron");
 const FR: &str = include_str!("../../../../examples/stories/i18n/test_minimal.fr.ron");
