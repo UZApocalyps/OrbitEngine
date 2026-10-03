@@ -58,6 +58,8 @@ pub struct EditorApp {
     egui_wake: Option<Instant>,
     retry_wake: Option<Instant>,
     skipped: u32,
+    /// The GPU device was lost and the quit was requested.
+    device_lost_handled: bool,
     deadline: Option<Instant>,
     deadline_hit: bool,
     preview_capture_done: bool,
@@ -187,6 +189,7 @@ impl EditorApp {
             egui_wake: None,
             retry_wake: None,
             skipped: 0,
+            device_lost_handled: false,
             deadline,
             deadline_hit: false,
             preview_capture_done: false,
@@ -357,6 +360,25 @@ impl EditorApp {
     }
 }
 
+impl EditorApp {
+    /// Once the GPU device is lost (driver reset / TDR, GPU removed), every
+    /// wgpu call silently fails and egui-wgpu panics in `update_buffers`:
+    /// stop painting, save what can be saved and quit with a clear message.
+    /// Returns whether the frame must be abandoned.
+    fn stop_if_device_lost(&mut self) -> bool {
+        let Some(reason) = self.preview.gfx().device_lost() else {
+            return false;
+        };
+        if !self.device_lost_handled {
+            self.device_lost_handled = true;
+            log::error!("GPU device lost ({reason}); the editor closes");
+            self.core.shutdown();
+            self.host.push(HostRequest::Quit);
+        }
+        true
+    }
+}
+
 impl App for EditorApp {
     fn update(&mut self, _dt: Duration) {
         if let Some(deadline) = self.deadline
@@ -372,6 +394,9 @@ impl App for EditorApp {
         self.retry_wake = None;
         let (width, height) = self.preview.gfx().size();
         if width == 0 || height == 0 || self.window.inner_size().width == 0 {
+            return;
+        }
+        if self.stop_if_device_lost() {
             return;
         }
         for (level, message) in logging::drain() {
@@ -430,6 +455,11 @@ impl App for EditorApp {
         }
 
         // ---- paint
+        // The preview may have lost the device just above: egui-wgpu would
+        // panic in `update_buffers` (`write_buffer_with` returns `None`).
+        if self.stop_if_device_lost() {
+            return;
+        }
         let jobs = self.egui_ctx.tessellate(shapes, pixels_per_point);
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [width, height],

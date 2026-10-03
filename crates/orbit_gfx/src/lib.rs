@@ -49,6 +49,8 @@ pub struct Gfx {
     config: wgpu::SurfaceConfiguration,
     target_factory: TargetFactory,
     pub(crate) sprites: SpritePipeline,
+    /// Set by wgpu's device-lost callback: see [`Gfx::device_lost`].
+    lost: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Gfx {
@@ -96,6 +98,22 @@ impl Gfx {
                 ..Default::default()
             })
             .await?;
+        // A lost device (driver reset / TDR, GPU removed) makes wgpu fail every
+        // later call *silently* (no validation panic): record it so that the
+        // caller can stop instead of tripping over `None` results downstream.
+        let lost = std::sync::Arc::new(std::sync::Mutex::new(None));
+        {
+            let lost = lost.clone();
+            device.set_device_lost_callback(move |reason, message| {
+                let text = format!("{reason:?}: {message}");
+                if reason != wgpu::DeviceLostReason::Destroyed {
+                    log::error!("GPU device lost ({text})");
+                }
+                if let Ok(mut slot) = lost.lock() {
+                    slot.get_or_insert(text);
+                }
+            });
+        }
 
         let mut config = surface
             .get_default_config(&adapter, size.0.max(1), size.1.max(1))
@@ -117,9 +135,19 @@ impl Gfx {
             config,
             target_factory,
             sprites,
+            lost,
         };
         gfx.resize(size.0, size.1);
         Ok(gfx)
+    }
+
+    /// Why the GPU device was lost, if it was (driver reset, GPU removed...).
+    /// Once lost, the device and everything created from it are unusable:
+    /// wgpu turns every call into a silent no-op (`Queue::write_buffer_with`
+    /// returns `None`, which egui-wgpu turns into a panic), so frames must
+    /// stop being recorded.
+    pub fn device_lost(&self) -> Option<String> {
+        self.lost.lock().ok().and_then(|slot| slot.clone())
     }
 
     /// Current surface size in physical pixels.
