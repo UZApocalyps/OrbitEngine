@@ -1495,10 +1495,22 @@ fn generic_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
     ui.add_space(4.0);
     let (plugin_id, kind, version) = (plugin_id.clone(), kind.clone(), *version);
     let data = data.clone();
+    // Fields declared by the plugin (M8-04): typed widgets; otherwise the
+    // generic editor of the open data.
+    let schema: Vec<orbit_plugin_api::FieldDef> = ctx
+        .registry()
+        .project
+        .node_type(&plugin_id, &kind)
+        .map(|t| t.def.fields.clone())
+        .unwrap_or_default();
     let mut changed: Option<CustomData> = None;
     card(ui, |ui| {
         ui.set_width(ui.available_width());
-        changed = fields::custom_data_editor(ui, egui::Id::new(("custom", id)), &data);
+        changed = if schema.is_empty() {
+            fields::custom_data_editor(ui, egui::Id::new(("custom", id)), &data)
+        } else {
+            fields::custom_fields_editor(ui, egui::Id::new(("custom", id)), story, &schema, &data)
+        };
     });
     if let Some(d) = changed {
         commit(

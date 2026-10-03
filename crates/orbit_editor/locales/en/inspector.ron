@@ -199,6 +199,7 @@
     "field.custom.bool": "Yes / no",
     "field.custom.list": "List",
     "field.custom.table": "Table",
+    "field.custom.pick_variable": "(choose a variable)",
     "field.add_item": "+ item",
     "field.add_entry": "+ entry",
     "varop.choose_var": "variable…",

@@ -62,6 +62,7 @@ pub use runtime::{
     escape_markup,
     parse_translation_index,
 };
+pub use orbit_vm::SharedPluginHost;
 pub use shell::AutosaveConfig;
 pub use stage::{
     CharacterPlacement, Stage3d, StageCharacter, StageEffect, StageState, character_placement,

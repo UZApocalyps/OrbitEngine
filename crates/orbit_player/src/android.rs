@@ -59,7 +59,7 @@ fn android_main(app: AndroidApp) {
             }) as Arc<dyn PakRead>)
         }),
     );
-    if let Err(err) = crate::run_launch(launch()) {
+    if let Err(err) = crate::run_launch(launch(), None) {
         log::error!("player failed: {err}");
     }
 }

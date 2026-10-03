@@ -63,6 +63,16 @@ const WINDOWS_README: &str = "Double-click the .exe to play. Saves are kept in y
 const LINUX_README: &str = "Run the executable to play (chmod +x it if your archive tool dropped the \
 permission). Saves are kept under ~/.local/share. Needs a Vulkan or OpenGL capable GPU driver.\n";
 
+/// `true` when `target` is the platform this exporter runs on (a player
+/// built locally with cargo, as for plugins, can only target it).
+pub(crate) fn is_host_target(target: ExportTarget) -> bool {
+    match target {
+        ExportTarget::Windows => cfg!(windows),
+        ExportTarget::Linux => cfg!(target_os = "linux"),
+        _ => false,
+    }
+}
+
 pub(crate) struct Written {
     pub output: PathBuf,
     pub files: Vec<PathBuf>,

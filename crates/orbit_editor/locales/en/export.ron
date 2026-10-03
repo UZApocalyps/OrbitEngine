@@ -41,6 +41,10 @@
     "export.templates": "Templates",
     "export.templates_default": "next to the editor (default)",
     "export.templates_hint": "Folder of the player templates (windows/, linux/, web/). Empty: the `templates` folder next to the editor.",
+    "export.plugins.title": "Plugins",
+    "export.plugins.crates": "Rust plugin crates (plugins/): {crates}",
+    "export.plugins.toolchain_ok": "Rust toolchain found: {version}",
+    "export.plugins.note": "Desktop exports build a player with these plugins (cargo build, a few minutes the first time). Web and Android exports are not available with plugins yet.",
 
     // run, results, journal
     "export.unsaved_warning": "The story has unsaved changes: they will be saved before the export.",

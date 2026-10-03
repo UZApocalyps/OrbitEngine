@@ -1,6 +1,6 @@
 [package]
 name = "orbit_plugin_api"
-description = "OrbitEngine plugin API, project side: manifest, custom nodes, validators, importers, MCP tools, hooks. No GPU and no egui; compiles to wasm."
+description = "OrbitEngine plugin API: manifest, custom nodes (editor schema + runtime handlers), UI actions, validators, importers, MCP tools, hooks. No GPU and no egui; compiles to wasm."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 orbit_core.workspace = true
 orbit_project.workspace = true
+orbit_vm.workspace = true
 thiserror.workspace = true
 
 [lints]

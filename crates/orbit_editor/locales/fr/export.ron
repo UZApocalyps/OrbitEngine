@@ -41,6 +41,10 @@
     "export.templates": "Templates",
     "export.templates_default": "à côté de l'éditeur (par défaut)",
     "export.templates_hint": "Dossier des templates de player (windows/, linux/, web/). Vide : le dossier `templates` à côté de l'éditeur.",
+    "export.plugins.title": "Plugins",
+    "export.plugins.crates": "Crates de plugins Rust (plugins/) : {crates}",
+    "export.plugins.toolchain_ok": "Toolchain Rust trouvée : {version}",
+    "export.plugins.note": "Les exports bureau construisent un player avec ces plugins (cargo build, quelques minutes la première fois). Les exports web et Android ne sont pas encore disponibles avec des plugins.",
 
     // run, results, journal
     "export.unsaved_warning": "L'histoire a des modifications non enregistrées : elles seront enregistrées avant l'export.",

@@ -11,6 +11,7 @@
 mod error;
 mod event;
 mod history;
+mod plugin;
 mod rollback;
 mod seek;
 mod state;
@@ -30,6 +31,9 @@ pub use event::{ChoiceView, PresentationEvent, StepResult};
 pub use history::{
     BacklogEntry, BacklogItem, Checkpoint, DEFAULT_BACKLOG_CAPACITY, DEFAULT_HISTORY_CAPACITY,
     Presentation, RollbackHistory,
+};
+pub use plugin::{
+    Handled, PluginContext, PluginEvent, PluginHost, PluginOutcome, SharedPluginHost,
 };
 pub use rollback::scene_events;
 pub use seek::{ChoiceStep, SeekLimits, SeekOutcome, SeekPath, seek};

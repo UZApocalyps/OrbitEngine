@@ -67,3 +67,24 @@ ADR 0005 a reporté le scripting au M8 et posé des invariants : l'état de jeu 
 * Le plan M8 est conservé ; précisions : M8-01 inclut l'API transactionnelle et le `ModuleResolver` en mémoire ; M8-06 inclut les annotations d'ID et la fusion par diff.
 * Le scripting ne peut pas exprimer d'attente (choix assumé) ; les mini-jeux temps réel passent par un plugin Rust ou un écran UI (ADR 0016).
 * Revue sécurité (opus) obligatoire sur la configuration de l'`Engine` avant fusion de M8-01.
+
+## Addendum M8-04 : plugins Rust runtime (implémenté)
+
+Approches examinées pour exécuter `NodeKind::Custom` :
+
+1. **Intercepter `PresentationEvent::Custom` dans le player, après coup.** Écarté : l'événement arrive quand le VM est déjà passé au nœud suivant, donc un plugin ne peut ni bloquer, ni influencer un `If` qui suit dans le même `step()`.
+2. **Trait hôte dans `orbit_vm`, implémenté par `orbit_plugin_api`** (retenu). `orbit_vm::PluginHost` (`run_node`, `run_action`) est attaché à chaque `Vm` (`set_plugin_host`), hors `VmState` : aucun format de save, de pak ni d'histoire ne change. `orbit_plugin_api::RuntimeRegistry` l'implémente ; le runtime ne dépend que d'`orbit_vm`.
+3. **Plugins dynamiques (dylib/WASM).** Écarté (ADR 0005) : liaison statique.
+
+Décisions :
+
+* `API_VERSION` = 1. `RuntimeRegistry::install` et `ProjectRegistry::install` refusent toute autre version (`PluginError::IncompatibleApi`), un id invalide ou un doublon.
+* Handlers `NodeHandler` / `UiActionHandler` : `&self`, `Send + Sync`. Ils reçoivent un `PluginContext` : lecture des variables (avec leurs propres écritures en attente), `eval(Condition)`, RNG seedé du VM (`random_u64`, `random_range` sans biais, `random_f64`), `apply(VarOp)` / `set`, `emit(événement)`, `warn`, `fail`. Le VM applique tout **après** le handler, en tout ou rien : une opération refusée ou un `fail` annule le nœud (RNG non avancé) avec un avertissement.
+* Résultat d'un nœud : `PluginOutcome::Continue` ou `Wait(secondes)` (→ `StepResult::WaitTime`). Pas d'attente d'entrée joueur ni de saut de port (les nœuds custom n'ont qu'une sortie) : un mini-jeu interactif passe par un écran UI dont les boutons appellent des actions custom.
+* Événements : `PresentationEvent::Custom { plugin_id, kind: nom, data }` ; l'événement générique du nœud reste émis en premier (compatibilité éditeur).
+* **Rollback et saves** : un plugin ne garde aucun état de jeu. Son état « sérialisable déclaré » = des variables de l'histoire, désignées par des champs `FieldKind::Variable(type)` que la validation vérifie (variable déclarée, bon type). Le RNG est dans `VmState`. Rejouer depuis un snapshot redonne le même résultat (testé).
+* `UiAction::Custom { name: "<plugin>.<action>", args }` (UI-18) : la `Shell` l'envoie au VM (`Vm::run_ui_action`), dont les écritures patchent le checkpoint affiché comme `apply_var_op` ; au titre, seules les variables persistantes existent. Sans handler : `Effect::Custom` vers l'hôte, comme avant.
+* Plugin absent au Play : nœud ignoré + avertissement. À l'export : erreur si un plugin requis n'est fourni par aucune crate de `plugins/`.
+* Schéma de champs : `NodeTypeDef::fields: Vec<FieldDef>` (`Int`/`Float` bornés, `Bool`, `Text`, `Variable`, `Choice`) → inspecteur typé dans l'éditeur et validation (`check_fields`).
+* Export « avec plugins » (`orbit_export::plugins`) : crates dans `plugins/<crate>/`, ids déclarés dans `[package.metadata.orbit] plugins = [...]`, fonction `orbit_plugins()`. Le panneau Export détecte `cargo` ; l'exporteur génère `Cargo.toml` + `src/main.rs` + `src/plugins.rs` (crate hors workspace) qui appelle `orbit_player::run_with_plugins`, lance `cargo build --release` et utilise l'exécutable comme template. Sources du moteur : `ORBIT_ENGINE_SRC` ou l'arbre de compilation. Seule la plateforme hôte (Windows/Linux) est supportée ; web/Android avec plugins : refus explicite (à faire).
+* Hooks de dessin : non fournis (reportés) ; un plugin présente ses résultats via des événements ou des variables affichées par l'UI.

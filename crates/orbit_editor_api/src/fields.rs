@@ -1001,6 +1001,110 @@ pub fn simple_condition_editor(
 
 // ---------------------------------------------------------------- custom data
 
+/// Editor of a plugin node's data built from the fields its plugin declared
+/// (`NodeTypeDef::fields`, M8-04): one typed widget per field, labels being
+/// plugin text keys (or plain text). Keys the plugin does not declare are
+/// kept untouched. Returns the new data after a change.
+pub fn custom_fields_editor(
+    ui: &mut Ui,
+    salt: egui::Id,
+    story: &Story,
+    fields: &[orbit_plugin_api::FieldDef],
+    data: &CustomData,
+) -> Option<CustomData> {
+    use orbit_plugin_api::FieldKind;
+    let mut entries = match data {
+        CustomData::Map(entries) => entries.clone(),
+        _ => Vec::new(),
+    };
+    let mut changed = false;
+    for f in fields {
+        let current = entries.iter().find(|(k, _)| *k == f.key).map(|(_, v)| v.clone());
+        let label = ui.t(&f.label);
+        let new = field(ui, &label, |ui| {
+            let response_help = |ui: &mut Ui| {
+                if !f.help.is_empty() {
+                    ui.label(RichText::new("?").color(weak(ui)))
+                        .on_hover_text(ui.t(&f.help));
+                }
+            };
+            let out = match &f.kind {
+                FieldKind::Int { min, max } => {
+                    let old = current.as_ref().and_then(CustomData::as_int).unwrap_or(*min);
+                    let mut v = old;
+                    ui.add(DragValue::new(&mut v).range(*min..=*max).speed(0.2));
+                    (current.is_none() || v != old).then_some(CustomData::Int(v))
+                }
+                FieldKind::Float { min, max } => {
+                    let old = match current {
+                        Some(CustomData::Float(x)) => x,
+                        _ => *min,
+                    };
+                    let mut v = old;
+                    ui.add(DragValue::new(&mut v).range(*min..=*max).speed(0.05));
+                    (current.is_none() || v != old).then_some(CustomData::Float(v))
+                }
+                FieldKind::Bool => {
+                    let old = current.as_ref().and_then(CustomData::as_bool).unwrap_or(false);
+                    checkbox(ui, old, "").map(CustomData::Bool)
+                }
+                FieldKind::Text => {
+                    let old = current.as_ref().and_then(CustomData::as_str).unwrap_or("").to_owned();
+                    let mut v = old.clone();
+                    ui.add(
+                        TextEdit::singleline(&mut v)
+                            .id_salt(salt.with(&f.key))
+                            .desired_width(f32::INFINITY),
+                    );
+                    (v != old).then_some(CustomData::Str(v))
+                }
+                FieldKind::Variable(ty) => {
+                    let old = current.as_ref().and_then(CustomData::as_str).unwrap_or("").to_owned();
+                    let mut v = old.clone();
+                    let shown = if old.is_empty() { ui.t("field.custom.pick_variable") } else { old.clone() };
+                    ComboBox::from_id_salt(salt.with(&f.key))
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            for decl in story
+                                .variables
+                                .iter()
+                                .filter(|d| ty.is_none_or(|t| d.initial.value_type() == t))
+                            {
+                                ui.selectable_value(&mut v, decl.name.clone(), &decl.name);
+                            }
+                        });
+                    (v != old).then_some(CustomData::Str(v))
+                }
+                FieldKind::Choice(options) => {
+                    let old = current.as_ref().and_then(CustomData::as_str).unwrap_or("").to_owned();
+                    let mut v = old.clone();
+                    ComboBox::from_id_salt(salt.with(&f.key))
+                        .selected_text(ui.t(&old))
+                        .show_ui(ui, |ui| {
+                            for o in options {
+                                ui.selectable_value(&mut v, o.clone(), ui.t(o));
+                            }
+                        });
+                    (v != old).then_some(CustomData::Str(v))
+                }
+            };
+            response_help(ui);
+            out
+        });
+        if let Some(problem) = f.kind.check(&f.key, current.as_ref()) {
+            ui.label(RichText::new(problem).small().color(warning(ui)));
+        }
+        if let Some(value) = new {
+            changed = true;
+            match entries.iter_mut().find(|(k, _)| *k == f.key) {
+                Some(slot) => slot.1 = value,
+                None => entries.push((f.key.clone(), value)),
+            }
+        }
+    }
+    changed.then_some(CustomData::Map(entries))
+}
+
 /// Generic editor of the open data of a plugin node, used when the plugin
 /// provides no inspector of its own. Returns the new value after a change.
 pub fn custom_data_editor(ui: &mut Ui, salt: egui::Id, data: &CustomData) -> Option<CustomData> {
