@@ -158,12 +158,6 @@ pub enum ValidationWarning {
     PossibleInfiniteLoop(NodeId),
     #[error("every option of choice {0} has a condition: the player may get stuck")]
     AllOptionsConditional(NodeId),
-    /// `Motion::Rigged` is reserved: the poster image is drawn instead.
-    #[error("character {character}, expression `{expression}`: rigged animation is not supported yet, the still image is used")]
-    RiggedUnsupported {
-        character: CharacterId,
-        expression: String,
-    },
     /// Execution reaches the end of `scene` without a jump, an `End` or a
     /// `Return`: the game ends there (scenes never fall into the next one).
     /// `node` is the last node reached, `None` for an empty scene.
@@ -214,4 +208,6 @@ pub enum AnimationIssue {
     BadFrameSize,
     #[error("an image sequence needs at least 1 image")]
     EmptySequence,
+    #[error("a rigged expression needs the name of a clip")]
+    NoRigClip,
 }

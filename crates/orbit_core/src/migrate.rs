@@ -31,6 +31,12 @@
 //!   `CloseScreen` and the contextual operands (`Operand::Item`, `ItemIndex`,
 //!   `ItemKey`, `Param`). Purely additive: a v11 document is a valid v12
 //!   document.
+//! * v12 -> v13 (M5A-07 / M5A-08): background layers and particle emitters.
+//!   Purely additive.
+//! * v13 -> v14 (M5B-07, ADR 0013): `Motion::Rigged` gets its payload (rig,
+//!   skin, clip, loop mode) and `AssetKind::Rig` is added. The old unit
+//!   `Rigged`, which never had an effect, is dropped (the expression becomes
+//!   a still image: nothing changes on screen).
 
 use std::borrow::Cow;
 
@@ -97,7 +103,7 @@ fn leading_version(source: &str) -> Option<u32> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11, v11_to_v12, v12_to_v13];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11, v11_to_v12, v12_to_v13, v13_to_v14];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -119,7 +125,11 @@ fn migrate_with<'a>(
             current,
         });
     }
-    let mut text = source.to_owned();
+    let mut text = if from < 14 {
+        drop_unit_rigged(source).into_owned()
+    } else {
+        source.to_owned()
+    };
     for version in from..current {
         let step = steps
             .get((version - 1) as usize)
@@ -334,6 +344,82 @@ fn v10_to_v11(source: &str) -> Result<String, CoreError> {
 
     let mut story: Story = ron::from_str(source)?;
     story.schema_version = 11;
+    story.to_ron()
+}
+
+/// Before v14 an expression could carry the reserved unit `Rigged` motion
+/// (never given an effect: the poster was drawn). v14 gives `Rigged` a
+/// payload, so the old value is dropped from the text *before* any step
+/// parses it: the expression becomes a still image, the picture on screen
+/// does not change. Matches `motion: Some(Rigged)` and `motion: Rigged`
+/// (implicit `Some`) with any spacing, plus the comma that follows.
+fn drop_unit_rigged(source: &str) -> Cow<'_, str> {
+    let bytes = source.as_bytes();
+    let mut out = String::new();
+    let mut copied = 0;
+    let mut from = 0;
+    while let Some(found) = source[from..].find("motion") {
+        let start = from + found;
+        from = start + "motion".len();
+        let boundary_before =
+            start == 0 || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
+        if !boundary_before {
+            continue;
+        }
+        let skip_ws = |mut i: usize| {
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            i
+        };
+        let mut i = skip_ws(from);
+        if bytes.get(i) != Some(&b':') {
+            continue;
+        }
+        i = skip_ws(i + 1);
+        let some = source[i..].starts_with("Some");
+        if some {
+            i = skip_ws(i + 4);
+            if bytes.get(i) != Some(&b'(') {
+                continue;
+            }
+            i = skip_ws(i + 1);
+        }
+        if !source[i..].starts_with("Rigged") {
+            continue;
+        }
+        i = skip_ws(i + "Rigged".len());
+        if some {
+            if bytes.get(i) != Some(&b')') {
+                continue;
+            }
+            i = skip_ws(i + 1);
+        } else if bytes.get(i) == Some(&b'(') {
+            continue;
+        }
+        if bytes.get(i) == Some(&b',') {
+            i += 1;
+        }
+        out.push_str(&source[copied..start]);
+        copied = i;
+        from = i;
+    }
+    if copied == 0 {
+        return Cow::Borrowed(source);
+    }
+    out.push_str(&source[copied..]);
+    Cow::Owned(out)
+}
+
+/// v13 -> v14 (M5B-07, ADR 0013): `Motion::Rigged` gets its payload
+/// ([`crate::defs::RiggedMotion`]) and `AssetKind::Rig` is added. The old
+/// unit `Rigged` was already dropped from the text by [`drop_unit_rigged`]
+/// (see [`migrate_with`]); only the version number changes here.
+fn v13_to_v14(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 14;
     story.to_ron()
 }
 
@@ -797,7 +883,12 @@ mod tests {
         story.characters[0].expressions.push(crate::defs::Expression {
             name: "r".into(),
             image,
-            motion: Some(Motion::Rigged),
+            motion: Some(Motion::Rigged(crate::defs::RiggedMotion {
+                rig: crate::ids::AssetId::new(),
+                skin: None,
+                clip: "idle".into(),
+                loop_mode: LoopMode::Loop,
+            })),
         });
         let again = Story::from_ron_unchecked(&story.to_ron().unwrap()).unwrap();
         assert_eq!(story, again);

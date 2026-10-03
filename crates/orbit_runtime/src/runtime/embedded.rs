@@ -882,8 +882,9 @@ impl Runtime {
             story
                 .character(c.character)
                 .and_then(|ch| ch.expression(&c.expression))
-                .and_then(|e| e.animation())
-                .is_some_and(|a| a.is_animated())
+                .is_some_and(|e| {
+                    e.animation().is_some_and(|a| a.is_animated()) || e.rigged().is_some()
+                })
         })
     }
 

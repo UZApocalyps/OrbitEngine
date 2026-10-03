@@ -232,11 +232,18 @@ impl Cx<'_> {
         use crate::error::AnimationIssue as I;
         let Some(motion) = &e.motion else { return };
         let anim = match motion {
-            Motion::Rigged => {
-                self.warnings.push(ValidationWarning::RiggedUnsupported {
-                    character,
-                    expression: e.name.clone(),
-                });
+            Motion::Rigged(r) => {
+                // The clip, skin and pictures live in the rig file: they
+                // are checked with the project's files (editor, MCP,
+                // `orbit_project`), not by the story alone.
+                if r.clip.trim().is_empty() {
+                    self.errors.push(ValidationError::InvalidAnimation {
+                        character,
+                        expression: e.name.clone(),
+                        issue: I::NoRigClip,
+                    });
+                }
+                self.check_asset(None, r.rig, AssetKind::Rig);
                 return;
             }
             Motion::Animation(a) => a,
@@ -1786,12 +1793,35 @@ mod tests {
     }
 
     #[test]
-    fn rigged_only_warns() {
-        let report = with_motion(crate::defs::Motion::Rigged);
-        assert!(report.is_ok(), "{report:?}");
+    fn rigged_needs_a_rig_asset_and_a_clip() {
+        use crate::defs::{LoopMode, Motion, RiggedMotion};
+        let rigged = |rig, clip: &str| {
+            Motion::Rigged(RiggedMotion {
+                rig,
+                skin: None,
+                clip: clip.into(),
+                loop_mode: LoopMode::Loop,
+            })
+        };
+        // Unknown asset.
+        let report = with_motion(rigged(AssetId::new(), "idle"));
+        assert!(matches!(report.errors[0], ValidationError::UnknownAsset { .. }));
+        // Right kind of asset, empty clip name.
+        let mut s = Story::new("t");
+        character(&mut s);
+        let rig = asset(&mut s, AssetKind::Rig, "assets/rigs/a.rig.ron");
+        s.characters[0].expressions[0].motion = Some(rigged(rig, " "));
+        let l = label();
+        let j = node(NodeKind::Jump { target: l.id });
+        let say = say(&mut s);
+        let mut s = with_nodes(s, vec![say, j, l, node(NodeKind::End)]);
+        let report = validate(&s);
         assert!(matches!(
-            report.warnings[0],
-            ValidationWarning::RiggedUnsupported { .. }
+            report.errors[0],
+            ValidationError::InvalidAnimation { .. }
         ));
+        // All good.
+        s.characters[0].expressions[0].motion = Some(rigged(rig, "idle"));
+        assert!(validate(&s).is_ok());
     }
 }

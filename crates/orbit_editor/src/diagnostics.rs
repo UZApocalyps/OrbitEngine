@@ -213,9 +213,6 @@ fn warning_location(warning: &ValidationWarning) -> Option<Location> {
         ValidationWarning::SceneEndsGame {
             scene, node: None, ..
         } => Some(Location::Scene(*scene)),
-        ValidationWarning::RiggedUnsupported { character, .. } => {
-            Some(Location::Character(*character))
-        }
         _ => None,
     }
 }
@@ -234,13 +231,6 @@ pub fn describe_warning(
         W::UnreachableNode(n) => (Some(*n), texts.get("problem.unreachable_node")),
         W::PossibleInfiniteLoop(n) => (Some(*n), texts.get("problem.infinite_loop")),
         W::SceneEndsGame { node, .. } => (*node, texts.get("problem.scene_ends_game")),
-        W::RiggedUnsupported { expression, .. } => (
-            None,
-            texts.format(
-                "problem.rigged_unsupported",
-                &[("expression", expression)],
-            ),
-        ),
         W::UnknownCurve { owner, name } => (
             match owner {
                 orbit_core::CurveOwner::Node(n) => Some(*n),

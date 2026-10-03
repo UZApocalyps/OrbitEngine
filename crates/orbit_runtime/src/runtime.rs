@@ -1261,6 +1261,8 @@ impl Runtime {
                     Some(game) => {
                         let mut scene = Scene::new();
                         let fx = game.director.stage_fx();
+                        self.anim_clock
+                            .set_reduced_motion(game.director.reduced_motion());
                         match game.director.transition() {
                             Some(tr) => self.anim_clock.sync([&tr.from, game.director.stage()]),
                             None => self.anim_clock.sync([game.director.stage()]),
@@ -1820,6 +1822,11 @@ pub(crate) fn stage_scene(
         );
     }
     for (i, c) in stage.characters.iter().enumerate() {
+        if crate::rigs::push_rigged_character(
+            renderer, store, story, c, anims, stage_fx, i as f32, scene,
+        ) {
+            continue;
+        }
         let Some(frame) = character_frame(renderer, store, story, c, anims) else {
             continue;
         };

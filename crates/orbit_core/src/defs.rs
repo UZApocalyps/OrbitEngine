@@ -137,14 +137,70 @@ pub fn builtin_position(position: &Position) -> Option<(f32, f32)> {
 /// `image` stays the *poster*: the picture used by thumbnails and as a
 /// fallback while the frames are not loaded (the editor keeps it on the
 /// first frame / the sheet).
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Expression {
     pub name: String,
     pub image: AssetId,
     /// `None` for a still image (not written to a RON file then).
-    #[serde(default)]
     pub motion: Option<Motion>,
+}
+
+thread_local! {
+    static LEGACY_MOTION_LAYOUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` (a binary decode of a game pack of version 1 to 4) with the
+/// layout those packs were written with: before schema v14 `Motion::Rigged`
+/// had no payload. Such an expression is read as a still image (it never
+/// had an effect). Postcard is not self-describing, so the reader has to be
+/// told; frozen, never remove (backward compatibility).
+pub fn with_legacy_motion_layout<R>(f: impl FnOnce() -> R) -> R {
+    let before = LEGACY_MOTION_LAYOUT.with(|c| c.replace(true));
+    let out = f();
+    LEGACY_MOTION_LAYOUT.with(|c| c.set(before));
+    out
+}
+
+impl<'de> Deserialize<'de> for Expression {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            name: String,
+            image: AssetId,
+            #[serde(default)]
+            motion: Option<Motion>,
+        }
+        /// `Motion` before v14.
+        #[derive(Deserialize)]
+        enum LegacyMotion {
+            Animation(Animation),
+            Rigged,
+        }
+        #[derive(Deserialize)]
+        struct Legacy {
+            name: String,
+            image: AssetId,
+            motion: Option<LegacyMotion>,
+        }
+        if !deserializer.is_human_readable() && LEGACY_MOTION_LAYOUT.with(std::cell::Cell::get) {
+            let l = Legacy::deserialize(deserializer)?;
+            return Ok(Expression {
+                name: l.name,
+                image: l.image,
+                motion: match l.motion {
+                    Some(LegacyMotion::Animation(a)) => Some(Motion::Animation(a)),
+                    Some(LegacyMotion::Rigged) | None => None,
+                },
+            });
+        }
+        let r = Raw::deserialize(deserializer)?;
+        Ok(Expression {
+            name: r.name,
+            image: r.image,
+            motion: r.motion,
+        })
+    }
 }
 
 /// Same trick as [`Character`]: `motion` is only left out of human readable
@@ -183,10 +239,24 @@ impl Expression {
         }
     }
 
-    /// Every asset this expression needs (poster first, then the frames),
-    /// without duplicates.
+    /// The rig clip, when this expression plays one.
+    pub fn rigged(&self) -> Option<&RiggedMotion> {
+        match &self.motion {
+            Some(Motion::Rigged(r)) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// Every asset this expression needs (poster first, then the frames or
+    /// the rig), without duplicates. The pictures a rig uses are named by
+    /// the rig file itself.
     pub fn assets(&self) -> Vec<AssetId> {
         let mut out = vec![self.image];
+        if let Some(r) = self.rigged()
+            && !out.contains(&r.rig)
+        {
+            out.push(r.rig);
+        }
         if let Some(a) = self.animation() {
             for id in a.frames.assets() {
                 if !out.contains(&id) {
@@ -204,9 +274,27 @@ impl Expression {
 pub enum Motion {
     /// Frame animation (sprite sheet or image sequence).
     Animation(Animation),
-    /// Skeletal animation. Reserved: not supported yet (validation warns,
-    /// the poster image is drawn).
-    Rigged,
+    /// Skeletal animation (schema v14, ADR 0013): a clip of a `.rig.ron`
+    /// asset. The `image` of the expression stays the poster.
+    Rigged(RiggedMotion),
+}
+
+/// A clip of a rig asset played by an expression (ADR 0013 §4). Rig units
+/// are the pixels of the expression's poster image, the rig origin sits at
+/// the poster's bottom-center (the character's anchor).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct RiggedMotion {
+    /// The `.rig.ron` asset (kind `Rig`).
+    pub rig: AssetId,
+    /// Skin (outfit) of the rig; `None`: the default skin.
+    #[serde(default)]
+    pub skin: Option<String>,
+    /// Name of the clip to play.
+    pub clip: String,
+    /// What happens at the end of the clip (overrides the clip's own).
+    #[serde(default)]
+    pub loop_mode: LoopMode,
 }
 
 /// What to do when the last frame is reached.
@@ -348,6 +436,9 @@ pub enum AssetKind {
     /// A TTF/OTF font. Added without a schema bump: stories that do not use
     /// it are unchanged, and older builds never wrote it.
     Font,
+    /// A `.rig.ron` 2D skeleton (ADR 0013, schema v14). Appended last so
+    /// that older paks keep their (postcard) encoding.
+    Rig,
 }
 
 impl std::fmt::Display for AssetKind {
@@ -357,7 +448,8 @@ impl std::fmt::Display for AssetKind {
             AssetKind::Music => "music",
             AssetKind::Sound => "sound",
             AssetKind::Scene3d => "scene3d",
-            AssetKind::Font => "font",
+            AssetKind::Rig => "rig",
+            AssetKind::Font =>"font",
         })
     }
 }

@@ -40,7 +40,33 @@ pub struct StageCharacter {
 pub struct AnimClock {
     now: f32,
     starts: std::collections::HashMap<(CharacterId, String), f32>,
+    /// Expression changes of a character, for the cross-fade of rig clips
+    /// (M5B-07): keyed by the character and its *new* expression.
+    fades: std::collections::HashMap<(CharacterId, String), ExpressionFade>,
+    /// Reduced motion: rigs hold their first pose and never cross-fade.
+    frozen: bool,
 }
+
+/// The expression a character just left, kept while a rig cross-fades.
+#[derive(Clone, Debug, PartialEq)]
+struct ExpressionFade {
+    previous: String,
+    previous_started: f32,
+    changed_at: f32,
+}
+
+/// A rig cross-fade in progress: the expression being left, its own clip
+/// time, and the weight of the new one (`0..1`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RigFade {
+    pub previous: String,
+    pub previous_elapsed: f32,
+    pub weight: f32,
+}
+
+/// Length (seconds) of the cross-fade between the clips of two expressions
+/// of the same rig (ADR 0013 §2: the default blend).
+pub const RIG_BLEND: f32 = 0.2;
 
 impl AnimClock {
     /// A clock where every character of `stage` started `time` seconds ago
@@ -67,12 +93,38 @@ impl AnimClock {
         for stage in stages {
             for c in &stage.characters {
                 alive.push((c.character, c.expression.as_str()));
-                self.starts
-                    .entry((c.character, c.expression.clone()))
-                    .or_insert(self.now);
+                let key = (c.character, c.expression.clone());
+                if self.starts.contains_key(&key) {
+                    continue;
+                }
+                // A new expression for a character already standing there:
+                // remember what it left (the other entry of the character
+                // that is not on screen any more).
+                let left = self
+                    .starts
+                    .iter()
+                    .filter(|((who, name), _)| *who == c.character && *name != c.expression)
+                    .filter(|((who, name), _)| {
+                        !alive.iter().any(|(w, n)| w == who && *n == name.as_str())
+                    })
+                    .map(|((_, name), start)| (name.clone(), *start))
+                    .next();
+                if let Some((previous, previous_started)) = left {
+                    self.fades.insert(
+                        key.clone(),
+                        ExpressionFade {
+                            previous,
+                            previous_started,
+                            changed_at: self.now,
+                        },
+                    );
+                }
+                self.starts.insert(key, self.now);
             }
         }
         self.starts
+            .retain(|(who, name), _| alive.iter().any(|(w, n)| w == who && *n == name.as_str()));
+        self.fades
             .retain(|(who, name), _| alive.iter().any(|(w, n)| w == who && *n == name.as_str()));
     }
 
@@ -81,6 +133,36 @@ impl AnimClock {
         self.starts
             .get(&(character, expression.to_owned()))
             .map_or(0.0, |start| (self.now - start).max(0.0))
+    }
+
+    /// [`AnimClock::elapsed`] for a rig clip: 0 under reduced motion (the
+    /// first pose is held).
+    pub fn rig_elapsed(&self, character: CharacterId, expression: &str) -> f32 {
+        if self.frozen {
+            0.0
+        } else {
+            self.elapsed(character, expression)
+        }
+    }
+
+    /// Reduced motion on / off. Frame animations are not affected (they are
+    /// the author's choice); rigs hold their first pose and do not fade.
+    pub fn set_reduced_motion(&mut self, on: bool) {
+        self.frozen = on;
+    }
+
+    /// The cross-fade of `character` towards `expression`, while it lasts.
+    pub fn rig_fade(&self, character: CharacterId, expression: &str) -> Option<RigFade> {
+        if self.frozen {
+            return None;
+        }
+        let f = self.fades.get(&(character, expression.to_owned()))?;
+        let weight = (self.now - f.changed_at) / RIG_BLEND;
+        (weight < 1.0).then(|| RigFade {
+            previous: f.previous.clone(),
+            previous_elapsed: (self.now - f.previous_started).max(0.0),
+            weight: weight.clamp(0.0, 1.0),
+        })
     }
 }
 

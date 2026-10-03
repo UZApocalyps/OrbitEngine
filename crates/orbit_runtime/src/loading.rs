@@ -186,11 +186,27 @@ pub struct AssetStore {
     library3d_requested: std::sync::atomic::AtomicBool,
     fonts: HashSet<String>,
     new_fonts: Vec<Vec<u8>>,
+    /// Parsed `.rig.ron` skeletons by manifest path (M5B-07). The pictures
+    /// they draw are textures of `textures`, under the paths the rig names.
+    rigs: HashMap<String, Arc<orbit_anim::rig::PreparedRig>>,
 }
 
 impl AssetStore {
     pub fn texture(&self, path: &str) -> Option<TextureId> {
         self.textures.get(path).copied()
+    }
+
+    /// A loaded rig.
+    pub fn rig(&self, path: &str) -> Option<&Arc<orbit_anim::rig::PreparedRig>> {
+        self.rigs.get(path)
+    }
+
+    pub(crate) fn insert_rig(&mut self, path: &str, rig: Arc<orbit_anim::rig::PreparedRig>) {
+        self.rigs.insert(path.to_owned(), rig);
+    }
+
+    pub(crate) fn insert_rig_texture(&mut self, path: &str, texture: TextureId) {
+        self.textures.insert(path.to_owned(), texture);
     }
 
     pub fn sound(&self, path: &str) -> Option<&Sound> {
@@ -227,7 +243,8 @@ impl AssetStore {
         if self.scenes3d.contains_key(path) {
             return true;
         }
-        self.textures.contains_key(path)
+        self.rigs.contains_key(path)
+            || self.textures.contains_key(path)
             || self.sounds.contains_key(path)
             || self.fonts.contains(path)
     }
@@ -246,7 +263,7 @@ impl AssetStore {
             renderer.release_texture(texture);
         }
         let sound = self.sounds.remove(path);
-        let font = self.fonts.remove(path);
+        let font = self.fonts.remove(path) | self.rigs.remove(path).is_some();
         #[cfg(feature = "3d")]
         let font = font || self.scenes3d.remove(path).is_some();
         texture.is_some() || sound.is_some() || font
@@ -258,6 +275,7 @@ impl AssetStore {
             renderer.release_texture(texture);
         }
         self.sounds.clear();
+        self.rigs.clear();
         #[cfg(feature = "3d")]
         {
             self.scenes3d.clear();
@@ -276,6 +294,7 @@ enum Handle {
     #[cfg(feature = "3d")]
     Library3d(Box<crate::library3d::LibraryLoad>),
     Font(AssetHandle<Vec<u8>>),
+    Rig(Box<crate::rigs::RigLoad>),
 }
 
 /// One manifest asset being loaded.
@@ -299,6 +318,7 @@ impl PendingAsset {
             #[cfg(feature = "3d")]
             Handle::Library3d(l) => l.is_done(),
             Handle::Font(h) => !matches!(h.poll(), AssetPoll::Loading),
+            Handle::Rig(r) => r.is_done(),
         }
     }
 }
@@ -362,6 +382,7 @@ pub fn start_loading_only(
                 continue;
             }
             AssetKind::Font => Handle::Font(loader.load_bytes(&entry.path)),
+            AssetKind::Rig => Handle::Rig(Box::new(crate::rigs::RigLoad::start(loader, &entry.path))),
         };
         pending.push(PendingAsset {
             path: entry.path.clone(),
@@ -438,6 +459,7 @@ pub fn finish_loading(
                 }
                 other => failures.push(describe_failure(&asset.path, &other)),
             },
+            Handle::Rig(load) => failures.extend(load.finish(renderer, store, &asset.path)),
         }
     }
     for failure in &failures {

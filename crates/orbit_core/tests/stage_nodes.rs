@@ -9,10 +9,10 @@ const V12: &str = include_str!("../../../examples/fixtures/compat/v12/story.ron"
 
 #[test]
 fn a_v12_story_gains_nothing_but_the_version_number() {
-    // Schema v13 is purely additive: no new node appears in a migrated v12
+    // Schema v13 was purely additive: no new node appears in a migrated v12
     // document, and the nodes it had are still there.
     let story = Story::from_ron_unchecked(V12).unwrap();
-    assert_eq!(story.schema_version, 13);
+    assert_eq!(story.schema_version, orbit_core::CURRENT_SCHEMA_VERSION);
     let text = story.to_ron().unwrap();
     assert!(!text.contains("BackgroundLayers") && !text.contains("Particles"));
     assert!(text.contains("OpenScreen") && text.contains("CloseScreen"));

@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 accesskit.workspace = true
 orbit_core.workspace = true
+orbit_anim.workspace = true
 orbit_vm.workspace = true
 orbit_platform.workspace = true
 orbit_render2d.workspace = true

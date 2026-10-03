@@ -48,6 +48,7 @@ pub mod library3d;
 pub mod loading;
 pub mod overlay;
 pub mod preview;
+pub mod rigs;
 mod runtime;
 pub mod scene_view;
 mod shell;

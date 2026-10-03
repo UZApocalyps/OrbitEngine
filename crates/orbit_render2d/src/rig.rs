@@ -14,6 +14,10 @@ pub struct RigPlacement {
     pub position: [f32; 2],
     /// Uniform scale of rig units to virtual pixels.
     pub scale: f32,
+    /// Vertical stretch on top of `scale` (1 = uniform).
+    pub aspect: f32,
+    /// Rotation (radians, clockwise on screen) around `position`.
+    pub rotation: f32,
     pub flip_x: bool,
     pub flip_y: bool,
     pub layer: Layer,
@@ -27,6 +31,8 @@ impl Default for RigPlacement {
         Self {
             position: [0.0, 0.0],
             scale: 1.0,
+            aspect: 1.0,
+            rotation: 0.0,
             flip_x: false,
             flip_y: false,
             layer: Layer::CHARACTERS,
@@ -40,8 +46,16 @@ impl RigPlacement {
     /// Rig space → world.
     pub fn matrix(&self) -> Affine {
         let sx = if self.flip_x { -self.scale } else { self.scale };
-        let sy = if self.flip_y { -self.scale } else { self.scale };
-        Affine { a: sx, b: 0.0, c: 0.0, d: sy, tx: self.position[0], ty: self.position[1] }
+        let sy = if self.flip_y { -self.scale } else { self.scale } * self.aspect;
+        let (sin, cos) = self.rotation.sin_cos();
+        Affine {
+            a: cos * sx,
+            b: sin * sx,
+            c: -sin * sy,
+            d: cos * sy,
+            tx: self.position[0],
+            ty: self.position[1],
+        }
     }
 }
 

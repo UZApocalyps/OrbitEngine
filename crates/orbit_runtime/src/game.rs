@@ -207,8 +207,12 @@ impl Game {
             self.story
                 .character(c.character)
                 .and_then(|ch| ch.expression(&c.expression))
-                .and_then(|e| e.animation())
-                .is_some_and(orbit_core::Animation::is_animated)
+                .is_some_and(|e| {
+                    e.animation().is_some_and(orbit_core::Animation::is_animated)
+                        // A rig clip plays on the shared clock, also while a
+                        // line is typed or waits for a click.
+                        || (e.rigged().is_some() && !self.director.reduced_motion())
+                })
         })
     }
 

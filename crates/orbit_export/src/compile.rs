@@ -39,6 +39,38 @@ pub struct Compiled {
     pub warnings: Vec<String>,
 }
 
+/// The distinct picture paths a `.rig.ron` draws (empty, with a warning,
+/// when the file cannot be read: the game then shows the poster).
+fn rig_images(rig: &AssetFile, warnings: &mut Vec<String>) -> Vec<String> {
+    let loaded = std::fs::read_to_string(&rig.source)
+        .map_err(|e| e.to_string())
+        .and_then(|t| orbit_anim::rig::load_rig(&t).map_err(|e| e.to_string()));
+    let rig_file = match loaded {
+        Ok(r) => r.rig,
+        Err(e) => {
+            warnings.push(format!("rig `{}` cannot be read: {e}", rig.path));
+            return Vec::new();
+        }
+    };
+    let mut out: Vec<String> = Vec::new();
+    for skin in &rig_file.skins {
+        for attachment in skin.attachments.values() {
+            let path = attachment.image();
+            let unsafe_path = path.is_empty()
+                || path.starts_with('/')
+                || path.contains('\\')
+                || path.contains(':')
+                || path.split('/').any(|p| p == "..");
+            if unsafe_path {
+                warnings.push(format!("rig `{}` draws `{path}`: not a project path", rig.path));
+            } else if !out.iter().any(|p| p == path) {
+                out.push(path.to_owned());
+            }
+        }
+    }
+    out
+}
+
 fn read_text(path: &Path) -> Result<String> {
     std::fs::read_to_string(path).map_err(ExportError::io(path))
 }
@@ -333,6 +365,30 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
                 path: entry.path.clone(),
                 source,
             });
+        }
+    }
+    // The pictures a used rig draws are named by the rig file (project
+    // paths): they ship with it even when the story declares them nowhere.
+    let rig_files: Vec<AssetFile> = assets
+        .iter()
+        .filter(|a| {
+            story
+                .assets
+                .assets
+                .iter()
+                .any(|e| e.path == a.path && e.kind == orbit_core::AssetKind::Rig)
+        })
+        .cloned()
+        .collect();
+    for rig in rig_files {
+        for image in rig_images(&rig, &mut warnings) {
+            let source = project.root.join(&image);
+            if !source.is_file() {
+                warnings.push(format!("rig `{}` draws `{image}`, which does not exist", rig.path));
+                missing.push(image);
+            } else if seen.insert(image.clone()) {
+                assets.push(AssetFile { path: image, source });
+            }
         }
     }
     if !missing.is_empty() {

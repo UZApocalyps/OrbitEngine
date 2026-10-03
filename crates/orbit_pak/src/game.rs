@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! "ORBITGAM"  magic (8 bytes)
-//! version     u32 LE  (3, or 4 for a game with 3D content, see below)
+//! version     u32 LE  (3; 4 for a game with 3D content, 5 for a rigged one, see below)
 //! postcard    GamePack
 //! ```
 //!
@@ -36,9 +36,19 @@ const MAGIC: &[u8; 8] = b"ORBITGAM";
 /// picks the lowest version that can hold the game ([`GamePack::to_bytes`]
 /// writes 3, [`GamePack::to_bytes_with_3d`] writes 4): a 2D game stays
 /// readable by older players.
-pub const PACK_VERSION: u32 = 4;
+///
+/// Version 5 (schema v14) changes the layout of `Motion::Rigged`, which now
+/// has a payload (rig, skin, clip, loop mode), and adds the `Rig` asset
+/// kind. It is written only for a game with a rigged expression
+/// ([`GamePack::to_bytes`] and [`GamePack::to_bytes_with_3d`] pick it by
+/// themselves); versions 1 to 4 are read with the layout of their time
+/// (`orbit_core::with_legacy_motion_layout`: the old unit `Rigged`, which
+/// never had an effect, reads as a still image).
+pub const PACK_VERSION: u32 = 5;
 /// Version written for a game without pak-level 3D content.
 pub const BASE_PACK_VERSION: u32 = 3;
+/// Version written for a game with pak-level 3D content.
+pub const PACK_VERSION_3D: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum PackError {
@@ -106,7 +116,7 @@ impl GamePack {
 
     /// Encodes a game whose pak holds 3D content (`3d/` entries): version 4.
     pub fn to_bytes_with_3d(&self) -> Result<Vec<u8>, PackError> {
-        self.encode(PACK_VERSION)
+        self.encode(PACK_VERSION_3D)
     }
 
     /// The version number of an encoded pack (`None`: not a pack).
@@ -119,7 +129,18 @@ impl GamePack {
             .map(|b| u32::from_le_bytes(b.try_into().expect("4 bytes")))
     }
 
+    /// Whether an expression of the game plays a rig clip (such a game needs
+    /// pack version 5).
+    pub fn uses_rigs(&self) -> bool {
+        self.story
+            .characters
+            .iter()
+            .flat_map(|c| &c.expressions)
+            .any(|e| e.rigged().is_some())
+    }
+
     fn encode(&self, version: u32) -> Result<Vec<u8>, PackError> {
+        let version = if self.uses_rigs() { PACK_VERSION } else { version };
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(&version.to_le_bytes());
@@ -145,29 +166,37 @@ impl GamePack {
             return Err(PackError::UnsupportedVersion { found: version });
         }
         let body = &bytes[12..];
-        if version == 1 {
-            let old: GamePackV1 =
-                postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))?;
-            return Ok(GamePack {
-                info: old.info,
-                story: old.story.into(),
-                translations: old.translations,
-                ui: None,
-            });
+        let decode = || {
+            if version == 1 {
+                let old: GamePackV1 =
+                    postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))?;
+                return Ok(GamePack {
+                    info: old.info,
+                    story: old.story.into(),
+                    translations: old.translations,
+                    ui: None,
+                });
+            }
+            if version == 2 {
+                let old: GamePackV2 =
+                    postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))?;
+                return Ok(GamePack {
+                    info: old.info,
+                    story: old.story.into(),
+                    translations: old.translations,
+                    ui: old.ui,
+                });
+            }
+            // Versions 3 and 4 share the layout of version 5 except for the
+            // rigged motion (handled by the flag above).
+            postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))
+        };
+        if version <= 4 {
+            // `Motion::Rigged` had no payload before version 5.
+            orbit_core::with_legacy_motion_layout(decode)
+        } else {
+            decode()
         }
-        if version == 2 {
-            let old: GamePackV2 =
-                postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))?;
-            return Ok(GamePack {
-                info: old.info,
-                story: old.story.into(),
-                translations: old.translations,
-                ui: old.ui,
-            });
-        }
-        // Versions 3 and 4 share the current layout. When a later version
-        // changes it, they get their own frozen struct like versions 1 and 2.
-        postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))
     }
 }
 
@@ -302,9 +331,92 @@ mod tests {
             fps: 10.0,
             loop_mode: LoopMode::PingPong,
         }));
-        pack.story.characters[0].expressions[1].motion = Some(Motion::Rigged);
         let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
         assert_eq!(back, pack);
+        assert_eq!(GamePack::version_of(&pack.to_bytes().unwrap()), Some(3));
+    }
+
+    fn rigged_pack() -> GamePack {
+        use orbit_core::{AssetEntry, AssetId, AssetKind, LoopMode, Motion, RiggedMotion};
+        let mut pack = fixture_pack();
+        let rig = AssetId::new();
+        pack.story.assets.assets.push(AssetEntry {
+            id: rig,
+            kind: AssetKind::Rig,
+            path: "assets/rigs/hero.rig.ron".into(),
+        });
+        pack.story.characters[0].expressions[1].motion = Some(Motion::Rigged(RiggedMotion {
+            rig,
+            skin: Some("outfit".into()),
+            clip: "wave".into(),
+            loop_mode: LoopMode::Once,
+        }));
+        pack
+    }
+
+    #[test]
+    fn a_rigged_game_is_a_version_5_pack_and_survives_postcard() {
+        let pack = rigged_pack();
+        assert!(pack.uses_rigs());
+        for bytes in [pack.to_bytes().unwrap(), pack.to_bytes_with_3d().unwrap()] {
+            assert_eq!(GamePack::version_of(&bytes), Some(5));
+            assert_eq!(GamePack::from_bytes(&bytes).unwrap(), pack);
+        }
+        // Without a rigged expression the lowest version is still written.
+        assert!(!fixture_pack().uses_rigs());
+        assert_eq!(
+            GamePack::version_of(&fixture_pack().to_bytes_with_3d().unwrap()),
+            Some(4)
+        );
+    }
+
+    /// Written before schema v14 (pack version 3), when `Motion::Rigged`
+    /// was a unit variant: `examples/fixtures/compat/pak_v3_rigged/game.pack`,
+    /// never regenerate (see `generate_pak_v3_rigged`, kept for the record).
+    const PACK_V3_RIGGED: &[u8] =
+        include_bytes!("../../../examples/fixtures/compat/pak_v3_rigged/game.pack");
+
+    #[test]
+    fn a_frozen_version_3_pack_with_the_unit_rigged_motion_loads_as_a_still() {
+        assert_eq!(&PACK_V3_RIGGED[8..12], &3u32.to_le_bytes());
+        let back = GamePack::from_bytes(PACK_V3_RIGGED).unwrap();
+        assert_eq!(back.story.characters[0].expressions[1].motion, None);
+        assert_eq!(back.story.characters[0].expressions[0].motion, None);
+        assert!(!back.uses_rigs());
+        // It re-encodes to a pack of the same version, with the same story.
+        let again = GamePack::from_bytes(&back.to_bytes().unwrap()).unwrap();
+        assert_eq!(again, back);
+    }
+
+    /// Builds the frozen fixture above from the current encoder: the byte of
+    /// `motion: None` of expression 1 is replaced by `Some(Rigged)` as the
+    /// old layout wrote it (`Some`, variant 1, no payload).
+    #[test]
+    #[ignore = "writes a fixture; run once with --ignored"]
+    fn generate_pak_v3_rigged() {
+        use orbit_core::{AnimFrames, Animation, LoopMode, Motion};
+        let plain = fixture_pack();
+        let mut marked = plain.clone();
+        marked.story.characters[0].expressions[1].motion = Some(Motion::Animation(Animation {
+            frames: AnimFrames::Sequence(vec![]),
+            fps: 1.0,
+            loop_mode: LoopMode::Loop,
+        }));
+        let a = plain.to_bytes().unwrap();
+        let b = marked.to_bytes().unwrap();
+        let at = a.iter().zip(&b).position(|(x, y)| x != y).unwrap();
+        assert_eq!((a[at], b[at]), (0, 1), "Option tag None / Some");
+        let tail = &b[at..];
+        // `Some(Animation(Sequence([]), 1.0, Loop))`: tag, variant 0, kind 1,
+        // len 0, f32 1.0, LoopMode 0.
+        assert_eq!(tail[..4], [1, 0, 1, 0]);
+        let mut out = a[..at].to_vec();
+        out.extend_from_slice(&[1, 1]);
+        out.extend_from_slice(&a[at + 1..]);
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/fixtures/compat/pak_v3_rigged");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("game.pack"), out).unwrap();
     }
 
     #[test]

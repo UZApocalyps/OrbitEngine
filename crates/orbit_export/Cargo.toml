@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 orbit_core.workspace = true
+orbit_anim.workspace = true
 orbit_project.workspace = true
 orbit_i18n.workspace = true
 orbit_pak.workspace = true

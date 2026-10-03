@@ -31,7 +31,7 @@ pub use orbit_anim::Loop as AnimLoop;
 pub use orbit_anim::{Curve, Ease};
 pub use defs::{
     AnimFrames, Animation, AssetEntry, AssetKind, AssetManifest, Character, Color, Expression,
-    FREE_POSITION_RANGE, LoopMode, Motion,
+    FREE_POSITION_RANGE, LoopMode, Motion, RiggedMotion, with_legacy_motion_layout,
     Position, PositionDef, SCALE_MAX, SCALE_MIN, StringTable, Transition, TransitionKind, VarDecl,
     VarScope, scale_is_valid,
 };

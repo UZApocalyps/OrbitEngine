@@ -10,7 +10,7 @@ macro_rules! frozen {
     };
 }
 
-const FROZEN: [(u32, &str); 12] = frozen!(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
+const FROZEN: [(u32, &str); 13] = frozen!(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
 
 #[test]
 fn every_frozen_story_migrates_validates_and_roundtrips() {
@@ -73,4 +73,76 @@ fn named_curves_are_validated() {
     story.curves.remove("bad");
     let again = Story::from_ron_unchecked(&story.to_ron().unwrap()).unwrap();
     assert_eq!(again.curves, story.curves);
+}
+
+#[test]
+fn a_v13_unit_rigged_expression_becomes_a_still_and_a_rigged_motion_round_trips() {
+    use orbit_core::{AssetKind, LoopMode, Motion, RiggedMotion};
+    let mut story = Story::from_ron_unchecked(include_str!(
+        "../../../examples/fixtures/compat/v13/story.ron"
+    ))
+    .unwrap();
+    let waving = story.characters[0]
+        .expressions
+        .iter()
+        .find(|e| e.name == "waving")
+        .expect("the fixture keeps the expression");
+    assert_eq!(waving.motion, None, "the reserved Rigged had no effect: a still");
+    assert_eq!(waving.assets(), vec![waving.image]);
+
+    let rig = orbit_core::AssetId::new();
+    story.assets.assets.push(orbit_core::AssetEntry {
+        id: rig,
+        kind: AssetKind::Rig,
+        path: "assets/rigs/hero.rig.ron".into(),
+    });
+    let e = story.characters[0]
+        .expressions
+        .iter_mut()
+        .find(|e| e.name == "waving")
+        .unwrap();
+    e.motion = Some(Motion::Rigged(RiggedMotion {
+        rig,
+        skin: Some("outfit".into()),
+        clip: "wave".into(),
+        loop_mode: LoopMode::PingPong,
+    }));
+    assert_eq!(e.assets(), vec![e.image, rig]);
+    let text = story.to_ron().unwrap();
+    let again = Story::from_ron(&text).unwrap();
+    assert_eq!(story, again);
+    assert!(validate(&story).errors.is_empty());
+    // A rigged expression pointing at an image asset is an error.
+    let image = story.characters[0].expressions[0].image;
+    if let Some(Motion::Rigged(r)) = &mut story.characters[0].expressions[1].motion {
+        r.rig = image;
+    }
+    assert!(
+        validate(&story)
+            .errors
+            .iter()
+            .any(|e| matches!(e, orbit_core::ValidationError::AssetKindMismatch { .. }))
+    );
+}
+
+#[test]
+fn unit_rigged_is_dropped_whatever_the_spacing_and_older_stories_still_load() {
+    // implicit_some spelling, tight spacing, in an older document.
+    let v8 = r#"(
+    schema_version: 8,
+    title: "Old",
+    scenes: [],
+    characters: [
+        (id: "01JBX0C0000000000000000001", name_id: "01JBX0T0000000000000000001",
+         color: (r: 1, g: 2, b: 3), expressions: [
+            (name: "a", image: "01JBX0A0000000000000000001", motion:Some( Rigged ) ),
+            (name: "b", image: "01JBX0A0000000000000000001", motion: Rigged,),
+            (name: "c", image: "01JBX0A0000000000000000001"),
+         ]),
+    ],
+)"#;
+    let story = Story::from_ron_unchecked(v8).unwrap();
+    assert_eq!(story.schema_version, CURRENT_SCHEMA_VERSION);
+    assert!(story.characters[0].expressions.iter().all(|e| e.motion.is_none()));
+    assert_eq!(story.characters[0].expressions.len(), 3);
 }
