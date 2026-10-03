@@ -677,6 +677,8 @@ impl Runtime {
             }
             AssetPoll::Ready(pak) => {
                 let pak: PakSource = (*pak).clone();
+                self.layer3d
+                    .set_quality(pak.meta(crate::compose3d::QUALITY_META));
                 let engine = AssetLoader::from_pak(pak.clone(), ENGINE_PAK_PREFIX);
                 self.font_handles = self
                     .config

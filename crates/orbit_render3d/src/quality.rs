@@ -134,6 +134,26 @@ impl QualityProfile {
         p
     }
 
+    /// The renderer profile of an export quality tier (M6-12). The light
+    /// limit follows the tier, capped by [`crate::MAX_LIGHTS`].
+    pub fn for_tier(tier: orbit_scene::quality::QualityTier) -> Self {
+        use orbit_scene::quality::QualityTier;
+        let mut p = match tier {
+            QualityTier::Web => Self::web(),
+            QualityTier::DesktopLow => Self::desktop_low(),
+            QualityTier::DesktopHigh => Self::desktop_high(),
+        };
+        let limits = tier.limits();
+        p.max_lights = limits.max_lights.min(crate::MAX_LIGHTS);
+        if let Some(s) = &mut p.shadows {
+            s.size = limits.shadow_map_size;
+        }
+        if !limits.bloom {
+            p.post.bloom = None;
+        }
+        p
+    }
+
     /// Disables HDR when the adapter cannot render to `Rgba16Float`
     /// (WebGL2 without `EXT_color_buffer_float`); post then runs in the
     /// forward shader (ADR 0014: fallback detected at init).
@@ -184,5 +204,14 @@ mod tests {
         assert!(!QualityProfile::web().hdr);
         assert!(QualityProfile::desktop_low().post.bloom.is_some());
         assert_eq!(QualityProfile::default().post.tonemap, Tonemap::None);
+        use orbit_scene::quality::QualityTier;
+        assert_eq!(QualityProfile::for_tier(QualityTier::Web), QualityProfile::web());
+        assert_eq!(
+            QualityProfile::for_tier(QualityTier::DesktopLow),
+            QualityProfile::desktop_low()
+        );
+        let high = QualityProfile::for_tier(QualityTier::DesktopHigh);
+        assert_eq!(high.max_lights, crate::MAX_LIGHTS.min(16));
+        assert_eq!(high.shadows.unwrap().pcf_radius, 2);
     }
 }

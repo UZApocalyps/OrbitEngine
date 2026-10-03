@@ -30,6 +30,10 @@ const FONTS: [(&str, &[u8]); 3] = [
 pub const FONT_LICENSE: &str = include_str!("../../../assets/fonts/OFL.txt");
 
 /// A pak in memory.
+/// Pak metadata key of the desktop quality tier (read by
+/// `orbit_runtime::compose3d::QUALITY_META`, same value).
+pub const QUALITY_META: &str = "quality";
+
 #[derive(Debug, Clone)]
 pub struct BuiltPak {
     pub bytes: Vec<u8>,
@@ -58,6 +62,12 @@ pub fn build_pak(
     writer.meta("engine", env!("CARGO_PKG_VERSION"));
     if let Some(lang) = &info.default_language {
         writer.meta("default_language", lang.clone());
+    }
+    // 3D quality of the desktop players (M6-12). A container metadata
+    // entry, not a pak format change: older players ignore it, and 2D games
+    // do not get it (their pak stays byte-identical).
+    if crate::scene3d::uses_3d(&compiled.pack.story) {
+        writer.meta(QUALITY_META, profile.desktop_quality.tier_id());
     }
 
     writer.add(GAME_PACK_ENTRY, &compiled.pack.to_bytes()?)?;

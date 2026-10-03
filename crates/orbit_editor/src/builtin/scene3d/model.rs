@@ -51,6 +51,17 @@ impl ModelLib {
     /// Decodes a PNG / JPEG into a texture called `name` (replacing a
     /// texture of the same name).
     pub fn add_texture_file(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        // KTX2 (M6-13): uncompressed RGBA / RGB, zstd or zlib supercompressed.
+        if orbit_scene::ktx2::is_ktx2(bytes) {
+            let texture = orbit_scene::ktx2::decode_rgba8(name, bytes)?;
+            if texture.width > 8192 || texture.height > 8192 {
+                return Err(format!("unsupported size {}x{}", texture.width, texture.height));
+            }
+            self.textures.retain(|t| t.name != name);
+            self.textures.push(texture);
+            self.generation += 1;
+            return Ok(());
+        }
         let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
         let (width, height) = (img.width(), img.height());
         if width == 0 || height == 0 || width > 8192 || height > 8192 {
@@ -85,7 +96,7 @@ impl ModelLib {
                     .is_some_and(|e| {
                         matches!(
                             e.to_ascii_lowercase().as_str(),
-                            "glb" | "gltf" | "png" | "jpg" | "jpeg"
+                            "glb" | "gltf" | "png" | "jpg" | "jpeg" | "ktx2"
                         )
                     })
             })
@@ -841,6 +852,28 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn ktx2_textures_load_from_the_models_folder() {
+        let dir = tmp("ktx2");
+        let px = vec![200u8; 2 * 2 * 4];
+        let file = orbit_scene::ktx2::encode_simple(
+            orbit_scene::ktx2::Format::R8G8B8A8_SRGB,
+            2,
+            2,
+            &px,
+            Some(orbit_scene::ktx2::SupercompressionScheme::Zstandard),
+        );
+        std::fs::write(dir.join("wall.ktx2"), file).unwrap();
+        let (lib, errors) = ModelLib::load_dir(&dir);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(lib.texture_names(), ["wall"]);
+        let bc7 = orbit_scene::ktx2::encode_simple(orbit_scene::ktx2::Format::BC7_UNORM_BLOCK, 4, 4, &[0; 16], None);
+        std::fs::write(dir.join("packed.ktx2"), bc7).unwrap();
+        let (_, errors) = ModelLib::load_dir(&dir);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -8,18 +8,27 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-default = ["gltf-import"]
+default = ["gltf-import", "ktx2"]
 # glTF import (native tooling: editor / CLI). Disable for wasm runtimes.
 gltf-import = ["dep:gltf"]
+# KTX2 textures (M6-13): pure Rust, wasm friendly.
+ktx2 = ["dep:ktx2", "dep:ruzstd", "dep:flate2"]
 
 [dependencies]
 orbit_core.workspace = true
 serde.workspace = true
 ron.workspace = true
 gltf = { version = "1", optional = true, default-features = false, features = ["names", "utils", "import", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_materials_unlit"] }
+ktx2 = { version = "0.5", optional = true }
+ruzstd = { version = "0.9", optional = true, default-features = false, features = ["std"] }
+flate2 = { version = "1.1.10", optional = true }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
 image.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+# wasm smoke test (tests/wasm.rs), run by the CI with wasm-bindgen-test-runner.
+wasm-bindgen-test = "0.3.79"

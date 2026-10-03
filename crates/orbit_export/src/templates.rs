@@ -11,6 +11,8 @@
 //!   linux/orbit-player
 //!   web/orbit_player.js
 //!   web/orbit_player_bg.wasm
+//!   web3d/orbit_player.js                    (same, with 3D scenes: used
+//!   web3d/orbit_player_bg.wasm                only by games that show one)
 //!   android/classes.dex                      (GameActivity, see [`AndroidTemplate`])
 //!   android/arm64-v8a/liborbit_player.so
 //! ```
@@ -45,6 +47,9 @@ pub fn player_file(target: ExportTarget) -> &'static str {
 
 /// JavaScript glue of the web template (next to the wasm module).
 pub const WEB_JS: &str = "orbit_player.js";
+
+/// Folder of the web template built with 3D scenes (M6-13).
+pub const WEB3D_DIR: &str = "web3d";
 
 /// The two files of the web template.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,6 +177,30 @@ impl Templates {
             .ok_or_else(|| self.missing(ExportTarget::Web))
     }
 
+    /// The web player with 3D scenes (`web3d/`, M6-13): same two files,
+    /// built with the `3d` feature. Only games that show a 3D scene use it,
+    /// so 2D games keep the smaller module.
+    pub fn web3d(&self) -> Result<WebTemplate> {
+        self.dirs
+            .iter()
+            .map(|d| d.join(WEB3D_DIR))
+            .find(|d| d.join(WEB_JS).is_file() && d.join(player_file(ExportTarget::Web)).is_file())
+            .map(|d| WebTemplate {
+                js: d.join(WEB_JS),
+                wasm: d.join(player_file(ExportTarget::Web)),
+            })
+            .ok_or_else(|| ExportError::TemplateMissing {
+                target: "web (3D)",
+                searched: self.dirs.iter().map(|d| d.join(WEB3D_DIR)).collect(),
+            })
+    }
+
+    /// The web template a game needs: [`Templates::web3d`] when it uses
+    /// 3D, else [`Templates::web`].
+    pub fn web_for(&self, uses_3d: bool) -> Result<WebTemplate> {
+        if uses_3d { self.web3d() } else { self.web() }
+    }
+
     /// The Android player: the dex and at least the `arm64-v8a` library.
     pub fn android(&self) -> Result<AndroidTemplate> {
         let lib = player_file(ExportTarget::Android);
@@ -246,6 +275,24 @@ mod tests {
         );
         let first = Templates::default().with_dir_first(a.path());
         assert_eq!(first.dirs(), [a.path().to_owned()]);
+    }
+
+    #[test]
+    fn the_3d_web_template_is_separate_and_picked_for_3d_games() {
+        let dir = TempDir::new("tpl_web3d");
+        let templates = Templates::new(vec![dir.path().to_owned()]);
+        std::fs::create_dir_all(dir.path().join("web")).unwrap();
+        std::fs::write(dir.path().join("web/orbit_player.js"), b"js").unwrap();
+        std::fs::write(dir.path().join("web/orbit_player_bg.wasm"), b"\0asm").unwrap();
+        assert!(templates.web_for(false).is_ok());
+        let err = templates.web_for(true).unwrap_err().to_string();
+        assert!(err.contains("web (3D)") && err.contains("web3d"), "{err}");
+        std::fs::create_dir_all(dir.path().join("web3d")).unwrap();
+        std::fs::write(dir.path().join("web3d/orbit_player.js"), b"js").unwrap();
+        std::fs::write(dir.path().join("web3d/orbit_player_bg.wasm"), b"\0asm").unwrap();
+        let t = templates.web_for(true).unwrap();
+        assert!(t.wasm.starts_with(dir.path().join("web3d")));
+        assert!(templates.web_for(false).unwrap().wasm.starts_with(dir.path().join("web")));
     }
 
     #[test]

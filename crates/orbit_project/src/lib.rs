@@ -24,7 +24,7 @@ mod storage;
 pub use assets_root::find_assets_root;
 pub use command::{Command, CommandError};
 pub use export::{
-    AndroidFormat, AndroidOrientation, ExportProfile, ExportTarget, PakCompression,
+    AndroidFormat, AndroidOrientation, DesktopQuality, ExportProfile, ExportTarget, PakCompression,
     is_valid_android_package, slugify,
 };
 pub use ext::{AssetUser, asset_users};

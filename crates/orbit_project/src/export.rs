@@ -83,6 +83,27 @@ pub enum AndroidOrientation {
     Sensor,
 }
 
+/// 3D rendering quality of the desktop players (M6-12, ADR 0014 section 3).
+/// The web and Android players always use the web profile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DesktopQuality {
+    /// 8 lights, one shadow, bloom: modest PCs and laptops.
+    #[default]
+    Low,
+    /// 16 lights, 4 shadows, softer shadows.
+    High,
+}
+
+impl DesktopQuality {
+    /// The quality tier id the player reads (`orbit_scene::quality`).
+    pub fn tier_id(self) -> &'static str {
+        match self {
+            DesktopQuality::Low => "desktop-low",
+            DesktopQuality::High => "desktop-high",
+        }
+    }
+}
+
 /// What the Android export produces.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AndroidFormat {
@@ -154,6 +175,9 @@ pub struct ExportProfile {
     /// gives 10203).
     #[serde(default)]
     pub android_version_code: Option<u32>,
+    /// 3D quality of the Windows and Linux players.
+    #[serde(default)]
+    pub desktop_quality: DesktopQuality,
 }
 
 fn default_version() -> String {
@@ -191,6 +215,7 @@ impl ExportProfile {
             android_package: None,
             android_orientation: AndroidOrientation::default(),
             android_format: AndroidFormat::default(),
+            desktop_quality: DesktopQuality::default(),
             android_version_code: None,
         }
     }
