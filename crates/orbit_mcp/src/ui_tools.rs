@@ -51,6 +51,32 @@ fn issues_json(bundle: &UiBundle) -> Vec<Json> {
         .collect()
 }
 
+/// The bundle's own issues plus the story cross-checks: `OpenScreen` /
+/// `CloseScreen` naming a missing screen, and variable uses (a `Repeat`
+/// source that is not a list or map...) given the declared types.
+fn issues_json_with_story(cx: &ToolCx<'_>, bundle: &UiBundle) -> Vec<Json> {
+    let story = cx.project.story();
+    let ty_of = |name: &str| {
+        story
+            .variables
+            .iter()
+            .find(|v| v.name == name)
+            .map(|v| v.initial.value_type())
+    };
+    let mut out = issues_json(bundle);
+    let extra = bundle
+        .story_issues(story)
+        .into_iter()
+        .chain(bundle.variable_issues(&ty_of));
+    out.extend(extra.map(|i| {
+        json!({
+            "severity": if i.severity == Severity::Error { "error" } else { "warning" },
+            "screen": i.screen, "widget": i.widget, "message": i.message,
+        })
+    }));
+    out
+}
+
 /// Validates then writes `bundle` into `ui/`; returns the warnings.
 fn commit(cx: &ToolCx<'_>, bundle: &UiBundle) -> Result<Vec<Json>, ToolError> {
     let issues = issues_json(bundle);
@@ -197,7 +223,14 @@ pub fn list_ui(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
             let role = SYSTEM_SCREENS
                 .iter()
                 .find(|n| b.system_screens.get(**n).map_or(**n, String::as_str) == s.id);
-            json!({"id": s.id, "modal": s.modal, "system_role": role})
+            let tr = |t: &Option<orbit_ui_data::ScreenTransition>| {
+                t.as_ref()
+                    .map(|t| json!({"kind": format!("{:?}", t.kind), "duration": t.duration}))
+            };
+            json!({
+                "id": s.id, "modal": s.modal, "hud": s.hud, "system_role": role,
+                "transition_in": tr(&s.transition_in), "transition_out": tr(&s.transition_out),
+            })
         })
         .collect();
     let splashes: Vec<Json> = b
@@ -220,7 +253,7 @@ pub fn list_ui(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
         "screens": screens,
         "system_screens": b.system_screens,
         "splashes": splashes,
-        "issues": issues_json(&b),
+        "issues": issues_json_with_story(cx, &b),
     }))
 }
 
@@ -229,7 +262,7 @@ pub fn read_ui_screen(cx: &mut ToolCx<'_>, a: ScreenIdArg) -> Result<String, Too
     let s = b
         .screen(&a.id)
         .ok_or_else(|| ToolError::not_found(format!("no screen `{}`", a.id)))?;
-    let issues: Vec<Json> = issues_json(&b)
+    let issues: Vec<Json> = issues_json_with_story(cx, &b)
         .into_iter()
         .filter(|i| i["screen"] == a.id)
         .collect();

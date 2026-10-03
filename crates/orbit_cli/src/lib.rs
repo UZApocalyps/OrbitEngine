@@ -380,6 +380,14 @@ fn play(
                         vm.complete_anim(node);
                         continue;
                     }
+                    StepResult::Screen { screen, .. } => {
+                        // The terminal has no UI: the screen closes at once, with no value.
+                        writeln!(out, "  [screen \"{screen}\": opened and closed]")?;
+                        if let Err(e) = vm.close_screen(&screen, None) {
+                            writeln!(err, "warning: cannot close screen: {e}")?;
+                        }
+                        continue;
+                    }
                     StepResult::End => {
                         writeln!(out, "[end]")?;
                         let data = PersistentData::from_vm(&vm);
@@ -416,6 +424,14 @@ fn play(
                     let text = vm.text(option.string_id).unwrap_or("<missing text>");
                     writeln!(out, "  {}) {text}", i + 1)?;
                 }
+            }
+            Interaction::Screen { screen, .. } => {
+                // Shown again by a rollback or load: close it like the first time.
+                writeln!(out, "  [screen \"{screen}\": opened and closed]")?;
+                if let Err(e) = vm.close_screen(screen, None) {
+                    writeln!(err, "warning: cannot close screen: {e}")?;
+                }
+                continue;
             }
         }
 

@@ -1061,6 +1061,44 @@ fn easing_curves_can_be_listed_created_used_and_deleted() {
 }
 
 #[test]
+fn open_and_close_screen_commands() {
+    use orbit_core::{NodeKind, Operand};
+    let mut f = Fixture::new("screens");
+    f.ok("create_scene", json!({"name": "s"}));
+    f.ok("declare_variable", json!({"name": "gold", "initial": 0}));
+    f.ok("declare_variable", json!({"name": "picked", "initial": ""}));
+    let add = |f: &mut Fixture, command: Value| {
+        f.call("add_command", json!({"scene": "s", "command": command}))
+    };
+    add(&mut f, json!({"type": "open_screen", "screen": "hud"})).unwrap();
+    add(&mut f, json!({"type": "open_screen", "screen": "phone", "wait": true,
+        "result": "picked",
+        "params": [{"name": "contact", "value": "\"Aiko\""}, {"name": "g", "value": "gold"}]}))
+    .unwrap();
+    add(&mut f, json!({"type": "close_screen", "screen": "hud"})).unwrap();
+    match &f.story().scenes[0].nodes[1].kind {
+        NodeKind::OpenScreen { wait: true, result, params, .. } => {
+            assert_eq!(result.as_deref(), Some("picked"));
+            assert_eq!(params[1].value, Operand::Var("gold".into()));
+        }
+        k => panic!("{k:?}"),
+    }
+    assert!(orbit_core::validate(f.story()).errors.is_empty());
+    let text = f.call("read_scene", json!({"scene": "s"})).unwrap();
+    assert!(text.contains("open screen \"phone\""), "{text}");
+    assert!(text.contains("close screen \"hud\""), "{text}");
+    for bad in [
+        json!({"type": "open_screen", "screen": ""}),
+        json!({"type": "open_screen", "screen": "x", "result": "picked"}),
+        json!({"type": "open_screen", "screen": "x", "params": [{"name": "a", "value": "1 + 2"}]}),
+        json!({"type": "close_screen", "screen": " "}),
+    ] {
+        assert!(add(&mut f, bad.clone()).is_err(), "{bad}");
+    }
+    assert_eq!(f.story().scenes[0].nodes.len(), 3);
+}
+
+#[test]
 fn effects_and_timelines_are_added_checked_and_described() {
     use orbit_core::{AnimTarget, Effect, NodeKind};
     let mut f = Fixture::new("effects");

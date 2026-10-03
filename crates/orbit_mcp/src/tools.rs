@@ -312,6 +312,16 @@ impl TransitionArg {
     }
 }
 
+/// A value handed to a screen by `open_screen`.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScreenParamArg {
+    /// Parameter name the screen binds.
+    pub name: String,
+    /// A literal (`3`, `"Aiko"`, `true`) or a story variable name, in the expression language.
+    pub value: String,
+}
+
 /// A story command (node) to add. `type` selects the kind.
 #[derive(Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -377,6 +387,24 @@ pub enum CommandSpec {
         var: String,
         /// Expression in the expression language, e.g. `trust + 1`, `true`, `"forest"`, `push(bag, "key")`, `insert(gold, "alice", 3)`.
         value: String,
+    },
+    /// Open a UI screen (a project `ui/` screen) from the story: a HUD
+    /// (`wait` false, stays open until `close_screen`) or a menu the story
+    /// waits for (`wait` true, until the screen closes).
+    OpenScreen {
+        /// Screen id (see the UI tools).
+        screen: String,
+        /// Block the story until the screen is closed (default false).
+        wait: Option<bool>,
+        /// Variable receiving the value the screen closes with (needs `wait`).
+        result: Option<String>,
+        /// Values handed to the screen (`BindPath::Param(name)`).
+        params: Option<Vec<ScreenParamArg>>,
+    },
+    /// Close a screen opened by `open_screen` (does nothing if not open).
+    CloseScreen {
+        /// Screen id.
+        screen: String,
     },
     /// Conditional jump.
     If {
@@ -570,6 +598,8 @@ pub fn spec_variant(spec: &CommandSpec) -> &'static str {
         CommandSpec::PlaySound { .. } => "PlaySound",
         CommandSpec::Wait { .. } => "Wait",
         CommandSpec::SetVar { .. } => "SetVar",
+        CommandSpec::OpenScreen { .. } => "OpenScreen",
+        CommandSpec::CloseScreen { .. } => "CloseScreen",
         CommandSpec::If { .. } => "If",
         CommandSpec::Jump { .. } => "Jump",
         CommandSpec::JumpScene { .. } => "JumpScene",
@@ -613,6 +643,8 @@ pub const NODE_KIND_TOOLS: &[(&str, &str)] = &[
     ("HideScene3d", "add_command type=hide_scene3d"),
     ("Effect", "add_command type=effect"),
     ("Timeline", "add_command type=timeline"),
+    ("OpenScreen", "add_command type=open_screen"),
+    ("CloseScreen", "add_command type=close_screen"),
 ];
 
 #[derive(Deserialize, JsonSchema)]
@@ -1202,6 +1234,58 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
             NodeKind::SetVar {
                 var: var.clone(),
                 value: parse_expr(value)?,
+            }
+        }
+        CommandSpec::OpenScreen {
+            screen,
+            wait,
+            result,
+            params,
+        } => {
+            if screen.trim().is_empty() {
+                return Err(ToolError::invalid("`screen` must not be empty"));
+            }
+            let wait = wait.unwrap_or(false);
+            if let Some(r) = result {
+                check_identifier(r)?;
+                if !wait {
+                    return Err(ToolError::invalid(
+                        "`result` needs `wait`: the value only exists once the screen closes",
+                    ));
+                }
+            }
+            let mut out = Vec::new();
+            for p in params.iter().flatten() {
+                let value = match parse_expr(&p.value)? {
+                    orbit_core::Expr::Lit(v) => orbit_core::Operand::Lit(v),
+                    orbit_core::Expr::Var(v) if !v.starts_with('@') => {
+                        orbit_core::Operand::Var(v)
+                    }
+                    _ => {
+                        return Err(ToolError::invalid(format!(
+                            "parameter `{}`: value must be a literal or a variable name",
+                            p.name
+                        )));
+                    }
+                };
+                out.push(orbit_core::ScreenParam {
+                    name: p.name.clone(),
+                    value,
+                });
+            }
+            NodeKind::OpenScreen {
+                screen: screen.trim().to_owned(),
+                wait,
+                result: result.clone(),
+                params: out,
+            }
+        }
+        CommandSpec::CloseScreen { screen } => {
+            if screen.trim().is_empty() {
+                return Err(ToolError::invalid("`screen` must not be empty"));
+            }
+            NodeKind::CloseScreen {
+                screen: screen.trim().to_owned(),
             }
         }
         CommandSpec::If {
