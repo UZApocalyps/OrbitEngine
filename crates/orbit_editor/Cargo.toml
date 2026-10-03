@@ -104,7 +104,7 @@ extensions = ["orbit"]
 mime-type = "application/x-orbit-story"
 description = "OrbitEngine story"
 name = "OrbitEngine story"
-role = "Editor"
+role = "editor"
 
 [package.metadata.packager.nsis]
 installer-icon = "../../assets/brand/icon.ico"
