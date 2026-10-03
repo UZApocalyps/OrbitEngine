@@ -57,6 +57,10 @@ impl PakLocation {
 enum Backend {
     /// Whole pak in memory (tests, servers that ignore `Range`).
     Memory(Vec<u8>),
+    /// A random-access reader provided by the host (Android `AAssetManager`),
+    /// see [`register_pak_scheme`].
+    #[cfg(not(target_arch = "wasm32"))]
+    Reader(Arc<dyn PakRead>),
     #[cfg(not(target_arch = "wasm32"))]
     File {
         path: std::path::PathBuf,
@@ -136,6 +140,14 @@ impl PakSource {
                     path: path.to_owned(),
                     message: "the pak is truncated".to_owned(),
                 })?,
+            Backend::Reader(reader) => {
+                reader
+                    .read_at(start, len as usize)
+                    .map_err(|e| AssetError::Io {
+                        path: path.to_owned(),
+                        message: e.to_string(),
+                    })?
+            }
             Backend::File { path: file, base } => native::read_at(file, base + start, len as usize)
                 .map_err(|e| AssetError::Io {
                     path: path.to_owned(),
@@ -182,6 +194,11 @@ impl PakSource {
             path: location.target.clone(),
             message: e.to_string(),
         };
+        if !location.appended
+            && let Some((opener, name)) = registry::lookup(&location.target)
+        {
+            return Self::from_reader(opener(name).map_err(io_error)?);
+        }
         let (path, base) = native::locate(location).map_err(io_error)?;
         let header_bytes = native::read_at(&path, base, HEADER_LEN).map_err(io_error)?;
         let header = Header::parse(&header_bytes).map_err(pak_error)?;
@@ -194,6 +211,29 @@ impl PakSource {
                 header,
                 index,
                 backend: Backend::File { path, base },
+            }),
+        })
+    }
+
+    /// A pak read through a host-provided random-access reader: only the
+    /// header and the index are read now, the entries on demand.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_reader(reader: Arc<dyn PakRead>) -> Result<Self, AssetError> {
+        let io_error = |e: std::io::Error| AssetError::Io {
+            path: "pak".to_owned(),
+            message: e.to_string(),
+        };
+        let header_bytes = reader.read_at(0, HEADER_LEN).map_err(io_error)?;
+        let header = Header::parse(&header_bytes).map_err(pak_error)?;
+        let index_bytes = reader
+            .read_at(HEADER_LEN as u64, header.index_len as usize)
+            .map_err(io_error)?;
+        let index = PakIndex::from_bytes(&index_bytes).map_err(pak_error)?;
+        Ok(Self {
+            inner: Arc::new(Inner {
+                header,
+                index,
+                backend: Backend::Reader(reader),
             }),
         })
     }
@@ -232,6 +272,57 @@ impl PakSource {
             path: path.to_owned(),
             message: e.to_string(),
         })
+    }
+}
+
+/// Random access to a pak stored where the file system cannot reach it (the
+/// `assets/` of an Android APK). Called from loader threads.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait PakRead: Send + Sync {
+    /// Exactly `len` bytes starting at `offset` (an error when short).
+    fn read_at(&self, offset: u64, len: usize) -> std::io::Result<Vec<u8>>;
+}
+
+/// Opens the reader of the pak named by what follows `scheme:` in a
+/// [`PakLocation`] target.
+#[cfg(not(target_arch = "wasm32"))]
+pub type PakOpener = Arc<dyn Fn(&str) -> std::io::Result<Arc<dyn PakRead>> + Send + Sync>;
+
+/// Makes `scheme:<name>` pak locations open through `opener` (the Android
+/// player registers `android-asset`). Registering a scheme again replaces
+/// its opener. Native only.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn register_pak_scheme(scheme: &str, opener: PakOpener) {
+    registry::register(scheme, opener);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod registry {
+    use std::sync::{Mutex, OnceLock};
+
+    use super::PakOpener;
+
+    type Schemes = Mutex<Vec<(String, PakOpener)>>;
+
+    fn schemes() -> &'static Schemes {
+        static SCHEMES: OnceLock<Schemes> = OnceLock::new();
+        SCHEMES.get_or_init(Schemes::default)
+    }
+
+    pub(super) fn register(scheme: &str, opener: PakOpener) {
+        let mut list = schemes().lock().unwrap_or_else(|p| p.into_inner());
+        list.retain(|(s, _)| s != scheme);
+        list.push((scheme.to_owned(), opener));
+    }
+
+    /// The opener of a `scheme:name` target and the name, when the scheme is
+    /// registered (a Windows `C:\...` path never matches: `C` is no scheme).
+    pub(super) fn lookup(target: &str) -> Option<(PakOpener, &str)> {
+        let (scheme, name) = target.split_once(':')?;
+        let list = schemes().lock().unwrap_or_else(|p| p.into_inner());
+        list.iter()
+            .find(|(s, _)| s == scheme)
+            .map(|(_, opener)| (opener.clone(), name))
     }
 }
 
@@ -428,5 +519,37 @@ mod tests {
         assert!(PakSource::open_blocking(&location).is_err());
         assert!(PakSource::open_blocking(&PakLocation::file(exe.to_string_lossy())).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    struct MemReader(Vec<u8>);
+
+    impl PakRead for MemReader {
+        fn read_at(&self, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
+            self.0
+                .get(offset as usize..offset as usize + len)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| std::io::Error::other("short read"))
+        }
+    }
+
+    #[test]
+    fn registered_scheme_opens_through_its_reader() {
+        let bytes = sample_pak();
+        register_pak_scheme(
+            "test-mem",
+            Arc::new(move |name: &str| {
+                if name == "game.pak" {
+                    Ok(Arc::new(MemReader(bytes.clone())) as Arc<dyn PakRead>)
+                } else {
+                    Err(std::io::Error::other("no such asset"))
+                }
+            }),
+        );
+        let pak = PakSource::open_blocking(&PakLocation::file("test-mem:game.pak")).unwrap();
+        assert_eq!(pak.meta("name"), Some("Demo"));
+        assert_eq!(pak.read_blocking("b.bin").unwrap(), vec![1, 2, 3]);
+        assert!(PakSource::open_blocking(&PakLocation::file("test-mem:other.pak")).is_err());
+        // An unregistered scheme is a plain (missing) file.
+        assert!(PakSource::open_blocking(&PakLocation::file("nope:game.pak")).is_err());
     }
 }

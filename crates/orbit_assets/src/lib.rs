@@ -28,6 +28,8 @@ pub use audio::{PcmAudio, decode_audio};
 pub use handle::{AssetHandle, AssetPoll};
 pub use image_data::{ImageData, decode_image};
 pub use pak::{PakLocation, PakSource};
+#[cfg(not(target_arch = "wasm32"))]
+pub use pak::{PakOpener, PakRead, register_pak_scheme};
 pub use watch::FileWatcher;
 
 use std::sync::Arc;
