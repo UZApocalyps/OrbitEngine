@@ -183,6 +183,7 @@ impl SpriteGpu {
         sprites: &[Sprite2d],
         breaks: impl FnOnce(&[usize]) -> Vec<usize>,
     ) {
+        orbit_profile::scope!("2d batch");
         queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(view_proj));
         sort_sprites(sprites, &mut self.order);
         let breaks = breaks(&self.order);

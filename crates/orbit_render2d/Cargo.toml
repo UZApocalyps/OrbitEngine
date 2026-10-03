@@ -13,6 +13,7 @@ orbit_gfx.workspace = true
 bytemuck.workspace = true
 log.workspace = true
 thiserror.workspace = true
+orbit_profile.workspace = true
 
 [dev-dependencies]
 pollster.workspace = true

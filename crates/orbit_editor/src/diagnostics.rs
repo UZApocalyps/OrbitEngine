@@ -258,7 +258,11 @@ pub struct Extras {
 /// Runs the story validation and groups the findings by node. `extras` adds
 /// the findings that need the registry or the file system.
 pub fn compute(texts: &Translator, story: &Story, revision: u64, extras: &Extras) -> Diagnostics {
-    let report = validate(story);
+    orbit_profile::scope!("validate");
+    let report = {
+        orbit_profile::scope!("validate: rules");
+        validate(story)
+    };
     let mut out = Diagnostics {
         revision,
         ..Diagnostics::default()
@@ -325,6 +329,7 @@ pub fn compute(texts: &Translator, story: &Story, revision: u64, extras: &Extras
 /// Errors first, then warnings; each group in reading order (definitions
 /// without a node first).
 fn sort_problems(story: &Story, problems: &mut [Problem]) {
+    orbit_profile::scope!("validate: sort");
     let mut order: HashMap<NodeId, usize> = HashMap::new();
     let mut n = 0;
     for scene in &story.scenes {

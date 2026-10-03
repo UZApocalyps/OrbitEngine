@@ -11,10 +11,12 @@
 mod error;
 mod sprite;
 mod texture;
+mod timing;
 
 pub use error::GfxError;
 pub use sprite::Sprite;
 pub use texture::{TEXTURE_FORMAT, Texture};
+pub use timing::MAX_TIMED_PASSES;
 pub use wgpu;
 
 use sprite::SpritePipeline;
@@ -52,6 +54,29 @@ pub struct Gfx {
     pub(crate) sprites: SpritePipeline,
     /// Set by wgpu's device-lost callback: see [`Gfx::device_lost`].
     lost: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// GPU pass timings (TL-04): `None` when the profiler is compiled out or
+    /// the adapter has no timestamp queries (WebGL2, some GL drivers).
+    timer: Option<timing::GpuTimer>,
+}
+
+/// Device features to ask for: timestamp queries when the profiler is
+/// compiled in and the adapter has them (never on the web).
+fn profiling_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    if orbit_profile::COMPILED
+        && !cfg!(target_arch = "wasm32")
+        && adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+    {
+        wgpu::Features::TIMESTAMP_QUERY
+    } else {
+        wgpu::Features::empty()
+    }
+}
+
+fn gpu_timer(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<timing::GpuTimer> {
+    device
+        .features()
+        .contains(wgpu::Features::TIMESTAMP_QUERY)
+        .then(|| timing::GpuTimer::new(device, queue))
 }
 
 impl Gfx {
@@ -96,6 +121,7 @@ impl Gfx {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("orbit device"),
                 required_limits: required_limits.using_resolution(adapter.limits()),
+                required_features: profiling_features(&adapter),
                 ..Default::default()
             })
             .await?;
@@ -127,6 +153,8 @@ impl Gfx {
         surface.configure(&device, &config);
 
         let sprites = SpritePipeline::new(&device, config.format);
+        let timer = gpu_timer(&device, &queue);
+        log::info!("GPU pass timings: {}", if timer.is_some() { "on" } else { "off" });
         let mut gfx = Self {
             instance,
             adapter,
@@ -137,6 +165,7 @@ impl Gfx {
             target_factory: Some(target_factory),
             sprites,
             lost,
+            timer,
         };
         gfx.resize(size.0, size.1);
         Ok(gfx)
@@ -205,6 +234,8 @@ impl Gfx {
             target_factory: None,
             sprites,
             lost,
+            // Headless contexts (tests, read-backs) are never timed.
+            timer: None,
         })
     }
 
@@ -374,6 +405,34 @@ impl Gfx {
         self.queue.present(texture);
         if suboptimal {
             self.configure_surface();
+        }
+        self.finish_gpu_timings();
+    }
+
+    /// Whether render passes can be timed on the GPU (see
+    /// [`Gfx::timestamp_writes`]).
+    pub fn gpu_timing_supported(&self) -> bool {
+        self.timer.is_some()
+    }
+
+    /// Timestamp writes to put in a render pass descriptor so that the pass
+    /// shows up as `label` in the profiler's GPU timings. `None` (record the
+    /// pass untimed) when timing is unsupported, paused, busy reading an
+    /// earlier frame, or when [`MAX_TIMED_PASSES`] passes were already timed
+    /// this frame.
+    pub fn timestamp_writes(
+        &self,
+        label: &'static str,
+    ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
+        self.timer.as_ref()?.writes(label)
+    }
+
+    /// Ends the GPU timing of a frame (resolves its queries, publishes the
+    /// newest finished ones to `orbit_profile`). [`Gfx::end_frame`] does it;
+    /// hosts that present by other means call it once per frame.
+    pub fn finish_gpu_timings(&self) {
+        if let Some(timer) = &self.timer {
+            timer.end_frame(&self.device, &self.queue);
         }
     }
 

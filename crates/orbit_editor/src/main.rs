@@ -37,6 +37,18 @@ fn main() -> ExitCode {
             }
         };
     }
+    if let Some(path) = &args.bench {
+        return match orbit_editor::perf::run_to_file(path) {
+            Ok(()) => {
+                println!("{}", path.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("erreur : {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if let Some((blocks, path)) = &args.generate_graph {
         let story = orbit_editor::bench_graph::generate_graph_story(*blocks);
         let written = story

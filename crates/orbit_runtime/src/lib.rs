@@ -44,6 +44,7 @@ mod game;
 pub mod gamepad_bindings;
 pub mod input;
 pub mod loading;
+pub mod overlay;
 pub mod preview;
 mod runtime;
 pub mod scene_view;

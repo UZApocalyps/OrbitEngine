@@ -23,6 +23,7 @@ orbit_pak.workspace = true
 image.workspace = true
 log.workspace = true
 thiserror.workspace = true
+orbit_profile.workspace = true
 orbit_render3d = { workspace = true, optional = true }
 orbit_scene = { path = "../orbit_scene", default-features = false, optional = true }
 

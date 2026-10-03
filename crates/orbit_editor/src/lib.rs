@@ -19,6 +19,7 @@ pub mod i18n;
 pub mod live;
 pub mod logging;
 pub mod palette;
+pub mod perf;
 pub mod preview_host;
 pub mod scene3d_host;
 pub mod search;

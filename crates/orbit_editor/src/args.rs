@@ -38,6 +38,8 @@ Options :
                            écrit une histoire de test d'environ <n> nœuds (un scène) puis quitte
   --generate-graph <n> <fichier.orbit>
                            écrit une histoire de test d'environ <n> blocs de graphe (scènes liées) puis quitte
+  --bench <fichier.json>   mesure les scénarios de référence (chargement, VM, écrans, lots 2D, éditeur
+                           sur 10 000 nœuds) sans fenêtre, écrit les résultats puis quitte (cargo xtask bench)
   --autoscroll <px>        fait défiler l'éditeur de scène de <px> pixels par frame ; avec --exit-after,
                            journalise le temps de frame (moyenne, p95, max) à la sortie
   --mcp-port <port>        démarre le serveur MCP live (HTTP, 127.0.0.1) sur ce port au lieu d'attendre
@@ -74,6 +76,7 @@ pub struct Args {
     pub preview_capture: Option<PathBuf>,
     pub generate_story: Option<(usize, PathBuf)>,
     pub generate_graph: Option<(usize, PathBuf)>,
+    pub bench: Option<PathBuf>,
     pub autoscroll: Option<f32>,
     pub mcp_port: Option<u16>,
     pub mcp_token: Option<String>,
@@ -114,6 +117,7 @@ impl Args {
                     let path = PathBuf::from(value("--generate-graph")?);
                     out.generate_graph = Some((n, path));
                 }
+                "--bench" => out.bench = Some(PathBuf::from(value("--bench")?)),
                 "--mcp-port" => {
                     let v = value("--mcp-port")?;
                     out.mcp_port = Some(v.parse().map_err(|_| format!("port invalide : {v}"))?);

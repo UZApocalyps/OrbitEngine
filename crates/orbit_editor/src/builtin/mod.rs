@@ -22,6 +22,7 @@ pub mod manual;
 mod nodeinfo;
 mod preview;
 mod problems;
+pub mod profiler;
 pub mod reveal;
 pub mod sample;
 mod scene;
@@ -76,6 +77,7 @@ pub mod ids {
     pub const TEXTVIEW: &str = "orbit.textview";
     pub const MANUAL: &str = "orbit.manual";
     pub const TIMELINE: &str = "orbit.timeline";
+    pub const PROFILER: &str = "orbit.profiler";
 }
 
 /// Full ids of the built-in panels.
@@ -103,6 +105,7 @@ pub mod panels {
     pub const UI_EDITOR: &str = "orbit.ui.editor";
     pub const TEXTVIEW: &str = "orbit.textview.textview";
     pub const MANUAL: &str = "orbit.manual.manual";
+    pub const PROFILER: &str = "orbit.profiler.profiler";
 }
 
 /// State the built-in plugins share with the editor core.
@@ -141,6 +144,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(sceneview::SceneViewPlugin),
         Box::new(console::ConsolePlugin),
         Box::new(problems::ProblemsPlugin),
+        Box::new(profiler::ProfilerPlugin),
         Box::new(search::SearchPlugin::new(shared.search.clone())),
         Box::new(export::ExportPlugin),
         Box::new(translations::TranslationsPlugin),
