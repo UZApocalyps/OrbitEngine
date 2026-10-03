@@ -21,7 +21,6 @@
     "action.palette": "Palette de commandes",
     "action.toggle_theme": "Basculer le thème clair / sombre",
     "action.experimental_3d": "Fonctionnalités 3D expérimentales",
-    "inspector.scene3d.hidden_notice": "Les fonctionnalités 3D expérimentales sont masquées (Affichage > Fonctionnalités 3D expérimentales). Ce nœud fonctionne toujours.",
     "action.reset_layout": "Réinitialiser la disposition",
     "action.language": "Langue : {language}",
     "action.show_panel": "Afficher : {panel}",
