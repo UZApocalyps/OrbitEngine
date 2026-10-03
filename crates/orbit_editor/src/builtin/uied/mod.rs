@@ -1035,6 +1035,9 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
     let fonts = theme_font_names(st);
     let font_assets = font_assets_of(ctx);
     let root = ctx.project_info().map(|p| p.root.clone());
+    let story_path = ctx
+        .project_info()
+        .map(|p| p.root.join(&p.story_file));
     let env = Env {
         tr: &tr,
         screens: &[],
@@ -1055,6 +1058,7 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         let ui = &mut left[0];
         contrast_section(ui, &tr, &contrast);
         fonts_section(ui, st, &tr, &font_assets, root.as_deref());
+        language_fonts_section(ui, st, &tr, story_path.as_deref(), root.as_deref());
         section_title(ui, &tr.t("uied.styles"));
         ui.horizontal(|ui| {
             ui.add(
@@ -1238,6 +1242,162 @@ fn fonts_section(
             }
         });
     }
+}
+
+/// Cached glyph-coverage verdict of one language (refreshed when the chain
+/// changes or every few seconds: the translation files are edited outside
+/// the editor too).
+#[derive(Clone, Default)]
+struct LangCover {
+    stamp: f64,
+    key: String,
+    missing: Vec<char>,
+}
+
+/// Per-language font fallback chains of the theme (M7-02): the fonts, in
+/// order, a language draws its texts with, and a warning when they cannot
+/// draw its translation.
+fn language_fonts_section(
+    ui: &mut Ui,
+    st: &mut State,
+    tr: &orbit_editor_api::Translator,
+    story_path: Option<&std::path::Path>,
+    root: Option<&std::path::Path>,
+) {
+    let Some(theme) = st.doc.as_ref().and_then(|d| d.bundle.theme.clone()) else {
+        return;
+    };
+    let mut langs: Vec<String> = story_path
+        .map(orbit_i18n::files::list_languages)
+        .unwrap_or_default();
+    for code in theme.language_fonts.keys() {
+        if !langs.contains(code) {
+            langs.push(code.clone());
+        }
+    }
+    let font_names: Vec<String> = theme.fonts.keys().cloned().collect();
+    enum Act {
+        Remove(String, usize),
+        Up(String, usize),
+        Add(String, String),
+    }
+    let mut act = None;
+    let now = ui.input(|i| i.time);
+    egui::CollapsingHeader::new(tr.t("uied.lang_fonts"))
+        .id_salt("uied_lang_fonts")
+        .default_open(!theme.language_fonts.is_empty())
+        .show(ui, |ui| {
+            ui.label(RichText::new(tr.t("uied.lang_fonts_hint")).small().color(weak(ui)));
+            if langs.is_empty() {
+                ui.label(RichText::new(tr.t("uied.lang_fonts_none")).small().color(weak(ui)));
+            }
+            for lang in &langs {
+                let chain = theme.language_fonts.get(lang).cloned().unwrap_or_default();
+                ui.label(RichText::new(lang).strong());
+                for (i, name) in chain.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{}.", i + 1));
+                        ui.label(name);
+                        if i > 0
+                            && icon_button(ui, icons::ARROW_UP, &tr.t("uied.lang_font_up")).clicked()
+                        {
+                            act = Some(Act::Up(lang.clone(), i));
+                        }
+                        if icon_button(ui, icons::TRASH, &tr.t("uied.lang_font_remove")).clicked() {
+                            act = Some(Act::Remove(lang.clone(), i));
+                        }
+                    });
+                }
+                let free: Vec<&String> = font_names.iter().filter(|n| !chain.contains(n)).collect();
+                if !free.is_empty() {
+                    egui::ComboBox::from_id_salt(("uied_lang_font_add", lang))
+                        .selected_text(format!("{}  {}", icons::PLUS, tr.t("uied.lang_font_add")))
+                        .show_ui(ui, |ui| {
+                            for name in free {
+                                if ui.selectable_label(false, name).clicked() {
+                                    act = Some(Act::Add(lang.clone(), name.clone()));
+                                }
+                            }
+                        });
+                }
+                // Glyph coverage of this language's translation.
+                let key = format!("{chain:?}{:?}", theme.fonts);
+                let id = egui::Id::new(("uied_lang_cover", lang));
+                let mut cover: LangCover = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+                if cover.key != key || now - cover.stamp > 3.0 {
+                    cover.stamp = now;
+                    cover.key = key;
+                    cover.missing = translation_missing_chars(&theme, lang, story_path, root);
+                    ui.data_mut(|d| d.insert_temp(id, cover.clone()));
+                }
+                if !cover.missing.is_empty() {
+                    ui.label(
+                        RichText::new(tr.tf(
+                            "uied.lang_fonts_missing",
+                            &[
+                                ("count", &cover.missing.len()),
+                                ("chars", &orbit_ui::describe_chars(&cover.missing)),
+                            ],
+                        ))
+                        .small()
+                        .color(warning(ui)),
+                    );
+                }
+                ui.add_space(4.0);
+            }
+        });
+    let (Some(act), Some(doc)) = (act, st.doc.as_mut()) else {
+        return;
+    };
+    doc.edit(|b| {
+        let Some(t) = b.theme.as_mut() else { return };
+        match act {
+            Act::Add(lang, name) => t.language_fonts.entry(lang).or_default().push(name),
+            Act::Up(lang, i) => {
+                if let Some(c) = t.language_fonts.get_mut(&lang)
+                    && i > 0
+                    && i < c.len()
+                {
+                    c.swap(i, i - 1);
+                }
+            }
+            Act::Remove(lang, i) => {
+                if let Some(c) = t.language_fonts.get_mut(&lang) {
+                    if i < c.len() {
+                        c.remove(i);
+                    }
+                    if c.is_empty() {
+                        t.language_fonts.remove(&lang);
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Characters of the `lang` translation file that the language's fonts
+/// cannot draw.
+fn translation_missing_chars(
+    theme: &orbit_ui::Theme,
+    lang: &str,
+    story_path: Option<&std::path::Path>,
+    root: Option<&std::path::Path>,
+) -> Vec<char> {
+    let Some(path) = story_path else { return Vec::new() };
+    let Ok(Some(translation)) =
+        orbit_i18n::files::load(&orbit_i18n::files::translation_path(path, lang))
+    else {
+        return Vec::new();
+    };
+    let text = translation.entries.values().cloned().collect::<Vec<_>>().join("\n");
+    let mut read = |asset: &str| root.and_then(|r| std::fs::read(r.join(asset)).ok());
+    orbit_ui::language_missing_chars(
+        Some(theme),
+        lang,
+        include_bytes!("../../../../../assets/fonts/Inter-Regular.ttf"),
+        &mut read,
+        &text,
+    )
 }
 
 fn style_props(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, env: &Env) {

@@ -103,16 +103,19 @@ fn new_fields_round_trip_and_stay_out_of_old_documents() {
 }
 
 const JOURNAL_V3: &str = include_str!("../../../examples/fixtures/compat/ui_v3/journal.screen.ron");
+const JOURNAL_V4: &str = include_str!("../../../examples/fixtures/compat/ui_v4/journal.screen.ron");
 
-/// UI-14 / UI-15 / UI-16 (`ui_version` 4): a frozen version 3 document
-/// (variables, collections, accessibility settings, plain `Close`) keeps
-/// loading, is stamped version 4, means the same and writes no new field.
+/// UI-14 / UI-15 / UI-16 (`ui_version` 5): frozen version 3 and 4 documents
+/// (variables, collections, accessibility settings, plain `Close`) keep
+/// loading, are stamped version 5, mean the same and write no new field.
 #[test]
-fn a_v3_screen_loads_unchanged_as_version_4() {
+fn v3_and_v4_screens_load_unchanged_as_version_5() {
     assert!(JOURNAL_V3.contains("ui_version: 3"));
-    let screen = from_ron(JOURNAL_V3).unwrap();
+    assert!(JOURNAL_V4.contains("ui_version: 4"));
+    assert_eq!(from_ron(JOURNAL_V3).unwrap(), from_ron(JOURNAL_V4).unwrap());
+    let screen = from_ron(JOURNAL_V4).unwrap();
     assert_eq!(screen.ui_version, UI_VERSION);
-    assert_eq!(UI_VERSION, 4);
+    assert_eq!(UI_VERSION, 5);
     assert!(!screen.hud);
     assert!(screen.transition_in.is_none() && screen.transition_out.is_none());
     assert_eq!(screen.on_cancel, vec![orbit_ui_data::UiAction::Close]);
@@ -126,7 +129,7 @@ fn a_v3_screen_loads_unchanged_as_version_4() {
 
 #[test]
 fn version_4_fields_round_trip() {
-    let src = r#"(ui_version: 4, id: "bag", hud: true,
+    let src = r#"(ui_version: 5, id: "bag", hud: true,
         transition_in: Some((kind: SlideUp, duration: 0.25, ease: Some(Preset(OutCubic)))),
         transition_out: Some((kind: Fade)),
         root: (kind: Stack(dir: Vertical), children: [

@@ -9,6 +9,7 @@
 mod access;
 mod action;
 mod bundle;
+mod coverage;
 mod layout;
 pub mod migrate;
 mod sound;
@@ -23,6 +24,7 @@ pub use access::{
 pub use action::{BindPath, SettingKey, UiAction};
 pub use bundle::{SYSTEM_SCREENS, SplashContent, SplashDef, UiBundle};
 pub use layout::{Align, Anchor, Dir, PanelKind, Size};
+pub use coverage::{describe_chars, language_missing_chars, missing_chars};
 pub use sound::UiSound;
 pub use transition::{ScreenFx, ScreenTransition, ScreenTransitionKind};
 pub use theme::{

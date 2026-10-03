@@ -28,15 +28,15 @@ pub fn read_version(source: &str) -> Result<u32, String> {
 pub type Step = fn(&str) -> Result<String, String>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2.
-const STEPS: &[Step] = &[v1_to_v2, v2_to_v3, v3_to_v4];
+const STEPS: &[Step] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5];
 
-/// v3 -> v4 (UI-14 / UI-15 / UI-16, ADR 0016): `ScreenAsset::hud`,
+/// v4 -> v5 (UI-14 / UI-15 / UI-16, ADR 0016): `ScreenAsset::hud`,
 /// `transition_in` / `transition_out`, `WidgetKind::Repeat`, the
 /// `BindPath::{Item, ItemIndex, ItemKey, Param}` bindings and
 /// `UiAction::CloseWith`. All optional or new variants (the plain `Close`
 /// is unchanged), so a document only changes its version number.
-fn v3_to_v4(source: &str) -> Result<String, String> {
-    Ok(bump_version(source, 3, 4))
+fn v4_to_v5(source: &str) -> Result<String, String> {
+    Ok(bump_version(source, 4, 5))
 }
 
 /// v1 -> v2 (UI-12): everything added is optional (`col_span`, `row_span`,
@@ -51,6 +51,12 @@ fn v1_to_v2(source: &str) -> Result<String, String> {
 /// document changes meaning), so a document only changes its version number.
 fn v2_to_v3(source: &str) -> Result<String, String> {
     Ok(bump_version(source, 2, 3))
+}
+
+/// v3 -> v4 (M7-02): `Theme::language_fonts` is optional and new, so a
+/// document only changes its version number.
+fn v3_to_v4(source: &str) -> Result<String, String> {
+    Ok(bump_version(source, 3, 4))
 }
 
 /// Rewrites the first `ui_version: from` to `ui_version: to` (a document
@@ -126,9 +132,13 @@ mod tests {
     #[test]
     fn v1_documents_are_stamped_with_the_new_version() {
         let out = migrate(1, "(ui_version: 1, id: \"a\")").unwrap();
-        assert_eq!(out, "(ui_version: 4, id: \"a\")");
+        assert_eq!(out, "(ui_version: 5, id: \"a\")");
         let out = migrate(2, "(ui_version: 2, id: \"a\")").unwrap();
-        assert_eq!(out, "(ui_version: 4, id: \"a\")");
+        assert_eq!(out, "(ui_version: 5, id: \"a\")");
+        let out = migrate(3, "(ui_version: 3, id: \"a\")").unwrap();
+        assert_eq!(out, "(ui_version: 5, id: \"a\")");
+        let out = migrate(4, "(ui_version: 4, id: \"a\")").unwrap();
+        assert_eq!(out, "(ui_version: 5, id: \"a\")");
         // A document without the field is already current.
         assert_eq!(migrate(1, "(id: \"a\")").unwrap(), "(id: \"a\")");
     }

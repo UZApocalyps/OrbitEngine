@@ -20,6 +20,7 @@ pub mod live;
 pub mod logging;
 pub mod palette;
 pub mod preview_host;
+pub mod rig_host;
 pub mod scene3d_host;
 pub mod search;
 pub mod session;

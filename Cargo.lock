@@ -3346,6 +3346,7 @@ dependencies = [
  "orbit_core",
  "ron",
  "serde",
+ "ttf-parser",
 ]
 
 [[package]]

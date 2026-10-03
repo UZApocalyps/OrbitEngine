@@ -7,7 +7,7 @@ use orbit_core::{Story, validate};
 use orbit_i18n::Translation;
 use orbit_pak::{GameInfo, GamePack};
 use orbit_project::{ExportProfile, asset_users};
-use orbit_ui_data::{Severity, SplashContent, UiBundle};
+use orbit_ui_data::{Severity, SplashContent, Theme, UiBundle, describe_chars, language_missing_chars};
 
 use crate::error::{ExportError, Result};
 use crate::project::ExportProject;
@@ -90,12 +90,14 @@ fn load_ui(
     project: &ExportProject,
     assets: &mut Vec<AssetFile>,
     warnings: &mut Vec<String>,
+    theme_out: &mut Option<Theme>,
 ) -> Result<Option<Vec<u8>>> {
     let dir = project.root.join("ui");
     if !dir.is_dir() {
         return Ok(None);
     }
     let bundle = UiBundle::load_dir(&dir).map_err(|e| ExportError::Ui(vec![e]))?;
+    theme_out.clone_from(&bundle.theme);
     let mut errors = Vec::new();
     for issue in bundle.validate() {
         let text = format!("{} {}: {}", issue.screen, issue.widget, issue.message);
@@ -124,6 +126,44 @@ fn load_ui(
     }
     let text = bundle.to_ron().map_err(|e| ExportError::Ui(vec![e]))?;
     Ok(Some(text.into_bytes()))
+}
+
+/// The font that draws every text without a project font (the engine's
+/// default).
+const DEFAULT_FONT: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
+
+/// One warning per language (source and translations) whose fonts (the
+/// default one plus the chain of the theme's `language_fonts`) cannot draw
+/// some character of its texts (M7-02).
+pub fn language_font_warnings(
+    root: &Path,
+    theme: Option<&Theme>,
+    story: &Story,
+    translations: &[Translation],
+) -> Vec<String> {
+    let mut read = |asset: &str| std::fs::read(root.join(asset)).ok();
+    let mut texts: Vec<(String, String)> = vec![(
+        story.strings.source_lang.clone(),
+        story.strings.entries.values().cloned().collect::<Vec<_>>().join("\n"),
+    )];
+    for t in translations {
+        texts.push((
+            t.lang.clone(),
+            t.entries.values().cloned().collect::<Vec<_>>().join("\n"),
+        ));
+    }
+    let mut out = Vec::new();
+    for (lang, text) in texts {
+        let missing = language_missing_chars(theme, &lang, DEFAULT_FONT, &mut read, &text);
+        if !missing.is_empty() {
+            out.push(format!(
+                "language `{lang}`: no font can draw {} character(s) of its texts ({}): import a font that covers them and add it to the language's font chain in the UI theme",
+                missing.len(),
+                describe_chars(&missing)
+            ));
+        }
+    }
+    out
 }
 
 /// The translation files next to the story: `i18n/<story stem>.<lang>.ron`.
@@ -329,7 +369,14 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
         }
     }
     let icon = load_icon(project, profile, &mut warnings)?;
-    let ui = load_ui(project, &mut assets, &mut warnings)?;
+    let mut theme = None;
+    let ui = load_ui(project, &mut assets, &mut warnings, &mut theme)?;
+    warnings.extend(language_font_warnings(
+        &project.root,
+        theme.as_ref(),
+        &story,
+        &translations,
+    ));
 
     let info = GameInfo {
         name: profile.game_name.clone(),
@@ -358,6 +405,39 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
 mod tests {
     use super::*;
     use crate::testing::{TempDir, demo_project};
+
+    #[test]
+    fn a_language_whose_font_cannot_draw_its_texts_is_a_warning() {
+        let dir = TempDir::new("compile_lang_fonts");
+        let fonts = dir.path().join("assets/fonts");
+        std::fs::create_dir_all(&fonts).unwrap();
+        std::fs::write(
+            fonts.join("jp.otf"),
+            include_bytes!("../../../assets/fonts/cjk/NotoSansJP-Regular.otf"),
+        )
+        .unwrap();
+        let mut story = Story::new("t");
+        let id = orbit_core::StringId::new();
+        story.strings.source_lang = "en".into();
+        story.strings.entries.insert(id, "Hello".into());
+        let mut ja = Translation::new("ja", "日本語");
+        ja.entries.insert(id, "こんにちは".into());
+        let mut fr = Translation::new("fr", "Français");
+        fr.entries.insert(id, "Bonjour, déjà".into());
+
+        // No theme: Inter cannot draw Japanese; French is fine.
+        let w = language_font_warnings(dir.path(), None, &story, &[ja.clone(), fr.clone()]);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].contains("`ja`") && w[0].contains("こ"), "{}", w[0]);
+
+        // The theme gives Japanese a project font: no warning.
+        let theme = Theme::from_ron(
+            "(fonts: {\"jp\": (asset: \"assets/fonts/jp.otf\", family: \"Noto Sans JP\")}, \
+              language_fonts: {\"ja\": [\"jp\"]})",
+        )
+        .unwrap();
+        assert!(language_font_warnings(dir.path(), Some(&theme), &story, &[ja, fr]).is_empty());
+    }
 
     #[test]
     fn a_ui_folder_is_compiled_into_the_pack_with_its_splash_images() {
