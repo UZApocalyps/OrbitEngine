@@ -346,12 +346,12 @@ impl Vm {
                             };
                             self.store_var(var, v);
                         }
-                        Err(VmError::Eval {
-                            source: orbit_core::EvalError::DivisionByZero,
-                            ..
-                        }) => self
+                        // Data-dependent failures (division by zero, index
+                        // out of bounds, missing key, collection too large)
+                        // leave the variable unchanged (ADR 0016).
+                        Err(VmError::Eval { source, .. }) if source.is_recoverable() => self
                             .warnings
-                            .push(format!("node {pc}: division by zero, `{var}` unchanged")),
+                            .push(format!("node {pc}: {source}, `{var}` unchanged")),
                         Err(e) => return Err(e),
                     }
                     self.state.pc = next;

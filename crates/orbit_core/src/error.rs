@@ -26,6 +26,10 @@ pub enum ValidationError {
     DuplicatePosition(String),
     #[error("duplicate variable declaration `{0}`")]
     DuplicateVariable(String),
+    /// The initial value of a list or map variable mixes element types or
+    /// exceeds the collection limits (schema v11).
+    #[error("variable `{name}` has an invalid initial value: {reason}")]
+    InvalidVariableValue { name: String, reason: String },
     #[error("position `{name}` has coordinates outside 0..1")]
     InvalidPositionCoords { name: String },
     #[error("asset {asset} has an invalid path `{path}` (must be relative, no `..`, no `\\`)")]

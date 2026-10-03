@@ -28,6 +28,8 @@ mod legacy_v3;
 
 #[cfg(test)]
 mod anim_save_tests;
+#[cfg(test)]
+mod collection_save_tests;
 pub mod manager;
 pub mod persistent;
 pub mod storage;

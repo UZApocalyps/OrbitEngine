@@ -642,12 +642,7 @@ fn export(core: &mut EditorCore, request: &ExportRequest) -> Result<String, Tool
 // ------------------------------------------------------- preview state JSON
 
 fn value_json(value: &Value) -> Json {
-    match value {
-        Value::Bool(b) => json!(b),
-        Value::Int(i) => json!(i),
-        Value::Float(f) => json!(f),
-        Value::Str(s) => json!(s),
-    }
+    orbit_mcp::convert::value_to_json(value)
 }
 
 fn position_name(position: &orbit_core::Position) -> String {

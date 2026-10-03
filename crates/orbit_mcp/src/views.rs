@@ -411,12 +411,7 @@ pub fn variables_json(story: &Story) -> Json {
                 json!({
                     "name": v.name,
                     "type": v.initial.value_type().to_string(),
-                    "initial": match &v.initial {
-                        orbit_core::Value::Bool(b) => json!(b),
-                        orbit_core::Value::Int(i) => json!(i),
-                        orbit_core::Value::Float(f) => json!(f),
-                        orbit_core::Value::Str(s) => json!(s),
-                    },
+                    "initial": crate::convert::value_to_json(&v.initial),
                     "scope": match v.scope {
                         orbit_core::VarScope::Game => "game",
                         orbit_core::VarScope::Persistent => "persistent",

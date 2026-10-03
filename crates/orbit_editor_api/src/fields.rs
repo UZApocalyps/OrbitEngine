@@ -613,26 +613,165 @@ pub fn value_editor(ui: &mut Ui, value: &Value) -> Option<Value> {
             ui.add(TextEdit::singleline(&mut v).desired_width(120.0));
             (v != *s).then_some(Value::Str(v))
         }
+        Value::List(t, items) => list_editor(ui, *t, items),
+        Value::Map(t, entries) => map_editor(ui, *t, entries),
     }
+}
+
+/// Rows of a collection editor are drawn in a scroll area this tall.
+const COLLECTION_EDITOR_HEIGHT: f32 = 180.0;
+
+/// A list edited as a table: one row per element (value + remove), and an
+/// "add" button. Elements keep the list's type.
+fn list_editor(ui: &mut Ui, elem: orbit_core::ScalarType, items: &[Value]) -> Option<Value> {
+    let mut out: Option<Vec<Value>> = None;
+    ui.vertical(|ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("orbit_list_editor")
+            .max_height(COLLECTION_EDITOR_HEIGHT)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for (i, item) in items.iter().enumerate() {
+                    ui.push_id(i, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(format!("{i}")).weak().monospace());
+                            if let Some(v) = value_editor(ui, item) {
+                                out.get_or_insert_with(|| items.to_vec())[i] = v;
+                            }
+                            if ui
+                                .small_button(egui_phosphor::regular::X)
+                                .on_hover_text(ui.t("field.collection.remove"))
+                                .clicked()
+                            {
+                                out.get_or_insert_with(|| items.to_vec()).remove(i);
+                            }
+                        });
+                    });
+                }
+            });
+        if items.is_empty() {
+            ui.label(RichText::new(ui.t("field.collection.empty")).weak().small());
+        }
+        let full = items.len() >= orbit_core::MAX_COLLECTION_LEN;
+        if ui
+            .add_enabled(
+                !full,
+                egui::Button::new(format!(
+                    "{}  {}",
+                    egui_phosphor::regular::PLUS,
+                    ui.t("field.collection.add")
+                ))
+                .small(),
+            )
+            .clicked()
+        {
+            out.get_or_insert_with(|| items.to_vec())
+                .push(elem.value_type().default_value());
+        }
+    });
+    out.map(|items| Value::list(elem, items))
+}
+
+/// A map edited as a table: key, value and remove per entry, and an "add"
+/// button (a fresh unique key). Renaming a key to an existing one is ignored.
+fn map_editor(
+    ui: &mut Ui,
+    elem: orbit_core::ScalarType,
+    entries: &std::collections::BTreeMap<String, Value>,
+) -> Option<Value> {
+    let mut out: Option<std::collections::BTreeMap<String, Value>> = None;
+    ui.vertical(|ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("orbit_map_editor")
+            .max_height(COLLECTION_EDITOR_HEIGHT)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for (i, (key, value)) in entries.iter().enumerate() {
+                    ui.push_id(i, |ui| {
+                        ui.horizontal(|ui| {
+                            let mut k = key.clone();
+                            ui.add(
+                                TextEdit::singleline(&mut k)
+                                    .desired_width(90.0)
+                                    .hint_text(ui.t("field.collection.key")),
+                            );
+                            if k != *key && !entries.contains_key(&k) {
+                                let map = out.get_or_insert_with(|| entries.clone());
+                                if let Some(v) = map.remove(key) {
+                                    map.insert(k, v);
+                                }
+                            }
+                            if let Some(v) = value_editor(ui, value) {
+                                out.get_or_insert_with(|| entries.clone())
+                                    .insert(key.clone(), v);
+                            }
+                            if ui
+                                .small_button(egui_phosphor::regular::X)
+                                .on_hover_text(ui.t("field.collection.remove"))
+                                .clicked()
+                            {
+                                out.get_or_insert_with(|| entries.clone()).remove(key);
+                            }
+                        });
+                    });
+                }
+            });
+        if entries.is_empty() {
+            ui.label(RichText::new(ui.t("field.collection.empty")).weak().small());
+        }
+        let full = entries.len() >= orbit_core::MAX_COLLECTION_LEN;
+        if ui
+            .add_enabled(
+                !full,
+                egui::Button::new(format!(
+                    "{}  {}",
+                    egui_phosphor::regular::PLUS,
+                    ui.t("field.collection.add")
+                ))
+                .small(),
+            )
+            .clicked()
+        {
+            let key = fresh_key(entries);
+            out.get_or_insert_with(|| entries.clone())
+                .insert(key, elem.value_type().default_value());
+        }
+    });
+    out.map(|m| Value::Map(elem, std::sync::Arc::new(m)))
+}
+
+/// `key`, `key2`, `key3`... the first one not in `entries`.
+pub fn fresh_key(entries: &std::collections::BTreeMap<String, Value>) -> String {
+    (1..)
+        .map(|i| if i == 1 { "key".to_owned() } else { format!("key{i}") })
+        .find(|k| !entries.contains_key(k))
+        .expect("an unused key exists")
 }
 
 /// Default value of a type.
 pub fn default_value(ty: ValueType) -> Value {
-    match ty {
-        ValueType::Bool => Value::Bool(false),
-        ValueType::Int => Value::Int(0),
-        ValueType::Float => Value::Float(0.0),
-        ValueType::Str => Value::Str(String::new()),
-    }
+    ty.default_value()
 }
 
 /// Human name of a value type.
 pub fn type_name(ui: &Ui, ty: ValueType) -> String {
-    ui.t(match ty {
-        ValueType::Bool => "field.type.bool",
-        ValueType::Int => "field.type.int",
-        ValueType::Float => "field.type.float",
-        ValueType::Str => "field.type.str",
+    match ty {
+        ValueType::Bool => ui.t("field.type.bool"),
+        ValueType::Int => ui.t("field.type.int"),
+        ValueType::Float => ui.t("field.type.float"),
+        ValueType::Str => ui.t("field.type.str"),
+        ValueType::List(t) => ui.tf("field.type.list", &[("elem", &elem_name(ui, t))]),
+        ValueType::Map(t) => ui.tf("field.type.map", &[("elem", &elem_name(ui, t))]),
+    }
+}
+
+/// Plural name of an element type ("whole numbers"), inside a collection type.
+fn elem_name(ui: &Ui, t: orbit_core::ScalarType) -> String {
+    ui.t(match t {
+        orbit_core::ScalarType::Bool => "field.elem.bool",
+        orbit_core::ScalarType::Int => "field.elem.int",
+        orbit_core::ScalarType::Float => "field.elem.float",
+        orbit_core::ScalarType::Str => "field.elem.str",
     })
 }
 

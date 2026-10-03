@@ -7,7 +7,7 @@
 //! parser only folds a minus written directly before a number), floats keep
 //! their exponent (`1e-7`), and `i64::MIN` is accepted.
 
-use orbit_core::{BinOp, Expr, UnOp, Value};
+use orbit_core::{BinOp, Expr, Func, ScalarType, UnOp, Value, fold_list, fold_map};
 
 use crate::lexer::{Tok, Token, quote};
 
@@ -50,6 +50,77 @@ fn write_expr(out: &mut String, e: &Expr) {
         Expr::Lit(Value::Int(i)) => out.push_str(&i.to_string()),
         Expr::Lit(Value::Float(f)) => out.push_str(&fmt_f64(*f)),
         Expr::Lit(Value::Str(s)) => out.push_str(&quote(s)),
+        Expr::Lit(Value::List(t, l)) if l.is_empty() => {
+            out.push_str(&format!("[:{}]", t.keyword()));
+        }
+        Expr::Lit(Value::Map(t, m)) if m.is_empty() => {
+            out.push_str(&format!("#{{:{}}}", t.keyword()));
+        }
+        Expr::Lit(Value::List(_, l)) => {
+            out.push('[');
+            for (i, v) in l.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write_expr(out, &Expr::Lit(v.clone()));
+            }
+            out.push(']');
+        }
+        Expr::Lit(Value::Map(_, m)) => {
+            out.push_str("#{");
+            for (i, (k, v)) in m.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&quote(k));
+                out.push_str(": ");
+                write_expr(out, &Expr::Lit(v.clone()));
+            }
+            out.push('}');
+        }
+        Expr::List(items) => {
+            out.push('[');
+            for (i, e) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write_expr(out, e);
+            }
+            out.push(']');
+        }
+        Expr::Map(entries) => {
+            out.push_str("#{");
+            for (i, (k, e)) in entries.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&quote(k));
+                out.push_str(": ");
+                write_expr(out, e);
+            }
+            out.push('}');
+        }
+        Expr::Index(c, i) => {
+            let bare = matches!(
+                **c,
+                Expr::Var(_) | Expr::Call(..) | Expr::Index(..) | Expr::List(_) | Expr::Map(_)
+            );
+            write_operand(out, c, !bare);
+            out.push('[');
+            write_expr(out, i);
+            out.push(']');
+        }
+        Expr::Call(f, args) => {
+            out.push_str(f.name());
+            out.push('(');
+            for (i, e) in args.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write_expr(out, e);
+            }
+            out.push(')');
+        }
         Expr::Var(name) => out.push_str(name),
         Expr::Unary(op, inner) => {
             out.push(if *op == UnOp::Not { '!' } else { '-' });
@@ -185,7 +256,71 @@ impl P<'_> {
             }
             return Ok(Expr::Unary(UnOp::Neg, Box::new(self.unary()?)));
         }
-        self.primary()
+        self.postfix()
+    }
+
+    fn eat(&mut self, sym: &str) -> bool {
+        let found = self.peek_sym(&[sym]).is_some();
+        if found {
+            self.at += 1;
+        }
+        found
+    }
+
+    fn expect(&mut self, sym: &str) -> Result<(), ExprError> {
+        if self.eat(sym) {
+            Ok(())
+        } else {
+            Err((self.col(), format!("expected `{sym}`")))
+        }
+    }
+
+    fn postfix(&mut self) -> Result<Expr, ExprError> {
+        let mut e = self.primary()?;
+        while self.eat("[") {
+            let index = self.or()?;
+            self.expect("]")?;
+            e = Expr::index(e, index);
+        }
+        Ok(e)
+    }
+
+    /// `:type` right after an opening bracket: a typed empty literal.
+    fn typed_empty(&mut self) -> Result<Option<ScalarType>, ExprError> {
+        if !self.eat(":") {
+            return Ok(None);
+        }
+        let col = self.col();
+        match self.tokens.get(self.at).map(|t| &t.tok) {
+            Some(Tok::Ident(name)) => match ScalarType::from_keyword(name) {
+                Some(t) => {
+                    self.at += 1;
+                    Ok(Some(t))
+                }
+                None => Err((col, format!("unknown element type `{name}`"))),
+            },
+            _ => Err((col, "expected an element type (bool, int, float, string)".into())),
+        }
+    }
+
+    /// Comma-separated items until `close` (already past the opening).
+    fn items<T>(
+        &mut self,
+        close: &str,
+        mut item: impl FnMut(&mut Self) -> Result<T, ExprError>,
+    ) -> Result<Vec<T>, ExprError> {
+        let mut out = Vec::new();
+        if self.eat(close) {
+            return Ok(out);
+        }
+        loop {
+            out.push(item(self)?);
+            if !self.eat(",") {
+                break;
+            }
+        }
+        self.expect(close)?;
+        Ok(out)
     }
 
     fn primary(&mut self) -> Result<Expr, ExprError> {
@@ -197,6 +332,51 @@ impl P<'_> {
         match &tok.tok {
             Tok::Num { text, float } => number(text, *float, false, col).map(Expr::Lit),
             Tok::Str(s) => Ok(Expr::Lit(Value::Str(s.clone()))),
+            Tok::Ident(name) if self.peek_sym(&["("]).is_some() => {
+                let Some(func) = Func::from_name(name) else {
+                    return Err((col, format!("unknown function `{name}`")));
+                };
+                self.at += 1;
+                let args = self.items(")", Self::or)?;
+                if args.len() != func.arity() {
+                    return Err((
+                        col,
+                        format!("`{name}` takes {} argument(s), got {}", func.arity(), args.len()),
+                    ));
+                }
+                Ok(Expr::Call(func, args))
+            }
+            Tok::Sym("[") => {
+                if let Some(t) = self.typed_empty()? {
+                    self.expect("]")?;
+                    return Ok(Expr::Lit(Value::empty_list(t)));
+                }
+                Ok(fold_list(self.items("]", Self::or)?))
+            }
+            Tok::Sym("#{") => {
+                if let Some(t) = self.typed_empty()? {
+                    self.expect("}")?;
+                    return Ok(Expr::Lit(Value::empty_map(t)));
+                }
+                let entries = self.items("}", |p| {
+                    let kcol = p.col();
+                    let key = match p.tokens.get(p.at).map(|t| &t.tok) {
+                        Some(Tok::Str(k)) => k.clone(),
+                        _ => return Err((kcol, "expected a text key (\"key\")".to_owned())),
+                    };
+                    p.at += 1;
+                    p.expect(":")?;
+                    Ok((key, kcol, p.or()?))
+                })?;
+                let mut out: Vec<(String, Expr)> = Vec::with_capacity(entries.len());
+                for (k, kcol, e) in entries {
+                    if out.iter().any(|(seen, _)| *seen == k) {
+                        return Err((kcol, format!("duplicate key {}", quote(&k))));
+                    }
+                    out.push((k, e));
+                }
+                Ok(fold_map(out))
+            }
             Tok::Ident(name) => Ok(match name.as_str() {
                 "true" => Expr::Lit(Value::Bool(true)),
                 "false" => Expr::Lit(Value::Bool(false)),
@@ -283,6 +463,64 @@ mod tests {
         ];
         for e in cases {
             assert_eq!(round(&e), e, "{}", print_expr(&e));
+        }
+    }
+
+    #[test]
+    fn collections_round_trip_and_match_core() {
+        use orbit_core::{Func, ScalarType};
+        let cases = [
+            "[1, 2]",
+            "[-1.5, 2e-7]",
+            "[:string]",
+            "#{:int}",
+            "#{\"a b\": 1, \"c\": -2}",
+            "[]",
+            "#{}",
+            "[n, 1 + 2]",
+            "#{\"k\": n}",
+            "bag[0]",
+            "bag[i][j]",
+            "-bag[0]",
+            "!flags[\"x\"]",
+            "(a + b)[0]",
+            "len(bag) >= 2 && contains(bag, \"sword\")",
+            "insert(m, \"k\", 1)",
+            "remove_key(m, k)",
+            "push(bag, \"x\")",
+            "remove(bag, 1)",
+            "remove_at(bag, 0)",
+            "clear(m)",
+            "has_key(m, \"k\")",
+        ];
+        for src in cases {
+            let line = lex_line(src).unwrap();
+            let mut at = 0;
+            let e = parse_expr(&line.tokens, &mut at, src.len() + 1)
+                .unwrap_or_else(|err| panic!("{src}: {err:?}"));
+            assert_eq!(at, line.tokens.len(), "{src}");
+            assert_eq!(round(&e), e, "{src}");
+            // Same tree as the core parser (which has no exponent syntax).
+            if !src.contains("e-") {
+                assert_eq!(Expr::parse(src).unwrap(), e, "{src}");
+            }
+        }
+        // Trees that are not produced by parsing round-trip too.
+        let built = [
+            Expr::Lit(Value::empty_list(ScalarType::Bool)),
+            Expr::Lit(Value::map(ScalarType::Float, [("x", Value::Float(1.0))])),
+            Expr::index(Expr::lit(-3i64), Expr::lit(0i64)),
+            Expr::Unary(UnOp::Neg, Box::new(Expr::index(Expr::var("a"), Expr::lit(0i64)))),
+            Expr::call(Func::Len, vec![Expr::List(vec![Expr::var("a")])]),
+        ];
+        for e in built {
+            assert_eq!(round(&e), e, "{}", print_expr(&e));
+        }
+        for bad in ["[1, 2", "[:list]", "#{1: 2}", "#{\"a\": 1, \"a\": 2}", "len(a, b)", "nope(a)"] {
+            let line = lex_line(bad).unwrap();
+            let mut at = 0;
+            let r = parse_expr(&line.tokens, &mut at, bad.len() + 1);
+            assert!(r.is_err() || at < line.tokens.len(), "{bad:?} should fail");
         }
     }
 

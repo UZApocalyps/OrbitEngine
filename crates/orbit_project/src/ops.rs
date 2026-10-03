@@ -715,7 +715,40 @@ fn rename_in_expr(expr: &Expr, old: &str, new: &str) -> Expr {
             Box::new(rename_in_expr(l, old, new)),
             Box::new(rename_in_expr(r, old, new)),
         ),
-        other => other.clone(),
+        Expr::List(items) => {
+            Expr::List(items.iter().map(|e| rename_in_expr(e, old, new)).collect())
+        }
+        Expr::Map(entries) => Expr::Map(
+            entries
+                .iter()
+                .map(|(k, e)| (k.clone(), rename_in_expr(e, old, new)))
+                .collect(),
+        ),
+        Expr::Index(c, i) => Expr::Index(
+            Box::new(rename_in_expr(c, old, new)),
+            Box::new(rename_in_expr(i, old, new)),
+        ),
+        Expr::Call(f, args) => {
+            Expr::Call(*f, args.iter().map(|e| rename_in_expr(e, old, new)).collect())
+        }
+        Expr::Lit(_) | Expr::Var(_) => expr.clone(),
+    }
+}
+
+#[cfg(test)]
+mod collection_rename_tests {
+    use super::rename_in_expr;
+    use orbit_core::Expr;
+
+    #[test]
+    fn renaming_reaches_into_collection_expressions() {
+        let e = Expr::parse("push(bag, bag[0]) == [bag[1]] && has_key(#{\"k\": bag}, \"bag\")")
+            .unwrap();
+        let renamed = rename_in_expr(&e, "bag", "sack");
+        assert!(renamed.variables().iter().all(|v| *v == "sack"));
+        assert_eq!(renamed.variables().len(), 4);
+        // Text that merely spells the name is untouched.
+        assert!(renamed.to_string().contains("\"bag\""));
     }
 }
 

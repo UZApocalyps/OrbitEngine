@@ -8,11 +8,15 @@
 //! such expressions again (anything else stays an expression, shown in
 //! "expression mode" by the editor). The UI system serializes the structured
 //! forms directly.
+//!
+//! Schema v11 (ADR 0016) adds the collection operations (push, remove,
+//! remove at, clear, set/remove a map key) and conditions (contains, has
+//! key, length comparisons).
 
 use serde::{Deserialize, Serialize};
 
-use crate::expr::{BinOp, EvalError, Expr, UnOp};
-use crate::value::{Value, ValueType};
+use crate::expr::{BinOp, EvalError, Expr, Func, UnOp};
+use crate::value::{ScalarType, Value, ValueType};
 
 /// The value an operation or comparison works with: a literal or another
 /// variable.
@@ -49,6 +53,8 @@ impl Operand {
 }
 
 /// What an operation does to its variable.
+///
+/// New variants are appended at the end (stable indices).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum OpKind {
@@ -61,6 +67,18 @@ pub enum OpKind {
     Div,
     /// Bool only; the operand is ignored.
     Toggle,
+    /// List: append the operand (schema v11).
+    Push,
+    /// List: remove the first element equal to the operand (schema v11).
+    Remove,
+    /// List: remove the element at the index given by the operand.
+    RemoveAt,
+    /// List or map: remove everything; the operand is ignored.
+    Clear,
+    /// Map: set the entry [`VarOp::key`] to the operand.
+    MapSet,
+    /// Map: remove the entry [`VarOp::key`]; the operand is ignored.
+    MapRemove,
 }
 
 impl OpKind {
@@ -76,6 +94,19 @@ impl OpKind {
             ],
             ValueType::Bool => &[OpKind::Set, OpKind::Toggle],
             ValueType::Str => &[OpKind::Set, OpKind::Add],
+            ValueType::List(_) => &[
+                OpKind::Push,
+                OpKind::Remove,
+                OpKind::RemoveAt,
+                OpKind::Clear,
+                OpKind::Set,
+            ],
+            ValueType::Map(_) => &[
+                OpKind::MapSet,
+                OpKind::MapRemove,
+                OpKind::Clear,
+                OpKind::Set,
+            ],
         }
     }
 
@@ -92,7 +123,29 @@ impl OpKind {
             OpKind::Mul => "mul",
             OpKind::Div => "div",
             OpKind::Toggle => "toggle",
+            OpKind::Push => "push",
+            OpKind::Remove => "remove",
+            OpKind::RemoveAt => "remove_at",
+            OpKind::Clear => "clear",
+            OpKind::MapSet => "map_set",
+            OpKind::MapRemove => "map_remove",
         }
+    }
+
+    /// Type of the operand for a variable of type `var`; `None` when the
+    /// operand is ignored.
+    pub fn operand_type(self, var: ValueType) -> Option<ValueType> {
+        match self {
+            OpKind::Toggle | OpKind::Clear | OpKind::MapRemove => None,
+            OpKind::Push | OpKind::Remove | OpKind::MapSet => var.element(),
+            OpKind::RemoveAt => Some(ValueType::Int),
+            _ => Some(var),
+        }
+    }
+
+    /// The operation uses [`VarOp::key`] (a text map key).
+    pub fn uses_key(self) -> bool {
+        matches!(self, OpKind::MapSet | OpKind::MapRemove)
     }
 }
 
@@ -104,6 +157,9 @@ pub enum OpError {
     Type(String),
     DivisionByZero,
     Overflow,
+    /// A collection error: index out of bounds, missing key, size limit
+    /// (schema v11).
+    Collection(EvalError),
 }
 
 impl std::fmt::Display for OpError {
@@ -113,6 +169,7 @@ impl std::fmt::Display for OpError {
             OpError::Type(m) => write!(f, "type mismatch: {m}"),
             OpError::DivisionByZero => f.write_str("division by zero"),
             OpError::Overflow => f.write_str("integer overflow"),
+            OpError::Collection(e) => write!(f, "{e}"),
         }
     }
 }
@@ -126,6 +183,9 @@ impl From<EvalError> for OpError {
             EvalError::Type(m) => OpError::Type(m),
             EvalError::Overflow => OpError::Overflow,
             EvalError::DivisionByZero => OpError::DivisionByZero,
+            e @ (EvalError::IndexOutOfBounds { .. }
+            | EvalError::MissingKey(_)
+            | EvalError::TooLarge) => OpError::Collection(e),
         }
     }
 }
@@ -136,8 +196,13 @@ impl From<EvalError> for OpError {
 pub struct VarOp {
     pub var: String,
     pub op: OpKind,
-    /// Ignored by [`OpKind::Toggle`].
+    /// Ignored by [`OpKind::Toggle`], [`OpKind::Clear`] and
+    /// [`OpKind::MapRemove`].
     pub value: Operand,
+    /// The map key of [`OpKind::MapSet`] / [`OpKind::MapRemove`] (schema
+    /// v11); `None` elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<Operand>,
 }
 
 impl VarOp {
@@ -146,7 +211,14 @@ impl VarOp {
             var: var.into(),
             op,
             value,
+            key: None,
         }
+    }
+
+    /// The same operation on the map key `key`.
+    pub fn with_key(mut self, key: Operand) -> Self {
+        self.key = Some(key);
+        self
     }
 
     pub fn set(var: impl Into<String>, value: impl Into<Value>) -> Self {
@@ -157,10 +229,21 @@ impl VarOp {
         Self::new(var, OpKind::Toggle, Operand::Lit(Value::Bool(true)))
     }
 
+    fn key_expr(&self) -> Expr {
+        self.key
+            .as_ref()
+            .map_or_else(|| Expr::Lit(Value::Str(String::new())), Operand::to_expr)
+    }
+
     /// The expression assigned to the variable (what a `SetVar` node stores).
     pub fn to_expr(&self) -> Expr {
         let target = || Expr::Var(self.var.clone());
         let bin = |op| Expr::binary(op, target(), self.value.to_expr());
+        let call = |f, extra: Vec<Expr>| {
+            let mut args = vec![target()];
+            args.extend(extra);
+            Expr::Call(f, args)
+        };
         match self.op {
             OpKind::Set => self.value.to_expr(),
             OpKind::Add => bin(BinOp::Add),
@@ -168,6 +251,12 @@ impl VarOp {
             OpKind::Mul => bin(BinOp::Mul),
             OpKind::Div => bin(BinOp::Div),
             OpKind::Toggle => Expr::negate(target()),
+            OpKind::Push => call(Func::Push, vec![self.value.to_expr()]),
+            OpKind::Remove => call(Func::Remove, vec![self.value.to_expr()]),
+            OpKind::RemoveAt => call(Func::RemoveAt, vec![self.value.to_expr()]),
+            OpKind::Clear => call(Func::Clear, vec![]),
+            OpKind::MapSet => call(Func::Insert, vec![self.key_expr(), self.value.to_expr()]),
+            OpKind::MapRemove => call(Func::RemoveKey, vec![self.key_expr()]),
         }
     }
 
@@ -175,12 +264,13 @@ impl VarOp {
     /// than a no-code operation (the editor then stays in expression mode).
     pub fn from_expr(var: &str, expr: &Expr) -> Option<VarOp> {
         let make = |op, value| Some(VarOp::new(var, op, value));
+        let is_target = |e: &Expr| matches!(e, Expr::Var(n) if n == var);
+        // The operand of ops that ignore it.
+        let ignored = || Operand::Lit(Value::Bool(true));
         match expr {
             Expr::Lit(_) | Expr::Var(_) => make(OpKind::Set, Operand::from_expr(expr)?),
-            Expr::Unary(UnOp::Not, inner) if matches!(&**inner, Expr::Var(n) if n == var) => {
-                Some(VarOp::toggle(var))
-            }
-            Expr::Binary(op, l, r) if matches!(&**l, Expr::Var(n) if n == var) => {
+            Expr::Unary(UnOp::Not, inner) if is_target(inner) => Some(VarOp::toggle(var)),
+            Expr::Binary(op, l, r) if is_target(l) => {
                 let kind = match op {
                     BinOp::Add => OpKind::Add,
                     BinOp::Sub => OpKind::Sub,
@@ -190,14 +280,29 @@ impl VarOp {
                 };
                 make(kind, Operand::from_expr(r)?)
             }
+            Expr::Call(f, args) if args.first().is_some_and(is_target) => match (f, &args[1..]) {
+                (Func::Push, [v]) => make(OpKind::Push, Operand::from_expr(v)?),
+                (Func::Remove, [v]) => make(OpKind::Remove, Operand::from_expr(v)?),
+                (Func::RemoveAt, [v]) => make(OpKind::RemoveAt, Operand::from_expr(v)?),
+                (Func::Clear, []) => make(OpKind::Clear, ignored()),
+                (Func::Insert, [k, v]) => Some(
+                    VarOp::new(var, OpKind::MapSet, Operand::from_expr(v)?)
+                        .with_key(Operand::from_expr(k)?),
+                ),
+                (Func::RemoveKey, [k]) => Some(
+                    VarOp::new(var, OpKind::MapRemove, ignored()).with_key(Operand::from_expr(k)?),
+                ),
+                _ => None,
+            },
             _ => None,
         }
     }
 
     /// The new value of the variable, given its current one through `get`.
     /// The result keeps the variable's type (a float result stored in an
-    /// integer variable is rounded). Dividing by zero is an error: callers
-    /// leave the variable unchanged.
+    /// integer variable is rounded). Dividing by zero, an index out of
+    /// bounds or a collection over its limits is an error: callers leave
+    /// the variable unchanged.
     pub fn apply(&self, get: &dyn Fn(&str) -> Option<Value>) -> Result<Value, OpError> {
         let current =
             get(&self.var).ok_or_else(|| OpError::UnknownVariable(self.var.clone()))?;
@@ -222,9 +327,24 @@ impl VarOp {
             ));
             return out;
         }
-        if self.op == OpKind::Toggle {
-            return out;
+        if self.op.uses_key() {
+            match &self.key {
+                None => out.push(format!("no key given for map `{}`", self.var)),
+                Some(Operand::Var(n)) if ty_of(n).is_none() => {
+                    out.push(format!("unknown variable `{n}`"));
+                }
+                Some(k) => {
+                    if let Some(kt) = k.value_type(ty_of)
+                        && kt != ValueType::Str
+                    {
+                        out.push(format!("a map key must be text, got {kt}"));
+                    }
+                }
+            }
         }
+        let Some(want) = self.op.operand_type(ty) else {
+            return out;
+        };
         if let Operand::Var(n) = &self.value
             && ty_of(n).is_none()
         {
@@ -232,10 +352,23 @@ impl VarOp {
             return out;
         }
         if let Some(vt) = self.value.value_type(ty_of)
-            && vt != ty
-            && !(vt.is_numeric() && ty.is_numeric())
+            && !ValueType::compatible(vt, want)
+            && !(want.is_collection() && same_kind_empty(&self.value, want))
         {
-            out.push(format!("`{}` is {ty} but the value is {vt}", self.var));
+            if want == ty {
+                out.push(format!("`{}` is {ty} but the value is {vt}", self.var));
+            } else {
+                out.push(format!(
+                    "`{}` expects a {want} for `{}`, got {vt}",
+                    self.var,
+                    self.op.key()
+                ));
+            }
+        }
+        if let Operand::Lit(v) = &self.value
+            && !v.is_well_formed()
+        {
+            out.push(format!("the value given to `{}` mixes element types", self.var));
         }
         let zero = matches!(&self.value, Operand::Lit(Value::Int(0)))
             || matches!(&self.value, Operand::Lit(Value::Float(f)) if *f == 0.0);
@@ -246,28 +379,57 @@ impl VarOp {
     }
 }
 
-/// Keeps `value` within `ty` (the declared type of a variable): numbers convert between int and float (a float
-/// stored in an int is rounded); anything else must already match.
+/// An empty literal collection of the right kind fits any element type.
+fn same_kind_empty(value: &Operand, want: ValueType) -> bool {
+    match (value, want) {
+        (Operand::Lit(Value::List(_, l)), ValueType::List(_)) => l.is_empty(),
+        (Operand::Lit(Value::Map(_, m)), ValueType::Map(_)) => m.is_empty(),
+        _ => false,
+    }
+}
+
+/// Keeps `value` within `ty` (the declared type of a variable): numbers
+/// convert between int and float (a float stored in an int is rounded);
+/// collections convert their elements the same way (an empty collection
+/// takes the declared element type); anything else must already match.
 pub fn coerce(value: Value, ty: ValueType) -> Result<Value, OpError> {
-    match (value, ty) {
-        (Value::Float(f), ValueType::Int) if f.is_finite() => {
-            let r = f.round();
-            if r >= i64::MIN as f64 && r <= i64::MAX as f64 {
-                Ok(Value::Int(r as i64))
-            } else {
-                Err(OpError::Overflow)
-            }
-        }
-        (Value::Int(i), ValueType::Float) => Ok(Value::Float(i as f64)),
-        (v, t) if v.value_type() == t => Ok(v),
-        (v, t) => Err(OpError::Type(format!(
-            "cannot store a {} in a {t} variable",
+    let mismatch = |v: &Value| {
+        OpError::Type(format!(
+            "cannot store a {} in a {ty} variable",
             v.value_type()
-        ))),
+        ))
+    };
+    match (value, ty) {
+        (v, t) if v.value_type() == t => Ok(v),
+        (Value::Float(f), ValueType::Int) if f.is_finite() => Value::Float(f)
+            .into_scalar(ScalarType::Int)
+            .ok_or(OpError::Overflow),
+        (Value::List(from, l), ValueType::List(to)) => {
+            let items = l
+                .iter()
+                .map(|v| v.clone().into_scalar(to))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| mismatch(&Value::List(from, l.clone())))?;
+            Ok(Value::List(to, items.into()))
+        }
+        (Value::Map(from, m), ValueType::Map(to)) => {
+            let entries = m
+                .iter()
+                .map(|(k, v)| Some((k.clone(), v.clone().into_scalar(to)?)))
+                .collect::<Option<std::collections::BTreeMap<_, _>>>()
+                .ok_or_else(|| mismatch(&Value::Map(from, m.clone())))?;
+            Ok(Value::Map(to, entries.into()))
+        }
+        (v, t) => match t.scalar().and_then(|s| v.clone().into_scalar(s)) {
+            Some(v) => Ok(v),
+            None => Err(mismatch(&v)),
+        },
     }
 }
 
 /// Comparison operator of a [`Condition::Cmp`].
+///
+/// New variants are appended at the end (stable indices).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Cmp {
@@ -277,6 +439,21 @@ pub enum Cmp {
     Le,
     Gt,
     Ge,
+    /// List: holds the operand (schema v11).
+    Contains,
+    /// List: does not hold the operand.
+    NotContains,
+    /// Map: has the key given by the operand.
+    HasKey,
+    /// Map: does not have the key.
+    NotHasKey,
+    /// Collection: number of elements `==` the operand.
+    LenEq,
+    LenNe,
+    LenLt,
+    LenLe,
+    LenGt,
+    LenGe,
 }
 
 impl Cmp {
@@ -285,6 +462,26 @@ impl Cmp {
     pub fn for_type(ty: ValueType) -> &'static [Cmp] {
         match ty {
             ValueType::Bool => &[Cmp::Eq, Cmp::Ne],
+            ValueType::List(_) => &[
+                Cmp::Contains,
+                Cmp::NotContains,
+                Cmp::LenEq,
+                Cmp::LenNe,
+                Cmp::LenLt,
+                Cmp::LenLe,
+                Cmp::LenGt,
+                Cmp::LenGe,
+            ],
+            ValueType::Map(_) => &[
+                Cmp::HasKey,
+                Cmp::NotHasKey,
+                Cmp::LenEq,
+                Cmp::LenNe,
+                Cmp::LenLt,
+                Cmp::LenLe,
+                Cmp::LenGt,
+                Cmp::LenGe,
+            ],
             _ => &[Cmp::Eq, Cmp::Ne, Cmp::Lt, Cmp::Le, Cmp::Gt, Cmp::Ge],
         }
     }
@@ -297,17 +494,88 @@ impl Cmp {
             Cmp::Le => "<=",
             Cmp::Gt => ">",
             Cmp::Ge => ">=",
+            Cmp::Contains => "contains",
+            Cmp::NotContains => "does not contain",
+            Cmp::HasKey => "has key",
+            Cmp::NotHasKey => "has no key",
+            Cmp::LenEq => "length ==",
+            Cmp::LenNe => "length !=",
+            Cmp::LenLt => "length <",
+            Cmp::LenLe => "length <=",
+            Cmp::LenGt => "length >",
+            Cmp::LenGe => "length >=",
+        }
+    }
+
+    /// Stable key, for UI strings (`cmp.<key>`).
+    pub fn key(self) -> &'static str {
+        match self {
+            Cmp::Eq => "eq",
+            Cmp::Ne => "ne",
+            Cmp::Lt => "lt",
+            Cmp::Le => "le",
+            Cmp::Gt => "gt",
+            Cmp::Ge => "ge",
+            Cmp::Contains => "contains",
+            Cmp::NotContains => "not_contains",
+            Cmp::HasKey => "has_key",
+            Cmp::NotHasKey => "not_has_key",
+            Cmp::LenEq => "len_eq",
+            Cmp::LenNe => "len_ne",
+            Cmp::LenLt => "len_lt",
+            Cmp::LenLe => "len_le",
+            Cmp::LenGt => "len_gt",
+            Cmp::LenGe => "len_ge",
+        }
+    }
+
+    /// Type of the operand compared with a variable of type `var`.
+    pub fn operand_type(self, var: ValueType) -> ValueType {
+        match self {
+            Cmp::Contains | Cmp::NotContains => var.element().unwrap_or(var),
+            Cmp::HasKey | Cmp::NotHasKey => ValueType::Str,
+            Cmp::LenEq | Cmp::LenNe | Cmp::LenLt | Cmp::LenLe | Cmp::LenGt | Cmp::LenGe => {
+                ValueType::Int
+            }
+            _ => var,
+        }
+    }
+
+    /// The scalar comparison applied to the length, for `Len*`.
+    fn len_cmp(self) -> Option<Cmp> {
+        Some(match self {
+            Cmp::LenEq => Cmp::Eq,
+            Cmp::LenNe => Cmp::Ne,
+            Cmp::LenLt => Cmp::Lt,
+            Cmp::LenLe => Cmp::Le,
+            Cmp::LenGt => Cmp::Gt,
+            Cmp::LenGe => Cmp::Ge,
+            _ => return None,
+        })
+    }
+
+    fn of_len(self) -> Cmp {
+        match self {
+            Cmp::Eq => Cmp::LenEq,
+            Cmp::Ne => Cmp::LenNe,
+            Cmp::Lt => Cmp::LenLt,
+            Cmp::Le => Cmp::LenLe,
+            Cmp::Gt => Cmp::LenGt,
+            Cmp::Ge => Cmp::LenGe,
+            other => other,
         }
     }
 
     fn bin_op(self) -> BinOp {
         match self {
-            Cmp::Eq => BinOp::Eq,
-            Cmp::Ne => BinOp::Ne,
-            Cmp::Lt => BinOp::Lt,
-            Cmp::Le => BinOp::Le,
-            Cmp::Gt => BinOp::Gt,
-            Cmp::Ge => BinOp::Ge,
+            Cmp::Eq | Cmp::LenEq => BinOp::Eq,
+            Cmp::Ne | Cmp::LenNe => BinOp::Ne,
+            Cmp::Lt | Cmp::LenLt => BinOp::Lt,
+            Cmp::Le | Cmp::LenLe => BinOp::Le,
+            Cmp::Gt | Cmp::LenGt => BinOp::Gt,
+            Cmp::Ge | Cmp::LenGe => BinOp::Ge,
+            // Not binary operators: handled by `Condition::to_expr`.
+            Cmp::Contains | Cmp::NotContains | Cmp::HasKey | Cmp::NotHasKey => BinOp::Eq,
         }
     }
 
@@ -359,12 +627,47 @@ impl Condition {
     pub fn to_expr(&self) -> Expr {
         match self {
             Condition::Cmp { var, cmp, value } => {
-                Expr::binary(cmp.bin_op(), Expr::Var(var.clone()), value.to_expr())
+                let target = Expr::Var(var.clone());
+                let call = |f| Expr::Call(f, vec![target.clone(), value.to_expr()]);
+                match cmp {
+                    Cmp::Contains => call(Func::Contains),
+                    Cmp::NotContains => Expr::negate(call(Func::Contains)),
+                    Cmp::HasKey => call(Func::HasKey),
+                    Cmp::NotHasKey => Expr::negate(call(Func::HasKey)),
+                    c if c.len_cmp().is_some() => Expr::binary(
+                        c.bin_op(),
+                        Expr::Call(Func::Len, vec![target.clone()]),
+                        value.to_expr(),
+                    ),
+                    c => Expr::binary(c.bin_op(), target.clone(), value.to_expr()),
+                }
             }
             Condition::All(items) => fold(items, BinOp::And, true),
             Condition::Any(items) => fold(items, BinOp::Or, false),
             Condition::Expr(e) => e.clone(),
         }
+    }
+
+    /// `var contains value` / `var has key value` read from a call.
+    fn from_call(expr: &Expr, negated: bool) -> Option<Condition> {
+        let Expr::Call(f, args) = expr else {
+            return None;
+        };
+        let [Expr::Var(var), v] = args.as_slice() else {
+            return None;
+        };
+        let cmp = match (f, negated) {
+            (Func::Contains, false) => Cmp::Contains,
+            (Func::Contains, true) => Cmp::NotContains,
+            (Func::HasKey, false) => Cmp::HasKey,
+            (Func::HasKey, true) => Cmp::NotHasKey,
+            _ => return None,
+        };
+        Some(Condition::Cmp {
+            var: var.clone(),
+            cmp,
+            value: Operand::from_expr(v)?,
+        })
     }
 
     /// Recognizes structured conditions inside an expression; the rest is
@@ -387,13 +690,27 @@ impl Condition {
                     cmp,
                     value,
                 },
+                (Some(cmp), Expr::Call(Func::Len, args), Some(value)) => match args.as_slice() {
+                    [Expr::Var(var)] => Condition::Cmp {
+                        var: var.clone(),
+                        cmp: cmp.of_len(),
+                        value,
+                    },
+                    _ => Condition::Expr(expr.clone()),
+                },
                 _ => Condition::Expr(expr.clone()),
             },
             Expr::Lit(Value::Bool(true)) => Condition::All(Vec::new()),
             Expr::Lit(Value::Bool(false)) => Condition::Any(Vec::new()),
             Expr::Var(var) => Condition::is_true(var.clone()),
+            Expr::Call(..) => {
+                Self::from_call(expr, false).unwrap_or_else(|| Condition::Expr(expr.clone()))
+            }
             Expr::Unary(UnOp::Not, inner) => match &**inner {
                 Expr::Var(var) => Condition::cmp(var.clone(), Cmp::Eq, false),
+                call @ Expr::Call(..) => {
+                    Self::from_call(call, true).unwrap_or_else(|| Condition::Expr(expr.clone()))
+                }
                 _ => Condition::Expr(expr.clone()),
             },
             _ => Condition::Expr(expr.clone()),
@@ -445,10 +762,11 @@ impl Condition {
                 let mut out = Vec::new();
                 if !Cmp::for_type(ty).contains(cmp) {
                     out.push(format!("`{}` cannot be used on {ty} `{var}`", cmp.symbol()));
+                    return out;
                 }
+                let want = cmp.operand_type(ty);
                 if let Some(vt) = value.value_type(ty_of)
-                    && vt != ty
-                    && !(vt.is_numeric() && ty.is_numeric())
+                    && !ValueType::compatible(vt, want)
                 {
                     out.push(format!("`{var}` is {ty} but is compared with {vt}"));
                 }
@@ -489,13 +807,16 @@ fn flatten(expr: &Expr, op: BinOp, out: &mut Vec<Condition>) {
 }
 
 impl ValueType {
-    /// A neutral value of this type (`0`, `false`, empty text).
+    /// A neutral value of this type (`0`, `false`, empty text, empty
+    /// collection).
     pub fn default_value(self) -> Value {
         match self {
             ValueType::Bool => Value::Bool(false),
             ValueType::Int => Value::Int(0),
             ValueType::Float => Value::Float(0.0),
             ValueType::Str => Value::Str(String::new()),
+            ValueType::List(t) => Value::empty_list(t),
+            ValueType::Map(t) => Value::empty_map(t),
         }
     }
 }
@@ -648,5 +969,156 @@ mod tests {
         assert_eq!(Condition::cmp("b", Cmp::Lt, true).issues(&ty).len(), 1);
         let group = Condition::All(vec![Condition::cmp("zz", Cmp::Eq, 1i64), Condition::is_true("b")]);
         assert_eq!(group.issues(&ty).len(), 1);
+    }
+
+    fn coll_vars() -> impl Fn(&str) -> Option<Value> + use<> {
+        vars(&[
+            ("bag", Value::list(ScalarType::Str, [Value::from("sword")])),
+            ("gold", Value::map(ScalarType::Int, [("alice", Value::Int(3))])),
+            ("i", Value::Int(0)),
+            ("item", Value::from("key")),
+        ])
+    }
+
+    fn coll_types(n: &str) -> Option<ValueType> {
+        match n {
+            "bag" => Some(ValueType::List(ScalarType::Str)),
+            "gold" => Some(ValueType::Map(ScalarType::Int)),
+            "i" => Some(ValueType::Int),
+            "item" => Some(ValueType::Str),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn collection_ops() {
+        let get = coll_vars();
+        let lit = |v: Value| Operand::Lit(v);
+        let push = VarOp::new("bag", OpKind::Push, Operand::Var("item".into()));
+        assert_eq!(
+            push.apply(&get),
+            Ok(Value::list(ScalarType::Str, ["sword", "key"].map(Value::from)))
+        );
+        let remove = VarOp::new("bag", OpKind::Remove, lit("sword".into()));
+        assert_eq!(remove.apply(&get), Ok(Value::empty_list(ScalarType::Str)));
+        let at = VarOp::new("bag", OpKind::RemoveAt, lit(Value::Int(4)));
+        assert!(matches!(
+            at.apply(&get),
+            Err(OpError::Collection(EvalError::IndexOutOfBounds { index: 4, len: 1 }))
+        ));
+        let clear = VarOp::new("gold", OpKind::Clear, lit(Value::Bool(true)));
+        assert_eq!(clear.apply(&get), Ok(Value::empty_map(ScalarType::Int)));
+        // A float stored in an int map is rounded, like an int variable.
+        let set = VarOp::new("gold", OpKind::MapSet, lit(Value::Float(2.6)))
+            .with_key(lit("bob".into()));
+        assert_eq!(
+            set.apply(&get),
+            Ok(Value::map(ScalarType::Int, [("alice", Value::Int(3)), ("bob", Value::Int(3))]))
+        );
+        let rm = VarOp::new("gold", OpKind::MapRemove, lit(Value::Bool(true)))
+            .with_key(lit("alice".into()));
+        assert_eq!(rm.apply(&get), Ok(Value::empty_map(ScalarType::Int)));
+        // `Set` with an untyped empty literal takes the variable's type.
+        let reset = VarOp::from_expr("bag", &Expr::parse("[]").unwrap());
+        assert_eq!(reset, None, "`[]` is an expression, not an operand");
+        let e = Expr::parse("[]").unwrap().eval(&get).unwrap();
+        assert_eq!(
+            coerce(e, ValueType::List(ScalarType::Str)),
+            Ok(Value::empty_list(ScalarType::Str))
+        );
+        assert!(coerce(Value::list(ScalarType::Str, ["x".into()]), ValueType::List(ScalarType::Int)).is_err());
+        assert_eq!(
+            coerce(Value::list(ScalarType::Int, [Value::Int(1)]), ValueType::List(ScalarType::Float)),
+            Ok(Value::list(ScalarType::Float, [Value::Float(1.0)]))
+        );
+    }
+
+    #[test]
+    fn collection_ops_round_trip_and_types() {
+        let lit = |v: Value| Operand::Lit(v);
+        for op in [
+            VarOp::new("bag", OpKind::Push, lit("x".into())),
+            VarOp::new("bag", OpKind::Remove, Operand::Var("item".into())),
+            VarOp::new("bag", OpKind::RemoveAt, lit(Value::Int(0))),
+            VarOp::new("bag", OpKind::Clear, lit(Value::Bool(true))),
+            VarOp::new("gold", OpKind::MapSet, lit(Value::Int(1))).with_key(lit("k".into())),
+            VarOp::new("gold", OpKind::MapRemove, lit(Value::Bool(true)))
+                .with_key(Operand::Var("item".into())),
+            VarOp::new("bag", OpKind::Set, lit(Value::list(ScalarType::Str, ["a".into()]))),
+        ] {
+            assert_eq!(VarOp::from_expr(&op.var, &op.to_expr()), Some(op.clone()));
+            assert!(op.issues(&coll_types).is_empty(), "{op:?}: {:?}", op.issues(&coll_types));
+            // The structured form survives RON, and `key` is only written when set.
+            let ron = ron::to_string(&op).unwrap();
+            assert_eq!(ron.contains("key"), op.key.is_some(), "{ron}");
+            assert_eq!(ron::from_str::<VarOp>(&ron).unwrap(), op);
+        }
+        // Operations of the wrong kind or with operands of the wrong type.
+        let bad = [
+            VarOp::new("bag", OpKind::Push, lit(Value::Int(1))),
+            VarOp::new("bag", OpKind::Add, lit("x".into())),
+            VarOp::new("gold", OpKind::Push, lit(Value::Int(1))),
+            VarOp::new("gold", OpKind::MapSet, lit(Value::Int(1))),
+            VarOp::new("gold", OpKind::MapSet, lit(Value::Int(1))).with_key(lit(Value::Int(1))),
+            VarOp::new("bag", OpKind::RemoveAt, lit("x".into())),
+            VarOp::new("i", OpKind::Push, lit(Value::Int(1))),
+            VarOp::new("bag", OpKind::Set, lit(Value::list(ScalarType::Int, [Value::Int(1)]))),
+        ];
+        for op in bad {
+            assert!(!op.issues(&coll_types).is_empty(), "{op:?}");
+        }
+        // An empty literal of another element type is fine for `Set`.
+        assert!(
+            VarOp::new("bag", OpKind::Set, lit(Value::empty_list(ScalarType::Int)))
+                .issues(&coll_types)
+                .is_empty()
+        );
+        assert_eq!(OpKind::for_type(ValueType::List(ScalarType::Int))[0], OpKind::Push);
+        assert!(OpKind::MapSet.supports(ValueType::Map(ScalarType::Str)));
+        assert!(!OpKind::Push.supports(ValueType::Int));
+        assert_eq!(OpKind::RemoveAt.operand_type(ValueType::List(ScalarType::Str)), Some(ValueType::Int));
+        assert_eq!(OpKind::Push.operand_type(ValueType::List(ScalarType::Str)), Some(ValueType::Str));
+        assert_eq!(OpKind::Clear.operand_type(ValueType::List(ScalarType::Str)), None);
+        // An old operation (no key) still reads.
+        let old: VarOp = ron::from_str("(var: \"n\", op: Add, value: Lit(Int(1)))").unwrap();
+        assert_eq!(old, VarOp::new("n", OpKind::Add, Operand::Lit(Value::Int(1))));
+    }
+
+    #[test]
+    fn collection_conditions() {
+        let get = coll_vars();
+        let c = |cond: Condition| cond.eval(&get);
+        assert_eq!(c(Condition::cmp("bag", Cmp::Contains, "sword")), Ok(true));
+        assert_eq!(c(Condition::cmp("bag", Cmp::NotContains, "sword")), Ok(false));
+        assert_eq!(c(Condition::cmp("gold", Cmp::HasKey, "alice")), Ok(true));
+        assert_eq!(c(Condition::cmp("gold", Cmp::NotHasKey, "alice")), Ok(false));
+        assert_eq!(c(Condition::cmp("bag", Cmp::LenEq, 1i64)), Ok(true));
+        assert_eq!(c(Condition::cmp("gold", Cmp::LenGt, 1i64)), Ok(false));
+        for cond in [
+            Condition::cmp("bag", Cmp::Contains, "x"),
+            Condition::cmp("bag", Cmp::NotContains, "x"),
+            Condition::cmp("gold", Cmp::HasKey, "x"),
+            Condition::cmp("gold", Cmp::NotHasKey, "x"),
+            Condition::cmp("bag", Cmp::LenGe, 2i64),
+            Condition::cmp("gold", Cmp::LenNe, 0i64),
+            Condition::All(vec![
+                Condition::cmp("bag", Cmp::Contains, "x"),
+                Condition::cmp("gold", Cmp::LenLt, 3i64),
+            ]),
+        ] {
+            let back = Condition::from_expr(&cond.to_expr());
+            assert_eq!(back, cond);
+            assert!(back.is_structured());
+            assert!(cond.issues(&coll_types).is_empty(), "{cond:?}");
+        }
+        assert_eq!(Condition::cmp("bag", Cmp::Contains, 1i64).issues(&coll_types).len(), 1);
+        assert_eq!(Condition::cmp("bag", Cmp::HasKey, "x").issues(&coll_types).len(), 1);
+        assert_eq!(Condition::cmp("bag", Cmp::Lt, "x").issues(&coll_types).len(), 1);
+        assert_eq!(Condition::cmp("gold", Cmp::LenEq, "x").issues(&coll_types).len(), 1);
+        assert_eq!(Condition::cmp("i", Cmp::Contains, 1i64).issues(&coll_types).len(), 1);
+        assert_eq!(Cmp::for_type(ValueType::Map(ScalarType::Int))[0], Cmp::HasKey);
+        // Raw expressions on collections are typed too.
+        let raw = Condition::Expr(Expr::parse("bag[0] == 1").unwrap());
+        assert_eq!(raw.issues(&coll_types).len(), 1);
     }
 }

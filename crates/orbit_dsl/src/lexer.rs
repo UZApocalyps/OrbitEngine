@@ -62,6 +62,13 @@ pub(crate) fn lex_line(src: &str) -> Result<Line, LexError> {
         let col = i + 1;
         if c.is_whitespace() {
             i += 1;
+        } else if c == '#' && chars.get(i + 1) == Some(&'{') {
+            // A map literal (`#{"key": 1}`), not a comment.
+            line.tokens.push(Token {
+                tok: Tok::Sym("#{"),
+                col,
+            });
+            i += 2;
         } else if c == '#' {
             if chars.get(i + 1) == Some(&'@') {
                 let start = i + 2;

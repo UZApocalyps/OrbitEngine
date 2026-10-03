@@ -380,6 +380,65 @@ mod tests {
         assert_eq!(back, pack);
     }
 
+    /// Written by the build of pack version 3 / schema v10, before lists and
+    /// maps existed: `examples/fixtures/compat/pak_v3/game.pack`, never
+    /// regenerate. Collections (schema v11) only append enum variants, so
+    /// the version-3 layout is unchanged and the pack version stays 3.
+    const PACK_V3: &[u8] = include_bytes!("../../../examples/fixtures/compat/pak_v3/game.pack");
+
+    #[test]
+    fn a_frozen_version_3_pack_still_loads() {
+        assert_eq!(&PACK_V3[8..12], &3u32.to_le_bytes());
+        let back = GamePack::from_bytes(PACK_V3).unwrap();
+        assert_eq!(back.info.id, "compat");
+        assert_eq!(back.ui.as_deref(), Some(&b"(screens: [])"[..]));
+        let mut expected = Story::from_ron_unchecked(FIXTURE).unwrap();
+        // The pack keeps the schema number it was built with.
+        expected.schema_version = back.story.schema_version;
+        assert_eq!(back.story, expected);
+        assert!(orbit_core::validate(&back.story).errors.is_empty());
+        let again = GamePack::from_bytes(&back.to_bytes().unwrap()).unwrap();
+        assert_eq!(again, back);
+    }
+
+    #[test]
+    fn list_and_map_variables_survive_postcard() {
+        use orbit_core::{Expr, Node, NodeId, NodeKind, ScalarType, Value, VarDecl};
+        let mut pack = fixture_pack();
+        // A story without collections encodes exactly as before.
+        let before = pack.to_bytes().unwrap();
+        assert_eq!(GamePack::from_bytes(&before).unwrap(), pack);
+        pack.story.variables.push(VarDecl::game(
+            "bag",
+            Value::list(ScalarType::Str, [Value::from("sword")]),
+        ));
+        pack.story.variables.push(VarDecl::persistent(
+            "endings",
+            Value::empty_map(ScalarType::Bool),
+        ));
+        for src in [
+            "push(bag, \"key\")",
+            "insert(endings, \"good\", contains(bag, \"key\") && len(bag) > 1)",
+            "[bag[0], \"x\"]",
+            "#{\"a\": true}",
+            "[:float]",
+        ] {
+            let var = if src.contains("endings") || src.starts_with('#') { "endings" } else { "bag" };
+            pack.story.scenes[0].nodes.insert(
+                0,
+                Node {
+                    id: NodeId::new(),
+                    kind: NodeKind::SetVar {
+                        var: var.into(),
+                        value: Expr::parse(src).unwrap(),
+                    },
+                },
+            );
+        }
+        let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
+        assert_eq!(back, pack);
+    }
+
     #[test]
     fn bad_packs_are_refused() {
         assert_eq!(

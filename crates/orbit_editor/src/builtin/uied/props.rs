@@ -74,13 +74,7 @@ fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
 
 /// The value a new dropdown option sets, by variable type.
 fn default_value(ty: orbit_core::ValueType) -> orbit_core::Value {
-    use orbit_core::{Value, ValueType};
-    match ty {
-        ValueType::Bool => Value::Bool(false),
-        ValueType::Int => Value::Int(0),
-        ValueType::Float => Value::Float(0.0),
-        ValueType::Str => Value::Str(String::new()),
-    }
+    ty.default_value()
 }
 
 /// A typed value: a check box, a number or a text.
@@ -98,6 +92,11 @@ fn value_editor(ui: &mut Ui, value: &mut orbit_core::Value) {
         }
         Value::Str(s) => {
             ui.add(egui::TextEdit::singleline(s).desired_width(80.0));
+        }
+        Value::List(..) | Value::Map(..) => {
+            if let Some(v) = orbit_editor_api::fields::value_editor(ui, value) {
+                *value = v;
+            }
         }
     }
 }

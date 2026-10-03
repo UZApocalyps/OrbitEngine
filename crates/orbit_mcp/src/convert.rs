@@ -349,6 +349,99 @@ pub fn check_identifier(name: &str) -> Result<(), ToolError> {
     }
 }
 
+/// JSON -> variable value: a scalar, an array (list) or an object (map,
+/// schema v11). The element type of a collection is `element_type`
+/// (`bool`, `int`, `float`, `string`) or, when absent, inferred from the
+/// elements; an empty collection needs it.
+pub fn json_to_value_typed(json: &Json, element_type: Option<&str>) -> Result<Value, ToolError> {
+    let elem = element_type
+        .map(|t| {
+            orbit_core::ScalarType::from_keyword(t.trim()).ok_or_else(|| {
+                ToolError::invalid(format!(
+                    "`{t}` is not an element type (bool, int, float or string)"
+                ))
+            })
+        })
+        .transpose()?;
+    let scalars = |values: Vec<&Json>| -> Result<(orbit_core::ScalarType, Vec<Value>), ToolError> {
+        let values = values
+            .into_iter()
+            .map(json_to_value)
+            .collect::<Result<Vec<_>, _>>()?;
+        let inferred = values.iter().try_fold(None, |acc: Option<orbit_core::ScalarType>, v| {
+            let Some(t) = v.value_type().scalar() else {
+                return Err(ToolError::invalid("lists and maps cannot contain lists or maps"));
+            };
+            Ok(Some(match acc {
+                None => t,
+                Some(a) if a == t => a,
+                Some(a) if a.value_type().is_numeric() && t.value_type().is_numeric() => {
+                    orbit_core::ScalarType::Float
+                }
+                Some(a) => {
+                    return Err(ToolError::invalid(format!(
+                        "a list or map holds one type of element, got {a} and {t}"
+                    )));
+                }
+            }))
+        })?;
+        let t = elem.or(inferred).ok_or_else(|| {
+            ToolError::invalid("an empty list or map needs `element_type` (bool, int, float or string)")
+        })?;
+        let converted = values
+            .into_iter()
+            .map(|v| {
+                let shown = v.to_string();
+                v.into_scalar(t)
+                    .ok_or_else(|| ToolError::invalid(format!("`{shown}` is not a {t}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((t, converted))
+    };
+    let value = match json {
+        Json::Array(items) => {
+            let (t, values) = scalars(items.iter().collect())?;
+            Value::list(t, values)
+        }
+        Json::Object(entries) => {
+            let (t, values) = scalars(entries.values().collect())?;
+            Value::map(t, entries.keys().cloned().zip(values))
+        }
+        other => {
+            if elem.is_some() {
+                return Err(ToolError::invalid(
+                    "`element_type` is only for a list (JSON array) or a map (JSON object)",
+                ));
+            }
+            return json_to_value(other);
+        }
+    };
+    if !value.within_limits() {
+        return Err(ToolError::invalid(format!(
+            "too large: at most {} elements and {} bytes of text",
+            orbit_core::MAX_COLLECTION_LEN,
+            orbit_core::MAX_COLLECTION_TEXT
+        )));
+    }
+    Ok(value)
+}
+
+/// Variable value -> JSON (lists are arrays, maps objects).
+pub fn value_to_json(v: &Value) -> Json {
+    match v {
+        Value::Bool(b) => Json::from(*b),
+        Value::Int(i) => Json::from(*i),
+        Value::Float(f) => Json::from(*f),
+        Value::Str(s) => Json::from(s.clone()),
+        Value::List(_, l) => Json::Array(l.iter().map(value_to_json).collect()),
+        Value::Map(_, m) => Json::Object(
+            m.iter()
+                .map(|(k, v)| (k.clone(), value_to_json(v)))
+                .collect(),
+        ),
+    }
+}
+
 /// JSON scalar -> variable value.
 pub fn json_to_value(json: &Json) -> Result<Value, ToolError> {
     match json {
