@@ -2315,6 +2315,7 @@ fn import_asset(cx: &mut ToolCx<'_>, a: ImportAssetArgs) -> Result<String, ToolE
                 AssetKind::Sound => "assets/sounds",
                 AssetKind::Scene3d => "assets/3d",
                 AssetKind::Font => "assets/fonts",
+                AssetKind::Rig => "assets/rigs",
             };
             let payload = match &converted {
                 Some(bytes) => bytes.clone(),

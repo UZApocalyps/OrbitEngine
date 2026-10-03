@@ -17,6 +17,8 @@ pub mod graph_layout;
 pub mod graph_ops;
 pub mod lock;
 pub mod ops;
+pub mod rigmesh;
+pub mod rigs;
 mod project;
 pub mod sandbox;
 mod storage;

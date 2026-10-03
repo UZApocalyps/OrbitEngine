@@ -208,6 +208,7 @@ fn validate_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Re
     }
 
     let mut report = orbit_core::validate(&story);
+    let mut rig_warnings = 0;
     if check_files {
         // Same resolution as the editor and the MCP server: a story file
         // opened alone may keep its assets in a parent folder.
@@ -224,6 +225,11 @@ fn validate_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Re
             .extend(orbit_core::check_asset_files(&story, |p| {
                 root.join(p).is_file()
             }));
+        // Rigged expressions: clip, skin and pictures live in the rig file.
+        for problem in orbit_project::rigs::rig_problems(&root, &story) {
+            let _ = writeln!(err, "warning: {problem}");
+            rig_warnings += 1;
+        }
     }
     print_report(&report, err);
     let _ = writeln!(
@@ -231,7 +237,7 @@ fn validate_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Re
         "{}: {} error(s), {} warning(s)",
         story_path.display(),
         report.errors.len(),
-        report.warnings.len()
+        report.warnings.len() + rig_warnings
     );
     Ok(if report.errors.is_empty() { 0 } else { 1 })
 }

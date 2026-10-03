@@ -20,10 +20,10 @@ mod geom;
 mod meshedit;
 mod clippanel;
 mod clips;
-mod meshgen;
+use orbit_project::rigmesh::meshgen;
 mod model;
 mod panels;
-mod weights;
+use orbit_project::rigmesh::weights;
 
 use std::cell::RefCell;
 use std::collections::HashMap;

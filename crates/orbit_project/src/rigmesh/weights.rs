@@ -7,7 +7,7 @@
 use orbit_anim::rig::{Affine, BoneId, Influence, MAX_INFLUENCES, MeshAttachment, Rig};
 
 use super::meshgen::{P, segment_distance};
-use super::model;
+use super::{bone_index, rest_locals, world_matrices};
 
 /// Influences below this are dropped.
 pub const EPSILON: f32 = 1e-4;
@@ -66,7 +66,7 @@ pub struct BoneSeg {
 
 /// The bones of the rest pose as segments.
 pub fn bone_segments(rig: &Rig) -> Vec<BoneSeg> {
-    let world = model::world_matrices(rig, &model::rest_locals(rig));
+    let world = world_matrices(rig, &rest_locals(rig));
     rig.bones
         .iter()
         .zip(&world)
@@ -274,7 +274,7 @@ pub fn skin_positions(
             let mut acc = Affine::ZERO;
             let mut sum = 0.0;
             for (b, w) in list {
-                if let Some(k) = model::bone_index(rig, b)
+                if let Some(k) = bone_index(rig, b)
                     && let Some(s) = skinning.get(k)
                 {
                     Affine::add_scaled(&mut acc, s, *w);
@@ -525,10 +525,18 @@ mod tests {
 
     #[test]
     fn skinning_follows_weights() {
-        let mut doc = model::RigDoc::new();
-        let a = doc.add_bone(None, [0.0, 0.0], [10.0, 0.0]).unwrap();
-        let rig = doc.rig().clone();
-        let bind = model::world_matrices(&rig, &model::rest_locals(&rig));
+        let a = BoneId::new("a");
+        let rig = Rig {
+            bones: vec![orbit_anim::rig::Bone {
+                id: a.clone(),
+                name: "a".into(),
+                parent: None,
+                rest: orbit_anim::rig::Xform::IDENTITY,
+                length: 10.0,
+            }],
+            ..Rig::default()
+        };
+        let bind = world_matrices(&rig, &rest_locals(&rig));
         let moved: Vec<Affine> = bind
             .iter()
             .map(|m| Affine {

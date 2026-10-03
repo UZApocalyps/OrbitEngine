@@ -3296,9 +3296,11 @@ version = "0.1.0"
 name = "orbit_project"
 version = "0.1.0"
 dependencies = [
+ "orbit_anim",
  "orbit_core",
  "ron",
  "serde",
+ "spade",
  "thiserror 2.0.21",
 ]
 
