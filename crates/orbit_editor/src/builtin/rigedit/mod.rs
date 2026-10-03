@@ -777,7 +777,7 @@ fn dropped_pictures(ui: &Ui, rect: Rect) -> Vec<PathBuf> {
         i.raw
             .dropped_files
             .iter()
-            .filter_map(|f| f.path.clone())
+            .map(|f| f.path().to_path_buf())
             .filter(|p| workflow::is_picture_file(p))
             .collect()
     })
@@ -785,7 +785,7 @@ fn dropped_pictures(ui: &Ui, rect: Rect) -> Vec<PathBuf> {
 
 /// Highlights `rect` while picture files are dragged over the window.
 fn paint_drop_hint(ui: &Ui, ctx: &EditorContext<'_>, rect: Rect, has_doc: bool) {
-    let hovering = ui.input(|i| i.raw.hovered_files.iter().any(|f| f.path.as_deref().is_some_and(workflow::is_picture_file)));
+    let hovering = ui.input(|i| !i.raw.hovered_files.is_empty());
     if !hovering {
         return;
     }

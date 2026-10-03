@@ -39,7 +39,14 @@ Particles are computed from the moment the step ran, never stored: going back in
 
 ## Skeleton animation (rigs)
 
-A **rig** brings a drawing to life with bones: breathing, a waving arm, a head that turns. Build it in the **Rig** panel (bones, meshes from a picture, weights, clips), then click **Add to project**: the file is saved as `assets/rigs/<name>.rig.ron` and appears in the Library. The pictures a rig draws must be files of the project.
+A **rig** brings a drawing to life with bones: breathing, a waving arm, a head that turns. The rig viewport shows a step bar (**1. Import image → 2. Draw bones → 3. Bind → 4. Pose / animate**) with what to do next:
+
+1. **Import the image.** Choose **Tools > New rig from image…** (or the big button of the empty rig viewport, or drop a PNG on it). The picture is copied into the project (`assets/images/`) if it is not there yet, and becomes a rig with a `root` bone at the character's feet and a mesh traced from the picture's transparency. It is framed and shown right away. Separate pieces (an arm, the head…) are added with **Add image part…** or by dropping more PNGs on the viewport: each one becomes its own slot, lined up with the first picture when it has the same size.
+2. **Draw the bones** with the bone tool (**B**): drag over the picture from one joint to the next (hips to neck, shoulder to elbow, elbow to hand). A new bone hangs from the selected one; click empty space first to start a new chain.
+3. **Bind.** Click **Bind to bones**: every picture gets automatic weights (each part follows the closest bone, softened between bones). To refine, take the weight brush (**P**): the heat map shows the selected bone's influence (Ctrl-click picks a bone), paint with Add / Subtract / Smooth.
+4. **Pose and animate.** After binding the viewport is in **pose mode** (**Tab**): select a bone and drag its ring to bend the picture. Pose mode never changes the rig itself; record clips in the Clips and Timeline panels.
+
+If you add bones later, the step bar asks you to bind again. Then click **Add to project**: the file is saved as `assets/rigs/<name>.rig.ron` and appears in the Library. The pictures a rig draws must be files of the project.
 
 To use it, open the character, choose the type **Rig** for an expression, then pick the rig, the **skin** (outfit), the **clip** and what happens at the end (loop, play once, ping-pong). A small animated preview shows the result. The expression's picture stays the **poster**: it is used for thumbnails and drawn while the rig loads or if it cannot be used (the Problems panel tells you why: missing file, unknown clip or skin, missing picture). The rig is drawn to the scale of the poster, with its origin at the bottom-center of the character.
 

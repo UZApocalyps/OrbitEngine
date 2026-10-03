@@ -150,7 +150,17 @@ pub fn bind_mesh(rig: &Rig, m: &MeshAttachment, falloff: f32) -> Vec<Vec<Influen
     }
     let diag = (hi[0] - lo[0]).hypot(hi[1] - lo[1]);
     let mut w = auto_weights(&m.vertices, &bone_segments(rig), falloff, (diag / 20.0).max(1.0));
-    let adj = adjacency(m.vertices.len(), &m.triangles);
+    // Smooth along short edges only: a long outline edge must not carry the
+    // head's weights to the feet.
+    let near = (diag / 8.0).max(1.0);
+    let mut adj = adjacency(m.vertices.len(), &m.triangles);
+    for (i, list) in adj.iter_mut().enumerate() {
+        let a = m.vertices[i];
+        list.retain(|&j| {
+            let b = m.vertices[j];
+            (a[0] - b[0]).hypot(a[1] - b[1]) <= near
+        });
+    }
     smooth_weights(&mut w, &adj, 2, 0.35);
     w
 }

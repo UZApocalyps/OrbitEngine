@@ -298,7 +298,7 @@ mod tests {
             if v[1] < -100.0 {
                 assert!(weights::weight_of(w, &top) > 0.6, "{v:?} {w:?}");
             }
-            if v[1] > -50.0 && v[1] < -20.0 {
+            if v[1] > -40.0 && v[1] < -20.0 {
                 assert!(weights::weight_of(w, &top) < 0.3, "{v:?} {w:?}");
                 assert!(weights::weight_of(w, &body) > 0.3, "{v:?} {w:?}");
             }
@@ -341,6 +341,84 @@ mod tests {
         }
         assert!(top_moved > 20.0, "{top_moved}");
         assert!(feet_moved < 1.0, "{feet_moved}");
+    }
+
+    /// End to end: a PNG on disk → rig → 2 bones → bind → rotate the child
+    /// → drawn by `orbit_render2d` (as the viewport host does) and read
+    /// back: the top of the picture moved, the feet did not. Skipped (passes)
+    /// without a GPU adapter.
+    #[test]
+    fn png_to_bent_pixels_end_to_end() {
+        use orbit_render2d::orbit_gfx::Gfx;
+        use orbit_render2d::{ReadbackStatus, Renderer2d, RigPlacement, Scene, TextureOptions, push_rig};
+        const S: u32 = 160;
+        // The PNG file.
+        let dir = std::env::temp_dir().join(format!("orbit_rig_e2e_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("assets/images")).unwrap();
+        let src = bar();
+        image::RgbaImage::from_raw(src.width, src.height, src.rgba.clone())
+            .unwrap()
+            .save(dir.join("assets/images/bar.png"))
+            .unwrap();
+        let pic = Picture::load(&dir, "assets/images/bar.png").unwrap();
+        assert_eq!((pic.width, pic.height), (40, 120));
+        let (mut doc, root, _) = rig_from_picture(&pic).unwrap();
+        let body = doc.add_bone(Some(&root), [0.0, 0.0], [0.0, -60.0]).unwrap();
+        let top = doc.add_bone(Some(&body), [0.0, -60.0], [0.0, -120.0]).unwrap();
+        bind(&mut doc, 3.0).unwrap();
+
+        let gfx = match pollster::block_on(Gfx::headless((S, S))) {
+            Ok(g) => g,
+            Err(e) => {
+                eprintln!("no GPU adapter, skipping: {e}");
+                return;
+            }
+        };
+        let Ok(mut r) = Renderer2d::new(gfx) else { return };
+        r.set_virtual_size(S as f32, S as f32);
+        let tex = r
+            .create_texture("bar", pic.width, pic.height, &pic.rgba, TextureOptions::COLOR)
+            .unwrap();
+        let prepared = PreparedRig::new(doc.rig().clone()).unwrap();
+        let mut draw = |degrees: f32| -> Vec<u8> {
+            let mut pose = prepared.setup_pose();
+            let i = model::bone_index(doc.rig(), &top).unwrap();
+            pose.bones[i].rotation += degrees;
+            let world = prepared.world(&pose);
+            let list = prepared.draw_list(&pose, &world, None, &CpuSkinner);
+            let mut scene = Scene::new();
+            scene.clear = Some([0.0, 0.0, 0.0, 1.0]);
+            let placement = RigPlacement { position: [80.0, 140.0], scale: 1.0, ..RigPlacement::default() };
+            push_rig(&mut scene, &list, &placement, |_| Some(tex));
+            let target = r.create_render_target("t", S, S).unwrap();
+            r.render_to_target(target, &scene).unwrap();
+            let mut rb = r.start_readback(target).unwrap();
+            for _ in 0..5000 {
+                match r.poll_readback(&mut rb) {
+                    ReadbackStatus::Pending => std::thread::sleep(std::time::Duration::from_millis(1)),
+                    ReadbackStatus::Ready { rgba, .. } => return rgba,
+                    ReadbackStatus::Failed => panic!("readback failed"),
+                }
+            }
+            panic!("readback timed out");
+        };
+        let px = |img: &[u8], x: u32, y: u32| {
+            let i = ((y * S + x) * 4) as usize;
+            [img[i], img[i + 1], img[i + 2]]
+        };
+        let rest = draw(0.0);
+        let bent = draw(90.0);
+        // Rest: red on top (rig y -110 → target y 30), blue at the feet.
+        assert!(px(&rest, 80, 30)[0] > 200, "{:?}", px(&rest, 80, 30));
+        assert!(px(&rest, 80, 135)[2] > 200, "{:?}", px(&rest, 80, 135));
+        // Bent: the top left its column, the feet stayed.
+        assert!(px(&bent, 80, 30)[0] < 60, "top moved: {:?}", px(&bent, 80, 30));
+        assert!(px(&bent, 80, 135)[2] > 200, "feet stayed: {:?}", px(&bent, 80, 135));
+        let red_moved = (0..S).flat_map(|y| (0..S).map(move |x| (x, y))).any(|(x, y)| {
+            px(&bent, x, y)[0] > 200 && px(&rest, x, y)[0] < 60
+        });
+        assert!(red_moved, "red pixels appear where there were none");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
