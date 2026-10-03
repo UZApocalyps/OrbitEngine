@@ -1076,7 +1076,7 @@ mod tests {
         let mut doc = UiDoc::load(&t.0).unwrap();
         assert!(!doc.exists && !doc.dirty());
         doc.enable_defaults();
-        assert_eq!(doc.bundle.screens.len(), 5);
+        assert_eq!(doc.bundle.screens.len(), UiBundle::builtin().screens.len());
         assert!(doc.dirty());
         // Quick edits of one field are one step; another key is another.
         for n in 0..3 {
@@ -1140,7 +1140,7 @@ mod tests {
         assert!(!t.0.join("theme.ron").exists());
         assert!(t.0.join("main_menu.screen.ron").exists());
         let again = UiDoc::load(&t.0).unwrap();
-        assert_eq!(again.bundle.screens.len(), 4);
+        assert_eq!(again.bundle.screens.len(), UiBundle::builtin().screens.len() - 1);
         assert!(again.bundle.theme.is_none());
     }
 
@@ -1152,7 +1152,7 @@ mod tests {
         doc.save().unwrap();
         doc.edit(|b| b.screens.clear());
         doc.reload().unwrap();
-        assert_eq!(doc.bundle.screens.len(), 5);
+        assert_eq!(doc.bundle.screens.len(), UiBundle::builtin().screens.len());
         assert!(!doc.can_undo());
         std::fs::write(t.0.join("broken.screen.ron"), "(id: ").unwrap();
         assert!(UiDoc::load(&t.0).is_err());
