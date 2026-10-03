@@ -135,4 +135,6 @@
     "textview.nothing_changed": "The text changes nothing.",
     "draft.label.effect": "Effect (move, shake, zoom…)",
     "draft.label.timeline": "Timeline",
+    "draft.label.open_screen": "Open screen",
+    "draft.label.close_screen": "Close screen",
 }

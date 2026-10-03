@@ -1217,6 +1217,8 @@ fn describe(texts: &orbit_editor_api::Translator, story: &Story, node: &Node) ->
             texts.t("scene.row.timeline"),
             super::fx_text::timeline_detail(texts, *duration, *looping, *wait, tracks),
         ),
+        NodeKind::OpenScreen { screen, .. } => (texts.t("scene.row.open_screen"), screen.clone()),
+        NodeKind::CloseScreen { screen } => (texts.t("scene.row.close_screen"), screen.clone()),
         NodeKind::Return => (texts.t("scene.row.return"), String::new()),
         NodeKind::End => (texts.t("scene.row.end"), String::new()),
         NodeKind::Custom {

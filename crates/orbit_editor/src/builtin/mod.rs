@@ -17,6 +17,7 @@ pub mod graph;
 mod importers;
 mod inspector;
 mod inspector_fx;
+mod inspector_screen;
 mod library;
 pub mod manual;
 mod nodeinfo;

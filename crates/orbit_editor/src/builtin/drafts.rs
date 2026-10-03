@@ -121,6 +121,18 @@ pub fn builtin_insertables() -> Vec<Insertable> {
             "draft.group.scene",
         ),
         item(
+            "OpenScreen",
+            "draft.label.open_screen",
+            icons::BROWSER,
+            "draft.group.scene",
+        ),
+        item(
+            "CloseScreen",
+            "draft.label.close_screen",
+            icons::X_SQUARE,
+            "draft.group.scene",
+        ),
+        item(
             "SetVar",
             "draft.label.set_var",
             icons::FUNCTION,
@@ -333,6 +345,15 @@ pub fn drafts_for(
             ease: None,
             wait: false,
         }))],
+        "OpenScreen" => vec![NodeDraft::plain(NodeKind::OpenScreen {
+            screen: String::new(),
+            wait: false,
+            result: None,
+            params: Vec::new(),
+        })],
+        "CloseScreen" => vec![NodeDraft::plain(NodeKind::CloseScreen {
+            screen: String::new(),
+        })],
         "Timeline" => vec![NodeDraft::plain(NodeKind::Timeline {
             duration: 2.0,
             looping: orbit_core::AnimLoop::Once,

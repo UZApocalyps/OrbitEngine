@@ -131,4 +131,6 @@
     "reveal.variable": "variable {name}",
     "reveal.asset_deleted": "deleted asset",
     "scene.row.timeline": "Timeline",
+    "scene.row.open_screen": "Open screen",
+    "scene.row.close_screen": "Close screen",
 }

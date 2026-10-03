@@ -668,6 +668,7 @@ mod tests {
                     d.update(duration + 0.01);
                 }
                 Flow::Waiting { remaining } => d.update(remaining + 0.01),
+                Flow::Screen(id) => assert!(d.close_screen(&id, None)),
                 Flow::Ended => return p,
                 Flow::Failed(msg) => panic!("story failed: {msg}"),
             }

@@ -131,4 +131,6 @@
     "reveal.variable": "variable {name}",
     "reveal.asset_deleted": "ressource supprimée",
     "scene.row.timeline": "Chronologie",
+    "scene.row.open_screen": "Ouvrir un écran",
+    "scene.row.close_screen": "Fermer un écran",
 }

@@ -253,6 +253,7 @@ fn flow_text(flow: Option<&orbit_runtime::director::Flow>) -> String {
         Some(Flow::Waiting { .. }) => "preview.flow.waiting".into(),
         Some(Flow::Transition { .. }) => "preview.flow.transition".into(),
         Some(Flow::Ended) => "preview.flow.ended".into(),
+        Some(Flow::Screen(_)) => "preview.flow.screen".into(),
         Some(Flow::Failed(_)) => "preview.flow.failed".into(),
     }
 }

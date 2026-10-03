@@ -83,7 +83,10 @@ fn screens_story() -> Arc<Story> {
 }
 
 fn screens_shell() -> Shell {
-    let story = screens_story();
+    screens_shell_for(screens_story())
+}
+
+fn screens_shell_for(story: Arc<Story>) -> Shell {
     let mut sh = Shell::new(
         story.clone(),
         Box::new(MemoryStorage::new()),
@@ -210,8 +213,9 @@ fn a_save_made_with_the_screen_open_loads_with_it() {
     let save = SaveData::capture(vm, CaptureInfo::new(1, 1));
     let bytes = save.encode().unwrap();
 
-    let mut other = screens_shell();
-    let mut vm = Vm::from_start(screens_story()).unwrap();
+    let story = sh.story().clone();
+    let mut other = screens_shell_for(story.clone());
+    let mut vm = Vm::from_start(story).unwrap();
     SaveData::decode(&bytes).unwrap().apply_to(&mut vm).unwrap();
     other.install_vm(vm, true);
     other.update(0.02);
