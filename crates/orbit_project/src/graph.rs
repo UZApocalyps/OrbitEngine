@@ -62,6 +62,10 @@ pub enum SlotKind {
     Option(usize),
     Then,
     Else,
+    /// The `n`-th named branch of a script.
+    Branch(usize),
+    /// Where a failing script goes (`None`: execution continues).
+    OnError,
 }
 
 /// Where a slot leads.
@@ -349,6 +353,26 @@ impl GraphModel {
                             kind: SlotKind::Else,
                             label: "sinon".to_owned(),
                             target: else_target.map_or(SlotTarget::None, &resolve),
+                            conditional: true,
+                        });
+                    }
+                    NodeKind::Script {
+                        branches, on_error, ..
+                    } => {
+                        for (i, b) in branches.iter().enumerate() {
+                            block.slots.push(Slot {
+                                node: Some(id),
+                                kind: SlotKind::Branch(i),
+                                label: b.name.clone(),
+                                target: resolve(b.target),
+                                conditional: true,
+                            });
+                        }
+                        block.slots.push(Slot {
+                            node: Some(id),
+                            kind: SlotKind::OnError,
+                            label: "en cas d'erreur".to_owned(),
+                            target: on_error.map_or(SlotTarget::None, &resolve),
                             conditional: true,
                         });
                     }

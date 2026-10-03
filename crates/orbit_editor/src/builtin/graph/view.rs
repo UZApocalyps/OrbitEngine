@@ -134,5 +134,7 @@ pub fn slot_color(kind: SlotKind) -> Color32 {
         SlotKind::Option(_) => Color32::from_rgb(236, 168, 70),
         SlotKind::Then => Color32::from_rgb(86, 200, 130),
         SlotKind::Else => Color32::from_rgb(232, 110, 120),
+        SlotKind::Branch(_) => Color32::from_rgb(214, 190, 90),
+        SlotKind::OnError => Color32::from_rgb(220, 90, 90),
     }
 }
