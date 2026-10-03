@@ -48,7 +48,7 @@ A script keeps nothing of its own: everything that matters is in variables, and 
 
 ## Limits
 
-To protect players, a script stops with an error when it runs more than 100 000 operations, calls functions more than 32 levels deep, or builds a text larger than 64 KB or a list or map of more than 10 000 elements.
+To protect players, a script stops with an error when it runs more than 100 000 operations, calls functions more than 32 levels deep, or builds a text larger than 64 KB or a list or map of more than 1 024 elements (nested lists and maps count together, and nest at most 64 deep). Modules import each other at most 8 deep and never in a cycle. Anonymous functions (`|x| x + 1`) cannot capture variables, and `curry` and `sleep` are not available.
 
 ## Export
 

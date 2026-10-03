@@ -11,8 +11,10 @@ publish.workspace = true
 orbit_core.workspace = true
 orbit_vm.workspace = true
 # Sandbox (ADR 0015 §1/§3): no clock (`no_time`), engine shared between the
-# VMs of a game (`sync`), no custom syntax.
-rhai = { version = "1", default-features = false, features = ["std", "sync", "no_time", "no_custom_syntax"] }
+# VMs of a game (`sync`), no custom syntax, no capturing closures
+# (`no_closure`: shared values could nest or form cycles deep enough to
+# overflow the native stack, see docs/security/rhai-review.md).
+rhai = { version = "1", default-features = false, features = ["std", "sync", "no_time", "no_custom_syntax", "no_closure"] }
 
 [dev-dependencies]
 orbit_save.workspace = true
