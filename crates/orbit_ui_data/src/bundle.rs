@@ -71,7 +71,15 @@ pub const SYSTEM_SCREENS: [&str; 5] = ["main_menu", "pause", "preferences", "sav
 
 impl UiBundle {
     pub fn from_ron(source: &str) -> Result<Self, String> {
-        ron::from_str(source).map_err(|e| e.to_string())
+        let mut bundle: Self = ron::from_str(source).map_err(|e| e.to_string())?;
+        // Screens embedded in a bundle deserialize as written: bring the
+        // ones from an older `ui_version` through the migration steps.
+        for screen in &mut bundle.screens {
+            if screen.ui_version < crate::widget::UI_VERSION {
+                *screen = from_ron(&crate::widget::to_ron(screen)?)?;
+            }
+        }
+        Ok(bundle)
     }
 
     pub fn to_ron(&self) -> Result<String, String> {

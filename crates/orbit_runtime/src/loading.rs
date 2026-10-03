@@ -164,6 +164,8 @@ pub fn successor_scenes(story: &Story, scene: usize) -> Vec<usize> {
 pub struct AssetStore {
     textures: HashMap<String, TextureId>,
     sounds: HashMap<String, Sound>,
+    fonts: HashSet<String>,
+    new_fonts: Vec<Vec<u8>>,
 }
 
 impl AssetStore {
@@ -175,8 +177,16 @@ impl AssetStore {
         self.sounds.get(path)
     }
 
+    /// Font files loaded since the last call (the runtime registers them
+    /// with the text engine).
+    pub fn take_new_fonts(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.new_fonts)
+    }
+
     pub fn contains(&self, path: &str) -> bool {
-        self.textures.contains_key(path) || self.sounds.contains_key(path)
+        self.textures.contains_key(path)
+            || self.sounds.contains_key(path)
+            || self.fonts.contains(path)
     }
 
     /// Drops the asset at `path` (a file that changed on disk): the next
@@ -187,7 +197,8 @@ impl AssetStore {
             renderer.release_texture(texture);
         }
         let sound = self.sounds.remove(path);
-        texture.is_some() || sound.is_some()
+        let font = self.fonts.remove(path);
+        texture.is_some() || sound.is_some() || font
     }
 
     /// Drops every asset (the asset root changed).
@@ -196,12 +207,14 @@ impl AssetStore {
             renderer.release_texture(texture);
         }
         self.sounds.clear();
+        self.fonts.clear();
     }
 }
 
 enum Handle {
     Image(AssetHandle<ImageData>),
     Audio(AssetHandle<PcmAudio>),
+    Font(AssetHandle<Vec<u8>>),
 }
 
 /// One manifest asset being loaded.
@@ -220,6 +233,7 @@ impl PendingAsset {
         match &self.handle {
             Handle::Image(h) => !matches!(h.poll(), AssetPoll::Loading),
             Handle::Audio(h) => !matches!(h.poll(), AssetPoll::Loading),
+            Handle::Font(h) => !matches!(h.poll(), AssetPoll::Loading),
         }
     }
 }
@@ -254,6 +268,7 @@ pub fn start_loading_only(
         let handle = match entry.kind {
             AssetKind::Image => Handle::Image(loader.load_image(&entry.path)),
             AssetKind::Music | AssetKind::Sound => Handle::Audio(loader.load_audio(&entry.path)),
+            AssetKind::Font => Handle::Font(loader.load_bytes(&entry.path)),
         };
         pending.push(PendingAsset {
             path: entry.path.clone(),
@@ -308,6 +323,13 @@ pub fn finish_loading(
                     }
                     Err(err) => failures.push(format!("sound `{}`: {err}", asset.path)),
                 },
+                other => failures.push(describe_failure(&asset.path, &other)),
+            },
+            Handle::Font(h) => match h.poll() {
+                AssetPoll::Ready(bytes) => {
+                    store.fonts.insert(asset.path);
+                    store.new_fonts.push(bytes.to_vec());
+                }
                 other => failures.push(describe_failure(&asset.path, &other)),
             },
         }

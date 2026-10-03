@@ -55,6 +55,7 @@
     "search.asset.image": "image",
     "search.asset.music": "music",
     "search.asset.sound": "sound",
+    "search.asset.font": "font",
 
     // ---- new nodes (insert menus)
     "draft.group.dialogue": "Dialogue",
@@ -91,9 +92,11 @@
     "edit.pick_animation": "Choose an animated GIF or APNG",
     "edit.pick_music": "Choose a music file",
     "edit.pick_sound": "Choose a sound",
+    "edit.pick_font": "Choose a font",
     "edit.kind.image": "image",
     "edit.kind.music": "music",
     "edit.kind.sound": "sound",
+    "edit.kind.font": "font",
     "edit.wrong_kind": "“{path}” is of type “{found}”, “{expected}” expected.",
     "edit.no_scene": "The project has no scene: create one first.",
     "edit.need_asset_pick": "No asset of type “{kind}”: choose a file to add to the project.",

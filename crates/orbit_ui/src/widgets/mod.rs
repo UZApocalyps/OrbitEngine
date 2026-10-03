@@ -15,12 +15,16 @@ mod node;
 
 pub use draw::DrawCtx;
 pub use interact::WidgetEvent;
+#[cfg(test)]
+pub(crate) use interact::POPUP_TAG;
 pub use node::{
     Align, Anchor, ButtonData, ButtonKind, Dir, Kind, LabelData, NO_TAG, Node, NodeId, PanelKind,
     Size, Tag, ellipsize, escape_markup, estimate_lines, estimate_text_width,
 };
 
-use orbit_render2d::Layer;
+use std::collections::HashMap;
+
+use orbit_render2d::{Layer, TextureId};
 
 use crate::theme::Theme;
 
@@ -45,6 +49,11 @@ pub struct Ui {
     /// `true` after keyboard input: the focus ring is drawn.
     pub(crate) focus_visible: bool,
     pub(crate) pointer: [f32; 2],
+    /// Open dropdown popup: the dropdown node and its number of rows.
+    pub(crate) popup: Option<(NodeId, usize)>,
+    /// Textures of the project images the theme refers to (nine-slice
+    /// backgrounds), by asset path.
+    pub(crate) images: HashMap<String, TextureId>,
     pub(crate) laid_out: bool,
     layer: Layer,
     alpha: f32,
@@ -66,11 +75,19 @@ impl Ui {
             list_drag: None,
             focus_visible: false,
             pointer: [-1.0, -1.0],
+            popup: None,
+            images: HashMap::new(),
             laid_out: false,
             layer: Layer::OVERLAY,
             alpha: 1.0,
             time: 0.0,
         }
+    }
+
+    /// Gives the textures of the project images (by asset path) that
+    /// nine-slice backgrounds of the theme use.
+    pub fn set_images(&mut self, images: HashMap<String, TextureId>) {
+        self.images = images;
     }
 
     pub fn theme(&self) -> &Theme {

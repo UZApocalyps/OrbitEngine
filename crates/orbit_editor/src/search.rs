@@ -196,6 +196,7 @@ impl SearchIndex {
                     AssetKind::Image => "search.asset.image",
                     AssetKind::Music => "search.asset.music",
                     AssetKind::Sound => "search.asset.sound",
+                    AssetKind::Font => "search.asset.font",
                 }),
                 Location::Asset(a.id),
             );

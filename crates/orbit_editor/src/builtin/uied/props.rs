@@ -23,6 +23,8 @@ pub struct Env<'a> {
     pub styles: &'a [String],
     /// Image assets of the project (paths).
     pub images: &'a [String],
+    /// Names of the theme's fonts (`Theme::fonts`).
+    pub fonts: &'a [String],
     /// Variables declared by the story (for conditions, operations, bindings).
     pub vars: &'a [VarInfo],
     /// Scenes of the story as `(id, name)` (targets of `SceneGoto`).
@@ -68,6 +70,36 @@ fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
         );
         add(ui);
     });
+}
+
+/// The value a new dropdown option sets, by variable type.
+fn default_value(ty: orbit_core::ValueType) -> orbit_core::Value {
+    use orbit_core::{Value, ValueType};
+    match ty {
+        ValueType::Bool => Value::Bool(false),
+        ValueType::Int => Value::Int(0),
+        ValueType::Float => Value::Float(0.0),
+        ValueType::Str => Value::Str(String::new()),
+    }
+}
+
+/// A typed value: a check box, a number or a text.
+fn value_editor(ui: &mut Ui, value: &mut orbit_core::Value) {
+    use orbit_core::Value;
+    match value {
+        Value::Bool(b) => {
+            ui.checkbox(b, "");
+        }
+        Value::Int(i) => {
+            ui.add(DragValue::new(i).speed(0.2));
+        }
+        Value::Float(f) => {
+            ui.add(DragValue::new(f).speed(0.05).max_decimals(3));
+        }
+        Value::Str(s) => {
+            ui.add(egui::TextEdit::singleline(s).desired_width(80.0));
+        }
+    }
 }
 
 fn heading(ui: &mut Ui, text: &str) {
@@ -678,13 +710,34 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
             });
             row(ui, &env.t("uied.bind"), |ui| bind_editor(ui, env, "bind", bind));
         }
-        WidgetKind::Dropdown { bind, options } => {
+        WidgetKind::Dropdown {
+            bind,
+            options,
+            values,
+        } => {
             row(ui, &env.t("uied.bind"), |ui| bind_editor(ui, env, "bind", bind));
+            // A variable dropdown gives each option the value it sets.
+            let var_ty = bind
+                .var()
+                .and_then(|name| env.vars.iter().find(|v| v.name == name))
+                .map(|v| v.ty);
+            let by_var = bind.var().is_some();
+            if by_var {
+                let ty = var_ty.unwrap_or(orbit_core::ValueType::Str);
+                values.resize_with(options.len(), || default_value(ty));
+                values.truncate(options.len());
+            } else {
+                values.clear();
+            }
             ui.label(RichText::new(env.t("uied.options")).small().color(weak(ui)));
             let mut remove = None;
             for (i, option) in options.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     text_ref_editor(ui, env, &format!("opt{i}"), option);
+                    if by_var && let Some(value) = values.get_mut(i) {
+                        ui.label("→");
+                        value_editor(ui, value);
+                    }
                     if ui.small_button(icons::X).clicked() {
                         remove = Some(i);
                     }
@@ -692,12 +745,25 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
             }
             if let Some(i) = remove {
                 options.remove(i);
+                if by_var && i < values.len() {
+                    values.remove(i);
+                }
             }
             if ui
                 .button(format!("{}  {}", icons::PLUS, env.t("uied.add_option")))
                 .clicked()
             {
                 options.push(TextRef::Literal(String::new()));
+                if by_var {
+                    values.push(default_value(var_ty.unwrap_or(orbit_core::ValueType::Str)));
+                }
+            }
+            if by_var && var_ty.is_none() {
+                ui.label(
+                    RichText::new(env.t("uied.dropdown_pick_var"))
+                        .small()
+                        .color(weak(ui)),
+                );
             }
         }
         WidgetKind::ScrollList => {}
@@ -780,6 +846,12 @@ fn layout_editor(ui: &mut Ui, env: &Env, l: &mut LayoutDef, is_root: bool) {
         }
     });
     row(ui, &env.t("uied.gap"), |ui| num(ui, &mut l.gap, 1.0));
+    row(ui, &env.t("uied.span"), |ui| {
+        // Columns / rows taken inside a grid (1 = one cell).
+        ui.add(DragValue::new(&mut l.col_span).range(1..=12));
+        ui.label("×");
+        ui.add(DragValue::new(&mut l.row_span).range(1..=12));
+    });
     row(ui, &env.t("uied.main_align"), |ui| align_editor(ui, env, "main", &mut l.main));
     row(ui, &env.t("uied.cross_align"), |ui| {
         align_editor(ui, env, "cross", &mut l.cross);
@@ -863,7 +935,22 @@ pub fn style_editor(ui: &mut Ui, env: &Env, s: &mut Style, exclude: Option<&str>
     });
     row(ui, &env.t("uied.font"), |ui| {
         let mut font = s.font.clone().unwrap_or_default();
-        ui.add(egui::TextEdit::singleline(&mut font).desired_width(120.0));
+        // The project fonts of the theme, or a family name typed by hand.
+        if !env.fonts.is_empty() {
+            ComboBox::from_id_salt("style_font")
+                .selected_text(if font.is_empty() {
+                    env.t("uied.font_default")
+                } else {
+                    font.clone()
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut font, String::new(), env.t("uied.font_default"));
+                    for name in env.fonts {
+                        ui.selectable_value(&mut font, name.clone(), name);
+                    }
+                });
+        }
+        ui.add(egui::TextEdit::singleline(&mut font).desired_width(100.0));
         s.font = (!font.is_empty()).then_some(font);
     });
     row(ui, &env.t("uied.font_size"), |ui| {
@@ -875,11 +962,7 @@ pub fn style_editor(ui: &mut Ui, env: &Env, s: &mut Style, exclude: Option<&str>
             num(ui, &mut p[1], 1.0);
         });
     });
-    row(ui, &env.t("uied.fill"), |ui| {
-        let mut c = s.fill.as_ref().map(|Fill::Color(c)| *c);
-        optional(ui, &mut c, [40, 44, 66, 255], |ui, c| color(ui, c));
-        s.fill = c.map(Fill::Color);
-    });
+    fill_editor(ui, env, &mut s.fill);
     row(ui, &env.t("uied.border"), |ui| {
         optional(
             ui,
@@ -904,6 +987,82 @@ pub fn style_editor(ui: &mut Ui, env: &Env, s: &mut Style, exclude: Option<&str>
     row(ui, &env.t("uied.sound_confirm"), |ui| {
         sound_field(ui, s, false);
     });
+}
+
+/// Kind of a style background, for the picker.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FillKind {
+    None,
+    Color,
+    NineSlice,
+}
+
+fn fill_kind(fill: &Option<Fill>) -> FillKind {
+    match fill {
+        None => FillKind::None,
+        Some(Fill::Color(_)) => FillKind::Color,
+        Some(Fill::NineSlice { .. }) => FillKind::NineSlice,
+    }
+}
+
+/// The background of a style: nothing, a color, or a 9-slice image with
+/// its four insets (pixels of the image kept as borders).
+fn fill_editor(ui: &mut Ui, env: &Env, fill: &mut Option<Fill>) {
+    row(ui, &env.t("uied.fill"), |ui| {
+        let mut kind = fill_kind(fill);
+        let before = kind;
+        pick(
+            ui,
+            "fill_kind",
+            &mut kind,
+            &[
+                (FillKind::None, env.t("uied.none")),
+                (FillKind::Color, env.v("fill_color")),
+                (FillKind::NineSlice, env.v("fill_nine_slice")),
+            ],
+        );
+        if kind != before {
+            *fill = match kind {
+                FillKind::None => None,
+                FillKind::Color => Some(Fill::Color([40, 44, 66, 255])),
+                FillKind::NineSlice => Some(Fill::NineSlice {
+                    image: env.images.first().cloned().unwrap_or_default(),
+                    insets: [16.0; 4],
+                }),
+            };
+        }
+        if let Some(Fill::Color(c)) = fill {
+            color(ui, c);
+        }
+    });
+    if let Some(Fill::NineSlice { image, insets }) = fill {
+        row(ui, &env.t("uied.nine_image"), |ui| {
+            let text = if image.is_empty() {
+                env.t("uied.none")
+            } else {
+                image.clone()
+            };
+            ComboBox::from_id_salt("nine_image")
+                .selected_text(text)
+                .width(160.0)
+                .show_ui(ui, |ui| {
+                    for img in env.images {
+                        ui.selectable_value(image, img.clone(), img);
+                    }
+                });
+        });
+        for (label, slot) in [
+            ("uied.inset_left", 0),
+            ("uied.inset_top", 1),
+            ("uied.inset_right", 2),
+            ("uied.inset_bottom", 3),
+        ] {
+            row(ui, &env.t(label), |ui| {
+                ui.add(DragValue::new(&mut insets[slot]).speed(0.5).range(0.0..=4096.0));
+                ui.label(RichText::new("px").small().color(weak(ui)));
+            });
+        }
+    }
 }
 
 fn sound_field(ui: &mut Ui, s: &mut Style, hover: bool) {

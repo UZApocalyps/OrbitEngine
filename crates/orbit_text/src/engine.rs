@@ -294,3 +294,13 @@ impl TextEngine {
         })
     }
 }
+
+/// First family name of a TTF/OTF/TTC file (`None` when the data is not a
+/// usable font). Lets a host name the font a project asset provides.
+pub fn font_family(data: &[u8]) -> Option<String> {
+    let mut db = fontdb::Database::new();
+    db.load_font_data(data.to_vec());
+    db.faces()
+        .next()
+        .and_then(|f| f.families.first().map(|(n, _)| n.clone()))
+}

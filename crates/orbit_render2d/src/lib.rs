@@ -33,7 +33,7 @@ pub use camera::{Camera2d, Viewport, letterbox};
 pub use orbit_gfx;
 pub use orbit_gfx::SurfaceFrame;
 pub use readback::{Readback, ReadbackStatus};
-pub use sprite::{Layer, Scene, Sprite2d, intersect_rects};
+pub use sprite::{Layer, Scene, Sprite2d, intersect_rects, nine_slice_quads};
 pub use texture::{TARGET_FORMAT, TextureId, TextureOptions};
 pub use transition::Transition;
 

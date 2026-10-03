@@ -266,6 +266,8 @@ pub(crate) struct Shell {
     slots_wanted: bool,
     end_banner: Option<Banner>,
     menu_background: Option<TextureId>,
+    /// Textures of the images the theme refers to (nine-slice fills).
+    ui_images: std::collections::HashMap<String, TextureId>,
 
     stack: Vec<Overlay>,
     game: Option<Game>,
@@ -398,6 +400,7 @@ impl Shell {
             persistent,
             end_banner: None,
             menu_background: None,
+            ui_images: std::collections::HashMap::new(),
             stack: Vec::new(),
             game: None,
             failure: None,
@@ -508,6 +511,15 @@ impl Shell {
     pub fn set_menu_background(&mut self, texture: Option<TextureId>) {
         self.menu_background = texture;
         self.refresh_main_menu();
+    }
+
+    /// Textures (by asset path) of the images the theme's nine-slice fills
+    /// use; the data-driven screens draw with them.
+    pub fn set_ui_images(&mut self, images: std::collections::HashMap<String, TextureId>) {
+        if images != self.ui_images {
+            self.ui_images = images;
+            self.sync_data();
+        }
     }
 
     fn toast(&mut self, text: String) {
@@ -1262,6 +1274,7 @@ impl Shell {
                 Vec::new()
             },
             vars: self.story_vars(),
+            images: self.ui_images.clone(),
         }
     }
 

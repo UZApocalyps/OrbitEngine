@@ -120,6 +120,18 @@ pub fn variable_issues(
                     }
                 }
             }
+            WidgetKind::Dropdown { bind, values, .. } => {
+                if let Some(name) = bind.var() {
+                    match ty_of(name) {
+                        None => add(wid, vec![format!("unknown variable `{name}`")], &mut out),
+                        Some(t) => {
+                            if values.iter().any(|v| v.value_type() != t) {
+                                add(wid, vec![format!("a dropdown value is not of the type of `{name}` ({t})")], &mut out);
+                            }
+                        }
+                    }
+                }
+            }
             WidgetKind::Label { text: TextRef::Bind(b), .. } => {
                 if let Some(name) = b.var()
                     && ty_of(name).is_none()
@@ -290,8 +302,21 @@ fn check_widget(sid: &str, w: &WidgetDef, theme: Option<&Theme>, out: &mut Vec<I
                 out.push(Issue::error(sid, wid, format!("{key:?} cannot be edited with a toggle")));
             }
         }
-        WidgetKind::Dropdown { bind, options } => {
-            if let Some(key) = check_bind(sid, wid, bind, out) {
+        WidgetKind::Dropdown { bind, options, values } => {
+            if bind.var().is_some() {
+                check_bind(sid, wid, bind, out);
+                if options.is_empty() {
+                    out.push(Issue::error(sid, wid, "a variable dropdown needs at least one option"));
+                } else if values.len() != options.len() {
+                    out.push(Issue::error(
+                        sid,
+                        wid,
+                        format!("{} options but {} values: each option needs a value", options.len(), values.len()),
+                    ));
+                } else if values.iter().any(|v| v.value_type() != values[0].value_type()) {
+                    out.push(Issue::error(sid, wid, "the values of a dropdown must all have the same type"));
+                }
+            } else if let Some(key) = check_bind(sid, wid, bind, out) {
                 match key {
                     SettingKey::Language => {}
                     SettingKey::SkipMode if options.len() == 2 => {}

@@ -65,6 +65,9 @@ pub enum Kind {
     Selector {
         options: Vec<String>,
         index: usize,
+        /// A dropdown: click / Confirm opens a popup list of the options
+        /// (Left / Right still step through them).
+        popup: bool,
     },
     /// Vertical list showing the children from `first` while they fit.
     ScrollList {
@@ -93,6 +96,7 @@ struct CacheKey {
     width: i32,
     size: i32,
     align: u8,
+    family: u64,
 }
 
 /// Laid-out text blocks of a node (rebuilt when text, size, color or width
@@ -117,15 +121,19 @@ impl TextCache {
         width: f32,
         size: f32,
         align: TextAlign,
+        family: Option<&str>,
     ) -> &mut TextBlock {
         let mut hasher = DefaultHasher::new();
         markup.hash(&mut hasher);
+        let mut family_hasher = DefaultHasher::new();
+        family.hash(&mut family_hasher);
         let key = CacheKey {
             text: hasher.finish(),
             color,
             width: width.round() as i32,
             size: (size * 10.0).round() as i32,
             align: align as u8,
+            family: family_hasher.finish(),
         };
         let index = match self.entries.iter().position(|(k, _)| *k == key) {
             Some(i) => i,
@@ -139,6 +147,7 @@ impl TextCache {
                         font_size: size,
                         color,
                         align,
+                        family: family.map(str::to_owned),
                         ..Default::default()
                     },
                     Some(width.max(1.0)),
@@ -175,6 +184,9 @@ pub struct Node {
     pub main: Align,
     pub cross: Align,
     pub anchor: Anchor,
+    /// Columns / rows a child of a grid covers (1 = a single cell).
+    pub col_span: usize,
+    pub row_span: usize,
     pub enabled: bool,
     // --- computed by layout ---
     pub(crate) rect: [f32; 4],
@@ -200,6 +212,8 @@ impl Node {
             main: Align::Start,
             cross: Align::Start,
             anchor: Anchor::FULL,
+            col_span: 1,
+            row_span: 1,
             enabled: true,
             rect: [0.0; 4],
             pref: [0.0; 2],
@@ -286,8 +300,21 @@ impl Node {
         } else {
             index.min(options.len() - 1)
         };
-        let mut n = Self::base(Kind::Selector { options, index });
+        let mut n = Self::base(Kind::Selector {
+            options,
+            index,
+            popup: false,
+        });
         n.tag = tag;
+        n
+    }
+
+    /// A selector that opens a popup list (a dropdown).
+    pub fn dropdown(tag: Tag, options: Vec<String>, index: usize) -> Self {
+        let mut n = Self::selector(tag, options, index);
+        if let Kind::Selector { popup, .. } = &mut n.kind {
+            *popup = true;
+        }
         n
     }
 
@@ -375,6 +402,13 @@ impl Node {
 
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    /// Columns and rows this node covers when it is a child of a grid.
+    pub fn span(mut self, cols: usize, rows: usize) -> Self {
+        self.col_span = cols.max(1);
+        self.row_span = rows.max(1);
         self
     }
 

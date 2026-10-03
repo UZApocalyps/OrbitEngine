@@ -53,6 +53,7 @@ pub fn import_asset_dialog(ctx: &mut EditorContext<'_>, kind: AssetKind) -> Opti
         AssetKind::Image => (ctx.t("edit.pick_image"), &["png", "jpg", "jpeg"]),
         AssetKind::Music => (ctx.t("edit.pick_music"), &["ogg", "wav"]),
         AssetKind::Sound => (ctx.t("edit.pick_sound"), &["ogg", "wav"]),
+        AssetKind::Font => (ctx.t("edit.pick_font"), &["ttf", "otf"]),
     };
     let file = rfd::FileDialog::new()
         .set_title(title)
@@ -377,6 +378,7 @@ pub fn kind_name(texts: &Translator, kind: AssetKind) -> String {
         AssetKind::Image => "edit.kind.image",
         AssetKind::Music => "edit.kind.music",
         AssetKind::Sound => "edit.kind.sound",
+        AssetKind::Font => "edit.kind.font",
     })
 }
 

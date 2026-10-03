@@ -2,7 +2,7 @@
 //! only GPU-side helper and re-exports the data types under their old path.
 
 pub use orbit_ui_data::{
-    Border, ButtonTheme, ChoiceTheme, ControlTheme, Fill, ListTheme, PanelTheme, ScreenTheme,
+    Border, ButtonTheme, ChoiceTheme, ControlTheme, Fill, FontRef, ListTheme, PanelTheme, ScreenTheme,
     StateColors, Style, StyleSounds, TextBoxTheme, Theme, UiSounds, WidgetTheme, resolve_style,
 };
 

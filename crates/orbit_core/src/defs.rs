@@ -342,6 +342,9 @@ pub enum AssetKind {
     Image,
     Music,
     Sound,
+    /// A TTF/OTF font. Added without a schema bump: stories that do not use
+    /// it are unchanged, and older builds never wrote it.
+    Font,
 }
 
 impl std::fmt::Display for AssetKind {
@@ -350,6 +353,7 @@ impl std::fmt::Display for AssetKind {
             AssetKind::Image => "image",
             AssetKind::Music => "music",
             AssetKind::Sound => "sound",
+            AssetKind::Font => "font",
         })
     }
 }

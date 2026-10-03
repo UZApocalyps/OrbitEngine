@@ -173,6 +173,7 @@
     "problem.duplicate_position": "Nom de position en double ou réservé : « {name} »",
     "problem.invalid_position_coords": "La position « {name} » sort de l'écran (0 à 1 attendu)",
     "problem.duplicate_scene": "Identifiant de scène en double",
+    "problem.division_by_zero": "Division par zéro : le diviseur vaut 0 ou une variable qui n'est jamais différente de 0",
     "problem.undefined_variable": "La variable « {var} » n'est ni déclarée ni assignée",
     "problem.unreachable_node": "Ce nœud n'est jamais atteint",
     "problem.infinite_loop": "Boucle possible sans réplique, choix ni attente",

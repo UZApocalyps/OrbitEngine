@@ -403,7 +403,9 @@ impl Runtime {
             self.config.theme = theme;
             self.ui_sounds = UiSoundBank::new(&self.config.theme, &self.assets_loader);
         }
+        let images = super::theme_images(&self.ctx.theme, &self.store);
         if let Some(shell) = self.shell_mut() {
+            shell.set_ui_images(images);
             shell.set_ui_bundle(&bundle);
         }
         self.emb_mut().dirty = true;

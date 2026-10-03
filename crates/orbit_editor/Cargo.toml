@@ -33,6 +33,7 @@ orbit_export.workspace = true
 orbit_i18n.workspace = true
 orbit_mcp.workspace = true
 orbit_ui.workspace = true
+orbit_text.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
 egui-wgpu.workspace = true

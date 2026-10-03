@@ -53,7 +53,7 @@ pub use screens::{
 pub use texts::{EN, FR, TextProvider, TextTable, Texts};
 pub use theme::{
     Border, ButtonTheme, ChoiceTheme, ControlTheme, ListTheme, PanelTheme, ScreenTheme, TextBoxTheme,
-    Fill, StateColors, Style, StyleSounds, Theme, UiSounds, WidgetTheme, resolve_style, tint,
+    Fill, FontRef, StateColors, Style, StyleSounds, Theme, UiSounds, WidgetTheme, resolve_style, tint,
 };
 pub use view::*;
 pub use widgets::{

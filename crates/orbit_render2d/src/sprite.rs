@@ -141,9 +141,80 @@ pub fn intersect_rects(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)]
 }
 
+/// The nine quads of a nine-slice picture: `(rect [x, y, w, h], uv [u0, v0,
+/// u1, v1])`, row by row. `tex` is the picture size in pixels and `insets`
+/// the `[left, top, right, bottom]` border widths in pixels of the picture;
+/// the borders are drawn at that size (shrunk together when `rect` is too
+/// small for them), the edges and the center stretch. Empty quads are left
+/// out.
+pub fn nine_slice_quads(
+    rect: [f32; 4],
+    tex: [f32; 2],
+    insets: [f32; 4],
+) -> Vec<([f32; 4], [f32; 4])> {
+    let [tw, th] = [tex[0].max(1.0), tex[1].max(1.0)];
+    // Source borders, never wider than the picture.
+    let mut l = insets[0].clamp(0.0, tw);
+    let mut r = insets[2].clamp(0.0, tw);
+    if l + r > tw {
+        let k = tw / (l + r);
+        (l, r) = (l * k, r * k);
+    }
+    let mut t = insets[1].clamp(0.0, th);
+    let mut b = insets[3].clamp(0.0, th);
+    if t + b > th {
+        let k = th / (t + b);
+        (t, b) = (t * k, b * k);
+    }
+    // Destination borders: shrunk when the rectangle is smaller than them.
+    let kx = if l + r > rect[2] && l + r > 0.0 { rect[2] / (l + r) } else { 1.0 };
+    let ky = if t + b > rect[3] && t + b > 0.0 { rect[3] / (t + b) } else { 1.0 };
+    let xs = [rect[0], rect[0] + l * kx, rect[0] + rect[2] - r * kx, rect[0] + rect[2]];
+    let ys = [rect[1], rect[1] + t * ky, rect[1] + rect[3] - b * ky, rect[1] + rect[3]];
+    let us = [0.0, l / tw, 1.0 - r / tw, 1.0];
+    let vs = [0.0, t / th, 1.0 - b / th, 1.0];
+    let mut out = Vec::with_capacity(9);
+    for j in 0..3 {
+        for i in 0..3 {
+            let (w, h) = (xs[i + 1] - xs[i], ys[j + 1] - ys[j]);
+            if w > 0.0 && h > 0.0 {
+                out.push((
+                    [xs[i], ys[j], w, h],
+                    [us[i], vs[j], us[i + 1], vs[j + 1]],
+                ));
+            }
+        }
+    }
+    out
+}
+
 impl Scene {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Draws `texture` (`tex_size` pixels) as a nine-slice picture filling
+    /// `rect` (see [`nine_slice_quads`]): nine sprites on `layer` / `z`.
+    pub fn push_nine_slice(
+        &mut self,
+        texture: TextureId,
+        tex_size: [f32; 2],
+        rect: [f32; 4],
+        insets: [f32; 4],
+        layer: Layer,
+        z: f32,
+        tint: [f32; 4],
+    ) {
+        for (r, uv) in nine_slice_quads(rect, tex_size, insets) {
+            self.push(
+                Sprite2d::new(texture, [r[0], r[1]], [r[2], r[3]])
+                    .anchor([0.0, 0.0])
+                    .layer(layer)
+                    .z(z)
+                    .uv(uv)
+                    .tint(tint),
+            );
+        }
     }
 
     /// Adds a sprite, clipped to the active clip stack (see
@@ -317,6 +388,34 @@ mod tests {
         Sprite2d::new(TextureId(tex), [0.0, 0.0], [10.0, 10.0])
             .layer(layer)
             .z(z)
+    }
+
+    #[test]
+    fn nine_slice_keeps_the_corners_and_stretches_the_rest() {
+        // A 32x32 picture with 8 px borders drawn at 100x60.
+        let q = nine_slice_quads([10.0, 20.0, 100.0, 60.0], [32.0, 32.0], [8.0, 8.0, 8.0, 8.0]);
+        assert_eq!(q.len(), 9);
+        // Top-left corner: 8x8, uv 0..0.25.
+        assert_eq!(q[0], ([10.0, 20.0, 8.0, 8.0], [0.0, 0.0, 0.25, 0.25]));
+        // Top edge stretches between the corners.
+        assert_eq!(q[1], ([18.0, 20.0, 84.0, 8.0], [0.25, 0.0, 0.75, 0.25]));
+        // Center fills the rest.
+        assert_eq!(q[4], ([18.0, 28.0, 84.0, 44.0], [0.25, 0.25, 0.75, 0.75]));
+        // Bottom-right corner.
+        assert_eq!(q[8], ([102.0, 72.0, 8.0, 8.0], [0.75, 0.75, 1.0, 1.0]));
+        // The quads tile the rectangle exactly.
+        let area: f32 = q.iter().map(|(r, _)| r[2] * r[3]).sum();
+        assert!((area - 6000.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn nine_slice_shrinks_borders_in_a_tiny_rect_and_skips_empty_quads() {
+        let q = nine_slice_quads([0.0, 0.0, 8.0, 100.0], [32.0, 32.0], [8.0, 8.0, 8.0, 8.0]);
+        let w: f32 = q.iter().map(|(r, _)| r[2]).fold(0.0, f32::max);
+        assert!(w <= 4.0 + 1e-4, "borders halve: {w}");
+        // Zero insets: a single quad over the whole picture.
+        let one = nine_slice_quads([0.0, 0.0, 50.0, 50.0], [32.0, 32.0], [0.0; 4]);
+        assert_eq!(one, vec![([0.0, 0.0, 50.0, 50.0], [0.0, 0.0, 1.0, 1.0])]);
     }
 
     fn run(sprites: &[Sprite2d]) -> (Vec<usize>, Vec<Batch>) {

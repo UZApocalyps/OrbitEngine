@@ -20,7 +20,7 @@ pub use bundle::{SYSTEM_SCREENS, SplashContent, SplashDef, UiBundle};
 pub use layout::{Align, Anchor, Dir, PanelKind, Size};
 pub use sound::UiSound;
 pub use theme::{
-    Border, ButtonTheme, ChoiceTheme, ControlTheme, Fill, ListTheme, PanelTheme, ScreenTheme,
+    Border, ButtonTheme, ChoiceTheme, ControlTheme, Fill, FontRef, ListTheme, PanelTheme, ScreenTheme,
     StateColors, Style, StyleSounds, TextBoxTheme, Theme, UiSounds, WidgetTheme,
     resolve_style,
 };

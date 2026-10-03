@@ -1,12 +1,14 @@
 //! Drawing: turns the laid-out widgets into sprites and text on a `Scene`.
 
+use std::collections::HashMap;
+
 use orbit_render2d::{Layer, Renderer2d, Scene, Sprite2d, TextureId};
 use orbit_text::{DrawParams, TextAlign, TextEngine, TextRenderer};
 
 use super::Ui;
 use super::layout::LINE_HEIGHT;
 use super::node::{ButtonKind, Kind, Node, NodeId, PanelKind, TextCache, escape_markup};
-use crate::theme::{Theme, resolve_style, tint};
+use crate::theme::{Style, Theme, resolve_style, tint};
 
 /// Everything drawing needs from the host.
 pub struct DrawCtx<'a> {
@@ -19,6 +21,8 @@ pub struct DrawCtx<'a> {
 
 struct Drawer<'a, 'b, 'c> {
     theme: &'a Theme,
+    images: &'a HashMap<String, TextureId>,
+    family: Option<String>,
     nodes: &'a mut Vec<Node>,
     focus: Option<NodeId>,
     hover: Option<NodeId>,
@@ -38,6 +42,8 @@ impl Ui {
         let roots = self.roots.clone();
         let mut drawer = Drawer {
             theme: &self.theme,
+            images: &self.images,
+            family: None,
             nodes: &mut self.nodes,
             focus: self.focus,
             hover: self.hover,
@@ -73,6 +79,34 @@ impl Drawer<'_, '_, '_> {
         );
     }
 
+    /// Draws the nine-slice background of `style` (when it has one and the
+    /// image is loaded): returns whether it did, else the caller falls back
+    /// to a plain color.
+    fn nine_slice(&mut self, style: Option<&Style>, rect: [f32; 4], layer: Layer, z: f32) -> bool {
+        let Some((image, insets)) = style.and_then(Style::nine_slice) else {
+            return false;
+        };
+        let Some(&texture) = self.images.get(image) else {
+            return false;
+        };
+        let Some(size) = self.ctx.renderer.texture_size(texture) else {
+            return false;
+        };
+        if rect[2] <= 0.0 || rect[3] <= 0.0 {
+            return true;
+        }
+        self.ctx.scene.push_nine_slice(
+            texture,
+            [size[0] as f32, size[1] as f32],
+            rect,
+            insets,
+            layer,
+            z,
+            [1.0, 1.0, 1.0, self.alpha],
+        );
+        true
+    }
+
     fn border(&mut self, rect: [f32; 4], width: f32, color: [u8; 4], layer: Layer, z: f32) {
         if width <= 0.0 {
             return;
@@ -104,7 +138,7 @@ impl Drawer<'_, '_, '_> {
         if markup.is_empty() || rect[2] <= 0.0 {
             return;
         }
-        let block = cache.block(markup, color, rect[2], size, align);
+        let block = cache.block(markup, color, rect[2], size, align, self.family.as_deref());
         let y = if center_v {
             rect[1] + (rect[3] - size * LINE_HEIGHT) * 0.5
         } else {
@@ -142,6 +176,10 @@ impl Drawer<'_, '_, '_> {
             .as_deref()
             .and_then(|n| resolve_style(&theme.styles, n));
 
+        self.family = style
+            .as_ref()
+            .and_then(|s| s.font.as_deref())
+            .map(|f| theme.font_family(f).to_owned());
         // Take the node's cache out while drawing text (it is borrowed
         // from the arena otherwise).
         let mut cache = std::mem::take(&mut self.nodes[id.0].cache);
@@ -159,8 +197,10 @@ impl Drawer<'_, '_, '_> {
                     Some(b) => (b.width, b.color),
                     None => (w.panel.border_width, w.panel.border_color),
                 };
-                self.quad(rect, bg, layer, 0.0);
-                self.border(rect, bw, bc, layer, 0.2);
+                if !self.nine_slice(style.as_ref(), rect, layer, 0.0) {
+                    self.quad(rect, bg, layer, 0.0);
+                    self.border(rect, bw, bc, layer, 0.2);
+                }
             }
             Kind::Label(l) => {
                 let size = l
@@ -221,7 +261,9 @@ impl Drawer<'_, '_, '_> {
                     .as_ref()
                     .and_then(|s| s.background(enabled, pressed, hot))
                     .unwrap_or(bg);
-                self.quad(rect, bg, layer, 0.0);
+                if !self.nine_slice(style.as_ref(), rect, layer, 0.0) {
+                    self.quad(rect, bg, layer, 0.0);
+                }
                 if b.selected && !hot && enabled {
                     self.border(rect, 2.0, w.accent_color, layer, 0.2);
                 }
@@ -352,10 +394,20 @@ let color = style
                     layer,
                 );
             }
-            Kind::Selector { options, index } => {
+            Kind::Selector {
+                options,
+                index,
+                popup,
+            } => {
                 let bt = &w.button;
                 let bg = if hot { bt.hover } else { bt.normal };
-                self.quad(rect, bg, layer, 0.0);
+                let bg = style
+                    .as_ref()
+                    .and_then(|s| s.background(enabled, pressed, hot))
+                    .unwrap_or(bg);
+                if !self.nine_slice(style.as_ref(), rect, layer, 0.0) {
+                    self.quad(rect, bg, layer, 0.0);
+                }
                 if ring {
                     self.border(rect, bt.focus_width, bt.focus_color, layer, 0.4);
                 }
@@ -367,7 +419,18 @@ let color = style
                 let arrow = [rect[0], rect[1], 56.0, rect[3]];
                 let arrow_r = [rect[0] + rect[2] - 56.0, rect[1], 56.0, rect[3]];
                 let multi = options.len() > 1;
-                if multi {
+                if *popup {
+                    self.text(
+                        &mut cache,
+                        "v",
+                        w.accent_color,
+                        w.text_size,
+                        TextAlign::Center,
+                        arrow_r,
+                        true,
+                        layer,
+                    );
+                } else if multi {
                     self.text(
                         &mut cache,
                         "<",
