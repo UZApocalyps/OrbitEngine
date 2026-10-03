@@ -1931,3 +1931,131 @@ fn save_and_load_after_goto_scene() {
     assert_eq!(shown_node(&p), s.l2);
     assert_eq!(next_interaction(&mut loaded), s.choice);
 }
+
+#[test]
+fn scene3d_commands_drive_the_declarative_3d_state() {
+    use crate::Scene3dState;
+    let mut b = B::new();
+    let bg = b.asset(AssetKind::Image, "bg.png");
+    let room = b.asset(AssetKind::Scene3d, "assets/3d/room.scene3d.ron");
+    b.push(NodeKind::Background {
+        asset: bg,
+        transition: None,
+    });
+    let l1 = b.say(None, "2D");
+    b.push(NodeKind::Camera3d {
+        camera: "ignored".into(),
+        transition: None,
+    });
+    b.push(NodeKind::ShowScene3d {
+        scene: room,
+        camera: None,
+        transition: Some(Transition::dissolve(0.5)),
+    });
+    let l2 = b.say(None, "3D, first camera");
+    b.push(NodeKind::Camera3d {
+        camera: "close".into(),
+        transition: None,
+    });
+    let l3 = b.say(None, "3D, close");
+    b.push(NodeKind::HideScene3d {
+        transition: Some(Transition::fade(Color::BLACK, 0.25)),
+    });
+    let l4 = b.say(None, "back to 2D");
+    b.push(NodeKind::ShowScene3d {
+        scene: room,
+        camera: Some("wide".into()),
+        transition: None,
+    });
+    b.push(NodeKind::Background {
+        asset: bg,
+        transition: None,
+    });
+    let l5 = b.say(None, "a background replaces the 3D scene");
+    b.push(NodeKind::End);
+    let story = b.build();
+    assert!(orbit_core::validate(&story).errors.is_empty());
+    let mut vm = vm_for(story);
+
+    assert_eq!(next_interaction(&mut vm), l1);
+    // A camera without a 3D scene is ignored with a warning.
+    assert!(vm.scene().scene3d.is_none());
+    assert_eq!(next_interaction(&mut vm), l2);
+    assert!(vm.take_warnings().iter().any(|w| w.contains("ignored")));
+    let shown = Scene3dState {
+        scene: room,
+        camera: None,
+    };
+    assert_eq!(vm.scene().scene3d, Some(shown.clone()));
+    // The 2D background is kept under the 3D scene.
+    assert_eq!(vm.scene().background, Some(bg));
+    assert_eq!(next_interaction(&mut vm), l3);
+    assert_eq!(
+        vm.scene().scene3d.as_ref().and_then(|s| s.camera.as_deref()),
+        Some("close")
+    );
+    assert_eq!(next_interaction(&mut vm), l4);
+    assert!(vm.scene().scene3d.is_none());
+    assert_eq!(vm.scene().background, Some(bg));
+    assert_eq!(next_interaction(&mut vm), l5);
+    assert!(vm.scene().scene3d.is_none());
+
+    // Rollback rebuilds the 3D state (scene + camera only) as cut events,
+    // after the background.
+    let p = vm.rollback(2).expect("rollback");
+    assert_eq!(shown_node(&p), l3);
+    assert_eq!(
+        p.scene.scene3d,
+        Some(Scene3dState {
+            scene: room,
+            camera: Some("close".into()),
+        })
+    );
+    let kinds: Vec<_> = p
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            PresentationEvent::Background { .. } => Some("bg"),
+            PresentationEvent::Scene3d {
+                transition: None, ..
+            } => Some("3d"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kinds, ["bg", "3d"]);
+
+    // A saved state whose 3D scene vanished from the story drops it.
+    let mut state = vm.snapshot();
+    state.scene.scene3d = Some(Scene3dState {
+        scene: AssetId::new(),
+        camera: None,
+    });
+    vm.restore(state).unwrap();
+    assert!(vm.scene().scene3d.is_none());
+}
+
+#[test]
+fn a_blocking_3d_transition_waits() {
+    let mut b = B::new();
+    let room = b.asset(AssetKind::Scene3d, "room.scene3d.ron");
+    b.push(NodeKind::ShowScene3d {
+        scene: room,
+        camera: Some("a".into()),
+        transition: Some(Transition::dissolve(0.5)),
+    });
+    b.push(NodeKind::Camera3d {
+        camera: "b".into(),
+        transition: Some(Transition::dissolve(0.25)),
+    });
+    b.push(NodeKind::HideScene3d { transition: None });
+    b.push(NodeKind::HideScene3d {
+        transition: Some(Transition::dissolve(1.0)),
+    });
+    b.push(NodeKind::End);
+    let mut vm = vm_for(b.build());
+    let out = trace(&mut vm, &mut first);
+    let waits: Vec<_> = out.iter().filter(|l| l.starts_with("transition")).collect();
+    // The second hide has nothing to hide: no event, no wait.
+    assert_eq!(waits, ["transition 0.5", "transition 0.25"]);
+    assert_eq!(out.iter().filter(|l| l.contains("HideScene3d")).count(), 1);
+}

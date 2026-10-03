@@ -33,6 +33,9 @@
 //! call <label-ref>                               Call
 //! return | end                                   Return / End
 //! custom "<plugin>" <kind> [version <n>] [data <value>]   Custom
+//! scene3d <asset-ref> [camera "<name>"] [with <transition>]   ShowScene3d
+//! camera3d "<name>" [with <transition>]          Camera3d
+//! hide_scene3d [with <transition>]               HideScene3d
 //! ```
 //!
 //! `<position>` is `left`, `center`, `right`, a quoted custom position name
@@ -75,6 +78,9 @@ pub const KEYWORDS: &[&str] = &[
     "return",
     "end",
     "custom",
+    "scene3d",
+    "camera3d",
+    "hide_scene3d",
     "at",
     "with",
     "scale",
@@ -456,6 +462,23 @@ fn write_node(ctx: &Ctx<'_>, scene: SceneId, node: &Node, out: &mut String) {
         NodeKind::PlaySound { asset } => format!("sound {}", ctx.asset_ref(*asset)),
         NodeKind::Wait { seconds } => format!("wait {}", fmt_f32(*seconds)),
         NodeKind::Call { label: l } => format!("call {}", label(*l)),
+        NodeKind::ShowScene3d {
+            scene,
+            camera,
+            transition: t,
+        } => {
+            let mut s = format!("scene3d {}", ctx.asset_ref(*scene));
+            if let Some(c) = camera {
+                s.push_str(&format!(" camera {}", quote(c)));
+            }
+            s.push_str(&transition(t));
+            s
+        }
+        NodeKind::Camera3d {
+            camera,
+            transition: t,
+        } => format!("camera3d {}{}", quote(camera), transition(t)),
+        NodeKind::HideScene3d { transition: t } => format!("hide_scene3d{}", transition(t)),
         NodeKind::Return => "return".into(),
         NodeKind::End => "end".into(),
         NodeKind::Custom {

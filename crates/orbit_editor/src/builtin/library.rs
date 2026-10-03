@@ -181,6 +181,7 @@ fn kind_count_key(kind: AssetKind) -> &'static str {
         AssetKind::Image => "asset.count.image",
         AssetKind::Music => "asset.count.music",
         AssetKind::Sound => "asset.count.sound",
+        AssetKind::Scene3d => "asset.count.scene3d",
     }
 }
 
@@ -189,6 +190,7 @@ fn kind_name(texts: &Translator, kind: AssetKind) -> String {
         AssetKind::Image => "asset.kind.image",
         AssetKind::Music => "asset.kind.music",
         AssetKind::Sound => "asset.kind.sound",
+        AssetKind::Scene3d => "asset.kind.scene3d",
     })
 }
 
@@ -197,6 +199,7 @@ fn kind_icon(kind: AssetKind) -> &'static str {
         AssetKind::Image => icons::IMAGE,
         AssetKind::Music => icons::MUSIC_NOTES,
         AssetKind::Sound => icons::SPEAKER_HIGH,
+        AssetKind::Scene3d => icons::CUBE,
     }
 }
 

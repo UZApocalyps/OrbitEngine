@@ -1,5 +1,55 @@
 //! Round trips on the shipped stories, and hand-written edits.
 
+#[test]
+fn scene3d_commands_round_trip() {
+    use orbit_core::{AssetEntry, AssetId, AssetKind, Node, NodeId, Scene, SceneId, Transition};
+    let mut story = Story::new("3d");
+    let room = AssetId::new();
+    story.assets.assets.push(AssetEntry {
+        id: room,
+        kind: AssetKind::Scene3d,
+        path: "assets/3d/room.scene3d.ron".into(),
+    });
+    let kinds = [
+        NodeKind::ShowScene3d {
+            scene: room,
+            camera: None,
+            transition: None,
+        },
+        NodeKind::ShowScene3d {
+            scene: room,
+            camera: Some("wide shot".into()),
+            transition: Some(Transition::dissolve(0.5)),
+        },
+        NodeKind::Camera3d {
+            camera: "close".into(),
+            transition: None,
+        },
+        NodeKind::HideScene3d {
+            transition: Some(Transition::dissolve(1.0)),
+        },
+        NodeKind::HideScene3d { transition: None },
+    ];
+    story.scenes.push(Scene {
+        id: SceneId::new(),
+        name: "main".into(),
+        nodes: kinds
+            .into_iter()
+            .map(|kind| Node {
+                id: NodeId::new(),
+                kind,
+            })
+            .collect(),
+    });
+    let text = print_story(&story);
+    assert!(text.contains("camera \"wide shot\""), "{text}");
+    assert!(text.contains("camera3d \"close\""), "{text}");
+    assert!(text.contains("hide_scene3d"), "{text}");
+    let back = parse(&text, &story, Scope::Story).unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(back, story);
+    assert_eq!(print_story(&back), text);
+}
+
 use orbit_core::{NodeKind, Story};
 use orbit_dsl::{ApplyError, Scope, apply, diff, parse, print_scene, print_story};
 use orbit_project::Project;

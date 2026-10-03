@@ -92,4 +92,16 @@ pub enum PresentationEvent {
         kind: String,
         data: orbit_core::CustomData,
     },
+    /// The 3D scene on screen is now `scene`, seen from `camera` (`None`:
+    /// the first camera). Emitted by `ShowScene3d` and `Camera3d`. It takes
+    /// over the background layer (the 2D background is kept underneath).
+    Scene3d {
+        scene: AssetId,
+        camera: Option<String>,
+        transition: Option<Transition>,
+    },
+    /// The 3D scene is removed: the 2D background shows again.
+    HideScene3d {
+        transition: Option<Transition>,
+    },
 }

@@ -47,7 +47,8 @@ pub struct Gfx {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    target_factory: TargetFactory,
+    /// `None` for a headless context ([`Gfx::headless`]): no surface, ever.
+    target_factory: Option<TargetFactory>,
     pub(crate) sprites: SpritePipeline,
     /// Set by wgpu's device-lost callback: see [`Gfx::device_lost`].
     lost: std::sync::Arc<std::sync::Mutex<Option<String>>>,
@@ -133,7 +134,7 @@ impl Gfx {
             device,
             queue,
             config,
-            target_factory,
+            target_factory: Some(target_factory),
             sprites,
             lost,
         };
@@ -148,6 +149,71 @@ impl Gfx {
     /// stop being recorded.
     pub fn device_lost(&self) -> Option<String> {
         self.lost.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    /// A context without a surface (offscreen rendering, read-back tests):
+    /// render targets work, frames are always skipped. Uses the WebGL2
+    /// downlevel limits, like the web. Native only.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn headless(size: (u32, u32)) -> Result<Self, GfxError> {
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle().with_env());
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("orbit headless device"),
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                    .using_resolution(adapter.limits()),
+                ..Default::default()
+            })
+            .await?;
+        let lost = std::sync::Arc::new(std::sync::Mutex::new(None));
+        {
+            let lost = lost.clone();
+            device.set_device_lost_callback(move |reason, message| {
+                let text = format!("{reason:?}: {message}");
+                if reason != wgpu::DeviceLostReason::Destroyed {
+                    log::error!("GPU device lost ({text})");
+                }
+                if let Ok(mut slot) = lost.lock() {
+                    slot.get_or_insert(text);
+                }
+            });
+        }
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: size.0.max(1),
+            height: size.1.max(1),
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: Vec::new(),
+            color_space: wgpu::SurfaceColorSpace::default(),
+        };
+        let sprites = SpritePipeline::new(&device, format);
+        Ok(Self {
+            instance,
+            adapter,
+            surface: None,
+            device,
+            queue,
+            config,
+            target_factory: None,
+            sprites,
+            lost,
+        })
+    }
+
+    fn create_surface(&self) -> Result<wgpu::Surface<'static>, GfxError> {
+        let factory = self
+            .target_factory
+            .as_ref()
+            .ok_or(GfxError::UnsupportedSurface)?;
+        Ok(self.instance.create_surface(factory())?)
     }
 
     /// Current surface size in physical pixels.
@@ -219,7 +285,7 @@ impl Gfx {
     /// surface exists. `size` is the window size now, in physical pixels.
     pub fn resume(&mut self, size: (u32, u32)) -> Result<(), GfxError> {
         if self.surface.is_none() {
-            self.surface = Some(self.instance.create_surface((self.target_factory)())?);
+            self.surface = Some(self.create_surface()?);
         }
         if size.0 > 0 && size.1 > 0 {
             self.config.width = size.0;
@@ -278,7 +344,7 @@ impl Gfx {
             }
             Cst::Lost => {
                 log::warn!("surface lost, recreating");
-                self.surface = Some(self.instance.create_surface((self.target_factory)())?);
+                self.surface = Some(self.create_surface()?);
                 self.configure_surface();
                 return Ok(None);
             }

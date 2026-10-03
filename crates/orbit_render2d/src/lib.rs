@@ -407,6 +407,13 @@ impl Renderer2d {
         readback.take()
     }
 
+    /// The GPU texture behind `id` (always `COPY_DST`; render targets are
+    /// sRGB RGBA8), for content produced outside this renderer, e.g. a 3D
+    /// render copied in to be composited as a sprite.
+    pub fn raw_texture(&self, id: TextureId) -> Option<&wgpu::Texture> {
+        self.textures.get(id).map(|e| &e.texture)
+    }
+
     /// Size of a texture in pixels.
     pub fn texture_size(&self, id: TextureId) -> Option<[u32; 2]> {
         self.textures.get(id).map(|e| [e.width, e.height])

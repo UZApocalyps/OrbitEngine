@@ -23,6 +23,7 @@ pub mod data;
 pub mod error;
 pub mod hash;
 mod legacy_v1;
+mod legacy_v2;
 pub mod manager;
 pub mod persistent;
 pub mod storage;

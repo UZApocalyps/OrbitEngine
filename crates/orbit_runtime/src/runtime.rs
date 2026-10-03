@@ -488,6 +488,9 @@ pub struct Runtime {
     font_handles: Vec<AssetHandle<Vec<u8>>>,
     fonts_ready: bool,
     targets: [TextureId; 2],
+    /// The 3D background layer (inert without the `3d` feature or before
+    /// the first 3D scene).
+    layer3d: crate::compose3d::Layer3d,
     thumbnail_target: TextureId,
     captures: Vec<(u64, Readback)>,
     mapper: InputMapper,
@@ -626,6 +629,7 @@ impl Runtime {
             font_handles,
             fonts_ready: embedded.is_some(),
             targets,
+            layer3d: crate::compose3d::Layer3d::default(),
             thumbnail_target,
             captures: Vec::new(),
             mapper: InputMapper::default(),
@@ -1084,12 +1088,17 @@ impl Runtime {
         let renderer = &mut self.ctx.renderer;
         for request in shell.take_capture_requests() {
             let mut scene = Scene::new();
+            self.layer3d.begin_frame();
+            let layer3d = self
+                .layer3d
+                .draw(renderer, &self.store, shell.story(), &request.stage);
             stage_scene(
                 renderer,
                 &self.store,
                 shell.story(),
                 &request.stage,
                 None,
+                layer3d,
                 &mut scene,
             );
             let started = renderer
@@ -1232,8 +1241,20 @@ impl Runtime {
                             Some(tr) => self.anim_clock.sync([&tr.from, game.director.stage()]),
                             None => self.anim_clock.sync([game.director.stage()]),
                         }
+                        self.layer3d.begin_frame();
                         if let Some(tr) = game.director.transition() {
                             transitioning = true;
+                            // 2D <-> 3D and camera changes blend like any
+                            // stage change: each side has its own 3D view.
+                            let from_3d =
+                                self.layer3d
+                                    .draw(renderer, &self.store, &game.story, &tr.from);
+                            let to_3d = self.layer3d.draw(
+                                renderer,
+                                &self.store,
+                                &game.story,
+                                game.director.stage(),
+                            );
                             let mut from = Scene::new();
                             stage_scene(
                                 renderer,
@@ -1241,6 +1262,7 @@ impl Runtime {
                                 &game.story,
                                 &tr.from,
                                 Some(&self.anim_clock),
+                                from_3d,
                                 &mut from,
                             );
                             stage_scene(
@@ -1249,6 +1271,7 @@ impl Runtime {
                                 &game.story,
                                 game.director.stage(),
                                 Some(&self.anim_clock),
+                                to_3d,
                                 &mut scene,
                             );
                             renderer.render_to_target(self.targets[0], &from)?;
@@ -1261,12 +1284,19 @@ impl Runtime {
                                 tr.progress,
                             )?;
                         } else {
+                            let layer3d = self.layer3d.draw(
+                                renderer,
+                                &self.store,
+                                &game.story,
+                                game.director.stage(),
+                            );
                             stage_scene(
                                 renderer,
                                 &self.store,
                                 &game.story,
                                 game.director.stage(),
                                 Some(&self.anim_clock),
+                                layer3d,
                                 &mut scene,
                             );
                             out.scene(renderer, &scene)?;
@@ -1665,12 +1695,17 @@ fn character_frame(
 /// Fills `scene` with the stage: opaque black, background (covering the
 /// canvas), then the characters bottom-center anchored at their position.
 /// `anims` gives the animation times (`None`: every animation on frame 0).
-fn stage_scene(
+/// When the stage shows a 3D scene, `layer3d` (its rendered view, see
+/// [`crate::compose3d::Layer3d`]) takes the background's place; while it is
+/// not available the background layer stays black. Without a 3D scene this
+/// is exactly the 2D stage.
+pub(crate) fn stage_scene(
     renderer: &Renderer2d,
     store: &AssetStore,
     story: &Story,
     stage: &StageState,
     anims: Option<&AnimClock>,
+    layer3d: Option<TextureId>,
     scene: &mut Scene,
 ) {
     let texture = |id| {
@@ -1678,7 +1713,15 @@ fn stage_scene(
         store.texture(path)
     };
     scene.clear = Some([0.0, 0.0, 0.0, 1.0]);
-    if let Some(tex) = stage.background.and_then(texture) {
+    if stage.scene3d.is_some() {
+        if let Some(tex) = layer3d {
+            scene.push(
+                Sprite2d::new(tex, [CANVAS[0] * 0.5, CANVAS[1] * 0.5], CANVAS)
+                    .anchor([0.5, 0.5])
+                    .layer(Layer::BACKGROUND),
+            );
+        }
+    } else if let Some(tex) = stage.background.and_then(texture) {
         let size = renderer.texture_size(tex).map_or(CANVAS, cover_size);
         scene.push(
             Sprite2d::new(tex, [CANVAS[0] * 0.5, CANVAS[1] * 0.5], size)

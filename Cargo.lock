@@ -3276,9 +3276,11 @@ dependencies = [
  "orbit_render2d",
  "orbit_render3d",
  "orbit_save",
+ "orbit_scene",
  "orbit_text",
  "orbit_ui",
  "orbit_vm",
+ "pollster 1.0.1",
  "thiserror 2.0.21",
 ]
 

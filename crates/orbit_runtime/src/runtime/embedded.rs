@@ -829,12 +829,17 @@ impl Runtime {
     ) -> Result<(), RenderError> {
         let clock = time.map(|t| crate::stage::AnimClock::at(stage, t));
         let mut scene = Scene::new();
+        self.layer3d.begin_frame();
+        let layer3d = self
+            .layer3d
+            .draw(&mut self.ctx.renderer, &self.store, story, stage);
         stage_scene(
             &self.ctx.renderer,
             &self.store,
             story,
             stage,
             clock.as_ref(),
+            layer3d,
             &mut scene,
         );
         self.ctx.renderer.render_to_target(target, &scene)

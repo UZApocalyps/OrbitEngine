@@ -176,6 +176,44 @@ mod tests {
     }
 
     #[test]
+    fn scene3d_assets_and_commands_survive_postcard() {
+        use orbit_core::{AssetEntry, AssetId, AssetKind, Node, NodeId, NodeKind, Transition};
+        let mut pack = fixture_pack();
+        // The 2D pack does not change: the new variants are appended.
+        let before = pack.to_bytes().unwrap();
+        let room = AssetId::new();
+        pack.story.assets.assets.push(AssetEntry {
+            id: room,
+            kind: AssetKind::Scene3d,
+            path: "assets/3d/room.scene3d.ron".into(),
+        });
+        let nodes = &mut pack.story.scenes[0].nodes;
+        for kind in [
+            NodeKind::ShowScene3d {
+                scene: room,
+                camera: Some("wide".into()),
+                transition: Some(Transition::dissolve(0.5)),
+            },
+            NodeKind::Camera3d {
+                camera: "close".into(),
+                transition: None,
+            },
+            NodeKind::HideScene3d { transition: None },
+        ] {
+            nodes.insert(
+                0,
+                Node {
+                    id: NodeId::new(),
+                    kind,
+                },
+            );
+        }
+        let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
+        assert_eq!(back, pack);
+        assert_eq!(fixture_pack().to_bytes().unwrap(), before);
+    }
+
+    #[test]
     fn a_character_default_position_survives_postcard() {
         let mut pack = fixture_pack();
         pack.story.characters[0].default_position = Some(orbit_core::Position::Right);
