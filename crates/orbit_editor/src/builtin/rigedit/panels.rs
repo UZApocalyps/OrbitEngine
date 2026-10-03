@@ -19,6 +19,15 @@ pub(super) fn empty_state(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut Sta
     ui.vertical_centered(|ui| {
         ui.label(RichText::new(ctx.t("rig.no_rig")).color(weak(ui)));
         ui.add_space(8.0);
+        if ui
+            .add(egui::Button::new(RichText::new(format!("{}  {}", icons::USER_SQUARE, ctx.t("rig.image.new"))).strong().size(15.0)).min_size(vec2(220.0, 32.0)))
+            .on_hover_text(ctx.t("rig.image.new_hint"))
+            .clicked()
+        {
+            st.request_new_from_image(ctx);
+        }
+        ui.label(RichText::new(ctx.t("rig.drop.empty")).small().color(faint(ui)));
+        ui.add_space(12.0);
         if ui.button(format!("{}  {}", icons::FILE_PLUS, ctx.t("rig.new"))).clicked() {
             st.request_new();
         }
@@ -485,14 +494,42 @@ fn slot_section(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
                 }
             }
         });
-    if current_image.is_some() && ui.button(ctx.t("rig.remove_picture")).clicked() {
-        detach = true;
-    }
+    ui.horizontal(|ui| {
+        // Pictures not yet in the project: imported (copied under
+        // `assets/images/`) then shown in the slot.
+        if ui
+            .button(format!("{}  {}", icons::UPLOAD_SIMPLE, ctx.t("rig.image.import")))
+            .on_hover_text(ctx.t("rig.image.import_hint"))
+            .clicked()
+            && let Some(file) = rfd::FileDialog::new()
+                .add_filter(ctx.t("rig.image.filter"), &["png", "jpg", "jpeg"])
+                .pick_file()
+        {
+            picked = st.import_picture(ctx, &file);
+        }
+        if current_image.is_some() && ui.button(ctx.t("rig.remove_picture")).clicked() {
+            detach = true;
+        }
+    });
     let root = st.project_root(ctx);
     if let Some(path) = picked {
         let size = image_size(st, &root, &path);
+        // A mesh is rebuilt from the new picture where the old one was, so
+        // the picture shows deformable right away (not as a region at the
+        // bone).
+        let mesh_center = match &current {
+            Some(Attachment::Mesh(m)) => super::meshgen::uv_map(m).and_then(|u| u.inverse()).map(|inv| inv.apply([0.5, 0.5])),
+            _ => None,
+        };
+        let pic = mesh_center.and_then(|c| super::workflow::Picture::load(&root, &path).ok().map(|p| (p, c)));
         if let Some(doc) = st.doc.as_mut() {
-            report(ctx, doc.attach_image(&sid, &skin_name, &path, size));
+            doc.begin_gesture();
+            if report(ctx, doc.attach_image(&sid, &skin_name, &path, size)).is_some()
+                && let Some((pic, center)) = pic
+            {
+                report(ctx, doc.set_mesh(&sid, &skin_name, super::workflow::mesh_for_picture(&pic, center)));
+            }
+            doc.end_gesture();
         }
     }
     if detach && let Some(doc) = st.doc.as_mut() {

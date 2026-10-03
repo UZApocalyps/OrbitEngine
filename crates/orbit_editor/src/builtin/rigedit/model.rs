@@ -362,6 +362,11 @@ impl RigDoc {
         self.in_gesture = true;
     }
 
+    /// A gesture is open (see [`RigDoc::begin_gesture`]).
+    pub fn in_gesture(&self) -> bool {
+        self.in_gesture
+    }
+
     pub fn end_gesture(&mut self) {
         if !self.in_gesture {
             return;

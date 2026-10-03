@@ -24,6 +24,7 @@ use orbit_project::rigmesh::meshgen;
 mod model;
 mod panels;
 use orbit_project::rigmesh::weights;
+mod workflow;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -114,6 +115,24 @@ impl EditorPlugin for RigPlugin {
             .category("category.tools")
             .menu("tools", 165),
         );
+        let state = self.state.clone();
+        reg.action(
+            ActionDef::new("new_from_image", "rig.image.new", move |ctx| {
+                for p in [
+                    panel_ids::RIG_VIEWPORT,
+                    panel_ids::RIG_HIERARCHY,
+                    panel_ids::RIG_INSPECTOR,
+                ] {
+                    ctx.request(EditorRequest::ShowPanel(p.to_owned()));
+                }
+                if let Ok(mut st) = state.try_borrow_mut() {
+                    st.request_new_from_image(ctx);
+                }
+            })
+            .icon(icons::USER_SQUARE)
+            .category("category.tools")
+            .menu("tools", 166),
+        );
     }
 }
 
@@ -123,6 +142,8 @@ impl EditorPlugin for RigPlugin {
 pub(super) enum Pending {
     New,
     Open(PathBuf),
+    /// "New rig from image": the picture picked or dropped.
+    NewFromImage(PathBuf),
 }
 
 /// What the viewport last asked the host to draw.
@@ -179,6 +200,9 @@ pub(super) struct State {
     pub(super) mesh: meshedit::MeshEdit,
     /// Clip editing and preview (M5B-06).
     anim: clippanel::AnimState,
+    /// Bones of the last "Bind to bones" (a bone added since asks to bind
+    /// again in the step bar).
+    pub bound_bones: Option<Vec<BoneId>>,
 }
 
 impl State {
@@ -209,6 +233,7 @@ impl State {
             ik_two: true,
             mesh: meshedit::MeshEdit::default(),
             anim: clippanel::AnimState::default(),
+            bound_bones: None,
         }
     }
 
@@ -235,6 +260,7 @@ impl State {
         self.framed = false;
         self.error = None;
         self.view = View::default();
+        self.bound_bones = None;
     }
 
     pub fn new_rig(&mut self) {
@@ -507,23 +533,340 @@ impl State {
         }
     }
 
+    /// Directory the rig's picture paths are relative to: the project's
+    /// assets root (where the importer copies files; a story kept in a
+    /// sub-folder has it above its own folder), else the rig's folder.
     pub fn project_root(&self, ctx: &EditorContext<'_>) -> PathBuf {
         ctx.project_info()
-            .map(|p| p.root.clone())
+            .map(|p| match ctx.story() {
+                Some(story) => orbit_project::find_assets_root(&p.root, story),
+                None => p.root.clone(),
+            })
             .or_else(|| self.doc.as_ref()?.path.as_ref()?.parent().map(ToOwned::to_owned))
             .unwrap_or_default()
     }
 
+    /// Frames the bones and the pictures.
     pub fn frame_all(&mut self, size: [f32; 2]) {
         let world = self.world();
-        if let Some(doc) = &self.doc
-            && let Some((lo, hi)) = geom::rig_bounds(doc.rig(), &world)
-        {
+        let pictures = match (&self.prepared, self.rig_pose()) {
+            (Some(p), Some(pose)) => {
+                let w = p.world(&pose);
+                let list = p.draw_list(&pose, &w, self.shown_skin().as_deref(), &orbit_anim::rig::CpuSkinner);
+                crate::rig_host::draw_bounds(&list)
+            }
+            _ => None,
+        };
+        let bones = self.doc.as_ref().and_then(|d| geom::rig_bounds(d.rig(), &world));
+        let all = match (bones, pictures) {
+            (Some((a, b)), Some((c, d))) => {
+                Some(([a[0].min(c[0]), a[1].min(c[1])], [b[0].max(d[0]), b[1].max(d[1])]))
+            }
+            (x, y) => x.or(y),
+        };
+        if let Some((lo, hi)) = all {
             self.view = View::fit(lo, hi, size);
         } else {
             self.view = View::default();
         }
     }
+}
+
+// -------------------------------------------------------------- workflow
+
+impl State {
+    /// The skin to draw, when the rig has it.
+    fn shown_skin(&self) -> Option<String> {
+        let doc = self.doc.as_ref()?;
+        doc.rig().skins.iter().any(|s| s.name == self.skin).then(|| self.skin.clone())
+    }
+
+    /// Path (as the rig stores it) of the picture file `abs`: an image asset
+    /// of the project with the same content when there is one (a file just
+    /// dropped on the window was imported by the editor already), else the
+    /// file imported now. Without a project: the absolute path.
+    fn resolve_picture(&mut self, ctx: &mut EditorContext<'_>, abs: &std::path::Path) -> Option<String> {
+        if !ctx.has_project() {
+            ctx.warn(ctx.t("rig.image.no_project"));
+            return Some(abs.to_string_lossy().replace('\\', "/"));
+        }
+        let root = self.project_root(ctx);
+        let bytes = match std::fs::read(abs) {
+            Ok(b) => b,
+            Err(e) => {
+                ctx.error(ctx.tf("rig.mesh.err.image", &[("path", &abs.display()), ("error", &e)]));
+                return None;
+            }
+        };
+        let same = ctx.story().and_then(|story| {
+            story
+                .assets
+                .assets
+                .iter()
+                .filter(|a| a.kind == orbit_core::AssetKind::Image)
+                .find(|a| {
+                    let p = root.join(&a.path);
+                    std::fs::metadata(&p).is_ok_and(|m| m.len() == bytes.len() as u64)
+                        && std::fs::read(&p).is_ok_and(|b| b == bytes)
+                })
+                .map(|a| a.path.clone())
+        });
+        if same.is_some() {
+            return same;
+        }
+        let report = crate::builtin::import_paths(ctx, &[abs.to_owned()]);
+        report.imported.into_iter().find(|i| i.kind == orbit_core::AssetKind::Image).map(|i| i.path)
+    }
+
+    /// The picture file `abs` as a project image (imported when needed).
+    pub fn import_picture(&mut self, ctx: &mut EditorContext<'_>, abs: &std::path::Path) -> Option<String> {
+        let path = self.resolve_picture(ctx, abs)?;
+        self.image_sizes.remove(&path);
+        Some(path)
+    }
+
+    fn load_picture(&mut self, ctx: &mut EditorContext<'_>, abs: &std::path::Path) -> Option<workflow::Picture> {
+        let path = self.resolve_picture(ctx, abs)?;
+        let root = self.project_root(ctx);
+        match workflow::Picture::load(&root, &path) {
+            Ok(p) => {
+                self.image_sizes.insert(path, [p.width as f32, p.height as f32]);
+                Some(p)
+            }
+            Err(e) => {
+                ctx.error(ctx.tf("rig.mesh.err.image", &[("path", &path), ("error", &e)]));
+                None
+            }
+        }
+    }
+
+    /// "New rig from image…": asks for a picture (unsaved changes first).
+    pub fn request_new_from_image(&mut self, ctx: &mut EditorContext<'_>) {
+        let mut dlg = rfd::FileDialog::new().add_filter(ctx.t("rig.image.filter"), &["png", "jpg", "jpeg"]);
+        if let Some(root) = ctx.project_info().map(|p| p.root.clone()) {
+            dlg = dlg.set_directory(root);
+        }
+        if let Some(path) = dlg.pick_file() {
+            self.request_new_from_path(ctx, path);
+        }
+    }
+
+    pub fn request_new_from_path(&mut self, ctx: &mut EditorContext<'_>, path: PathBuf) {
+        if self.doc.as_ref().is_some_and(RigDoc::dirty) {
+            self.pending = Some(Pending::NewFromImage(path));
+        } else {
+            self.new_from_image(ctx, &path);
+        }
+    }
+
+    /// Step 1: a rig with a root bone and the picture as a mesh, framed,
+    /// the bone tool ready to draw over it.
+    pub fn new_from_image(&mut self, ctx: &mut EditorContext<'_>, abs: &std::path::Path) {
+        let Some(pic) = self.load_picture(ctx, abs) else { return };
+        match workflow::rig_from_picture(&pic) {
+            Ok((doc, root, slot)) => {
+                self.set_doc(doc);
+                self.selected = Some(root);
+                self.selected_slot = Some(slot);
+                self.tool = Tool::Create;
+                self.sync();
+                ctx.info(ctx.t("rig.image.created"));
+            }
+            Err(e) => ctx.warn(ctx.t(e.key())),
+        }
+    }
+
+    /// "Add image part…": another picture as its own slot.
+    pub fn request_add_part(&mut self, ctx: &mut EditorContext<'_>) {
+        let mut dlg = rfd::FileDialog::new().add_filter(ctx.t("rig.image.filter"), &["png", "jpg", "jpeg"]);
+        if let Some(root) = ctx.project_info().map(|p| p.root.clone()) {
+            dlg = dlg.set_directory(root);
+        }
+        if let Some(paths) = dlg.pick_files() {
+            for p in paths {
+                self.add_part(ctx, &p, None);
+            }
+        }
+    }
+
+    /// Adds the picture `abs` as a slot on the selected bone (else the root):
+    /// lined up with the first picture when it has its size, else at `at`
+    /// (rig space) or the middle of the view. A rig without picture gets it
+    /// as its main picture, standing on the origin.
+    pub fn add_part(&mut self, ctx: &mut EditorContext<'_>, abs: &std::path::Path, at: Option<[f32; 2]>) {
+        let Some(pic) = self.load_picture(ctx, abs) else { return };
+        let Some(doc) = self.doc.as_mut() else { return };
+        let first = !doc.rig().slots.iter().any(|s| s.attachment.is_some());
+        doc.begin_gesture();
+        let bone = match workflow::part_bone(doc.rig(), self.selected.as_ref()) {
+            Some(b) => Ok(b),
+            None => workflow::add_root(doc, &pic),
+        };
+        let view_center = [-self.view.pan[0] / self.view.zoom, -self.view.pan[1] / self.view.zoom];
+        let center = if first {
+            workflow::standing_center(&pic)
+        } else {
+            workflow::part_center(doc.rig(), &pic, at.unwrap_or(view_center))
+        };
+        let result = bone.and_then(|b| workflow::add_part(doc, &b, &pic, center).map(|s| (b, s)));
+        doc.end_gesture();
+        match result {
+            Ok((bone, slot)) => {
+                self.selected_slot = Some(slot);
+                if self.selected.is_none() {
+                    self.selected = Some(bone);
+                }
+                if first {
+                    self.framed = false;
+                }
+                ctx.info(ctx.tf("rig.image.part_added", &[("name", &pic.path)]));
+            }
+            Err(e) => ctx.warn(ctx.t(e.key())),
+        }
+    }
+
+    /// Step 3: automatic weights for every mesh from the bones, then pose
+    /// mode with the rotate tool so the next drag bends the picture.
+    pub fn bind_to_bones(&mut self, ctx: &mut EditorContext<'_>) {
+        let falloff = self.mesh.falloff;
+        let Some(doc) = self.doc.as_mut() else { return };
+        if doc.rig().bones.len() < 2 {
+            ctx.warn(ctx.t("rig.bind.need_bones"));
+            return;
+        }
+        match workflow::bind(doc, falloff) {
+            Ok(0) => ctx.warn(ctx.t("rig.bind.no_mesh")),
+            Ok(n) => {
+                self.bound_bones = Some(doc.rig().bones.iter().map(|b| b.id.clone()).collect());
+                if self.selected_slot.is_none() {
+                    self.selected_slot = doc
+                        .rig()
+                        .slots
+                        .iter()
+                        .find(|s| s.attachment.is_some())
+                        .map(|s| s.id.clone());
+                }
+                if self.selected.as_ref().and_then(|b| model::bone(doc.rig(), b)).is_none_or(|b| b.parent.is_none()) {
+                    self.selected = doc.rig().bones.iter().rev().find(|b| b.parent.is_some()).map(|b| b.id.clone());
+                }
+                set_pose_mode(self, true);
+                self.tool = Tool::Rotate;
+                ctx.info(ctx.tf("rig.bind.done", &[("count", &n)]));
+            }
+            Err(e) => ctx.warn(ctx.t(e.key())),
+        }
+    }
+
+    /// Where the beginner workflow is.
+    pub fn step(&self) -> workflow::Step {
+        self.doc.as_ref().map_or(workflow::Step::Import, |d| workflow::step(d.rig(), self.bound_bones.as_deref()))
+    }
+}
+
+/// Picture files dropped on `rect` this frame (a drop whose position is
+/// unknown counts when the pointer was last seen over it).
+fn dropped_pictures(ui: &Ui, rect: Rect) -> Vec<PathBuf> {
+    ui.input(|i| {
+        if i.raw.dropped_files.is_empty() {
+            return Vec::new();
+        }
+        let over = i.pointer.latest_pos().is_none_or(|p| rect.contains(p));
+        if !over {
+            return Vec::new();
+        }
+        i.raw
+            .dropped_files
+            .iter()
+            .filter_map(|f| f.path.clone())
+            .filter(|p| workflow::is_picture_file(p))
+            .collect()
+    })
+}
+
+/// Highlights `rect` while picture files are dragged over the window.
+fn paint_drop_hint(ui: &Ui, ctx: &EditorContext<'_>, rect: Rect, has_doc: bool) {
+    let hovering = ui.input(|i| i.raw.hovered_files.iter().any(|f| f.path.as_deref().is_some_and(workflow::is_picture_file)));
+    if !hovering {
+        return;
+    }
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("rig_drop")));
+    painter.rect_filled(rect, 4.0, accent(ui).gamma_multiply(0.15));
+    painter.rect_stroke(rect.shrink(2.0), 4.0, Stroke::new(2.0, accent(ui)), egui::StrokeKind::Inside);
+    let key = if has_doc { "rig.drop.part" } else { "rig.drop.new" };
+    painter.text(rect.center(), Align2::CENTER_CENTER, ctx.t(key), FontId::proportional(16.0), accent(ui));
+}
+
+/// The drops on the viewport: no rig → a new rig from the first picture;
+/// else every picture becomes a part where it was dropped.
+fn handle_drops(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, rect: Rect) {
+    let dropped = dropped_pictures(ui, rect);
+    if dropped.is_empty() {
+        return;
+    }
+    if st.doc.is_none() {
+        st.request_new_from_path(ctx, dropped[0].clone());
+        for p in &dropped[1..] {
+            st.add_part(ctx, p, None);
+        }
+        return;
+    }
+    let at = ui.input(|i| i.pointer.latest_pos()).filter(|p| rect.contains(*p)).map(|p| pointer_rig(st, rect, p));
+    for p in &dropped {
+        st.add_part(ctx, p, at);
+    }
+}
+
+/// The four steps of the beginner workflow, the current one highlighted,
+/// with what to do next.
+fn step_bar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
+    let step = st.step();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for (i, key) in ["rig.step.import", "rig.step.bones", "rig.step.bind", "rig.step.pose"].iter().enumerate() {
+            if i > 0 {
+                ui.label(RichText::new(icons::CARET_RIGHT).color(faint(ui)));
+            }
+            let text = format!("{}. {}", i + 1, ctx.t(key));
+            let text = match i.cmp(&step.index()) {
+                std::cmp::Ordering::Less => RichText::new(format!("{} {text}", icons::CHECK)).color(weak(ui)),
+                std::cmp::Ordering::Equal => RichText::new(text).strong().color(accent(ui)),
+                std::cmp::Ordering::Greater => RichText::new(text).color(faint(ui)),
+            };
+            ui.label(text);
+        }
+        ui.separator();
+        let hint = match step {
+            workflow::Step::Import => "rig.step.import_hint",
+            workflow::Step::Bones => "rig.step.bones_hint",
+            workflow::Step::Bind => "rig.step.bind_hint",
+            workflow::Step::Pose => "rig.step.pose_hint",
+        };
+        ui.label(RichText::new(ctx.t(hint)).small().color(weak(ui)));
+        match step {
+            workflow::Step::Import => {
+                if ui.button(format!("{}  {}", icons::IMAGE, ctx.t("rig.image.add_part"))).clicked() {
+                    st.request_add_part(ctx);
+                }
+            }
+            workflow::Step::Bones => {
+                if st.tool != Tool::Create && ui.button(ctx.t("rig.tool.create")).clicked() {
+                    set_pose_mode(st, false);
+                    st.tool = Tool::Create;
+                }
+            }
+            workflow::Step::Bind => {
+                if ui.button(RichText::new(format!("{}  {}", icons::LINK, ctx.t("rig.bind"))).strong()).clicked() {
+                    st.bind_to_bones(ctx);
+                }
+            }
+            workflow::Step::Pose => {
+                if !st.pose_mode && ui.button(ctx.t("rig.mode.pose")).clicked() {
+                    set_pose_mode(st, true);
+                    st.tool = Tool::Rotate;
+                }
+            }
+        }
+    });
 }
 
 // --------------------------------------------------------------- viewport
@@ -534,11 +877,15 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
     st.begin_frame(ui);
     clippanel::tick(ui, st);
     if st.doc.is_none() {
+        let full = ui.available_rect_before_wrap();
         panels::empty_state(ui, ctx, st);
+        paint_drop_hint(ui, ctx, full, false);
+        handle_drops(ui, ctx, st, full);
         confirm_dialog(ui, ctx, st);
         return;
     }
     toolbar(ui, ctx, st);
+    step_bar(ui, ctx, st);
     ui.separator();
     let avail = ui.available_size();
     let (rect, response) =
@@ -556,6 +903,12 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
         keys(ui, ctx, st, rect);
     }
     interact(ui, ctx, st, &response, rect);
+    handle_drops(ui, ctx, st, rect);
+    st.sync();
+    if !st.framed {
+        st.frame_all([rect.width(), rect.height()]);
+        st.framed = true;
+    }
 
     // ---- ask the host for a picture when something changed
     if let (Some(doc), Some(prepared), Some(pose)) = (&st.doc, st.prepared.clone(), st.rig_pose()) {
@@ -634,6 +987,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
         FontId::proportional(11.0),
         faint(ui),
     );
+    paint_drop_hint(ui, ctx, rect, true);
     confirm_dialog(ui, ctx, st);
 }
 
@@ -1000,6 +1354,21 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         if icon_button(ui, icons::FOLDER_OPEN, &ctx.t("rig.open_file")).clicked() {
             st.request_open(ctx);
         }
+        if icon_button(ui, icons::USER_SQUARE, &ctx.t("rig.image.new")).clicked() {
+            st.request_new_from_image(ctx);
+        }
+        if icon_button(ui, icons::IMAGE, &ctx.t("rig.image.add_part")).clicked() {
+            st.request_add_part(ctx);
+        }
+        let can_bind = st.doc.as_ref().is_some_and(|d| d.rig().bones.len() >= 2);
+        if ui
+            .add_enabled(can_bind, egui::Button::new(RichText::new(icons::LINK).size(15.0)).frame(false))
+            .on_hover_text(ctx.t("rig.bind_hint"))
+            .on_disabled_hover_text(ctx.t("rig.bind.need_bones"))
+            .clicked()
+        {
+            st.bind_to_bones(ctx);
+        }
         if ui
             .add_enabled(dirty || !has_path, egui::Button::new(RichText::new(icons::FLOPPY_DISK).size(15.0)).frame(false))
             .on_hover_text(ctx.t("rig.save"))
@@ -1108,6 +1477,7 @@ fn confirm_dialog(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
     match (choice, st.pending.take()) {
         (Some(true), Some(Pending::New)) => st.new_rig(),
         (Some(true), Some(Pending::Open(p))) => st.open_path(&p, ctx),
+        (Some(true), Some(Pending::NewFromImage(p))) => st.new_from_image(ctx, &p),
         (None, pending) => st.pending = pending,
         _ => {}
     }

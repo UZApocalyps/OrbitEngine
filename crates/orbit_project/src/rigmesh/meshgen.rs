@@ -52,6 +52,18 @@ impl MeshParams {
             ..Self::default()
         }
     }
+
+    /// Settings for a whole character picture: denser than
+    /// [`MeshParams::for_image`] (about 12 interior vertices across the
+    /// largest side) so elbows and knees have vertices to bend on.
+    pub fn for_character(w: u32, h: u32) -> Self {
+        let side = w.max(h) as f32;
+        Self {
+            tolerance: (side / 150.0).clamp(1.0, 6.0),
+            spacing: (side / 12.0).max(4.0),
+            ..Self::default()
+        }
+    }
 }
 
 /// Why a mesh operation was refused (`key()`: i18n message).

@@ -87,7 +87,18 @@ impl Target {
 /// The selected slot's attachment in the shown skin (or the skin that has it).
 pub(super) fn target(st: &State) -> Option<Target> {
     let rig = st.doc.as_ref()?.rig();
-    let slot = model::slot(rig, st.selected_slot.as_ref()?)?;
+    // No slot selected: the first slot showing a mesh, so the weight tool
+    // works right after "Bind to bones" without visiting the hierarchy.
+    let slot = match st.selected_slot.as_ref() {
+        Some(id) => model::slot(rig, id)?,
+        None => rig.slots.iter().find(|s| {
+            s.attachment.as_ref().is_some_and(|a| {
+                rig.skins
+                    .iter()
+                    .any(|k| matches!(k.attachments.get(a), Some(Attachment::Mesh(_))))
+            })
+        })?,
+    };
     let att = slot.attachment.as_ref()?;
     let has = |n: &str| {
         rig.skins
@@ -525,18 +536,7 @@ fn auto_weights_for(
     m: &MeshAttachment,
     falloff: f32,
 ) -> Vec<Vec<orbit_anim::rig::Influence>> {
-    let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
-    for v in &m.vertices {
-        lo = [lo[0].min(v[0]), lo[1].min(v[1])];
-        hi = [hi[0].max(v[0]), hi[1].max(v[1])];
-    }
-    let diag = (hi[0] - lo[0]).hypot(hi[1] - lo[1]);
-    weights::auto_weights(
-        &m.vertices,
-        &weights::bone_segments(rig),
-        falloff,
-        (diag / 20.0).max(1.0),
-    )
+    weights::bind_mesh(rig, m, falloff)
 }
 
 /// "Mesh" and "Weights" sections of the slot inspector.
