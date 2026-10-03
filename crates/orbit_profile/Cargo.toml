@@ -1,0 +1,19 @@
+[package]
+name = "orbit_profile"
+description = "OrbitEngine lightweight profiler: scoped CPU timers and GPU pass timings, compiled out of release players."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Forces the profiler on in any build (the editor, `orbit_player --features
+# profiling`). Without it the profiler exists only in native debug builds:
+# release players and the web pay nothing (every call is an empty inline fn).
+enabled = []
+
+[dependencies]
+
+[lints]
+workspace = true

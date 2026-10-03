@@ -4,6 +4,22 @@
     "console.clear": "Clear console",
     "console.empty": "Nothing to show.",
 
+    // ---- profiler
+    "profiler.title": "Profiler",
+    "profiler.record": "Record",
+    "profiler.clear": "Clear the history",
+    "profiler.empty": "No frame recorded yet.",
+    "profiler.compiled_out": "The profiler is not part of this build.",
+    "profiler.cpu_summary": "CPU frame: mean {mean} ms, p95 {p95} ms, worst {max} ms",
+    "profiler.gpu_summary": "GPU passes: mean {mean} ms, p95 {p95} ms, worst {max} ms",
+    "profiler.gpu_unavailable": "GPU timings unavailable (no timestamp queries on this device).",
+    "profiler.scopes": "Most expensive spans (per frame)",
+    "profiler.scope": "Span",
+    "profiler.mean": "Mean (ms)",
+    "profiler.max": "Worst (ms)",
+    "profiler.calls": "Calls",
+    "profiler.gpu_passes": "GPU passes (ms)",
+
     // ---- problems
     "problems.title": "Problems",
     "problems.next": "Go to next problem",

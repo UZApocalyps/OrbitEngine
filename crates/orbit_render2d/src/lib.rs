@@ -40,6 +40,37 @@ pub use sprite::{Layer, Mesh2d, MeshVertex, Scene, Sprite2d, intersect_rects, ni
 pub use texture::{TARGET_FORMAT, TextureId, TextureOptions};
 pub use transition::Transition;
 
+/// CPU side of the sprite batcher without a GPU, for benchmarks
+/// (`orbit-editor --bench`, TL-04).
+#[doc(hidden)]
+pub mod bench {
+    use crate::sprite::{Batch, Sprite2d, Vertex, emit_batches, sort_sprites};
+    pub use crate::texture::TextureId;
+
+    /// A texture id for sprites that are only batched, never drawn.
+    pub fn texture(n: u32) -> TextureId {
+        TextureId(n)
+    }
+
+    /// Reusable buffers, like the renderer's.
+    #[derive(Default)]
+    pub struct CpuBatcher {
+        order: Vec<usize>,
+        vertices: Vec<Vertex>,
+        batches: Vec<Batch>,
+    }
+
+    impl CpuBatcher {
+        /// Sorts and batches `sprites` like a frame does; returns the
+        /// number of draw calls.
+        pub fn build(&mut self, sprites: &[Sprite2d]) -> usize {
+            sort_sprites(sprites, &mut self.order);
+            emit_batches(sprites, &self.order, &mut self.vertices, &mut self.batches, &[]);
+            self.batches.len()
+        }
+    }
+}
+
 use orbit_gfx::{Gfx, GfxError, wgpu};
 use thiserror::Error;
 
@@ -446,6 +477,7 @@ impl Renderer2d {
         load: wgpu::LoadOp<wgpu::Color>,
         scene: &Scene,
     ) {
+        orbit_profile::scope!("2d draw pass");
         self.scratch.clear();
         if let Some(color) = scene.clear {
             let r = self.camera.visible_rect();
@@ -502,7 +534,7 @@ impl Renderer2d {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: self.gfx.timestamp_writes("2d scene"),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -777,7 +809,7 @@ impl Renderer2d {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: self.gfx.timestamp_writes("2d transition"),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });

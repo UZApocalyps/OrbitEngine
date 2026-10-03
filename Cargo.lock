@@ -3070,6 +3070,7 @@ dependencies = [
  "orbit_mcp",
  "orbit_platform",
  "orbit_plugin_api",
+ "orbit_profile",
  "orbit_project",
  "orbit_render2d",
  "orbit_render3d",
@@ -3126,6 +3127,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "log",
+ "orbit_profile",
  "thiserror 2.0.21",
  "wgpu",
 ]
@@ -3213,6 +3215,7 @@ dependencies = [
  "orbit_audio",
  "orbit_gfx",
  "orbit_platform",
+ "orbit_profile",
  "orbit_render2d",
  "orbit_runtime",
  "orbit_text",
@@ -3232,6 +3235,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit_profile"
+version = "0.1.0"
+
+[[package]]
 name = "orbit_project"
 version = "0.1.0"
 dependencies = [
@@ -3249,6 +3256,7 @@ dependencies = [
  "log",
  "orbit_anim",
  "orbit_gfx",
+ "orbit_profile",
  "pollster 1.0.1",
  "thiserror 2.0.21",
 ]
@@ -3279,6 +3287,7 @@ dependencies = [
  "orbit_i18n",
  "orbit_pak",
  "orbit_platform",
+ "orbit_profile",
  "orbit_render2d",
  "orbit_render3d",
  "orbit_save",
@@ -5675,6 +5684,7 @@ dependencies = [
  "hound",
  "image",
  "orbit_export",
+ "serde_json",
 ]
 
 [[package]]

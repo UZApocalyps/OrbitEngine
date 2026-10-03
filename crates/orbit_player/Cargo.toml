@@ -16,6 +16,9 @@ showcase = []
 # templates are built without default features; the native one adds `3d`,
 # the web one keeps 2D games free of it (M6-13: 3D web template).
 3d = ["orbit_runtime/3d"]
+# The profiler (F3 overlay, GPU pass timings) in a release build. Debug
+# builds always have it; templates (release) never do.
+profiling = ["orbit_profile/enabled"]
 
 [dependencies]
 orbit_platform.workspace = true
@@ -26,6 +29,7 @@ orbit_audio.workspace = true
 orbit_assets.workspace = true
 orbit_runtime.workspace = true
 orbit_ui.workspace = true
+orbit_profile.workspace = true
 log.workspace = true
 thiserror.workspace = true
 

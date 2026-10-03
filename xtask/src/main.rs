@@ -2,6 +2,7 @@
 
 mod arch;
 mod assets;
+mod bench;
 mod serve;
 mod templates;
 mod web;
@@ -25,6 +26,10 @@ Commands:
                 when cargo-ndk, the NDK and the rust targets are present, and skipped with a message otherwise.
   wasm-budget   Fail if target/templates/web/orbit_player_bg.wasm is over the size budget (--file <wasm>)
   check-arch    Verify core crates have no GPU/window deps and compile to wasm32
+  bench         Headless reference benchmarks (orbit-editor --bench): writes target/bench/results.json and
+                compares the medians with xtask/bench-baseline.json (informational).
+                Options: --debug --quick --out <json> --baseline <json> --threshold <ratio, 1.5>
+                --strict (fail on a regression) --update-baseline
   gen-assets    Regenerate assets/logo.png and the procedural assets/demo/ files
 ";
 
@@ -38,6 +43,7 @@ fn main() -> ExitCode {
         Some("templates") => templates::templates(&rest),
         Some("wasm-budget") => templates::budget(&rest),
         Some("check-arch") => arch::check(),
+        Some("bench") => bench::bench(&rest),
         Some("gen-assets") => assets::generate(),
         Some("help") | Some("--help") | Some("-h") | None => {
             print!("{HELP}");

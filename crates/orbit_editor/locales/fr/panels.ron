@@ -4,6 +4,22 @@
     "console.clear": "Effacer la console",
     "console.empty": "Rien à afficher.",
 
+    // ---- profiler
+    "profiler.title": "Profileur",
+    "profiler.record": "Enregistrer",
+    "profiler.clear": "Effacer l'historique",
+    "profiler.empty": "Aucune image enregistrée pour l'instant.",
+    "profiler.compiled_out": "Le profileur ne fait pas partie de cette version.",
+    "profiler.cpu_summary": "Image CPU : moyenne {mean} ms, p95 {p95} ms, pire {max} ms",
+    "profiler.gpu_summary": "Passes GPU : moyenne {mean} ms, p95 {p95} ms, pire {max} ms",
+    "profiler.gpu_unavailable": "Temps GPU indisponibles (pas de requêtes d'horodatage sur ce périphérique).",
+    "profiler.scopes": "Sections les plus coûteuses (par image)",
+    "profiler.scope": "Section",
+    "profiler.mean": "Moyenne (ms)",
+    "profiler.max": "Pire (ms)",
+    "profiler.calls": "Appels",
+    "profiler.gpu_passes": "Passes GPU (ms)",
+
     // ---- problems
     "problems.title": "Problèmes",
     "problems.next": "Aller au problème suivant",

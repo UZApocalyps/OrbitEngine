@@ -22,6 +22,7 @@ pub mod manual;
 mod nodeinfo;
 mod preview;
 mod problems;
+pub mod profiler;
 pub mod reveal;
 pub mod sample;
 mod rigedit;
@@ -78,6 +79,7 @@ pub mod ids {
     pub const MANUAL: &str = "orbit.manual";
     pub const TIMELINE: &str = "orbit.timeline";
     pub const RIG: &str = "orbit.rig";
+    pub const PROFILER: &str = "orbit.profiler";
 }
 
 /// Full ids of the built-in panels.
@@ -108,6 +110,7 @@ pub mod panels {
     pub const RIG_VIEWPORT: &str = "orbit.rig.viewport";
     pub const RIG_HIERARCHY: &str = "orbit.rig.hierarchy";
     pub const RIG_INSPECTOR: &str = "orbit.rig.inspector";
+    pub const PROFILER: &str = "orbit.profiler.profiler";
 }
 
 /// State the built-in plugins share with the editor core.
@@ -148,6 +151,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(sceneview::SceneViewPlugin),
         Box::new(console::ConsolePlugin),
         Box::new(problems::ProblemsPlugin),
+        Box::new(profiler::ProfilerPlugin),
         Box::new(search::SearchPlugin::new(shared.search.clone())),
         Box::new(export::ExportPlugin),
         Box::new(translations::TranslationsPlugin),

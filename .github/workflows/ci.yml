@@ -157,6 +157,17 @@ jobs:
         run: cargo test -p orbit_editor -p orbit_editor_api -p orbit_plugin_api
       - name: Build (release)
         run: cargo build --release -p orbit_editor
+      # TL-04: reference scenarios against xtask/bench-baseline.json. Shared
+      # runners are noisy: regressions are annotated, never fatal.
+      - name: Benchmarks (informational)
+        continue-on-error: true
+        run: cargo xtask bench --quick
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ runner.os }}
+          path: target/bench/results.json
+          if-no-files-found: ignore
       - uses: actions/download-artifact@v4
         with:
           pattern: templates-*

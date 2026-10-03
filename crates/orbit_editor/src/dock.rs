@@ -106,6 +106,8 @@ impl TabViewer for DockViewer<'_, '_> {
             // Each panel gets its own id scope: two panels using an auto-id
             // widget (a `ScrollArea`...) would otherwise share its state.
             Some(panel) => {
+                let _span = orbit_profile::is_enabled()
+                    .then(|| orbit_profile::Scope::new(orbit_profile::intern(tab)));
                 ui.push_id(("orbit_panel_ui", tab.as_str()), |ui| {
                     (panel.def.ui)(ui, self.ctx);
                 });

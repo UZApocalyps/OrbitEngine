@@ -403,6 +403,7 @@ impl App for EditorApp {
         if self.stop_if_device_lost() {
             return;
         }
+        orbit_profile::begin_frame();
         for (level, message) in logging::drain() {
             self.core.state.console.push(level, message);
         }
@@ -422,13 +423,17 @@ impl App for EditorApp {
         // ---- UI
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let output = {
+            orbit_profile::scope!("editor ui");
             let core = &mut self.core;
             self.egui_ctx.run_ui(raw_input, |ui| core.ui(ui))
         };
         // The preview: story sync, commands, input, the game's frame into its
         // target (before egui paints it), state for the next UI pass.
         self.apply_debug_edit(now);
-        let wake = self.preview.update(&mut self.core, &mut self.renderer, now);
+        let wake = {
+            orbit_profile::scope!("preview");
+            self.preview.update(&mut self.core, &mut self.renderer, now)
+        };
         if self.scene3d.update(&self.core.shared.scene3d, self.preview.gfx(), &mut self.renderer) {
             self.host.push(HostRequest::RequestRedraw);
         }
@@ -470,6 +475,7 @@ impl App for EditorApp {
         if self.stop_if_device_lost() {
             return;
         }
+        let paint_span = orbit_profile::Scope::new("editor paint");
         let jobs = self.egui_ctx.tessellate(shapes, pixels_per_point);
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [width, height],
@@ -507,7 +513,7 @@ impl App for EditorApp {
                                 },
                             })],
                             depth_stencil_attachment: None,
-                            timestamp_writes: None,
+                            timestamp_writes: self.preview.gfx().timestamp_writes("editor ui"),
                             occlusion_query_set: None,
                             multiview_mask: None,
                         })
@@ -535,6 +541,8 @@ impl App for EditorApp {
             self.renderer.free_texture(id);
         }
         textures_delta.clear();
+        drop(paint_span);
+        orbit_profile::finish_frame();
 
         if self.args.autoscroll.is_some() {
             self.frame_ms.push(now.elapsed().as_secs_f32() * 1000.0);

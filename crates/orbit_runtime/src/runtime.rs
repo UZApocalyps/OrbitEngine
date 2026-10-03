@@ -509,6 +509,8 @@ pub struct Runtime {
     host_requests: Vec<HostRequest>,
     /// Set when hosted by an editor (see [`Runtime::new_embedded`]).
     embedded: Option<embedded::Embedded>,
+    /// The F3 profiler overlay, when shown (development builds only).
+    overlay: Option<crate::overlay::ProfilerOverlay>,
     /// Lazy asset loading in progress (web player, see [`Streaming`]).
     streaming: Option<Streaming>,
     /// The page is hidden: nothing is drawn.
@@ -644,6 +646,7 @@ impl Runtime {
             ui_sounds,
             host_requests: Vec::new(),
             embedded: embedded.map(embedded::Embedded::new),
+            overlay: None,
             streaming: None,
             hidden: false,
             safe_area: orbit_platform::SafeArea::default(),
@@ -1332,7 +1335,10 @@ impl Runtime {
                         scene: &mut ui_scene,
                         white: *white,
                     };
-                    shell.draw_ui(&mut ctx, !transitioning);
+                    {
+                        orbit_profile::scope!("ui draw");
+                        shell.draw_ui(&mut ctx, !transitioning);
+                    }
                     out.scene(renderer, &ui_scene)?;
                 }
                 if self.streaming.as_ref().is_some_and(|s| s.blocked) {
@@ -1843,7 +1849,15 @@ fn play_command(audio: &mut AudioEngine, store: &AssetStore, story: &Story, comm
 
 impl App for Runtime {
     fn update(&mut self, dt: Duration) {
+        // Hosted by the editor, frames are the editor's.
+        if self.embedded.is_none() {
+            orbit_profile::begin_frame();
+        }
+        orbit_profile::scope!("runtime update");
         let dt_secs = dt.as_secs_f32().min(MAX_DT);
+        if let Some(overlay) = &mut self.overlay {
+            overlay.update(dt_secs);
+        }
         self.time += dt_secs;
         self.audio.update();
         self.poll_opening();
@@ -1864,6 +1878,7 @@ impl App for Runtime {
         if let Phase::Running(shell) = &mut self.phase {
             shell.set_now(orbit_platform::unix_time_ms());
             if !blocked {
+                orbit_profile::scope!("shell update");
                 shell.update(dt_secs);
             }
         }
@@ -1885,10 +1900,32 @@ impl App for Runtime {
                 return;
             }
         };
-        if let Err(err) = self.draw(&mut Output::Surface(&mut frame)) {
-            log::error!("render error: {err}");
+        {
+            orbit_profile::scope!("runtime draw");
+            if let Err(err) = self.draw(&mut Output::Surface(&mut frame)) {
+                log::error!("render error: {err}");
+            }
+        }
+        if let Some(overlay) = &mut self.overlay
+            && self.fonts_ready
+        {
+            let Ctx {
+                renderer,
+                text_engine,
+                text_renderer,
+                white,
+                ..
+            } = &mut self.ctx;
+            if let Some(scene) = overlay.scene(text_engine, text_renderer, renderer, *white)
+                && let Err(err) = renderer.draw_scene(&mut frame, &scene)
+            {
+                log::error!("profiler overlay: {err}");
+            }
         }
         self.ctx.renderer.end_frame(frame);
+        if self.embedded.is_none() {
+            orbit_profile::finish_frame();
+        }
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>, _scale_factor: f64) {
@@ -1896,6 +1933,24 @@ impl App for Runtime {
     }
 
     fn input(&mut self, event: &InputEvent) {
+        // F3: profiler overlay (development builds; never in the editor's
+        // preview, which has its own profiler panel).
+        if crate::overlay::ENABLED
+            && self.embedded.is_none()
+            && matches!(
+                event,
+                InputEvent::Key {
+                    code: orbit_platform::KeyCode::F3,
+                    pressed: true
+                }
+            )
+        {
+            self.overlay = match self.overlay.take() {
+                Some(_) => None,
+                None => Some(crate::overlay::ProfilerOverlay::default()),
+            };
+            return;
+        }
         if let Phase::Running(shell) = &self.phase {
             let bindings = GamepadBindings::from_prefs(&shell.prefs().gamepad);
             if &bindings != self.mapper.bindings() {
