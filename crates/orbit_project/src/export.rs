@@ -12,13 +12,16 @@ pub enum ExportTarget {
     Windows,
     Linux,
     Web,
+    /// APK or AAB (`orbit_export`).
+    Android,
 }
 
 impl ExportTarget {
-    pub const ALL: [ExportTarget; 3] = [
+    pub const ALL: [ExportTarget; 4] = [
         ExportTarget::Windows,
         ExportTarget::Linux,
         ExportTarget::Web,
+        ExportTarget::Android,
     ];
 
     /// Name used on the command line and in folder names.
@@ -27,6 +30,7 @@ impl ExportTarget {
             ExportTarget::Windows => "windows",
             ExportTarget::Linux => "linux",
             ExportTarget::Web => "web",
+            ExportTarget::Android => "android",
         }
     }
 
@@ -36,6 +40,7 @@ impl ExportTarget {
             ExportTarget::Windows => "Windows (zip)",
             ExportTarget::Linux => "Linux (tar.gz)",
             ExportTarget::Web => "Web (navigateur)",
+            ExportTarget::Android => "Android (APK / AAB)",
         }
     }
 
@@ -68,8 +73,41 @@ pub enum PakCompression {
     Lz4,
 }
 
+/// Screen orientation of the Android game.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AndroidOrientation {
+    #[default]
+    Landscape,
+    Portrait,
+    /// Follows the sensor.
+    Sensor,
+}
+
+/// What the Android export produces.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AndroidFormat {
+    /// Installable file (tests, direct distribution).
+    #[default]
+    Apk,
+    /// App bundle (Play Store).
+    Aab,
+}
+
+/// Whether `id` is a valid Android application id (`com.example.game`: at
+/// least two segments, each starting with a letter).
+pub fn is_valid_android_package(id: &str) -> bool {
+    let segments: Vec<&str> = id.split('.').collect();
+    segments.len() >= 2
+        && segments.iter().all(|s| {
+            s.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+}
+
+/// Android is exported on request (it needs the Android SDK): the default
+/// profile covers the desktop and the web.
 fn default_targets() -> Vec<ExportTarget> {
-    ExportTarget::ALL.to_vec()
+    vec![ExportTarget::Windows, ExportTarget::Linux, ExportTarget::Web]
 }
 
 fn default_true() -> bool {
@@ -104,6 +142,18 @@ pub struct ExportProfile {
     /// empty follows the system language.
     #[serde(default)]
     pub default_language: Option<String>,
+    /// Android application id (`com.studio.game`); empty derives
+    /// `com.orbit.<game id>`.
+    #[serde(default)]
+    pub android_package: Option<String>,
+    #[serde(default)]
+    pub android_orientation: AndroidOrientation,
+    #[serde(default)]
+    pub android_format: AndroidFormat,
+    /// Android `versionCode`; empty derives it from the version (`1.2.3`
+    /// gives 10203).
+    #[serde(default)]
+    pub android_version_code: Option<u32>,
 }
 
 fn default_version() -> String {
@@ -138,6 +188,10 @@ impl ExportProfile {
             pak_compression: PakCompression::default(),
             web_precompress: true,
             default_language: None,
+            android_package: None,
+            android_orientation: AndroidOrientation::default(),
+            android_format: AndroidFormat::default(),
+            android_version_code: None,
         }
     }
 
@@ -171,6 +225,14 @@ impl ExportProfile {
                 "the icon path `{icon}` must be relative to the project"
             ));
         }
+        if let Some(package) = &self.android_package
+            && !package.trim().is_empty()
+            && !is_valid_android_package(package.trim())
+        {
+            out.push(format!(
+                "the Android package `{package}` must look like com.studio.game"
+            ));
+        }
         out
     }
 }
@@ -201,6 +263,18 @@ mod tests {
         p.targets.clear();
         p.icon = Some("../x.png".into());
         assert_eq!(p.problems().len(), 5);
+    }
+
+    #[test]
+    fn android_package_ids() {
+        assert!(is_valid_android_package("com.orbit.mon_jeu"));
+        assert!(!is_valid_android_package("game"));
+        assert!(!is_valid_android_package("com.1game"));
+        assert!(!is_valid_android_package("com..x"));
+        let mut p = ExportProfile::new("r", "G");
+        p.android_package = Some("nope".into());
+        assert_eq!(p.problems().len(), 1);
+        assert_eq!(ExportTarget::parse("android"), Some(ExportTarget::Android));
     }
 
     #[test]

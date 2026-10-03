@@ -37,6 +37,7 @@
 //! # Ok::<(), orbit_export::ExportError>(())
 //! ```
 
+pub mod android;
 mod compile;
 mod error;
 mod native;
@@ -56,12 +57,16 @@ use std::sync::atomic::AtomicBool;
 
 pub use compile::{AssetFile, Compiled, compile};
 pub use error::{ExportError, Result};
-pub use orbit_project::{ExportProfile, ExportTarget, PakCompression};
+pub use orbit_project::{
+    AndroidFormat, AndroidOrientation, ExportProfile, ExportTarget, PakCompression,
+};
 pub use pakbuild::{BuiltPak, build_pak};
 pub use project::ExportProject;
 pub use report::{BuildReport, Event, ExportReport, LogLevel, ProgressFn, Reporter};
 pub use serve::{Server, open_in_browser, open_path};
-pub use templates::{ENV_VAR as TEMPLATES_ENV_VAR, Templates, WebTemplate};
+pub use templates::{
+    AndroidAbi, AndroidTemplate, ENV_VAR as TEMPLATES_ENV_VAR, Templates, WebTemplate,
+};
 pub use tool::{ToolFailure, run_request};
 
 /// What an export needs besides the project.
@@ -72,6 +77,8 @@ pub struct ExportOptions {
     /// Set to `true` from another thread to stop the export as soon as
     /// possible ([`ExportError::Cancelled`]).
     pub cancel: Option<Arc<AtomicBool>>,
+    /// Android signing and tools (the keystore password is never stored).
+    pub android: android::AndroidOptions,
 }
 
 impl ExportOptions {
@@ -80,6 +87,7 @@ impl ExportOptions {
         Self {
             templates: Templates::standard(),
             cancel: None,
+            android: android::AndroidOptions::default(),
         }
     }
 }
@@ -178,6 +186,9 @@ pub fn export_many(
             ExportTarget::Web => {
                 options.templates.web()?;
             }
+            ExportTarget::Android => {
+                android::preflight(&options.templates, &options.android, profile)?;
+            }
             native => {
                 options.templates.native(*native)?;
             }
@@ -209,6 +220,20 @@ pub fn export_many(
                     .unwrap_or_default();
                 rep.info(format!("wasm player: {} bytes{brotli}", written.wasm_bytes));
                 (written.dir, written.files)
+            }
+            ExportTarget::Android => {
+                let setup =
+                    android::preflight(&options.templates, &options.android, profile)?;
+                let written = android::export(
+                    &prepared.pak,
+                    prepared.compiled.icon.as_deref(),
+                    profile,
+                    &setup,
+                    out_dir,
+                    &mut android::SystemRunner,
+                    &mut rep,
+                )?;
+                (written.output, written.files)
             }
             native => {
                 let template = options.templates.native(*native)?;

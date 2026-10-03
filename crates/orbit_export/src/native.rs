@@ -94,7 +94,9 @@ pub(crate) fn export(
             let exe = format!("{folder}/{}", profile.game_id);
             write_tar_gz(&output, &exe, &player, &pak.bytes, &trailer, &folder)?;
         }
-        ExportTarget::Web => unreachable!("the web has its own exporter"),
+        ExportTarget::Web | ExportTarget::Android => {
+            unreachable!("the web and Android have their own exporters")
+        }
     }
     rep.step(1.0, "Archive written");
     Ok(Written {

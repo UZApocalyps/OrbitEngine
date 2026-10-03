@@ -20,6 +20,9 @@ Commands:
   templates     Build the player templates games are exported with (host OS player, wasm player with wasm-opt)
                 into target/templates/. Options: --out <dir> --no-native --no-web --target <triple>
                 --wasm-opt <path> --skip-wasm-opt --check-budget
+                --no-android --android-dex-input <aar|jar> (repeatable)
+                Android (arm64-v8a, + armeabi-v7a / x86_64 when their rust target is installed) is built
+                when cargo-ndk, the NDK and the rust targets are present, and skipped with a message otherwise.
   wasm-budget   Fail if target/templates/web/orbit_player_bg.wasm is over the size budget (--file <wasm>)
   check-arch    Verify core crates have no GPU/window deps and compile to wasm32
   gen-assets    Regenerate assets/logo.png and the procedural assets/demo/ files

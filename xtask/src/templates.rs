@@ -8,6 +8,8 @@
 //! target/templates/linux/orbit-player           (built on Linux, i.e. by the CI)
 //! target/templates/web/orbit_player.js          (wasm-bindgen glue)
 //! target/templates/web/orbit_player_bg.wasm     (release-wasm profile, wasm-opt -Oz)
+//! target/templates/android/<abi>/liborbit_player.so + android/classes.dex
+//!                                               (when cargo-ndk, the NDK and the rust targets exist)
 //! ```
 //!
 //! The player is built without the `showcase` feature (no renderer demo, no
@@ -16,6 +18,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use orbit_export::AndroidAbi;
+use orbit_export::android::toolchain::{Detected, detect, process_env};
 
 use crate::web::{ensure_wasm_bindgen_cli, locked_wasm_bindgen_version};
 use crate::{Result, cargo, run, workspace_root};
@@ -42,6 +47,11 @@ struct Options {
     /// Extra native targets (`--target <triple>`), besides the host.
     targets: Vec<String>,
     check_budget: bool,
+    /// Build the Android player when its tools are there (`--no-android` skips).
+    android: bool,
+    /// Inputs of `d8` for `classes.dex`: the Games Activity AAR and its
+    /// dependencies (`--android-dex-input <file>`, repeatable).
+    android_dex_inputs: Vec<PathBuf>,
 }
 
 fn parse(args: &[String]) -> Result<Options> {
@@ -53,6 +63,8 @@ fn parse(args: &[String]) -> Result<Options> {
         skip_wasm_opt: false,
         targets: Vec::new(),
         check_budget: false,
+        android: true,
+        android_dex_inputs: Vec::new(),
     };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -68,6 +80,10 @@ fn parse(args: &[String]) -> Result<Options> {
                 .targets
                 .push(it.next().ok_or("--target needs a triple")?.clone()),
             "--check-budget" => o.check_budget = true,
+            "--no-android" => o.android = false,
+            "--android-dex-input" => o.android_dex_inputs.push(PathBuf::from(
+                it.next().ok_or("--android-dex-input needs a file")?,
+            )),
             other => return Err(format!("unknown option `{other}`").into()),
         }
     }
@@ -150,6 +166,154 @@ fn native_template(out: &Path, triple: Option<&str>, host: &str) -> Result {
         dest.display(),
         mib(fs::metadata(&dest)?.len())
     );
+    Ok(())
+}
+
+/// What `cargo xtask templates` can do for Android, given what is installed:
+/// the ABIs to build, or why to skip.
+fn android_plan(
+    installed_targets: &[String],
+    cargo_ndk: bool,
+    ndk: bool,
+) -> std::result::Result<Vec<AndroidAbi>, String> {
+    if !cargo_ndk {
+        return Err("cargo-ndk is not installed (`cargo install cargo-ndk --locked`)".to_owned());
+    }
+    if !ndk {
+        return Err(
+            "the Android NDK was not found (install it with sdkmanager `ndk;26.1.10909125`, \
+             then set ANDROID_NDK_HOME or ANDROID_HOME)"
+                .to_owned(),
+        );
+    }
+    let abis: Vec<AndroidAbi> = AndroidAbi::ALL
+        .into_iter()
+        .filter(|abi| installed_targets.iter().any(|t| t == abi.triple()))
+        .collect();
+    if !abis.contains(&AndroidAbi::Arm64) {
+        return Err(
+            "the rust target aarch64-linux-android is not installed \
+             (`rustup target add aarch64-linux-android`)"
+                .to_owned(),
+        );
+    }
+    Ok(abis)
+}
+
+fn command_works(program: &str, args: &[&str]) -> bool {
+    Command::new(program)
+        .args(args)
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+fn installed_rust_targets() -> Vec<String> {
+    Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|l| l.trim().to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Builds `liborbit_player.so` for each possible ABI with cargo-ndk, and
+/// `classes.dex` (GameActivity) with d8 when its inputs are given. Anything
+/// missing skips the Android template with a message, it never fails the
+/// whole command.
+fn android_template(out: &Path, o: &Options) -> Result {
+    let detected = detect(&process_env, &[]);
+    let plan = android_plan(
+        &installed_rust_targets(),
+        command_works("cargo", &["ndk", "--version"]),
+        detected.ndk.is_some(),
+    );
+    let abis = match plan {
+        Ok(abis) => abis,
+        Err(why) => {
+            println!("skipping the Android template: {why}");
+            return Ok(());
+        }
+    };
+    let dest = out.join("android");
+    for abi in &abis {
+        let mut build = cargo();
+        build.args(["ndk", "-t", abi.id(), "rustc"]).args([
+            "-p",
+            "orbit_player",
+            "--lib",
+            "--release",
+            "--no-default-features",
+            "--crate-type",
+            "cdylib",
+        ]);
+        if let Some(ndk) = &detected.ndk {
+            build.env("ANDROID_NDK_HOME", ndk);
+        }
+        if let Err(err) = run(&mut build) {
+            if *abi == AndroidAbi::Arm64 {
+                println!("skipping the Android template: the arm64-v8a build failed: {err}");
+                return Ok(());
+            }
+            println!("no {} library: {err}", abi.id());
+            continue;
+        }
+        let so = workspace_root()
+            .join("target")
+            .join(abi.triple())
+            .join("release")
+            .join("liborbit_player.so");
+        let dir = dest.join(abi.id());
+        fs::create_dir_all(&dir)?;
+        fs::copy(&so, dir.join("liborbit_player.so"))
+            .map_err(|e| format!("cannot copy {}: {e}", so.display()))?;
+        println!("android {}: {}", abi.id(), dir.join("liborbit_player.so").display());
+    }
+    android_dex(&dest, o, &detected)
+}
+
+/// `classes.dex` from the Games Activity AAR (and dependencies) with `d8`.
+fn android_dex(dest: &Path, o: &Options, detected: &Detected) -> Result {
+    if o.android_dex_inputs.is_empty() {
+        println!(
+            "android: no classes.dex produced (GameActivity is Java): pass the games-activity AAR and its \
+             dependencies with --android-dex-input <file> (repeatable), or copy a prebuilt classes.dex to {}",
+            dest.join("classes.dex").display()
+        );
+        return Ok(());
+    }
+    let Some(build_tools) = &detected.build_tools else {
+        println!("android: d8 needs the SDK build-tools (sdkmanager \"build-tools;34.0.0\"): classes.dex skipped");
+        return Ok(());
+    };
+    let work = workspace_root().join("target/templates-work/android-dex");
+    if work.exists() {
+        fs::remove_dir_all(&work)?;
+    }
+    fs::create_dir_all(&work)?;
+    let d8 = ["d8", "d8.bat", "d8.exe"]
+        .iter()
+        .map(|n| build_tools.join(n))
+        .find(|p| p.is_file())
+        .ok_or_else(|| format!("no d8 in {}", build_tools.display()))?;
+    let mut cmd = Command::new(d8);
+    cmd.args(["--release", "--min-api", "26", "--output"])
+        .arg(&work)
+        .args(&o.android_dex_inputs);
+    if let Some(jdk_home) = detected.jdk.as_ref().and_then(|j| j.home.as_ref()) {
+        cmd.env("JAVA_HOME", jdk_home);
+    }
+    run(&mut cmd)?;
+    let extra = work.join("classes2.dex");
+    if extra.exists() {
+        return Err("d8 produced several dex files: the Android template holds a single classes.dex".into());
+    }
+    fs::create_dir_all(dest)?;
+    fs::copy(work.join("classes.dex"), dest.join("classes.dex"))?;
+    println!("android classes.dex: {}", dest.join("classes.dex").display());
     Ok(())
 }
 
@@ -301,6 +465,9 @@ pub fn templates(args: &[String]) -> Result {
     if o.web {
         web_template(&o.out, &o)?;
     }
+    if o.android {
+        android_template(&o.out, &o)?;
+    }
     println!("templates ready in {}", o.out.display());
     if o.check_budget && o.web {
         check_budget(&o.out.join("web/orbit_player_bg.wasm"))?;
@@ -375,6 +542,26 @@ mod tests {
         assert_eq!(o.targets, ["x86_64-unknown-linux-gnu"]);
         assert!(parse(&args(&["--bogus"])).is_err());
         assert!(parse(&args(&["--out"])).is_err());
+    }
+
+    #[test]
+    fn android_is_skipped_with_a_reason_when_tools_are_missing() {
+        let rust = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let all = rust(&["aarch64-linux-android", "x86_64-linux-android"]);
+        let why = android_plan(&all, false, true).unwrap_err();
+        assert!(why.contains("cargo-ndk"), "{why}");
+        let why = android_plan(&all, true, false).unwrap_err();
+        assert!(why.contains("NDK"), "{why}");
+        let why = android_plan(&rust(&["x86_64-linux-android"]), true, true).unwrap_err();
+        assert!(why.contains("rustup target add aarch64-linux-android"), "{why}");
+        assert_eq!(
+            android_plan(&all, true, true).unwrap(),
+            [AndroidAbi::Arm64, AndroidAbi::X86_64]
+        );
+        let args = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let o = parse(&args(&["--no-android", "--android-dex-input", "a.aar"])).unwrap();
+        assert!(!o.android);
+        assert_eq!(o.android_dex_inputs, [PathBuf::from("a.aar")]);
     }
 
     #[test]

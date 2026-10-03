@@ -619,6 +619,7 @@ fn export(core: &mut EditorCore, request: &ExportRequest) -> Result<String, Tool
     let options = orbit_export::ExportOptions {
         templates,
         cancel: None,
+        android: Default::default(),
     };
     let project = if has_manifest {
         root

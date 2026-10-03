@@ -15,7 +15,7 @@ pub const USAGE: &str = "\
         compiled to a binary game pack with its translations, and the assets
         it uses are packed into <out>/<game id>.pak (default out: <project>/build).
         Play it with: orbit-player --pak <file>
-    orbit export <windows|linux|web|all> --project <dir> --out <dir>
+    orbit export <windows|linux|web|android|all> --project <dir> --out <dir>
                  [--profile <name>] [--templates <dir>] [--serve [--port <n>] [--no-open]]
         Export the game for a platform: a zip (Windows), a tar.gz (Linux) or a
         folder for a web server (web). `all` uses the targets of the profile.
@@ -23,6 +23,10 @@ pub const USAGE: &str = "\
         `templates` folder next to this program (see `cargo xtask templates`).
         --serve   web only: serve the exported folder on 127.0.0.1 to try it
                   (opens the browser unless --no-open; stop with Ctrl+C)
+        android: an APK or AAB (profile option), needs the Android SDK build-tools
+                  and a JDK. Sign with --android-keystore <file> --android-alias <name>
+                  (password in $ORBIT_ANDROID_KEYSTORE_PASSWORD, never stored) or
+                  --android-debug (the Android debug keystore, for tests only).
 ";
 
 struct Common {
@@ -33,6 +37,9 @@ struct Common {
     serve: bool,
     port: Option<u16>,
     no_open: bool,
+    android_keystore: Option<PathBuf>,
+    android_alias: Option<String>,
+    android_debug: bool,
 }
 
 fn parse(args: &[String]) -> Result<(Vec<String>, Common), String> {
@@ -44,6 +51,9 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Common), String> {
         serve: false,
         port: None,
         no_open: false,
+        android_keystore: None,
+        android_alias: None,
+        android_debug: false,
     };
     let mut positional = Vec::new();
     let mut it = args.iter();
@@ -60,6 +70,11 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Common), String> {
             }
             "--serve" => common.serve = true,
             "--no-open" => common.no_open = true,
+            "--android-keystore" => {
+                common.android_keystore = Some(PathBuf::from(value("--android-keystore")?));
+            }
+            "--android-alias" => common.android_alias = Some(value("--android-alias")?),
+            "--android-debug" => common.android_debug = true,
             flag if flag.starts_with("--") => return Err(format!("unknown option `{flag}`")),
             other => positional.push(other.to_owned()),
         }
@@ -95,9 +110,22 @@ fn options(common: &Common) -> ExportOptions {
     if let Some(dir) = &common.templates {
         templates = templates.with_dir_first(dir);
     }
+    let mut android = orbit_export::android::AndroidOptions::default();
+    if common.android_debug {
+        android.signing = orbit_export::android::Signing::Debug;
+    } else if let Some(path) = &common.android_keystore {
+        android.signing = orbit_export::android::Signing::Keystore {
+            path: path.clone(),
+            alias: common.android_alias.clone().unwrap_or_default(),
+            password: orbit_export::android::Secret::new(
+                std::env::var("ORBIT_ANDROID_KEYSTORE_PASSWORD").unwrap_or_default(),
+            ),
+        };
+    }
     ExportOptions {
         templates,
         cancel: None,
+        android,
     }
 }
 
@@ -175,7 +203,7 @@ pub fn export_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
         profile.targets.clone()
     } else {
         vec![ExportTarget::parse(target).ok_or(format!(
-            "unknown target `{target}` (windows, linux, web or all)"
+            "unknown target `{target}` (windows, linux, web, android or all)"
         ))?]
     };
     if common.serve && targets != [ExportTarget::Web] {

@@ -11,6 +11,8 @@
 //!   linux/orbit-player
 //!   web/orbit_player.js
 //!   web/orbit_player_bg.wasm
+//!   android/classes.dex                      (GameActivity, see [`AndroidTemplate`])
+//!   android/arm64-v8a/liborbit_player.so
 //! ```
 //!
 //! Where the folder is looked for ([`Templates::standard`]), in order:
@@ -37,6 +39,7 @@ pub fn player_file(target: ExportTarget) -> &'static str {
         ExportTarget::Windows => "orbit-player.exe",
         ExportTarget::Linux => "orbit-player",
         ExportTarget::Web => "orbit_player_bg.wasm",
+        ExportTarget::Android => "liborbit_player.so",
     }
 }
 
@@ -48,6 +51,57 @@ pub const WEB_JS: &str = "orbit_player.js";
 pub struct WebTemplate {
     pub js: PathBuf,
     pub wasm: PathBuf,
+}
+
+/// An Android CPU architecture (name of the folder in `lib/` of an APK).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AndroidAbi {
+    Arm64,
+    Arm32,
+    X86_64,
+}
+
+impl AndroidAbi {
+    /// `arm64-v8a` is mandatory in an Android template, the others optional.
+    pub const ALL: [AndroidAbi; 3] = [AndroidAbi::Arm64, AndroidAbi::Arm32, AndroidAbi::X86_64];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            AndroidAbi::Arm64 => "arm64-v8a",
+            AndroidAbi::Arm32 => "armeabi-v7a",
+            AndroidAbi::X86_64 => "x86_64",
+        }
+    }
+
+    /// The Rust target triple the player is built for.
+    pub fn triple(self) -> &'static str {
+        match self {
+            AndroidAbi::Arm64 => "aarch64-linux-android",
+            AndroidAbi::Arm32 => "armv7-linux-androideabi",
+            AndroidAbi::X86_64 => "x86_64-linux-android",
+        }
+    }
+}
+
+/// File name of the dex of the Android template (GameActivity and its
+/// dependencies, compiled from the Games Activity AAR with `d8`).
+pub const ANDROID_DEX: &str = "classes.dex";
+
+/// What the Android template holds:
+///
+/// ```text
+/// templates/android/classes.dex                       GameActivity (dex)
+/// templates/android/arm64-v8a/liborbit_player.so      required
+/// templates/android/armeabi-v7a/liborbit_player.so    optional
+/// templates/android/x86_64/liborbit_player.so         optional
+/// templates/android/bundletool.jar                    optional (AAB)
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AndroidTemplate {
+    pub dir: PathBuf,
+    pub dex: PathBuf,
+    /// Present architectures, `arm64-v8a` first.
+    pub libs: Vec<(AndroidAbi, PathBuf)>,
 }
 
 /// Where player templates are looked for.
@@ -97,7 +151,7 @@ impl Templates {
 
     /// The player executable of a native target.
     pub fn native(&self, target: ExportTarget) -> Result<PathBuf> {
-        debug_assert_ne!(target, ExportTarget::Web);
+        debug_assert!(!matches!(target, ExportTarget::Web | ExportTarget::Android));
         self.dirs
             .iter()
             .map(|d| d.join(target.id()).join(player_file(target)))
@@ -118,10 +172,35 @@ impl Templates {
             .ok_or_else(|| self.missing(ExportTarget::Web))
     }
 
+    /// The Android player: the dex and at least the `arm64-v8a` library.
+    pub fn android(&self) -> Result<AndroidTemplate> {
+        let lib = player_file(ExportTarget::Android);
+        self.dirs
+            .iter()
+            .map(|d| d.join("android"))
+            .find(|d| d.join(ANDROID_DEX).is_file() && d.join("arm64-v8a").join(lib).is_file())
+            .map(|dir| AndroidTemplate {
+                dex: dir.join(ANDROID_DEX),
+                libs: AndroidAbi::ALL
+                    .into_iter()
+                    .map(|abi| (abi, dir.join(abi.id()).join(lib)))
+                    .filter(|(_, p)| p.is_file())
+                    .collect(),
+                dir,
+            })
+            .ok_or_else(|| self.missing(ExportTarget::Android))
+    }
+
+    /// Folders `android/` of the search path (for `bundletool.jar`).
+    pub fn android_dirs(&self) -> Vec<PathBuf> {
+        self.dirs.iter().map(|d| d.join("android")).collect()
+    }
+
     /// Whether the template of `target` can be found.
     pub fn has(&self, target: ExportTarget) -> bool {
         match target {
             ExportTarget::Web => self.web().is_ok(),
+            ExportTarget::Android => self.android().is_ok(),
             native => self.native(native).is_ok(),
         }
     }
@@ -167,6 +246,26 @@ mod tests {
         );
         let first = Templates::default().with_dir_first(a.path());
         assert_eq!(first.dirs(), [a.path().to_owned()]);
+    }
+
+    #[test]
+    fn the_android_template_needs_the_dex_and_the_arm64_library() {
+        let dir = TempDir::new("tpl_android");
+        let templates = Templates::new(vec![dir.path().to_owned()]);
+        assert!(templates.android().is_err());
+        let android = dir.path().join("android");
+        std::fs::create_dir_all(android.join("arm64-v8a")).unwrap();
+        std::fs::write(android.join("arm64-v8a/liborbit_player.so"), b"elf").unwrap();
+        assert!(templates.android().is_err(), "no dex yet");
+        std::fs::write(android.join("classes.dex"), b"dex").unwrap();
+        let t = templates.android().unwrap();
+        assert_eq!(t.libs.len(), 1);
+        std::fs::create_dir_all(android.join("x86_64")).unwrap();
+        std::fs::write(android.join("x86_64/liborbit_player.so"), b"elf").unwrap();
+        let t = templates.android().unwrap();
+        let abis: Vec<_> = t.libs.iter().map(|(a, _)| a.id()).collect();
+        assert_eq!(abis, ["arm64-v8a", "x86_64"]);
+        assert!(templates.available().contains(&ExportTarget::Android));
     }
 
     #[test]
