@@ -63,6 +63,7 @@ impl DataContext {
             SettingKey::VoiceVolume => p.voice,
             SettingKey::TextSpeed => p.text_speed,
             SettingKey::AutoDelay => p.auto_delay,
+            SettingKey::TextScale => p.text_scale,
             _ => return None,
         })
     }
@@ -76,6 +77,7 @@ impl DataContext {
             SettingKey::VoiceVolume => p.voice = v,
             SettingKey::TextSpeed => p.text_speed = v,
             SettingKey::AutoDelay => p.auto_delay = v,
+            SettingKey::TextScale => p.text_scale = v,
             _ => {}
         }
     }
@@ -91,7 +93,7 @@ enum Bound {
         max: f32,
         step: Option<f32>,
     },
-    Toggle,
+    Toggle(SettingKey),
     VarSlider {
         name: String,
         min: f32,
@@ -273,6 +275,12 @@ impl DataScreen {
             SettingKey::Fullscreen => {
                 if p.fullscreen == Some(true) { "On" } else { "Off" }.to_owned()
             }
+            SettingKey::ScreenReader => {
+                if p.screen_reader == Some(true) { "On" } else { "Off" }.to_owned()
+            }
+            SettingKey::HighContrast => if p.high_contrast { "On" } else { "Off" }.to_owned(),
+            SettingKey::ReducedMotion => if p.reduced_motion { "On" } else { "Off" }.to_owned(),
+            SettingKey::TextScale => format!("{:.0}%", p.text_scale * 100.0),
             SettingKey::Language => p
                 .languages
                 .iter()
@@ -407,14 +415,21 @@ impl DataScreen {
                     let n = Node::toggle(tag, self.text(text), *on);
                     return self.finish(n, def, parent, path, index, st);
                 }
-                // Only the fullscreen toggle exists; the host may not offer it.
-                if bind.setting() != Some(SettingKey::Fullscreen) {
-                    return;
-                }
-                let Some(on) = p.fullscreen else { return };
+                // The host may not offer fullscreen (or the screen reader
+                // option): the toggle is then left out.
+                let Some(key) = bind.setting() else { return };
+                let on = match key {
+                    SettingKey::Fullscreen => p.fullscreen,
+                    SettingKey::ScreenReader => p.screen_reader,
+                    SettingKey::HighContrast => Some(p.high_contrast),
+                    SettingKey::ReducedMotion => Some(p.reduced_motion),
+                    _ => None,
+                };
+                let Some(on) = on else { return };
                 let tag = Self::new_tag(st);
-                st.binds.insert(tag, Bound::Toggle);
-                Node::toggle(tag, self.text(text), on)
+                st.binds.insert(tag, Bound::Toggle(key));
+                let n = Node::toggle(tag, self.text(text), on);
+                return self.finish(n, def, parent, path, index, st);
             }
             WidgetKind::Dropdown {
                 bind,
@@ -736,6 +751,7 @@ fn setting_event(key: SettingKey, v: f32) -> Option<UiEvent> {
         SettingKey::VoiceVolume => UiEvent::SetVolume(AudioBus::Voice, v),
         SettingKey::TextSpeed => UiEvent::SetTextSpeed(v),
         SettingKey::AutoDelay => UiEvent::SetAutoDelay(v),
+        SettingKey::TextScale => UiEvent::SetTextScale(v),
         _ => return None,
     })
 }
@@ -809,9 +825,28 @@ impl Screen for DataScreen {
                 }
                 WidgetEvent::Toggled(tag, on) => {
                     match self.binds.get(&tag).cloned() {
-                        Some(Bound::Toggle) => {
-                            self.ctx.prefs.fullscreen = Some(on);
-                            out.push(UiEvent::SetFullscreen(on));
+                        Some(Bound::Toggle(key)) => {
+                            let prefs = &mut self.ctx.prefs;
+                            match key {
+                                SettingKey::Fullscreen => {
+                                    prefs.fullscreen = Some(on);
+                                    out.push(UiEvent::SetFullscreen(on));
+                                }
+                                SettingKey::ScreenReader => {
+                                    prefs.screen_reader = Some(on);
+                                    out.push(UiEvent::SetScreenReader(on));
+                                }
+                                SettingKey::HighContrast => {
+                                    prefs.high_contrast = on;
+                                    out.push(UiEvent::SetHighContrast(on));
+                                }
+                                SettingKey::ReducedMotion => {
+                                    prefs.reduced_motion = on;
+                                    out.push(UiEvent::SetReducedMotion(on));
+                                }
+                                _ => {}
+                            }
+                            changed = true;
                         }
                         Some(Bound::VarToggle(name)) => {
                             self.set_var(&name, Value::Bool(on), &mut out);
@@ -1413,4 +1448,45 @@ mod tests {
         assert_eq!(crate::asset::validate_with_vars(&asset, None, &none).len(), 5);
     }
 
+    const A11Y_SCREEN: &str = r#"(
+        id: "a11y",
+        root: (kind: Stack(dir: Vertical), children: [
+            (kind: Slider(bind: Setting(TextScale), min: 1.0, max: 1.6, step: Some(0.1))),
+            (kind: Label(text: Bind(Setting(TextScale)))),
+            (kind: Toggle(text: Literal("HC"), bind: Setting(HighContrast))),
+            (kind: Toggle(text: Literal("RM"), bind: Setting(ReducedMotion))),
+            (kind: Toggle(text: Literal("SR"), bind: Setting(ScreenReader))),
+        ]),
+    )"#;
+
+    #[test]
+    fn accessibility_settings_drive_toggles_and_the_text_scale_slider() {
+        let mut c = ctx();
+        c.prefs.text_scale = 1.2;
+        let mut s = DataScreen::new(from_ron(A11Y_SCREEN).unwrap(), &Theme::default(), &Texts::builtin("en"), c);
+        // Slider 1, label readout 2, toggles 3..5.
+        assert_eq!(click(&mut s, 3), vec![UiEvent::SetHighContrast(true)]);
+        assert_eq!(click(&mut s, 4), vec![UiEvent::SetReducedMotion(true)]);
+        assert_eq!(click(&mut s, 5), vec![UiEvent::SetScreenReader(false)]);
+        // A click in the middle of the slider is 1.3 (1.0 + 0.5 * 0.6).
+        let p = center_of(&mut s, 1);
+        s.handle(UiInput::PointerMove(p));
+        let mut ev = s.handle(UiInput::PointerDown(p));
+        ev.extend(s.handle(UiInput::PointerUp(p)));
+        match no_sound(ev).as_slice() {
+            [UiEvent::SetTextScale(v)] => assert!((v - 1.3).abs() < 0.051, "{v}"),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(s.ctx.prefs.high_contrast && s.ctx.prefs.reduced_motion);
+        assert_eq!(s.ctx.prefs.screen_reader, Some(false));
+    }
+
+    #[test]
+    fn the_screen_reader_toggle_is_left_out_when_the_host_hides_the_option() {
+        let mut c = ctx();
+        c.prefs.screen_reader = None;
+        let mut s = DataScreen::new(from_ron(A11Y_SCREEN).unwrap(), &Theme::default(), &Texts::builtin("en"), c);
+        assert!(s.ui().find(5).is_none());
+        assert!(s.ui().find(4).is_some());
+    }
 }

@@ -1,5 +1,5 @@
 (
-    ui_version: 2,
+    ui_version: 3,
     id: "load",
     pauses_game: true,
     dim_background: true,

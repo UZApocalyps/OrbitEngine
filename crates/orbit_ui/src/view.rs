@@ -134,6 +134,10 @@ pub struct PrefsView {
     pub fullscreen: Option<bool>,
     /// Screen reader support (`None` hides the option).
     pub screen_reader: Option<bool>,
+    /// Text scale inside [`orbit_ui_data::TEXT_SCALE_RANGE`] (M7-07).
+    pub text_scale: f32,
+    pub high_contrast: bool,
+    pub reduced_motion: bool,
     pub languages: Vec<LanguageView>,
     /// Code of the current language.
     pub language: String,
@@ -151,6 +155,9 @@ impl Default for PrefsView {
             skip_mode: SkipMode::ReadOnly,
             fullscreen: Some(false),
             screen_reader: Some(true),
+            text_scale: 1.0,
+            high_contrast: false,
+            reduced_motion: false,
             languages: Vec::new(),
             language: String::new(),
         }
@@ -218,6 +225,12 @@ pub enum UiEvent {
     SetFullscreen(bool),
     /// Screen reader support on / off (ADR 0017).
     SetScreenReader(bool),
+    /// Text scale (M7-07), inside `TEXT_SCALE_RANGE`.
+    SetTextScale(f32),
+    /// High-contrast theme on / off (M7-07).
+    SetHighContrast(bool),
+    /// Reduced motion on / off (M7-07).
+    SetReducedMotion(bool),
     /// Language code.
     SetLanguage(String),
     ResetPreferences,

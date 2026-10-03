@@ -1044,9 +1044,16 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         vars: &[],
         scenes: &[],
     };
+    let contrast = st
+        .doc
+        .as_ref()
+        .and_then(|d| d.bundle.theme.as_ref())
+        .map(|t| t.contrast_issues())
+        .unwrap_or_default();
     ui.columns(2, |cols| {
         let (left, right) = cols.split_at_mut(1);
         let ui = &mut left[0];
+        contrast_section(ui, &tr, &contrast);
         fonts_section(ui, st, &tr, &font_assets, root.as_deref());
         section_title(ui, &tr.t("uied.styles"));
         ui.horizontal(|ui| {
@@ -1086,6 +1093,38 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             .auto_shrink([false, false])
             .show(ui, |ui| style_props(ui, ctx, st, &env));
     });
+}
+
+/// The color pairs of the theme under WCAG AA (M7-07), with the reminder
+/// that the player's high-contrast mode replaces the colors anyway.
+fn contrast_section(ui: &mut Ui, tr: &orbit_editor_api::Translator, issues: &[orbit_ui::ContrastIssue]) {
+    if issues.is_empty() {
+        return;
+    }
+    section_title(ui, &tr.t("uied.contrast_title"));
+    ui.label(RichText::new(tr.t("uied.contrast_hint")).small().color(weak(ui)));
+    for issue in issues {
+        let key = format!("uied.contrast.{}", issue.id());
+        let mut what = tr.t(&key);
+        if what == key {
+            what = issue.what.clone();
+        }
+        if let Some(subject) = &issue.subject {
+            what = format!("{what} `{subject}`");
+        }
+        ui.label(
+            RichText::new(format!(
+                "{}  {what}: {:.1}:1 ({} {:.1}:1)",
+                icons::WARNING,
+                issue.ratio,
+                tr.t("uied.contrast_needs"),
+                issue.required
+            ))
+            .small()
+            .color(warning(ui)),
+        );
+    }
+    ui.add_space(6.0);
 }
 
 /// Names of the fonts declared by the theme.

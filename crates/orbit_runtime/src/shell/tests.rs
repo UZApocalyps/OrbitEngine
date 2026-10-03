@@ -1449,3 +1449,86 @@ fn a_scene_goto_at_the_title_is_ignored() {
     let (sh, _) = press("SceneGoto(\"epilogue\")", |_| {});
     assert!(!sh.has_game());
 }
+
+// ------------------------------------------------ accessibility (M7-07)
+
+#[test]
+fn accessibility_defaults_leave_the_theme_untouched() {
+    let sh = shell();
+    assert_eq!(sh.theme, Theme::default());
+    assert_eq!(sh.prefs().text_scale, 1.0);
+    assert!(!sh.prefs().high_contrast && !sh.prefs().reduced_motion);
+    assert!(!sh.prefs_view().high_contrast);
+}
+
+#[test]
+fn text_scale_and_high_contrast_re_skin_the_game_and_persist() {
+    let storage = MemoryStorage::new();
+    let mut sh = shell_with(&storage, ShellConfig::default());
+    sh.apply(UiEvent::StartGame);
+    sh.apply(UiEvent::SetTextScale(1.5));
+    assert_eq!(sh.theme.textbox.text_size, Theme::default().textbox.text_size * 1.5);
+    assert!(sh.theme.textbox.rect[3] > Theme::default().textbox.rect[3]);
+    sh.apply(UiEvent::SetHighContrast(true));
+    assert_eq!(sh.theme.textbox.background, [0, 0, 0, 255]);
+    // The scale survives the contrast switch, and out-of-range values clamp.
+    assert_eq!(sh.theme.textbox.text_size, Theme::default().textbox.text_size * 1.5);
+    sh.apply(UiEvent::SetTextScale(9.0));
+    assert_eq!(sh.prefs().text_scale, 1.6);
+    sh.update(PREFS_SAVE_DELAY + 0.1);
+
+    // A new session reads them back and starts skinned.
+    let again = shell_with(&storage, ShellConfig::default());
+    assert_eq!(again.prefs().text_scale, 1.6);
+    assert!(again.prefs().high_contrast);
+    assert_eq!(again.theme.textbox.background, [0, 0, 0, 255]);
+    assert_eq!(again.base_theme, Theme::default());
+
+    // Defaults bring the project theme back.
+    sh.apply(UiEvent::ResetPreferences);
+    assert_eq!(sh.theme, Theme::default());
+}
+
+#[test]
+fn old_preferences_files_keep_todays_look() {
+    let storage = MemoryStorage::new();
+    storage.put_raw(
+        "prefs.ron",
+        b"(volumes: (master: 0.5, music: 0.8, sfx: 1.0, voice: 1.0), text_speed: 40.0, \
+          auto_delay: 2.0, skip_mode: ReadOnly, fullscreen: false, language: None)"
+            .to_vec(),
+    );
+    let sh = shell_with(&storage, ShellConfig::default());
+    assert_eq!(sh.theme, Theme::default());
+    assert!(!sh.prefs().reduced_motion);
+}
+
+#[test]
+fn reduced_motion_cuts_the_running_transition_and_reaches_new_games() {
+    let mut sh = shell();
+    sh.apply(UiEvent::StartGame);
+    assert_eq!(kind(&sh), FlowKind::Transition, "the demo opens with a fade");
+    sh.apply(UiEvent::SetReducedMotion(true));
+    assert_ne!(kind(&sh), FlowKind::Transition);
+    assert!(sh.game().unwrap().director.transition().is_none());
+
+    let mut sh = shell();
+    sh.apply(UiEvent::SetReducedMotion(true));
+    sh.apply(UiEvent::StartGame);
+    assert_ne!(kind(&sh), FlowKind::Transition);
+}
+
+#[test]
+fn the_data_preferences_screen_follows_the_accessibility_settings() {
+    let mut sh = with_bundle(&UiBundle::builtin());
+    sh.apply(UiEvent::OpenPreferences);
+    assert!(matches!(sh.top(), Some(Overlay::Custom(_))));
+    // The data screen is rebuilt in high contrast without losing its place.
+    sh.apply(UiEvent::SetHighContrast(true));
+    assert!(sh.prefs().high_contrast);
+    assert!(matches!(sh.top(), Some(Overlay::Custom(_))));
+    sh.apply(UiEvent::SetTextScale(1.6));
+    assert_eq!(sh.theme.widgets.text_size, Theme::default().widgets.text_size * 1.6);
+    sh.apply(UiEvent::SetScreenReader(false));
+    assert!(!sh.prefs().screen_reader);
+}

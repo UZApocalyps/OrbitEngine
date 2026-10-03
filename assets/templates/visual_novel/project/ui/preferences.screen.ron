@@ -1,5 +1,5 @@
 (
-    ui_version: 2,
+    ui_version: 3,
     id: "preferences",
     dim_background: true,
     on_cancel: [Close],
@@ -7,7 +7,7 @@
         kind: Panel(kind: Normal, dir: Vertical),
         layout: (
             width: Fixed(1500.0),
-            height: Fixed(960.0),
+            height: Fit,
             pad: (50.0, 30.0),
             gap: 12.0,
             cross: Stretch,
@@ -81,7 +81,31 @@
                     ),
                 ],
             ),
-            (id: "fullscreen", kind: Toggle(text: Key("ui.prefs.fullscreen"), bind: Setting(Fullscreen))),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 20.0),
+                children: [
+                    (kind: Label(text: Key("ui.prefs.text_scale")), layout: (width: Fixed(460.0))),
+                    (id: "text_scale", kind: Slider(bind: Setting(TextScale), min: 1.0, max: 1.6, step: Some(0.1)), layout: (width: Fixed(620.0))),
+                    (kind: Label(text: Bind(Setting(TextScale)), dim: true), layout: (width: Fixed(180.0))),
+                ],
+            ),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 20.0),
+                children: [
+                    (id: "fullscreen", kind: Toggle(text: Key("ui.prefs.fullscreen"), bind: Setting(Fullscreen)), layout: (width: Fixed(640.0))),
+                    (id: "screen_reader", kind: Toggle(text: Key("ui.prefs.screen_reader"), bind: Setting(ScreenReader)), layout: (width: Fixed(640.0))),
+                ],
+            ),
+            (
+                kind: Stack(dir: Horizontal),
+                layout: (gap: 20.0),
+                children: [
+                    (id: "high_contrast", kind: Toggle(text: Key("ui.prefs.high_contrast"), bind: Setting(HighContrast)), layout: (width: Fixed(640.0))),
+                    (id: "reduced_motion", kind: Toggle(text: Key("ui.prefs.reduced_motion"), bind: Setting(ReducedMotion)), layout: (width: Fixed(640.0))),
+                ],
+            ),
             (
                 kind: Stack(dir: Horizontal),
                 layout: (gap: 20.0),

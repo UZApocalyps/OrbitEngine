@@ -6,6 +6,7 @@
 //! font, so export, pak and MCP tooling can use it without the render
 //! crates. `orbit_ui` re-exports everything under its historical paths.
 
+mod access;
 mod action;
 mod bundle;
 mod layout;
@@ -15,6 +16,9 @@ mod theme;
 pub mod validate;
 mod widget;
 
+pub use access::{
+    AA_COMPONENT, AA_TEXT, ContrastIssue, TEXT_SCALE_RANGE, clamp_text_scale, contrast_ratio, luminance,
+};
 pub use action::{BindPath, SettingKey, UiAction};
 pub use bundle::{SYSTEM_SCREENS, SplashContent, SplashDef, UiBundle};
 pub use layout::{Align, Anchor, Dir, PanelKind, Size};

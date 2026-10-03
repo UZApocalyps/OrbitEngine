@@ -129,7 +129,20 @@ pub struct Preferences {
     /// blind player could not find the option to turn it on. Files written
     /// before this field existed load with it on.
     pub screen_reader: bool,
+    /// Accessibility (M7-07): multiplier of the dialogue, choice and UI text
+    /// sizes, inside [`TEXT_SCALE_RANGE`]. `1.0` = the theme's sizes (the
+    /// value of files written before this field existed).
+    pub text_scale: f32,
+    /// Accessibility: replaces the theme colors by a high-contrast set.
+    pub high_contrast: bool,
+    /// Accessibility: finite animations, shakes and transitions are cut
+    /// (the final state is reached at once).
+    pub reduced_motion: bool,
 }
+
+/// Allowed [`Preferences::text_scale`] (the same range as
+/// `orbit_ui_data::TEXT_SCALE_RANGE`).
+pub const TEXT_SCALE_RANGE: [f32; 2] = [1.0, 1.6];
 
 /// The remappable gamepad actions with their default button.
 pub const GAMEPAD_ACTIONS: [(&str, &str); 7] = [
@@ -153,6 +166,9 @@ impl Default for Preferences {
             language: None,
             gamepad: BTreeMap::new(),
             screen_reader: true,
+            text_scale: 1.0,
+            high_contrast: false,
+            reduced_motion: false,
         }
     }
 }
@@ -182,6 +198,11 @@ impl Preferences {
         self.volumes.voice = unit(self.volumes.voice);
         self.text_speed = non_negative(self.text_speed, 40.0, 10_000.0);
         self.auto_delay = non_negative(self.auto_delay, 2.0, 60.0);
+        self.text_scale = if self.text_scale.is_finite() {
+            self.text_scale.clamp(TEXT_SCALE_RANGE[0], TEXT_SCALE_RANGE[1])
+        } else {
+            1.0
+        };
         self
     }
 

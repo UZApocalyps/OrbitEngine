@@ -56,6 +56,8 @@ pub(crate) struct PlaySettings {
     pub auto_delay: f32,
     /// Skip everything (`true`) or only text already read.
     pub skip_all: bool,
+    /// Accessibility: no blinking marker, animations and transitions cut.
+    pub reduced_motion: bool,
 }
 
 impl Default for PlaySettings {
@@ -64,6 +66,7 @@ impl Default for PlaySettings {
             text_speed: 40.0,
             auto_delay: 2.0,
             skip_all: false,
+            reduced_motion: false,
         }
     }
 }
@@ -75,6 +78,7 @@ fn textbox_theme(base: &TextBoxTheme, settings: &PlaySettings) -> TextBoxTheme {
         } else {
             f32::INFINITY
         },
+        indicator_blink: base.indicator_blink && !settings.reduced_motion,
         ..base.clone()
     }
 }
@@ -124,6 +128,7 @@ impl Game {
             skip_timer: 0.0,
             auto_timer: 0.0,
         };
+        game.director.set_reduced_motion(settings.reduced_motion);
         game.sync(theme);
         game
     }
@@ -136,8 +141,19 @@ impl Game {
 
     pub fn set_settings(&mut self, settings: PlaySettings, theme: &Theme) {
         self.settings = settings;
+        self.director.set_reduced_motion(settings.reduced_motion);
         self.dialogue
             .set_theme(textbox_theme(&theme.textbox, &settings));
+    }
+
+    /// The theme changed (text scale, high contrast): the line or choice on
+    /// screen is laid out again with it, shown whole.
+    pub fn set_theme(&mut self, theme: &Theme) {
+        self.dialogue
+            .set_theme(textbox_theme(&theme.textbox, &self.settings));
+        self.seen_generation = u64::MAX;
+        self.seen_progress = self.director.progress();
+        self.sync(theme);
     }
 
     /// Switches the language: the line or choice on screen is translated and

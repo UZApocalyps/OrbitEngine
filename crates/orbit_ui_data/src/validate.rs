@@ -289,6 +289,7 @@ fn check_widget(sid: &str, w: &WidgetDef, theme: Option<&Theme>, out: &mut Vec<I
                         | SettingKey::VoiceVolume
                         | SettingKey::TextSpeed
                         | SettingKey::AutoDelay
+                        | SettingKey::TextScale
                 )
             {
                 out.push(Issue::error(sid, wid, format!("{key:?} cannot be edited with a slider")));
@@ -297,7 +298,13 @@ fn check_widget(sid: &str, w: &WidgetDef, theme: Option<&Theme>, out: &mut Vec<I
         WidgetKind::Toggle { text, bind } => {
             check_text(sid, wid, text, out);
             if let Some(key) = check_bind(sid, wid, bind, out)
-                && key != SettingKey::Fullscreen
+                && !matches!(
+                    key,
+                    SettingKey::Fullscreen
+                        | SettingKey::ScreenReader
+                        | SettingKey::HighContrast
+                        | SettingKey::ReducedMotion
+                )
             {
                 out.push(Issue::error(sid, wid, format!("{key:?} cannot be edited with a toggle")));
             }
