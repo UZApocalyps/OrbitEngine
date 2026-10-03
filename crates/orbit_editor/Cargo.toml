@@ -51,6 +51,8 @@ env_logger.workspace = true
 image = { workspace = true, features = ["jpeg", "gif"] }
 pollster.workspace = true
 serde_json = "1"
+# Constrained Delaunay triangulation for rig meshes (ADR 0013, editor only).
+spade = "2.15"
 
 [dev-dependencies]
 hound.workspace = true
