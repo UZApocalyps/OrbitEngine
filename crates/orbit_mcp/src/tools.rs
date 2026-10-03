@@ -615,6 +615,7 @@ enum AssetKindArg {
     Image,
     Music,
     Sound,
+    Font,
 }
 
 impl From<AssetKindArg> for AssetKind {
@@ -623,6 +624,7 @@ impl From<AssetKindArg> for AssetKind {
             AssetKindArg::Image => AssetKind::Image,
             AssetKindArg::Music => AssetKind::Music,
             AssetKindArg::Sound => AssetKind::Sound,
+            AssetKindArg::Font => AssetKind::Font,
         }
     }
 }
@@ -1560,6 +1562,9 @@ fn import_asset(cx: &mut ToolCx<'_>, a: ImportAssetArgs) -> Result<String, ToolE
     {
         kind = Some(AssetKind::Image);
     }
+    if kind.is_none() && matches!(ext.as_str(), "ttf" | "otf") {
+        kind = Some(AssetKind::Font);
+    }
     let converted = match importer {
         Some(importer) => {
             let bytes = fs::read(&source)?;
@@ -1601,6 +1606,7 @@ fn import_asset(cx: &mut ToolCx<'_>, a: ImportAssetArgs) -> Result<String, ToolE
                 AssetKind::Music => "assets/music",
                 AssetKind::Sound => "assets/sounds",
                 AssetKind::Scene3d => "assets/3d",
+                AssetKind::Font => "assets/fonts",
             };
             let payload = match &converted {
                 Some(bytes) => bytes.clone(),

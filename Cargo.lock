@@ -3074,6 +3074,7 @@ dependencies = [
  "orbit_runtime",
  "orbit_save",
  "orbit_scene",
+ "orbit_text",
  "orbit_ui",
  "orbit_vm",
  "pollster 1.0.1",

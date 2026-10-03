@@ -926,6 +926,7 @@ impl Runtime {
             shell.warn_storage_unavailable();
         }
         shell.set_menu_background(menu_background(&story, &self.store));
+        shell.set_ui_images(theme_images(&self.ctx.theme, &self.store));
         shell
     }
 
@@ -1510,6 +1511,20 @@ fn menu_background(story: &Story, store: &AssetStore) -> Option<TextureId> {
     menu_background_path(story).and_then(|path| store.texture(path))
 }
 
+/// Textures of the nine-slice images the styles of `theme` use (the ones
+/// already loaded in `store`), by asset path.
+pub(crate) fn theme_images(
+    theme: &orbit_ui::Theme,
+    store: &AssetStore,
+) -> std::collections::HashMap<String, TextureId> {
+    theme
+        .styles
+        .values()
+        .filter_map(|style| style.nine_slice().map(|(path, _)| path))
+        .filter_map(|path| store.texture(path).map(|t| (path.to_owned(), t)))
+        .collect()
+}
+
 /// Manifest path of the picture behind the main menu.
 fn menu_background_path(story: &Story) -> Option<&str> {
     story
@@ -1804,6 +1819,11 @@ impl App for Runtime {
             self.reload();
         }
         self.poll_loading();
+        for bytes in self.store.take_new_fonts() {
+            if self.ctx.text_engine.add_font_data(bytes) == 0 {
+                log::warn!("a font asset could not be loaded");
+            }
+        }
         let blocked = self.is_blocked();
         self.update_splash(dt_secs);
         if let Phase::Running(shell) = &mut self.phase {

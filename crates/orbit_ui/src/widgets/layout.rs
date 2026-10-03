@@ -54,6 +54,10 @@ impl Ui {
     fn measure(&mut self, id: NodeId) -> [f32; 2] {
         let children = self.nodes[id.0].children.clone();
         let prefs: Vec<[f32; 2]> = children.iter().map(|&c| self.measure(c)).collect();
+        let spans: Vec<[usize; 2]> = children
+            .iter()
+            .map(|c| [self.nodes[c.0].col_span, self.nodes[c.0].row_span])
+            .collect();
         let node = &self.nodes[id.0];
         let w = &self.theme.widgets;
         let flow = |dir: Dir, gap: f32| -> [f32; 2] {
@@ -68,7 +72,8 @@ impl Ui {
                 Dir::Horizontal => [sum(0) + gaps, max(1)],
                 Dir::Stack => [max(0), max(1)],
                 Dir::Grid(cols) => {
-                    let (cw, rh) = grid_tracks(&prefs, cols);
+                    let cells = grid_place(&spans, cols);
+                    let (cw, rh) = grid_tracks(&prefs, &cells, gap);
                     [
                         cw.iter().sum::<f32>() + gap * cw.len().saturating_sub(1) as f32,
                         rh.iter().sum::<f32>() + gap * rh.len().saturating_sub(1) as f32,
@@ -264,13 +269,22 @@ impl Ui {
         visible: bool,
     ) {
         let prefs: Vec<[f32; 2]> = children.iter().map(|c| self.nodes[c.0].pref).collect();
-        let (mut cw, mut rh) = grid_tracks(&prefs, cols);
+        let spans: Vec<[usize; 2]> = children
+            .iter()
+            .map(|c| [self.nodes[c.0].col_span, self.nodes[c.0].row_span])
+            .collect();
+        let cells = grid_place(&spans, cols);
+        let (mut cw, mut rh) = grid_tracks(&prefs, &cells, gap);
         let mut fill_c = vec![false; cw.len()];
         let mut fill_r = vec![false; rh.len()];
-        for (i, &ch) in children.iter().enumerate() {
+        for (cell, &ch) in cells.iter().zip(children) {
             let n = &self.nodes[ch.0];
-            fill_c[i % cols] |= matches!(n.width, Size::Fill(_));
-            fill_r[i / cols] |= matches!(n.height, Size::Fill(_));
+            if matches!(n.width, Size::Fill(_)) {
+                fill_c[cell.col..cell.col + cell.cols].fill(true);
+            }
+            if matches!(n.height, Size::Fill(_)) {
+                fill_r[cell.row..cell.row + cell.rows].fill(true);
+            }
         }
         spread(&mut cw, &fill_c, inner[2], gap);
         spread(&mut rh, &fill_r, inner[3], gap);
@@ -286,10 +300,13 @@ impl Ui {
             xs.push(x);
             x += w + gap;
         }
-        for (i, &ch) in children.iter().enumerate() {
-            let (c, r) = (i % cols, i / cols);
-            let cell = [xs[c], ys[r], cw[c], rh[r]];
-            let rect = self.place_in(ch, cell, main, cross);
+        for (cell, &ch) in cells.iter().zip(children) {
+            let width = cw[cell.col..cell.col + cell.cols].iter().sum::<f32>()
+                + gap * (cell.cols - 1) as f32;
+            let height = rh[cell.row..cell.row + cell.rows].iter().sum::<f32>()
+                + gap * (cell.rows - 1) as f32;
+            let area = [xs[cell.col], ys[cell.row], width, height];
+            let rect = self.place_in(ch, area, main, cross);
             self.arrange(ch, rect, visible);
         }
     }
@@ -387,17 +404,92 @@ impl Ui {
     }
 }
 
-/// Natural column widths and row heights of a grid `cols` wide.
-fn grid_tracks(prefs: &[[f32; 2]], cols: usize) -> (Vec<f32>, Vec<f32>) {
+/// Where a grid child sits: first column / row and how many it covers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GridCell {
+    pub col: usize,
+    pub row: usize,
+    pub cols: usize,
+    pub rows: usize,
+}
+
+/// Auto-places children (`[col_span, row_span]` each, 0 counts as 1) in a
+/// grid `cols` wide: row by row, each child in the first free spot where
+/// it fits (a span wider than the grid is cut to the grid).
+pub(crate) fn grid_place(spans: &[[usize; 2]], cols: usize) -> Vec<GridCell> {
     let cols = cols.max(1);
-    let rows = prefs.len().div_ceil(cols);
-    let mut cw = vec![0.0f32; cols.min(prefs.len())];
+    let mut taken: Vec<Vec<bool>> = Vec::new();
+    let mut out = Vec::with_capacity(spans.len());
+    for &[cs, rs] in spans {
+        let (cs, rs) = (cs.clamp(1, cols), rs.max(1));
+        let mut at = 0;
+        let (col, row) = loop {
+            let (r, c) = (at / cols, at % cols);
+            at += 1;
+            if c + cs > cols {
+                continue;
+            }
+            let free = (r..r + rs).all(|y| {
+                taken
+                    .get(y)
+                    .is_none_or(|line| line[c..c + cs].iter().all(|t| !t))
+            });
+            if free {
+                break (c, r);
+            }
+        };
+        if taken.len() < row + rs {
+            taken.resize(row + rs, vec![false; cols]);
+        }
+        for line in &mut taken[row..row + rs] {
+            line[col..col + cs].fill(true);
+        }
+        out.push(GridCell {
+            col,
+            row,
+            cols: cs,
+            rows: rs,
+        });
+    }
+    out
+}
+
+/// Natural column widths and row heights of the placed children. A child
+/// spanning several tracks first lets the single-track ones size them, then
+/// the missing room is shared evenly among the tracks it covers.
+fn grid_tracks(prefs: &[[f32; 2]], cells: &[GridCell], gap: f32) -> (Vec<f32>, Vec<f32>) {
+    let cols = cells.iter().map(|c| c.col + c.cols).max().unwrap_or(0);
+    let rows = cells.iter().map(|c| c.row + c.rows).max().unwrap_or(0);
+    let mut cw = vec![0.0f32; cols];
     let mut rh = vec![0.0f32; rows];
-    for (i, p) in prefs.iter().enumerate() {
-        cw[i % cols] = cw[i % cols].max(p[0]);
-        rh[i / cols] = rh[i / cols].max(p[1]);
+    for (p, c) in prefs.iter().zip(cells) {
+        if c.cols == 1 {
+            cw[c.col] = cw[c.col].max(p[0]);
+        }
+        if c.rows == 1 {
+            rh[c.row] = rh[c.row].max(p[1]);
+        }
+    }
+    for (p, c) in prefs.iter().zip(cells) {
+        if c.cols > 1 {
+            grow(&mut cw[c.col..c.col + c.cols], p[0], gap);
+        }
+        if c.rows > 1 {
+            grow(&mut rh[c.row..c.row + c.rows], p[1], gap);
+        }
     }
     (cw, rh)
+}
+
+/// Widens `tracks` evenly until they (and the gaps between) hold `need`.
+fn grow(tracks: &mut [f32], need: f32, gap: f32) {
+    let have = tracks.iter().sum::<f32>() + gap * (tracks.len() - 1) as f32;
+    if need > have {
+        let extra = (need - have) / tracks.len() as f32;
+        for t in tracks {
+            *t += extra;
+        }
+    }
 }
 
 /// Shares the room left in `avail` among the tracks flagged in `fill`.

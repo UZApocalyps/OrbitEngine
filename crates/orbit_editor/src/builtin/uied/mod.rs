@@ -620,6 +620,7 @@ fn screens_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         .map(|t| t.styles.keys().cloned().collect())
         .unwrap_or_default();
     let images = images_of(ctx);
+    let fonts = theme_font_names(st);
     let vars = ctx.story().map(orbit_editor_api::varwidgets::story_vars).unwrap_or_default();
     let scenes = story_scenes(ctx);
     let env = Env {
@@ -627,6 +628,7 @@ fn screens_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         screens: &screens,
         styles: &styles,
         images: &images,
+        fonts: &fonts,
         vars: &vars,
         scenes: &scenes,
     };
@@ -1029,18 +1031,23 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         .and_then(|d| d.bundle.theme.as_ref())
         .map(|t| t.styles.keys().cloned().collect())
         .unwrap_or_default();
-    let images = Vec::new();
+    let images = images_of(ctx);
+    let fonts = theme_font_names(st);
+    let font_assets = font_assets_of(ctx);
+    let root = ctx.project_info().map(|p| p.root.clone());
     let env = Env {
         tr: &tr,
         screens: &[],
         styles: &names,
         images: &images,
+        fonts: &fonts,
         vars: &[],
         scenes: &[],
     };
     ui.columns(2, |cols| {
         let (left, right) = cols.split_at_mut(1);
         let ui = &mut left[0];
+        fonts_section(ui, st, &tr, &font_assets, root.as_deref());
         section_title(ui, &tr.t("uied.styles"));
         ui.horizontal(|ui| {
             ui.add(
@@ -1079,6 +1086,119 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             .auto_shrink([false, false])
             .show(ui, |ui| style_props(ui, ctx, st, &env));
     });
+}
+
+/// Names of the fonts declared by the theme.
+fn theme_font_names(st: &State) -> Vec<String> {
+    st.doc
+        .as_ref()
+        .and_then(|d| d.bundle.theme.as_ref())
+        .map(|t| t.fonts.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Font assets (paths) of the project.
+fn font_assets_of(ctx: &EditorContext<'_>) -> Vec<String> {
+    ctx.story()
+        .map(|s| {
+            s.assets
+                .assets
+                .iter()
+                .filter(|a| a.kind == AssetKind::Font)
+                .map(|a| a.path.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Family name a font file provides (`None` when it cannot be read).
+fn font_family_of(root: Option<&std::path::Path>, asset: &str) -> Option<String> {
+    let bytes = std::fs::read(root?.join(asset)).ok()?;
+    orbit_text::font_family(&bytes)
+}
+
+/// The fonts of the theme: the project font assets the styles can name.
+fn fonts_section(
+    ui: &mut Ui,
+    st: &mut State,
+    tr: &orbit_editor_api::Translator,
+    font_assets: &[String],
+    root: Option<&std::path::Path>,
+) {
+    let fonts: Vec<(String, orbit_ui::FontRef)> = st
+        .doc
+        .as_ref()
+        .and_then(|d| d.bundle.theme.as_ref())
+        .map(|t| t.fonts.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    let mut remove = None;
+    let mut add = None;
+    egui::CollapsingHeader::new(tr.t("uied.fonts"))
+        .id_salt("uied_fonts")
+        .default_open(!fonts.is_empty())
+        .show(ui, |ui| {
+            if fonts.is_empty() {
+                ui.label(RichText::new(tr.t("uied.fonts_none")).small().color(weak(ui)));
+            }
+            for (name, font) in &fonts {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(name).strong());
+                    ui.label(RichText::new(&font.asset).small().color(weak(ui)));
+                    if icon_button(ui, icons::TRASH, &tr.t("uied.font_remove")).clicked() {
+                        remove = Some(name.clone());
+                    }
+                });
+            }
+            let unused: Vec<&String> = font_assets
+                .iter()
+                .filter(|a| !fonts.iter().any(|(_, f)| &f.asset == *a))
+                .collect();
+            if font_assets.is_empty() {
+                ui.label(RichText::new(tr.t("uied.fonts_import")).small().color(weak(ui)));
+            } else if !unused.is_empty() {
+                egui::ComboBox::from_id_salt("uied_add_font")
+                    .selected_text(format!("{}  {}", icons::PLUS, tr.t("uied.font_add")))
+                    .show_ui(ui, |ui| {
+                        for asset in unused {
+                            if ui.selectable_label(false, asset).clicked() {
+                                add = Some(asset.clone());
+                            }
+                        }
+                    });
+            }
+        });
+    let Some(doc) = st.doc.as_mut() else { return };
+    if let Some(name) = remove {
+        doc.edit(|b| {
+            if let Some(t) = b.theme.as_mut() {
+                t.fonts.remove(&name);
+            }
+        });
+    }
+    if let Some(asset) = add {
+        let family = font_family_of(root, &asset).unwrap_or_else(|| {
+            std::path::Path::new(&asset)
+                .file_stem()
+                .map_or_else(|| "font".to_owned(), |s| s.to_string_lossy().into_owned())
+        });
+        doc.edit(|b| {
+            if let Some(t) = b.theme.as_mut() {
+                let mut name = family.clone();
+                let mut n = 2;
+                while t.fonts.contains_key(&name) {
+                    name = format!("{family} {n}");
+                    n += 1;
+                }
+                t.fonts.insert(
+                    name,
+                    orbit_ui::FontRef {
+                        asset,
+                        family,
+                    },
+                );
+            }
+        });
+    }
 }
 
 fn style_props(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, env: &Env) {

@@ -126,6 +126,10 @@ fn owner(node: &Option<NodeId>) -> String {
 pub enum ValidationWarning {
     #[error("node {node} reads variable `{var}` which is never declared nor assigned")]
     UndefinedVariable { node: NodeId, var: String },
+    #[error(
+        "node {node} divides by zero (the divisor is 0 or a variable that is never different from 0)"
+    )]
+    DivisionByZero { node: NodeId },
     #[error("node {0} is unreachable from the story entry")]
     UnreachableNode(NodeId),
     #[error(

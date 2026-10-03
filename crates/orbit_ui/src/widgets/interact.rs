@@ -1,8 +1,15 @@
 //! Focus, hover, pointer and keyboard handling of a [`Ui`].
 
 use super::Ui;
-use super::node::{Kind, NodeId, Tag};
+use super::node::{Anchor, Dir, Kind, Node, NodeId, PanelKind, Size, Tag};
 use crate::input::{UiInput, UiSound};
+
+/// Tag of the first row of a dropdown popup (row `i` is `POPUP_TAG + i`).
+/// Screens must not use tags this high.
+pub(crate) const POPUP_TAG: Tag = 0x4000_0000;
+/// Rows a dropdown popup shows before it scrolls.
+const POPUP_ROWS: usize = 6;
+const POPUP_PAD: f32 = 6.0;
 
 /// What a widget reported to the screen that owns it.
 #[derive(Clone, Debug, PartialEq)]
@@ -17,6 +24,8 @@ pub enum WidgetEvent {
     Cancelled,
     /// A UI sound cue to forward to the host.
     Sound(UiSound),
+    /// A sound file named by the style of a widget (play it directly).
+    SoundFile(String),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -138,6 +147,9 @@ impl Ui {
     /// Applies one input and returns what the widgets reported.
     pub fn handle(&mut self, input: UiInput) -> Vec<WidgetEvent> {
         self.ensure_layout();
+        if let Some(consumed) = self.popup_input(input) {
+            return consumed;
+        }
         let mut out = Vec::new();
         match input {
             UiInput::PointerMove(p) => self.pointer_move(p, &mut out),
@@ -158,6 +170,7 @@ impl Ui {
             UiInput::PageUp => self.page(-1),
             UiInput::PageDown => self.page(1),
         }
+        self.finish_popup(&mut out);
         self.ensure_layout();
         out
     }
@@ -175,8 +188,8 @@ impl Ui {
         let hit = self.hit_test(p);
         if hit != self.hover {
             self.hover = hit;
-            if hit.is_some() {
-                out.push(WidgetEvent::Sound(UiSound::Hover));
+            if let Some(id) = hit {
+                out.push(self.sound_event(id, UiSound::Hover));
             }
         }
         if hit.is_some() {
@@ -196,6 +209,11 @@ impl Ui {
             Kind::Slider { .. } => {
                 self.drag = Some(id);
                 self.set_slider_from_x(id, p[0], out);
+            }
+            Kind::Selector { popup: true, .. } => {
+                let confirm = self.sound_event(id, UiSound::Confirm);
+                out.push(confirm);
+                self.open_popup(id);
             }
             Kind::Selector { .. } => {
                 let r = self.nodes[id.0].rect;
@@ -238,7 +256,7 @@ impl Ui {
 
     fn step_selector(&mut self, id: NodeId, delta: i32, out: &mut Vec<WidgetEvent>) {
         let tag = self.nodes[id.0].tag;
-        if let Kind::Selector { options, index } = &mut self.nodes[id.0].kind
+        if let Kind::Selector { options, index, .. } = &mut self.nodes[id.0].kind
             && options.len() > 1
         {
             let n = options.len() as i32;
@@ -251,20 +269,161 @@ impl Ui {
 
     fn activate(&mut self, id: NodeId, out: &mut Vec<WidgetEvent>) {
         let tag = self.nodes[id.0].tag;
+        let confirm = self.sound_event(id, UiSound::Confirm);
         match &mut self.nodes[id.0].kind {
             Kind::Button(_) => {
-                out.push(WidgetEvent::Sound(UiSound::Confirm));
+                out.push(confirm);
                 out.push(WidgetEvent::Activated(tag));
             }
             Kind::Toggle { on, .. } => {
                 *on = !*on;
                 let new = *on;
-                out.push(WidgetEvent::Sound(UiSound::Confirm));
+                out.push(confirm);
                 out.push(WidgetEvent::Toggled(tag, new));
+            }
+            Kind::Selector { popup: true, .. } => {
+                out.push(confirm);
+                self.open_popup(id);
             }
             Kind::Selector { .. } => self.step_selector(id, 1, out),
             _ => {}
         }
+    }
+
+    /// The event for a UI sound cue of widget `id`: the file of its style's
+    /// `sounds` (hover / confirm) when it has one, else the generic cue the
+    /// host looks up in the theme.
+    pub(crate) fn sound_event(&self, id: NodeId, sound: UiSound) -> WidgetEvent {
+        let file = self.nodes[id.0]
+            .style
+            .as_deref()
+            .and_then(|name| crate::theme::resolve_style(&self.theme.styles, name))
+            .and_then(|style| style.sounds)
+            .and_then(|s| match sound {
+                UiSound::Hover => s.hover,
+                UiSound::Confirm => s.confirm,
+                _ => None,
+            });
+        match file {
+            Some(path) if !path.trim().is_empty() => WidgetEvent::SoundFile(path),
+            _ => WidgetEvent::Sound(sound),
+        }
+    }
+
+    // ---------------------------------------------------------- dropdown
+
+    /// Opens the popup list of the dropdown `id` (a modal of buttons in a
+    /// scroll list, clipped to the panel) below it, or above when there is
+    /// no room.
+    fn open_popup(&mut self, id: NodeId) {
+        let Kind::Selector { options, index, .. } = self.nodes[id.0].kind.clone() else {
+            return;
+        };
+        if options.is_empty() {
+            return;
+        }
+        let rect = self.nodes[id.0].rect;
+        let row_h = self.theme.widgets.button.small_height;
+        let gap = 4.0;
+        let rows = options.len().min(POPUP_ROWS);
+        let height = rows as f32 * row_h + (rows - 1) as f32 * gap + 2.0 * POPUP_PAD;
+        let mut y = rect[1] + rect[3] + 4.0;
+        if y + height > super::CANVAS[1] {
+            y = (rect[1] - 4.0 - height).max(0.0);
+        }
+        let style = self.nodes[id.0].style.clone();
+        let visible = self.focus_visible;
+        self.open_modal(|ui| {
+            let mut panel = Node::panel(PanelKind::Normal, Dir::Vertical)
+                .pad(POPUP_PAD, POPUP_PAD)
+                .fixed(rect[2], height)
+                .anchor(Anchor::top_left(rect[0], y));
+            panel.style = style;
+            let root = ui.add_root(panel);
+            let list = ui.add(
+                root,
+                Node::scroll_list(POPUP_TAG - 1)
+                    .size(Size::Fill(1.0), Size::Fill(1.0))
+                    .gap(gap),
+            );
+            for (i, option) in options.iter().enumerate() {
+                ui.add(
+                    list,
+                    Node::button(POPUP_TAG + i as Tag, option.clone())
+                        .small()
+                        .selected(i == index),
+                );
+            }
+            if let Kind::ScrollList { first, .. } = &mut ui.nodes[list.0].kind {
+                *first = (index + 1).saturating_sub(POPUP_ROWS);
+            }
+            root
+        });
+        self.popup = Some((id, options.len()));
+        self.focus_visible = visible;
+        self.ensure_layout();
+        self.set_focus_tag(POPUP_TAG + index as Tag);
+    }
+
+    pub(crate) fn close_popup(&mut self) {
+        if self.popup.take().is_some() {
+            self.close_modal();
+        }
+    }
+
+    /// Whether a dropdown popup is open.
+    pub fn popup_open(&self) -> bool {
+        self.popup.is_some()
+    }
+
+    /// Input while a popup is open: Cancel and a click outside close it
+    /// (and are not passed on). Returns the events when the input was
+    /// consumed.
+    fn popup_input(&mut self, input: UiInput) -> Option<Vec<WidgetEvent>> {
+        let (_, _) = self.popup?;
+        match input {
+            UiInput::Cancel => {
+                self.close_popup();
+                Some(vec![WidgetEvent::Sound(UiSound::Cancel)])
+            }
+            UiInput::PointerDown(p) => {
+                let inside = self
+                    .modal
+                    .is_some_and(|(root, _, _)| contains(self.nodes[root.0].rect, p));
+                if inside {
+                    None
+                } else {
+                    self.close_popup();
+                    Some(Vec::new())
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Turns the activation of a popup row into the selection of its
+    /// dropdown and closes the popup.
+    fn finish_popup(&mut self, out: &mut Vec<WidgetEvent>) {
+        let Some((owner, count)) = self.popup else {
+            return;
+        };
+        let picked = out.iter().position(|e| {
+            matches!(e, WidgetEvent::Activated(t) if *t >= POPUP_TAG && ((*t - POPUP_TAG) as usize) < count)
+        });
+        let Some(at) = picked else { return };
+        let WidgetEvent::Activated(tag) = out.remove(at) else {
+            return;
+        };
+        let chosen = (tag - POPUP_TAG) as usize;
+        let owner_tag = self.nodes[owner.0].tag;
+        self.close_popup();
+        if let Kind::Selector { index, .. } = &mut self.nodes[owner.0].kind
+            && *index != chosen
+        {
+            *index = chosen;
+            out.push(WidgetEvent::Selected(owner_tag, chosen));
+        }
+        self.focus = Some(owner);
     }
 
     fn confirm(&mut self, out: &mut Vec<WidgetEvent>) {

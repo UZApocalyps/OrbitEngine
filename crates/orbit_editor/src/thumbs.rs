@@ -154,6 +154,14 @@ pub fn generate(req: &ThumbRequest) -> Result<Thumb, String> {
             }
             Thumb { image: None, info }
         }
+        AssetKind::Font => {
+            let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+            let info = orbit_text::font_family(&bytes).ok_or("not a usable font")?;
+            if fs::create_dir_all(&dir).is_ok() {
+                let _ = fs::write(&info_path, &info);
+            }
+            Thumb { image: None, info }
+        }
     };
     Ok(thumb)
 }

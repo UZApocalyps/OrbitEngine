@@ -35,6 +35,7 @@ orbit_mcp.workspace = true
 orbit_ui.workspace = true
 orbit_render3d.workspace = true
 orbit_scene = { path = "../orbit_scene" }
+orbit_text.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
 egui-wgpu.workspace = true

@@ -30,6 +30,7 @@ pub fn asset_dir(kind: AssetKind) -> &'static str {
         AssetKind::Music => "assets/music",
         AssetKind::Sound => "assets/sounds",
         AssetKind::Scene3d => "assets/3d",
+        AssetKind::Font => "assets/fonts",
     }
 }
 

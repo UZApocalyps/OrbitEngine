@@ -34,6 +34,9 @@ pub struct DataContext {
     pub saves: Vec<CategoryView>,
     /// Story variables (both scopes) the conditions and bindings read.
     pub vars: BTreeMap<String, Value>,
+    /// Textures of the project images the theme uses (nine-slice
+    /// backgrounds), by asset path.
+    pub images: HashMap<String, TextureId>,
 }
 
 impl DataContext {
@@ -101,6 +104,11 @@ enum Bound {
         key: SettingKey,
         /// Language codes (language dropdown only).
         codes: Vec<String>,
+    },
+    /// A dropdown bound to a story variable: option `i` sets `values[i]`.
+    VarDropdown {
+        name: String,
+        values: Vec<Value>,
     },
     Slot(SlotAction),
 }
@@ -216,6 +224,7 @@ impl DataScreen {
         let mut theme = self.theme.clone();
         theme.styles.extend(std::mem::take(&mut st.styles));
         st.ui.set_theme(theme);
+        st.ui.set_images(self.ctx.images.clone());
         st.ui.layout();
         st.ui.focus_first();
         if let Some(tag) = focus {
@@ -407,7 +416,36 @@ impl DataScreen {
                 st.binds.insert(tag, Bound::Toggle);
                 Node::toggle(tag, self.text(text), on)
             }
-            WidgetKind::Dropdown { bind, options } => {
+            WidgetKind::Dropdown {
+                bind,
+                options,
+                values,
+            } => {
+                if let Some(name) = bind.var() {
+                    let Some(current) = self.ctx.vars.get(name) else {
+                        return;
+                    };
+                    if options.is_empty()
+                        || values.len() != options.len()
+                        || values
+                            .iter()
+                            .any(|v| v.value_type() != current.value_type())
+                    {
+                        return;
+                    }
+                    let selected = values.iter().position(|v| v == current).unwrap_or(0);
+                    let tag = Self::new_tag(st);
+                    st.binds.insert(
+                        tag,
+                        Bound::VarDropdown {
+                            name: name.to_owned(),
+                            values: values.clone(),
+                        },
+                    );
+                    let names = options.iter().map(|o| self.text(o)).collect();
+                    let n = Node::dropdown(tag, names, selected);
+                    return self.finish(n, def, parent, path, index, st);
+                }
                 let Some(key) = bind.setting() else { return };
                 let (names, index, codes) = match key {
                     SettingKey::Language => (
@@ -427,7 +465,7 @@ impl DataScreen {
                 };
                 let tag = Self::new_tag(st);
                 st.binds.insert(tag, Bound::Dropdown { key, codes });
-                Node::selector(tag, names, index)
+                Node::dropdown(tag, names, index)
             }
             WidgetKind::ScrollList => Node::scroll_list(Self::new_tag(st)),
             WidgetKind::SaveSlots { .. } => Node::vbox().gap(14.0),
@@ -452,6 +490,8 @@ impl DataScreen {
         node.pad = l.pad;
         node.margin = l.margin;
         node.gap = l.gap;
+        node.col_span = l.col_span.max(1);
+        node.row_span = l.row_span.max(1);
         node.main = l.main;
         node.cross = l.cross;
         node.enabled = self.ctx.eval(&def.enabled);
@@ -713,6 +753,10 @@ impl Screen for DataScreen {
                 out.push(UiEvent::Sound(s));
                 continue;
             }
+            if let WidgetEvent::SoundFile(path) = ev {
+                out.push(UiEvent::PlaySound(path));
+                continue;
+            }
             if self.confirm.route(&mut self.ui, &ev, &mut out) {
                 continue;
             }
@@ -776,8 +820,15 @@ impl Screen for DataScreen {
                         _ => {}
                     }
                 }
+                WidgetEvent::SoundFile(_) => {}
                 WidgetEvent::Selected(tag, index) => {
-                    if let Some(Bound::Dropdown { key, codes }) = self.binds.get(&tag) {
+                    if let Some(Bound::VarDropdown { name, values }) = self.binds.get(&tag).cloned()
+                    {
+                        if let Some(value) = values.get(index) {
+                            self.set_var(&name, value.clone(), &mut out);
+                            changed = true;
+                        }
+                    } else if let Some(Bound::Dropdown { key, codes }) = self.binds.get(&tag) {
                         match key {
                             SettingKey::Language => {
                                 if let Some(code) = codes.get(index) {
@@ -998,7 +1049,7 @@ mod tests {
         let mut s = screen(ctx());
         let tag = 8;
         let id = s.ui().find(tag).unwrap();
-        let crate::widgets::Kind::Selector { options, index } = &s.ui().node(id).kind else {
+        let crate::widgets::Kind::Selector { options, index, .. } = &s.ui().node(id).kind else {
             panic!()
         };
         assert_eq!(options, &["English", "Francais"]);
@@ -1269,6 +1320,72 @@ mod tests {
         // The screen already shows the new value (the Shop condition may have
         // rebuilt it, so look the label up by content).
         assert_eq!(s.ctx.vars.get("gold"), Some(&Value::Int(v)));
+    }
+
+    const DROPDOWN_SCREEN: &str = "(id: \"d\", root: (kind: Stack(dir: Vertical), children: [\
+        (kind: Dropdown(bind: Var(\"mode\"), options: [Literal(\"Easy\"), Literal(\"Normal\"), Literal(\"Hard\")], \
+         values: [Str(\"easy\"), Str(\"normal\"), Str(\"hard\")]), style: Some(\"fancy\"), layout: (width: Fixed(400.0)))]))";
+
+    fn dropdown_screen(mode: &str) -> DataScreen {
+        let mut c = ctx();
+        c.vars.insert("mode".into(), Value::Str(mode.into()));
+        let mut theme = Theme::default();
+        theme.styles.insert(
+            "fancy".into(),
+            Style {
+                sounds: Some(crate::theme::StyleSounds {
+                    hover: Some("sfx/h.ogg".into()),
+                    confirm: Some("sfx/c.ogg".into()),
+                }),
+                ..Style::default()
+            },
+        );
+        DataScreen::new(from_ron(DROPDOWN_SCREEN).unwrap(), &theme, &Texts::builtin("en"), c)
+    }
+
+    #[test]
+    fn a_dropdown_bound_to_a_variable_shows_it_and_sets_it_from_the_popup() {
+        let mut s = dropdown_screen("normal");
+        let id = s.ui().find(1).unwrap();
+        let crate::widgets::Kind::Selector { options, index, popup } = &s.ui().node(id).kind else {
+            panic!()
+        };
+        assert_eq!((options.clone(), *index, *popup), (vec!["Easy".into(), "Normal".into(), "Hard".into()], 1, true));
+        // Open the popup, pick the last row.
+        click(&mut s, 1);
+        assert!(s.ui().popup_open());
+        let row = crate::widgets::POPUP_TAG + 2;
+        let ev = click(&mut s, row);
+        assert_eq!(
+            ev,
+            vec![UiEvent::VarOp(VarOp::new(
+                "mode",
+                orbit_core::OpKind::Set,
+                orbit_core::Operand::Lit(Value::Str("hard".into()))
+            ))]
+        );
+        assert_eq!(s.ctx.vars.get("mode"), Some(&Value::Str("hard".into())));
+        assert!(!s.ui().popup_open());
+    }
+
+    #[test]
+    fn style_sounds_play_the_named_file_through_a_data_screen() {
+        let mut s = dropdown_screen("easy");
+        let p = center_of(&mut s, 1);
+        assert!(s.handle(UiInput::PointerMove(p)).contains(&UiEvent::PlaySound("sfx/h.ogg".into())));
+        // Opening the dropdown is its "confirm".
+        let down = s.handle(UiInput::PointerDown(p));
+        assert!(down.contains(&UiEvent::PlaySound("sfx/c.ogg".into())), "{down:?}");
+    }
+
+    #[test]
+    fn a_variable_dropdown_is_left_out_without_a_matching_variable() {
+        let mut c = ctx();
+        c.vars.insert("mode".into(), Value::Int(1));
+        let mut s = DataScreen::new(from_ron(DROPDOWN_SCREEN).unwrap(), &Theme::default(), &Texts::builtin("en"), c);
+        assert!(s.ui().find(1).is_none(), "wrong type");
+        let mut s = DataScreen::new(from_ron(DROPDOWN_SCREEN).unwrap(), &Theme::default(), &Texts::builtin("en"), ctx());
+        assert!(s.ui().find(1).is_none(), "unknown variable");
     }
 
     #[test]

@@ -146,6 +146,7 @@ impl KindTag {
             Self::Dropdown => WidgetKind::Dropdown {
                 bind: BindPath::Setting(SettingKey::Language),
                 options: Vec::new(),
+                values: Vec::new(),
             },
             Self::ScrollList => WidgetKind::ScrollList,
             Self::SaveSlots => WidgetKind::SaveSlots {

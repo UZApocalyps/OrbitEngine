@@ -512,6 +512,157 @@ fn grid_gives_spare_width_to_fill_columns() {
     assert_eq!(ui.rect_of(2).unwrap(), [110.0, 0.0, 290.0, 40.0]);
 }
 
+fn dropdown_ui(options: usize, selected: usize) -> Ui {
+    let mut ui = ui();
+    let root = ui.add_root(Node::vbox().pad(20.0, 20.0));
+    let names = (0..options).map(|i| format!("opt{i}")).collect();
+    ui.add(root, Node::dropdown(7, names, selected).w(Size::Fixed(300.0)));
+    ui.layout();
+    ui
+}
+
+fn click(ui: &mut Ui, p: [f32; 2]) -> Vec<WidgetEvent> {
+    ui.handle(UiInput::PointerMove(p));
+    let mut out = ui.handle(UiInput::PointerDown(p));
+    out.extend(ui.handle(UiInput::PointerUp(p)));
+    sounds_stripped(out)
+}
+
+#[test]
+fn a_dropdown_opens_a_popup_and_a_row_click_selects_and_closes() {
+    let mut ui = dropdown_ui(3, 0);
+    let r = ui.rect_of(7).unwrap();
+    assert!(click(&mut ui, centre(r)).is_empty(), "opening selects nothing");
+    assert!(ui.popup_open() && ui.has_modal());
+    assert_eq!(ui.selector_index(7), Some(0));
+    // Rows are below the dropdown, in order.
+    let rows: Vec<[f32; 4]> = (0..3)
+        .map(|i| ui.rect_of(crate::widgets::interact::POPUP_TAG + i).unwrap())
+        .collect();
+    assert!(rows[0][1] >= r[1] + r[3], "popup opens below: {rows:?}");
+    assert!(rows[0][1] < rows[1][1] && rows[1][1] < rows[2][1]);
+    assert_eq!(click(&mut ui, centre(rows[2])), vec![WidgetEvent::Selected(7, 2)]);
+    assert!(!ui.popup_open() && !ui.has_modal());
+    assert_eq!(ui.selector_index(7), Some(2));
+    // Picking the current option again changes nothing.
+    click(&mut ui, centre(r));
+    let again = ui.rect_of(crate::widgets::interact::POPUP_TAG + 2).unwrap();
+    assert!(click(&mut ui, centre(again)).is_empty());
+}
+
+#[test]
+fn a_dropdown_popup_closes_on_cancel_and_on_an_outside_click_without_selecting() {
+    let mut ui = dropdown_ui(3, 1);
+    let r = ui.rect_of(7).unwrap();
+    click(&mut ui, centre(r));
+    assert!(ui.popup_open());
+    assert!(ui.handle(UiInput::Cancel).iter().all(|e| *e != WidgetEvent::Cancelled));
+    assert!(!ui.popup_open());
+    click(&mut ui, centre(r));
+    assert!(ui.popup_open());
+    assert!(click(&mut ui, [1500.0, 900.0]).is_empty());
+    assert!(!ui.popup_open());
+    assert_eq!(ui.selector_index(7), Some(1));
+}
+
+#[test]
+fn a_dropdown_popup_is_keyboard_driven_and_scrolls_long_lists() {
+    let mut ui = dropdown_ui(10, 0);
+    ui.set_focus_tag(7);
+    ui.handle(UiInput::Confirm);
+    assert!(ui.popup_open());
+    assert_eq!(ui.focused_tag(), Some(crate::widgets::interact::POPUP_TAG));
+    ui.handle(UiInput::Down);
+    ui.handle(UiInput::Down);
+    let ev = sounds_stripped(ui.handle(UiInput::Confirm));
+    assert_eq!(ev, vec![WidgetEvent::Selected(7, 2)]);
+    assert_eq!(ui.focused_tag(), Some(7), "focus returns to the dropdown");
+    // Ten options: only six rows are shown, the popup scrolls.
+    ui.handle(UiInput::Confirm);
+    let hidden = ui
+        .find(crate::widgets::interact::POPUP_TAG + 9)
+        .map(|id| ui.node(id).is_visible());
+    assert_eq!(hidden, Some(false));
+}
+
+#[test]
+fn style_sounds_replace_the_generic_cue() {
+    let mut theme = Theme::default();
+    theme.styles.insert(
+        "fancy".into(),
+        crate::theme::Style {
+            sounds: Some(crate::theme::StyleSounds {
+                hover: Some("sfx/hover.ogg".into()),
+                confirm: Some("sfx/click.ogg".into()),
+            }),
+            ..Default::default()
+        },
+    );
+    let mut ui = Ui::new(theme);
+    let root = ui.add_root(Node::vbox());
+    ui.add(root, Node::button(1, "A").style("fancy").w(Size::Fixed(200.0)));
+    ui.add(root, Node::button(2, "B").w(Size::Fixed(200.0)));
+    ui.layout();
+    let a = centre(ui.rect_of(1).unwrap());
+    let b = centre(ui.rect_of(2).unwrap());
+    assert!(ui
+        .handle(UiInput::PointerMove(a))
+        .contains(&WidgetEvent::SoundFile("sfx/hover.ogg".into())));
+    ui.handle(UiInput::PointerDown(a));
+    let up = ui.handle(UiInput::PointerUp(a));
+    assert!(up.contains(&WidgetEvent::SoundFile("sfx/click.ogg".into())), "{up:?}");
+    // An unstyled button keeps the generic cues.
+    assert!(ui
+        .handle(UiInput::PointerMove(b))
+        .contains(&WidgetEvent::Sound(crate::input::UiSound::Hover)));
+}
+
+#[test]
+fn grid_spans_cover_several_columns_and_rows() {
+    let mut ui = ui();
+    let root = ui.add_root(Node::grid(3).gap(10.0).fixed(1000.0, 500.0));
+    // Row 0: a header spanning the three columns.
+    ui.add(root, Node::vbox().fixed(200.0, 20.0).span(3, 1).tag(1));
+    // Row 1: a tall cell (2 rows) then two small ones; row 2 gets the rest.
+    ui.add(root, Node::vbox().fixed(50.0, 70.0).span(1, 2).tag(2));
+    ui.add(root, Node::vbox().fixed(40.0, 30.0).tag(3));
+    ui.add(root, Node::vbox().fixed(40.0, 30.0).tag(4));
+    ui.add(root, Node::vbox().fixed(40.0, 30.0).tag(5));
+    ui.layout();
+    // The 200 px header is wider than 50 + 40 + 40 + 2 gaps (150): the
+    // three columns share the missing 50 px, so the next cells move right.
+    let wide = ui.rect_of(1).unwrap();
+    assert_eq!(wide, [0.0, 0.0, 200.0, 20.0]);
+    let share = 50.0 / 3.0;
+    let near = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01;
+    let at = |ui: &mut Ui, tag| {
+        let r = ui.rect_of(tag).unwrap();
+        [r[0], r[1]]
+    };
+    assert!(near(at(&mut ui, 2), [0.0, 30.0]));
+    assert!(near(at(&mut ui, 3), [50.0 + share + 10.0, 30.0]));
+    assert!(near(at(&mut ui, 4), [50.0 + 40.0 + 2.0 * share + 20.0, 30.0]));
+    // The next one wraps under the cells to the right of the tall one.
+    assert!(near(at(&mut ui, 5), [50.0 + share + 10.0, 70.0]));
+}
+
+#[test]
+fn grid_place_skips_taken_cells_and_cuts_wide_spans() {
+    use super::layout::{GridCell, grid_place};
+    let cell = |col, row, cols, rows| GridCell { col, row, cols, rows };
+    let placed = grid_place(&[[1, 2], [1, 1], [1, 1], [1, 1], [9, 0]], 2);
+    assert_eq!(
+        placed,
+        vec![
+            cell(0, 0, 1, 2),
+            cell(1, 0, 1, 1),
+            cell(1, 1, 1, 1),
+            cell(0, 2, 1, 1),
+            cell(0, 3, 2, 1),
+        ]
+    );
+}
+
 #[test]
 fn layout_types_round_trip_through_ron() {
     let anchor = Anchor::new([0.5, 0.0], [0.5, 0.0], [0.0, 30.0]);

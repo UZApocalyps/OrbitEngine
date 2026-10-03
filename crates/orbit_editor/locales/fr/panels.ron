@@ -56,6 +56,7 @@
     "search.asset.music": "music",
     "search.asset.sound": "sound",
     "search.asset.scene3d": "scène 3D",
+    "search.asset.font": "police",
 
     // ---- new nodes (insert menus)
     "draft.group.dialogue": "Dialogue",
@@ -97,6 +98,8 @@
     "edit.kind.music": "music",
     "edit.kind.sound": "sound",
     "edit.kind.scene3d": "scène 3D",
+    "edit.pick_font": "Choisir une police",
+    "edit.kind.font": "police",
     "edit.wrong_kind": "« {path} » est de type « {found} », « {expected} » attendu.",
     "edit.no_scene": "Le projet n'a aucune scène : créez-en une d'abord.",
     "edit.need_asset_pick": "Aucune ressource de type « {kind} » : choisissez un fichier à ajouter au projet.",

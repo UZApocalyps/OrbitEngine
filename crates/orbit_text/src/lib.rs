@@ -24,7 +24,7 @@ mod typewriter;
 
 pub use atlas::{DrawParams, TextRenderer};
 pub use block::TextBlock;
-pub use engine::{TextAlign, TextEngine, TextLayout, TextStyle};
+pub use engine::{TextAlign, TextEngine, TextLayout, TextStyle, font_family};
 pub use markup::{
     ParsedText, Pause, Segment, SegmentStyle, parse_color, parse_markup, srgb_to_linear,
 };
@@ -46,6 +46,22 @@ mod tests {
         }
         e.set_default_family("Inter");
         e
+    }
+
+    #[test]
+    fn font_family_names_a_font_file_and_refuses_garbage() {
+        assert_eq!(font_family(INTER).as_deref(), Some("Inter"));
+        assert_eq!(font_family(&[1, 2, 3]), None);
+        // A style naming a family picks that font, not the default one.
+        let mut e = engine(&[INTER, JP]);
+        let jp = font_family(JP).unwrap();
+        let text = parse_markup("あ");
+        let style = TextStyle {
+            family: Some(jp),
+            ..Default::default()
+        };
+        let layout = e.layout(&text, &style, Some(400.0), 1.0);
+        assert!(layout.glyph_count() > 0 && layout.width > 0.0, "the named family shapes the text");
     }
 
     #[test]

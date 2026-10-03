@@ -109,7 +109,7 @@ pub fn import_paths(ctx: &mut EditorContext<'_>, paths: &[PathBuf]) -> ImportRep
     };
     let added = report.added();
     if added > 0 {
-        let kinds: Vec<String> = [AssetKind::Image, AssetKind::Music, AssetKind::Sound]
+        let kinds: Vec<String> = [AssetKind::Image, AssetKind::Music, AssetKind::Sound, AssetKind::Font]
             .into_iter()
             .filter_map(|k| {
                 let n = report
@@ -182,6 +182,7 @@ fn kind_count_key(kind: AssetKind) -> &'static str {
         AssetKind::Music => "asset.count.music",
         AssetKind::Sound => "asset.count.sound",
         AssetKind::Scene3d => "asset.count.scene3d",
+        AssetKind::Font => "asset.count.font",
     }
 }
 
@@ -191,6 +192,7 @@ fn kind_name(texts: &Translator, kind: AssetKind) -> String {
         AssetKind::Music => "asset.kind.music",
         AssetKind::Sound => "asset.kind.sound",
         AssetKind::Scene3d => "asset.kind.scene3d",
+        AssetKind::Font => "asset.kind.font",
     })
 }
 
@@ -200,6 +202,7 @@ fn kind_icon(kind: AssetKind) -> &'static str {
         AssetKind::Music => icons::MUSIC_NOTES,
         AssetKind::Sound => icons::SPEAKER_HIGH,
         AssetKind::Scene3d => icons::CUBE,
+        AssetKind::Font => icons::TEXT_T,
     }
 }
 
@@ -420,6 +423,8 @@ fn items(
         // The kind is only known after decoding: guess from the folder.
         let kind = if f.path.starts_with("assets/music") {
             AssetKind::Music
+        } else if f.path.ends_with(".ttf") || f.path.ends_with(".otf") {
+            AssetKind::Font
         } else if f.path.starts_with("assets/sounds")
             || f.path.ends_with(".wav")
             || f.path.ends_with(".ogg")
@@ -631,6 +636,10 @@ fn toolbar(ui: &mut Ui, st: &mut LibUi, all: &[Item], actions: &mut Vec<Action>)
             (
                 Filter::Kind(AssetKind::Sound),
                 format!("{} {}", icons::SPEAKER_HIGH, ui.t("library.filter.sounds")),
+            ),
+            (
+                Filter::Kind(AssetKind::Font),
+                format!("{} {}", icons::TEXT_T, ui.t("library.filter.fonts")),
             ),
         ] {
             ui.selectable_value(

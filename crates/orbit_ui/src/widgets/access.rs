@@ -134,7 +134,7 @@ impl Ui {
                 );
                 a
             }
-            Kind::Selector { options, index } => {
+            Kind::Selector { options, index, .. } => {
                 let mut a = node(A11yRole::ComboBox, named(""));
                 a.value = options.get(*index).map(|o| plain(o));
                 a

@@ -168,6 +168,8 @@ pub struct AssetStore {
     /// Parsed `.scene3d.ron` documents (feature `3d`).
     #[cfg(feature = "3d")]
     scenes3d: HashMap<String, Arc<orbit_scene::Scene3d>>,
+    fonts: HashSet<String>,
+    new_fonts: Vec<Vec<u8>>,
 }
 
 impl AssetStore {
@@ -202,7 +204,15 @@ impl AssetStore {
         if self.scenes3d.contains_key(path) {
             return true;
         }
-        self.textures.contains_key(path) || self.sounds.contains_key(path)
+        self.textures.contains_key(path)
+            || self.sounds.contains_key(path)
+            || self.fonts.contains(path)
+    }
+
+    /// Font files loaded since the last call (the runtime registers them
+    /// with the text engine).
+    pub fn take_new_fonts(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.new_fonts)
     }
 
     /// Drops the asset at `path` (a file that changed on disk): the next
@@ -213,11 +223,10 @@ impl AssetStore {
             renderer.release_texture(texture);
         }
         let sound = self.sounds.remove(path);
+        let font = self.fonts.remove(path);
         #[cfg(feature = "3d")]
-        if self.scenes3d.remove(path).is_some() {
-            return true;
-        }
-        texture.is_some() || sound.is_some()
+        let font = font || self.scenes3d.remove(path).is_some();
+        texture.is_some() || sound.is_some() || font
     }
 
     /// Drops every asset (the asset root changed).
@@ -228,6 +237,7 @@ impl AssetStore {
         self.sounds.clear();
         #[cfg(feature = "3d")]
         self.scenes3d.clear();
+        self.fonts.clear();
     }
 }
 
@@ -236,6 +246,7 @@ enum Handle {
     Audio(AssetHandle<PcmAudio>),
     #[cfg(feature = "3d")]
     Scene3d(AssetHandle<orbit_scene::Scene3d>),
+    Font(AssetHandle<Vec<u8>>),
 }
 
 /// One manifest asset being loaded.
@@ -256,6 +267,7 @@ impl PendingAsset {
             Handle::Audio(h) => !matches!(h.poll(), AssetPoll::Loading),
             #[cfg(feature = "3d")]
             Handle::Scene3d(h) => !matches!(h.poll(), AssetPoll::Loading),
+            Handle::Font(h) => !matches!(h.poll(), AssetPoll::Loading),
         }
     }
 }
@@ -304,6 +316,7 @@ pub fn start_loading_only(
                 );
                 continue;
             }
+            AssetKind::Font => Handle::Font(loader.load_bytes(&entry.path)),
         };
         pending.push(PendingAsset {
             path: entry.path.clone(),
@@ -364,6 +377,13 @@ pub fn finish_loading(
             Handle::Scene3d(h) => match h.poll() {
                 AssetPoll::Ready(scene) => {
                     store.scenes3d.insert(asset.path, scene);
+                }
+                other => failures.push(describe_failure(&asset.path, &other)),
+            },
+            Handle::Font(h) => match h.poll() {
+                AssetPoll::Ready(bytes) => {
+                    store.fonts.insert(asset.path);
+                    store.new_fonts.push(bytes.to_vec());
                 }
                 other => failures.push(describe_failure(&asset.path, &other)),
             },
