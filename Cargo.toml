@@ -61,6 +61,7 @@ orbit_assets = { path = "crates/orbit_assets" }
 orbit_ui = { path = "crates/orbit_ui" }
 orbit_ui_data = { path = "crates/orbit_ui_data" }
 orbit_runtime = { path = "crates/orbit_runtime" }
+orbit_render3d = { path = "crates/orbit_render3d" }
 cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
 unicode-segmentation = "1"
 kira = { version = "0.12", default-features = false, features = ["cpal"] }
