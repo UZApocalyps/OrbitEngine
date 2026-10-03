@@ -138,6 +138,13 @@ fn run_segment(vm: &mut Vm, target: NodeId, steps: &mut usize, budget: usize) ->
                 };
             }
             Some(StepResult::End | StepResult::Error(_)) => return Segment::Dead,
+            // A screen the story waits for is closed without a value (as
+            // with Escape): its result variable keeps its value.
+            Some(StepResult::Screen { screen, .. }) => {
+                if vm.close_screen(&screen, None).is_err() {
+                    return Segment::Dead;
+                }
+            }
             Some(StepResult::Say { .. })
             | Some(StepResult::WaitTime(_))
             | Some(StepResult::WaitTransition { .. })

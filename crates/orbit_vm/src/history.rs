@@ -117,7 +117,8 @@ impl Default for History {
 fn same_interaction(a: &Option<Interaction>, b: &Option<Interaction>) -> bool {
     match (a, b) {
         (Some(Interaction::Say { node: x, .. }), Some(Interaction::Say { node: y, .. }))
-        | (Some(Interaction::Choice { node: x, .. }), Some(Interaction::Choice { node: y, .. })) => {
+        | (Some(Interaction::Choice { node: x, .. }), Some(Interaction::Choice { node: y, .. }))
+        | (Some(Interaction::Screen { node: x, .. }), Some(Interaction::Screen { node: y, .. })) => {
             x == y
         }
         _ => false,
@@ -154,16 +155,33 @@ impl History {
     /// A variable changed outside of a node: records it in the checkpoint
     /// on screen and cuts the known future.
     pub fn patch_cursor_var(&mut self, name: &str, value: &orbit_core::Value) {
+        self.patch_cursor(|state| {
+            state.vars.insert(name.to_owned(), value.clone());
+        });
+    }
+
+    /// The state changed outside of a node (a variable, a screen closed by
+    /// the player): applies the change to the checkpoint on screen and cuts
+    /// the known future.
+    pub fn patch_cursor(&mut self, patch: impl FnOnce(&mut VmState)) {
         if self.entries.is_empty() {
             return;
         }
         let index = self.cursor.min(self.entries.len() - 1);
         self.cursor = index;
-        self.entries[index]
-            .state
-            .vars
-            .insert(name.to_owned(), value.clone());
+        patch(&mut self.entries[index].state);
         self.truncate_future();
+    }
+
+    /// The screen the story waited for was closed: like an answered choice,
+    /// one rollback step reopens it, and the known future (which followed
+    /// from another closing) is cut.
+    pub fn on_screen_closed(&mut self) {
+        self.ahead = true;
+        if !self.entries.is_empty() {
+            self.cursor = self.cursor.min(self.entries.len() - 1);
+            self.truncate_future();
+        }
     }
 
     /// Index of the oldest entry rollback may reach.

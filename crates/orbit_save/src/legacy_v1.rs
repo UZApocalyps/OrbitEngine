@@ -98,6 +98,7 @@ impl From<VmStateV1> for VmState {
             shown: old.shown,
             active_anims: Vec::new(),
             scene_clock: 0.0,
+            open_screens: Vec::new(),
         }
     }
 }

@@ -36,10 +36,25 @@ pub enum StepResult {
     /// of scene clock (`Vm::advance_clock`), then call `step()` again. A
     /// skip calls `Vm::complete_anim(node)` first.
     WaitAnimation { node: NodeId, duration: f32 },
+    /// An `OpenScreen { wait: true }` node opened the screen `screen` (it is
+    /// in `Vm::open_screens`): show it and call `Vm::close_screen` when the
+    /// player closes it. Calling `step()` before that returns this again.
+    Screen { node: NodeId, screen: String },
     /// The story is over. Further `step()` calls return `End` again.
     End,
     /// Fatal error. The VM stays in this state until `restore()`.
     Error(VmError),
+}
+
+impl StepResult {
+    /// A line, a choice or a screen the story waits for: the results that
+    /// are rollback checkpoints.
+    pub fn is_interaction(&self) -> bool {
+        matches!(
+            self,
+            StepResult::Say { .. } | StepResult::Choice { .. } | StepResult::Screen { .. }
+        )
+    }
 }
 
 /// A visible choice option.

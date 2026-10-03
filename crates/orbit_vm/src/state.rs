@@ -100,6 +100,28 @@ pub enum Pending {
         node: NodeId,
         visible: Vec<usize>,
     },
+    /// The `OpenScreen { wait: true }` node `node` opened a screen: the story
+    /// resumes when the host calls `Vm::close_screen` for it (UI-14).
+    /// Appended (save format 5): older variants keep their encoding.
+    Screen {
+        node: NodeId,
+    },
+}
+
+/// A screen opened by the story (`NodeKind::OpenScreen`, UI-14, ADR 0016).
+/// Declarative: the host builds the screen from it, so rollback and loading
+/// bring it back in its initial state (scroll and focus are not kept).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OpenScreenState {
+    /// Id of the screen (`ScreenAsset::id`).
+    pub screen: String,
+    /// The `OpenScreen` node that opened it (its `result` variable receives
+    /// the value the screen closes with).
+    pub node: NodeId,
+    /// The parameters, evaluated when the node ran.
+    pub params: Vec<(String, Value)>,
+    /// The story waits for this screen to close.
+    pub waiting: bool,
 }
 
 /// The blocking thing the player is looking at: what a host must re-display
@@ -116,12 +138,18 @@ pub enum Interaction {
         /// Visible options only, in the order `Vm::choose` indexes them.
         options: Vec<ChoiceView>,
     },
+    /// The story waits for the screen `screen`, opened by the
+    /// `OpenScreen { wait: true }` node `node`, to close (UI-14). Appended
+    /// (save format 5).
+    Screen { node: NodeId, screen: String },
 }
 
 impl Interaction {
     pub fn node(&self) -> NodeId {
         match self {
-            Interaction::Say { node, .. } | Interaction::Choice { node, .. } => *node,
+            Interaction::Say { node, .. }
+            | Interaction::Choice { node, .. }
+            | Interaction::Screen { node, .. } => *node,
         }
     }
 }
@@ -157,6 +185,10 @@ pub struct VmState {
     /// the host (`Vm::advance_clock`), frozen in pauses.
     #[serde(default)]
     pub scene_clock: f64,
+    /// Screens opened by the story, in opening order (save format 5, UI-14).
+    /// Missing in format-4 saves (decoded by `orbit_save::legacy_v4`).
+    #[serde(default)]
+    pub open_screens: Vec<OpenScreenState>,
 }
 
 /// An animation started by an `Effect` / `Timeline` node.
@@ -172,22 +204,23 @@ impl VmState {
     pub fn pending_choice_node(&self) -> Option<NodeId> {
         match &self.pending {
             Pending::Choice { node, .. } => Some(*node),
-            Pending::None => None,
+            Pending::None | Pending::Screen { .. } => None,
         }
     }
 
     /// Every node id this state points to (program counter, call stack,
-    /// pending choice, shown interaction): they must exist in the story for
-    /// the state to be restorable.
+    /// pending choice or screen, shown interaction, open screens): they must
+    /// exist in the story for the state to be restorable.
     pub fn referenced_nodes(&self) -> Vec<NodeId> {
         let mut out: Vec<NodeId> = self.pc.into_iter().collect();
         out.extend(self.call_stack.iter().flatten().copied());
-        if let Pending::Choice { node, .. } = &self.pending {
+        if let Pending::Choice { node, .. } | Pending::Screen { node } = &self.pending {
             out.push(*node);
         }
         if let Some(shown) = &self.shown {
             out.push(shown.node());
         }
+        out.extend(self.open_screens.iter().map(|s| s.node));
         out
     }
 }

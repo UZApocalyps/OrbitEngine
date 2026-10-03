@@ -25,29 +25,87 @@ use crate::value::{ScalarType, Value, ValueType};
 pub enum Operand {
     Lit(Value),
     Var(String),
+    /// Inside a generated list (`WidgetKind::Repeat`, UI-15): the element of
+    /// the row (the value, for a map). The four contextual operands were
+    /// appended in schema v12 (ADR 0016): existing indices are unchanged.
+    Item,
+    /// The 0-based position of the row in a generated list.
+    ItemIndex,
+    /// The key of the row in a list generated from a map (text).
+    ItemKey,
+    /// A parameter the story gave the screen (`NodeKind::OpenScreen`, UI-14).
+    Param(String),
 }
+
+/// Reserved variable names the contextual operands evaluate as. A screen
+/// supplies them in its variable lookup; anywhere else they are unknown
+/// variables (a variable name never starts with `@`).
+pub const ITEM_VAR: &str = "@item";
+pub const ITEM_INDEX_VAR: &str = "@index";
+pub const ITEM_KEY_VAR: &str = "@key";
+pub const PARAM_VAR_PREFIX: &str = "@param.";
 
 impl Operand {
     pub fn to_expr(&self) -> Expr {
         match self {
             Operand::Lit(v) => Expr::Lit(v.clone()),
             Operand::Var(n) => Expr::Var(n.clone()),
+            Operand::Item => Expr::Var(ITEM_VAR.into()),
+            Operand::ItemIndex => Expr::Var(ITEM_INDEX_VAR.into()),
+            Operand::ItemKey => Expr::Var(ITEM_KEY_VAR.into()),
+            Operand::Param(p) => Expr::Var(format!("{PARAM_VAR_PREFIX}{p}")),
         }
     }
 
     fn from_expr(e: &Expr) -> Option<Operand> {
         match e {
             Expr::Lit(v) => Some(Operand::Lit(v.clone())),
-            Expr::Var(n) => Some(Operand::Var(n.clone())),
+            Expr::Var(n) => Some(Operand::from_var_name(n)),
             _ => None,
         }
     }
 
-    /// Static type of the operand (`None` for an unknown variable).
+    /// `Var(name)`, or the contextual operand a reserved name stands for.
+    pub fn from_var_name(n: &str) -> Operand {
+        match n {
+            ITEM_VAR => Operand::Item,
+            ITEM_INDEX_VAR => Operand::ItemIndex,
+            ITEM_KEY_VAR => Operand::ItemKey,
+            _ => match n.strip_prefix(PARAM_VAR_PREFIX) {
+                Some(p) => Operand::Param(p.to_owned()),
+                None => Operand::Var(n.to_owned()),
+            },
+        }
+    }
+
+    /// Whether the operand only has a value inside a screen (a generated row
+    /// or a screen parameter): story nodes refuse such operands.
+    pub fn is_contextual(&self) -> bool {
+        matches!(
+            self,
+            Operand::Item | Operand::ItemIndex | Operand::ItemKey | Operand::Param(_)
+        )
+    }
+
+    /// The value of the operand: a literal as it is, a variable (or a
+    /// contextual name) through `get`; `None` when `get` does not know it.
+    pub fn eval(&self, get: &dyn Fn(&str) -> Option<Value>) -> Option<Value> {
+        match self {
+            Operand::Lit(v) => Some(v.clone()),
+            other => match other.to_expr() {
+                Expr::Var(n) => get(&n),
+                _ => None,
+            },
+        }
+    }
+
+    /// Static type of the operand (`None` for an unknown variable, and for
+    /// the contextual operands, only known in a screen at run time).
     pub fn value_type(&self, ty_of: &dyn Fn(&str) -> Option<ValueType>) -> Option<ValueType> {
         match self {
             Operand::Lit(v) => Some(v.value_type()),
             Operand::Var(n) => ty_of(n),
+            Operand::Item | Operand::ItemIndex | Operand::ItemKey | Operand::Param(_) => None,
         }
     }
 }

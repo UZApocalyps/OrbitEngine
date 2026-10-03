@@ -558,6 +558,37 @@ impl Cx<'_> {
                 }
                 NodeKind::Wait { seconds } => self.check_duration(id, *seconds),
                 NodeKind::Effect(_) | NodeKind::Timeline { .. } => self.check_animation(id, &node.kind),
+                NodeKind::OpenScreen { screen, params, .. } => {
+                    let mut problems = Vec::new();
+                    if screen.trim().is_empty() {
+                        problems.push("no screen chosen".to_owned());
+                    }
+                    let mut names = HashSet::new();
+                    for p in params {
+                        if p.name.trim().is_empty() {
+                            problems.push("a parameter has no name".to_owned());
+                        } else if !names.insert(p.name.as_str()) {
+                            problems.push(format!("parameter `{}` is given twice", p.name));
+                        }
+                        if p.value.is_contextual() {
+                            problems.push(format!(
+                                "parameter `{}` uses a value that only exists in a screen (item, parameter)",
+                                p.name
+                            ));
+                        }
+                    }
+                    self.errors.extend(
+                        problems
+                            .into_iter()
+                            .map(|message| ValidationError::InvalidScreenNode { node: id, message }),
+                    );
+                }
+                NodeKind::CloseScreen { screen } if screen.trim().is_empty() => {
+                    self.errors.push(ValidationError::InvalidScreenNode {
+                        node: id,
+                        message: "no screen chosen".to_owned(),
+                    });
+                }
                 _ => {}
             }
         }
@@ -662,6 +693,28 @@ impl Cx<'_> {
                         });
                     }
                 }
+                NodeKind::OpenScreen { result, params, .. } => {
+                    // The result keeps the declared type of its variable
+                    // (coercion at run time): it must be declared.
+                    if let Some(var) = result
+                        && !declared.contains(var)
+                    {
+                        errors.push(ValidationError::InvalidScreenNode {
+                            node: node.id,
+                            message: format!("result variable `{var}` is not declared"),
+                        });
+                    }
+                    for p in params {
+                        if let crate::varops::Operand::Var(v) = &p.value
+                            && !defined.contains(v)
+                        {
+                            warnings.push(ValidationWarning::UndefinedVariable {
+                                node: node.id,
+                                var: v.clone(),
+                            });
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -677,7 +730,10 @@ impl Cx<'_> {
         let blocking = |n: &Node| {
             matches!(
                 n.kind,
-                NodeKind::Say { .. } | NodeKind::Choice { .. } | NodeKind::Wait { .. }
+                NodeKind::Say { .. }
+                    | NodeKind::Choice { .. }
+                    | NodeKind::Wait { .. }
+                    | NodeKind::OpenScreen { wait: true, .. }
             )
         };
         // Scene of every node: a scene never falls into the next one.

@@ -44,4 +44,6 @@ pub enum VmError {
     NotAwaitingChoice,
     #[error("invalid choice {index}: {available} option(s) available")]
     InvalidChoice { index: usize, available: usize },
+    #[error("the screen `{0}` was not opened by the story")]
+    ScreenNotOpen(String),
 }

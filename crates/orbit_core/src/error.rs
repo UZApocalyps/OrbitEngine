@@ -107,6 +107,10 @@ pub enum ValidationError {
     /// A forever-looping timeline would block the story.
     #[error("node {0} waits for a timeline that never ends (forever / ping-pong loops cannot wait)")]
     BlockingInfiniteTimeline(NodeId),
+    /// An `OpenScreen` / `CloseScreen` node is malformed (no screen, bad
+    /// parameter, undeclared result variable); `message` says what.
+    #[error("node {node} opens or closes a screen incorrectly: {message}")]
+    InvalidScreenNode { node: NodeId, message: String },
 }
 
 /// Where a curve lives.

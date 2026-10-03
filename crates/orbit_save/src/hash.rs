@@ -50,6 +50,8 @@ fn kind_tag(kind: &NodeKind) -> u8 {
         NodeKind::HideScene3d { .. } => 21,
         NodeKind::Effect(_) => 22,
         NodeKind::Timeline { .. } => 23,
+        NodeKind::OpenScreen { .. } => 24,
+        NodeKind::CloseScreen { .. } => 25,
     }
 }
 

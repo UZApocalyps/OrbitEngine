@@ -25,6 +25,9 @@ mod anim_tests;
 #[cfg(test)]
 mod collection_tests;
 
+#[cfg(test)]
+mod screen_tests;
+
 pub use error::VmError;
 pub use event::{ChoiceView, PresentationEvent, StepResult};
 pub use history::{
@@ -34,7 +37,8 @@ pub use history::{
 pub use rollback::scene_events;
 pub use seek::{ChoiceStep, SeekLimits, SeekOutcome, SeekPath, seek};
 pub use state::{
-    ActiveAnim, CharacterOnStage, Interaction, MusicState, Pending, Rng, Scene3dState, SceneState,
+    ActiveAnim, CharacterOnStage, Interaction, MusicState, OpenScreenState, Pending, Rng, Scene3dState,
+    SceneState,
     VmState,
 };
-pub use vm::{MAX_ACTIVE_ANIMS, MAX_CALL_DEPTH, MAX_NODES_PER_STEP, Vm};
+pub use vm::{MAX_ACTIVE_ANIMS, MAX_CALL_DEPTH, MAX_NODES_PER_STEP, MAX_OPEN_SCREENS, Vm};
