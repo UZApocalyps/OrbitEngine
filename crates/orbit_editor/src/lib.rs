@@ -24,6 +24,7 @@ pub mod scene3d_host;
 pub mod search;
 pub mod session;
 pub mod storage;
+pub mod templates;
 pub mod theme;
 pub mod thumbs;
 pub mod ui;

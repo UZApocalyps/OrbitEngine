@@ -26,6 +26,7 @@ enum DialogOutcome {
     CreateProject {
         name: String,
         parent: String,
+        template: String,
     },
     CancelNewProject,
     /// The story file changed on disk: reload (`true`) or keep ours.
@@ -224,8 +225,12 @@ impl EditorCore {
                 self.dialog = None;
                 self.resolve_external_change(reload);
             }
-            DialogOutcome::CreateProject { name, parent } => {
-                match self.create_and_open(std::path::Path::new(parent.trim()), &name) {
+            DialogOutcome::CreateProject {
+                name,
+                parent,
+                template,
+            } => {
+                match self.create_and_open(std::path::Path::new(parent.trim()), &name, &template) {
                     Ok(()) => {
                         // `open_project` may have opened a confirmation instead.
                         if matches!(self.dialog, Some(Dialog::NewProject(_))) {
@@ -776,6 +781,13 @@ fn new_project_dialog(
                     form.parent = folder.display().to_string();
                 }
             });
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(ctx.t("template.title"))
+                    .small()
+                    .color(theme.text_weak()),
+            );
+            template_picker(ui, ctx, theme, form);
             if let Some(error) = &form.error {
                 ui.add_space(8.0);
                 ui.label(RichText::new(error).color(theme.danger()));
@@ -797,6 +809,7 @@ fn new_project_dialog(
                     outcome = DialogOutcome::CreateProject {
                         name: form.name.clone(),
                         parent: form.parent.clone(),
+                        template: form.template.clone(),
                     };
                 }
                 if ui.button(ctx.t("common.cancel")).clicked() {
@@ -808,6 +821,68 @@ fn new_project_dialog(
         outcome = DialogOutcome::CancelNewProject;
     }
     outcome
+}
+
+/// The templates as selectable cards (thumbnail, name, description).
+fn template_picker(ui: &mut Ui, ctx: &Context, theme: &Theme, form: &mut NewProjectForm) {
+    let selected = if form.template.is_empty() {
+        crate::templates::TEMPLATES[0].id
+    } else {
+        form.template.as_str()
+    }
+    .to_owned();
+    for template in crate::templates::TEMPLATES {
+        let active = template.id == selected;
+        let stroke = if active {
+            egui::Stroke::new(1.5, theme.accent())
+        } else {
+            egui::Stroke::new(1.0, theme.text_weak().gamma_multiply(0.4))
+        };
+        let response = egui::Frame::new()
+            .stroke(stroke)
+            .corner_radius(6)
+            .inner_margin(6)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    if let Some(texture) = template_thumbnail(ctx, template) {
+                        ui.add(egui::Image::new(&texture).fit_to_exact_size(vec2(96.0, 54.0)));
+                    }
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(ctx.t(template.name_key)).font(bold(13.5)));
+                        ui.label(
+                            RichText::new(ctx.t(template.desc_key))
+                                .small()
+                                .color(theme.text_weak()),
+                        );
+                    });
+                });
+            })
+            .response
+            .interact(egui::Sense::click());
+        if response.clicked() {
+            form.template = template.id.to_owned();
+        }
+    }
+}
+
+/// The thumbnail of a template as an egui texture, cached in the context.
+fn template_thumbnail(ctx: &Context, template: &crate::templates::Template) -> Option<egui::TextureHandle> {
+    let key = Id::new(("orbit-template-thumb", template.id));
+    if let Some(texture) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(key)) {
+        return Some(texture);
+    }
+    let rgba = image::load_from_memory_with_format(template.thumbnail, image::ImageFormat::Png)
+        .ok()?
+        .into_rgba8();
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    let texture = ctx.load_texture(
+        format!("template-{}", template.id),
+        egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()),
+        egui::TextureOptions::LINEAR,
+    );
+    ctx.data_mut(|d| d.insert_temp(key, texture.clone()));
+    Some(texture)
 }
 
 fn primary(ui: &mut Ui, theme: &Theme, text: &str) -> egui::Response {

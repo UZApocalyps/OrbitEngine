@@ -1,0 +1,103 @@
+// Visual novel starter: two scenes, two characters, one choice, one variable.
+(
+    schema_version: 8,
+    title: "Visual novel",
+    strings: (
+        source_lang: "en",
+        entries: {
+            "01TPX0T0000000000000000001": "Mira",
+            "01TPX0T0000000000000000002": "Jun",
+            "01TPX0T0000000000000000003": "Dawn over the harbour town. The ferry leaves in one hour.",
+            "01TPX0T0000000000000000004": "I almost did not come. But here I am.",
+            "01TPX0T0000000000000000005": "Mira! I saved you a seat by the window.",
+            "01TPX0T0000000000000000006": "Thank her warmly.",
+            "01TPX0T0000000000000000007": "Say nothing and sit down.",
+            "01TPX0T0000000000000000008": "Thanks, Jun. It means a lot.",
+            "01TPX0T0000000000000000009": "Always. Let us make this trip a good one.",
+            "01TPX0T0000000000000000010": "...",
+            "01TPX0T0000000000000000011": "You are quiet today. That is fine too.",
+            "01TPX0T0000000000000000012": "Night on the island. The lanterns are lit.",
+            "01TPX0T0000000000000000013": "I am glad you came along, Mira.",
+            "01TPX0T0000000000000000014": "Jun smiles. Today the two of you are closer than ever.",
+            "01TPX0T0000000000000000015": "Jun smiles politely. There is still time to get to know each other.",
+            "01TPX0T0000000000000000016": "The end. Edit this story, or start your own.",
+        },
+    ),
+    assets: (
+        assets: [
+            (id: "01TPX0A0000000000000000001", kind: Image, path: "assets/bg_dawn.png"),
+            (id: "01TPX0A0000000000000000002", kind: Image, path: "assets/bg_night.png"),
+            (id: "01TPX0A0000000000000000003", kind: Image, path: "assets/hero.png"),
+            (id: "01TPX0A0000000000000000004", kind: Image, path: "assets/friend.png"),
+        ],
+    ),
+    characters: [
+        (
+            id: "01TPX0C0000000000000000001",
+            name_id: "01TPX0T0000000000000000001",
+            color: (r: 232, g: 120, b: 160),
+            expressions: [
+                (name: "neutral", image: "01TPX0A0000000000000000003"),
+            ],
+        ),
+        (
+            id: "01TPX0C0000000000000000002",
+            name_id: "01TPX0T0000000000000000002",
+            color: (r: 90, g: 150, b: 230),
+            expressions: [
+                (name: "neutral", image: "01TPX0A0000000000000000004"),
+            ],
+        ),
+    ],
+    positions: [],
+    variables: [
+        (name: "friendship", initial: Int(0), scope: Game),
+    ],
+    scenes: [
+        (
+            id: "01TPX0S0000000000000000001",
+            name: "morning",
+            nodes: [
+                (id: "01TPX0N0000000000000000001", kind: Label(name: "start")),
+                (id: "01TPX0N0000000000000000002", kind: Background(asset: "01TPX0A0000000000000000001", transition: Some((kind: Fade((r: 0, g: 0, b: 0)), duration: 1.0)))),
+                (id: "01TPX0N0000000000000000003", kind: Say(speaker: None, text_id: "01TPX0T0000000000000000003")),
+                (id: "01TPX0N0000000000000000004", kind: Show(character: "01TPX0C0000000000000000001", expression: "neutral", position: Left, transition: Some((kind: Dissolve, duration: 0.5)))),
+                (id: "01TPX0N0000000000000000005", kind: Say(speaker: Some("01TPX0C0000000000000000001"), text_id: "01TPX0T0000000000000000004")),
+                (id: "01TPX0N0000000000000000006", kind: Show(character: "01TPX0C0000000000000000002", expression: "neutral", position: Right, transition: Some((kind: Dissolve, duration: 0.5)))),
+                (id: "01TPX0N0000000000000000007", kind: Say(speaker: Some("01TPX0C0000000000000000002"), text_id: "01TPX0T0000000000000000005")),
+                (id: "01TPX0N0000000000000000008", kind: Choice(options: [
+                    (text_id: "01TPX0T0000000000000000006", target: "01TPX0N0000000000000000010", condition: None),
+                    (text_id: "01TPX0T0000000000000000007", target: "01TPX0N0000000000000000020", condition: None),
+                ])),
+                (id: "01TPX0N0000000000000000010", kind: Label(name: "thank")),
+                (id: "01TPX0N0000000000000000011", kind: SetVar(var: "friendship", value: Binary(Add, Var("friendship"), Lit(Int(1))))),
+                (id: "01TPX0N0000000000000000012", kind: Say(speaker: Some("01TPX0C0000000000000000001"), text_id: "01TPX0T0000000000000000008")),
+                (id: "01TPX0N0000000000000000013", kind: Say(speaker: Some("01TPX0C0000000000000000002"), text_id: "01TPX0T0000000000000000009")),
+                (id: "01TPX0N0000000000000000014", kind: Jump(target: "01TPX0N0000000000000000030")),
+                (id: "01TPX0N0000000000000000020", kind: Label(name: "silent")),
+                (id: "01TPX0N0000000000000000021", kind: Say(speaker: Some("01TPX0C0000000000000000001"), text_id: "01TPX0T0000000000000000010")),
+                (id: "01TPX0N0000000000000000022", kind: Say(speaker: Some("01TPX0C0000000000000000002"), text_id: "01TPX0T0000000000000000011")),
+                (id: "01TPX0N0000000000000000030", kind: Label(name: "join")),
+                (id: "01TPX0N0000000000000000031", kind: JumpScene(scene: "01TPX0S0000000000000000002", label: None)),
+            ],
+        ),
+        (
+            id: "01TPX0S0000000000000000002",
+            name: "evening",
+            nodes: [
+                (id: "01TPX0N0000000000000000040", kind: Background(asset: "01TPX0A0000000000000000002", transition: Some((kind: Fade((r: 0, g: 0, b: 0)), duration: 1.0)))),
+                (id: "01TPX0N0000000000000000041", kind: Say(speaker: None, text_id: "01TPX0T0000000000000000012")),
+                (id: "01TPX0N0000000000000000042", kind: Say(speaker: Some("01TPX0C0000000000000000002"), text_id: "01TPX0T0000000000000000013")),
+                (id: "01TPX0N0000000000000000043", kind: If(condition: Binary(Ge, Var("friendship"), Lit(Int(1))), then_target: "01TPX0N0000000000000000050", else_target: Some("01TPX0N0000000000000000051"))),
+                (id: "01TPX0N0000000000000000050", kind: Label(name: "close")),
+                (id: "01TPX0N0000000000000000044", kind: Say(speaker: None, text_id: "01TPX0T0000000000000000014")),
+                (id: "01TPX0N0000000000000000045", kind: Jump(target: "01TPX0N0000000000000000052")),
+                (id: "01TPX0N0000000000000000051", kind: Label(name: "distant")),
+                (id: "01TPX0N0000000000000000046", kind: Say(speaker: None, text_id: "01TPX0T0000000000000000015")),
+                (id: "01TPX0N0000000000000000052", kind: Label(name: "closing")),
+                (id: "01TPX0N0000000000000000047", kind: Say(speaker: None, text_id: "01TPX0T0000000000000000016")),
+                (id: "01TPX0N0000000000000000048", kind: End),
+            ],
+        ),
+    ],
+)

@@ -24,6 +24,7 @@
     "menu.edit": "Édition",
     "menu.view": "Affichage",
     "menu.tools": "Outils",
+    "menu.help": "Aide",
     "menu.preview": "Preview",
     "menu.language": "Langue",
 
@@ -32,6 +33,7 @@
     "category.edit": "Édition",
     "category.view": "Affichage",
     "category.tools": "Outils",
+    "category.help": "Aide",
     "category.graph": "Graphe",
     "category.preview": "Preview",
     "category.scene": "Scène",

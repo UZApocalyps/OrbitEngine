@@ -1,0 +1,10 @@
+{
+    "manual.title": "Manual",
+    "manual.open": "Open the manual",
+    "manual.empty": "The manual is empty.",
+    "template.title": "Template",
+    "template.blank.name": "Blank",
+    "template.blank.desc": "One scene and two lines to rewrite. Start from nothing.",
+    "template.visual_novel.name": "Visual novel starter",
+    "template.visual_novel.desc": "Two scenes, two characters, a choice, a variable, custom screens and a splash. Ready to play.",
+}

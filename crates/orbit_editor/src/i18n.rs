@@ -103,6 +103,12 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
         include_str!("../locales/fr/uieditor.ron"),
     ),
     (
+        "manual",
+        &["manual", "template"],
+        include_str!("../locales/en/manual.ron"),
+        include_str!("../locales/fr/manual.ron"),
+    ),
+    (
         "panels",
         &[
             "console", "problems", "explorer", "search", "draft", "edit", "util", "watch", "misc",
