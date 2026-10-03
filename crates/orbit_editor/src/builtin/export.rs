@@ -17,7 +17,9 @@ use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, PanelDef,
     Plugin, PluginManifest, Translator, UiText, Waker, icons,
 };
+use orbit_export::android::{AndroidOptions, Secret, Signing, toolchain as android_tools};
 use orbit_export::{
+    AndroidFormat, AndroidOrientation,
     Event, ExportOptions, ExportProfile, ExportProject, ExportReport, ExportTarget, LogLevel,
     PakCompression, Server, Templates, export_many,
 };
@@ -32,6 +34,10 @@ pub struct ExportPlugin;
 
 /// Preference key of the folder holding the player templates.
 const PREF_TEMPLATES: &str = "templates_dir";
+/// Preference keys of the Android keystore file and key alias. The password
+/// is never a preference.
+const PREF_ANDROID_KEYSTORE: &str = "android_keystore";
+const PREF_ANDROID_ALIAS: &str = "android_alias";
 
 impl Plugin for ExportPlugin {
     fn manifest(&self) -> PluginManifest {
@@ -103,6 +109,7 @@ impl ExportJob {
         targets: Vec<ExportTarget>,
         out_dir: PathBuf,
         templates: Templates,
+        android: AndroidOptions,
         waker: Waker,
         texts: &Translator,
     ) -> Self {
@@ -118,6 +125,7 @@ impl ExportJob {
                     let options = ExportOptions {
                         templates,
                         cancel: Some(flag),
+                        android,
                     };
                     let events = sink.clone();
                     export_many(
@@ -206,6 +214,14 @@ struct ExportUi {
     dirty: bool,
     out_dir: String,
     templates_dir: String,
+    /// Android signing: keystore path and alias are preferences, the
+    /// password is typed for each export and never stored.
+    android_keystore: String,
+    android_alias: String,
+    android_debug: bool,
+    android_password: String,
+    /// Android tools found on this machine (refreshed on demand).
+    android_tools: Option<android_tools::Detected>,
     job: Option<ExportJob>,
     fraction: f32,
     label: String,
@@ -240,6 +256,10 @@ impl ExportUi {
         }
         *self = Self {
             templates_dir: std::mem::take(&mut self.templates_dir),
+            android_keystore: std::mem::take(&mut self.android_keystore),
+            android_alias: std::mem::take(&mut self.android_alias),
+            android_debug: self.android_debug,
+            android_tools: self.android_tools.take(),
             server: self.server.take(),
             ..Self::default()
         };
@@ -280,6 +300,40 @@ impl ExportUi {
         templates
     }
 
+    fn wants_android(&mut self) -> bool {
+        self.profile().targets.contains(&ExportTarget::Android)
+    }
+
+    /// The signing the Android export will use. Takes the typed password:
+    /// it is asked again for the next export.
+    fn take_android_options(&mut self) -> AndroidOptions {
+        let signing = if self.android_debug {
+            Signing::Debug
+        } else if self.android_keystore.trim().is_empty() {
+            Signing::Unset
+        } else {
+            Signing::Keystore {
+                path: PathBuf::from(self.android_keystore.trim()),
+                alias: self.android_alias.clone(),
+                password: Secret::new(std::mem::take(&mut self.android_password)),
+            }
+        };
+        self.android_password.clear();
+        AndroidOptions {
+            signing,
+            ..AndroidOptions::default()
+        }
+    }
+
+    /// Android needs a signing choice and, for a keystore, its password.
+    fn android_ready(&mut self) -> bool {
+        !self.wants_android()
+            || self.android_debug
+            || (!self.android_keystore.trim().is_empty()
+                && !self.android_alias.trim().is_empty()
+                && !self.android_password.is_empty())
+    }
+
     fn running(&self) -> bool {
         self.job.is_some()
     }
@@ -318,6 +372,18 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             .unwrap_or("")
             .to_owned();
     }
+    if state.android_keystore.is_empty() {
+        state.android_keystore = ctx
+            .pref(ids::EXPORT, PREF_ANDROID_KEYSTORE)
+            .unwrap_or("")
+            .to_owned();
+    }
+    if state.android_alias.is_empty() {
+        state.android_alias = ctx
+            .pref(ids::EXPORT, PREF_ANDROID_ALIAS)
+            .unwrap_or("")
+            .to_owned();
+    }
     state.ensure_loaded(&info.root, &info.story_file, info.has_manifest, &info.name);
     state.poll();
     if state.running() {
@@ -337,15 +403,27 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             profile_form(ui, &mut state, &info.root, &mut messages);
             ui.add_space(6.0);
             targets_and_output(ui, &mut state);
+            if state.wants_android() {
+                ui.add_space(6.0);
+                android_section(ui, &mut state);
+            }
             ui.add_space(8.0);
             run_controls(ui, &mut state, ctx, &info, &mut messages);
             ui.add_space(8.0);
             journal(ui, &mut state, &mut messages);
         });
     let templates_dir = state.templates_dir.trim().to_owned();
+    let android_keystore = state.android_keystore.trim().to_owned();
+    let android_alias = state.android_alias.trim().to_owned();
     drop(state);
     if templates_dir != ctx.pref(ids::EXPORT, PREF_TEMPLATES).unwrap_or("") {
         ctx.set_pref(ids::EXPORT, PREF_TEMPLATES, templates_dir);
+    }
+    if android_keystore != ctx.pref(ids::EXPORT, PREF_ANDROID_KEYSTORE).unwrap_or("") {
+        ctx.set_pref(ids::EXPORT, PREF_ANDROID_KEYSTORE, android_keystore);
+    }
+    if android_alias != ctx.pref(ids::EXPORT, PREF_ANDROID_ALIAS).unwrap_or("") {
+        ctx.set_pref(ids::EXPORT, PREF_ANDROID_ALIAS, android_alias);
     }
     for (error, message) in messages {
         if error {
@@ -595,6 +673,181 @@ fn targets_and_output(ui: &mut Ui, state: &mut ExportUi) {
         });
 }
 
+/// Android options: package, orientation, format, tools found, signing.
+fn android_section(ui: &mut Ui, state: &mut ExportUi) {
+    let texts = ui.texts();
+    section_title(ui, &texts.t("export.android.title"));
+    let mut changed = false;
+    let templates = state.templates();
+    let profile = state.profile();
+    egui::Grid::new("export_android_grid")
+        .num_columns(2)
+        .spacing([10.0, 6.0])
+        .show(ui, |ui| {
+            ui.label(texts.t("export.android.package"));
+            let mut package = profile.android_package.clone().unwrap_or_default();
+            let derived = format!("com.orbit.{}", profile.game_id.replace('-', "_"));
+            if ui
+                .add(
+                    TextEdit::singleline(&mut package)
+                        .hint_text(derived)
+                        .desired_width(260.0),
+                )
+                .on_hover_text(texts.t("export.android.package_hint"))
+                .changed()
+            {
+                profile.android_package = (!package.trim().is_empty()).then_some(package);
+                changed = true;
+            }
+            ui.end_row();
+            ui.label(texts.t("export.android.version_code"));
+            let mut code = profile
+                .android_version_code
+                .map(|c| c.to_string())
+                .unwrap_or_default();
+            if ui
+                .add(TextEdit::singleline(&mut code).desired_width(80.0))
+                .on_hover_text(texts.t("export.android.version_code_hint"))
+                .changed()
+            {
+                profile.android_version_code = code.trim().parse().ok();
+                changed = true;
+            }
+            ui.end_row();
+            ui.label(texts.t("export.android.orientation"));
+            ui.horizontal(|ui| {
+                for (value, key) in [
+                    (AndroidOrientation::Landscape, "export.android.landscape"),
+                    (AndroidOrientation::Portrait, "export.android.portrait"),
+                    (AndroidOrientation::Sensor, "export.android.sensor"),
+                ] {
+                    changed |= ui
+                        .selectable_value(&mut profile.android_orientation, value, texts.t(key))
+                        .changed();
+                }
+            });
+            ui.end_row();
+            ui.label(texts.t("export.android.format"));
+            ui.horizontal(|ui| {
+                changed |= ui
+                    .selectable_value(&mut profile.android_format, AndroidFormat::Apk, "APK")
+                    .on_hover_text(texts.t("export.android.apk_hint"))
+                    .changed();
+                changed |= ui
+                    .selectable_value(&mut profile.android_format, AndroidFormat::Aab, "AAB")
+                    .on_hover_text(texts.t("export.android.aab_hint"))
+                    .changed();
+            });
+            ui.end_row();
+        });
+    let wants_aab = profile.android_format == AndroidFormat::Aab;
+    if changed {
+        state.dirty = true;
+    }
+
+    // Tools found on this machine.
+    ui.add_space(4.0);
+    let detected = state
+        .android_tools
+        .get_or_insert_with(|| {
+            android_tools::detect(&android_tools::process_env, &templates.android_dirs())
+        })
+        .clone();
+    let mut refresh = false;
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(texts.t("export.android.tools")).strong());
+        refresh = ui
+            .small_button(icons::ARROWS_CLOCKWISE)
+            .on_hover_text(texts.t("export.android.refresh"))
+            .clicked();
+    });
+    let shown = |ui: &mut Ui, label: String, found: Option<String>| match found {
+        Some(path) => {
+            ui.label(RichText::new(format!("{}  {label}: {path}", icons::CHECK)).color(success()));
+        }
+        None => {
+            ui.label(
+                RichText::new(format!(
+                    "{}  {label}: {}",
+                    icons::WARNING,
+                    texts.t("export.android.not_found")
+                ))
+                .color(warning(ui)),
+            );
+        }
+    };
+    let path = |p: &Option<PathBuf>| p.as_ref().map(|p| p.display().to_string());
+    shown(ui, texts.t("export.android.sdk_build_tools"), path(&detected.build_tools));
+    shown(ui, texts.t("export.android.sdk_platform"), path(&detected.android_jar));
+    shown(
+        ui,
+        "JDK".to_owned(),
+        detected.jdk.as_ref().map(|j| {
+            j.home
+                .as_ref()
+                .map_or_else(|| "PATH".to_owned(), |h| h.display().to_string())
+        }),
+    );
+    if wants_aab {
+        shown(
+            ui,
+            "bundletool".to_owned(),
+            detected.bundletool.as_ref().map(|b| match b {
+                android_tools::Bundletool::Jar(p) | android_tools::Bundletool::Program(p) => {
+                    p.display().to_string()
+                }
+            }),
+        );
+    }
+    if detected.sdk.is_none() || detected.build_tools.is_none() || detected.jdk.is_none() {
+        ui.label(RichText::new(texts.t("export.android.install_hint")).color(faint(ui)));
+    }
+    if refresh {
+        state.android_tools = None;
+    }
+
+    // Signing.
+    ui.add_space(4.0);
+    ui.label(RichText::new(texts.t("export.android.signing")).strong());
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut state.android_debug, false, texts.t("export.android.keystore"));
+        ui.selectable_value(&mut state.android_debug, true, texts.t("export.android.debug"))
+            .on_hover_text(texts.t("export.android.debug_hint"));
+    });
+    if state.android_debug {
+        ui.label(RichText::new(texts.t("export.android.debug_hint")).color(faint(ui)));
+        return;
+    }
+    egui::Grid::new("export_android_signing_grid")
+        .num_columns(3)
+        .spacing([10.0, 6.0])
+        .show(ui, |ui| {
+            ui.label(texts.t("export.android.keystore_file"));
+            ui.add(TextEdit::singleline(&mut state.android_keystore).desired_width(260.0))
+                .on_hover_text(texts.t("export.android.keystore_hint"));
+            if ui
+                .button(icons::FOLDER_OPEN)
+                .on_hover_text(texts.t("export.android.pick_keystore"))
+                .clicked()
+                && let Some(file) = rfd::FileDialog::new().pick_file()
+            {
+                state.android_keystore = file.to_string_lossy().into_owned();
+            }
+            ui.end_row();
+            ui.label(texts.t("export.android.alias"));
+            ui.add(TextEdit::singleline(&mut state.android_alias).desired_width(260.0));
+            ui.end_row();
+            ui.label(texts.t("export.android.password"));
+            ui.add(
+                TextEdit::singleline(&mut state.android_password)
+                    .password(true)
+                    .desired_width(260.0),
+            )
+            .on_hover_text(texts.t("export.android.password_hint"));
+            ui.end_row();
+        });
+}
+
 fn start_export(
     state: &mut ExportUi,
     ctx: &mut EditorContext<'_>,
@@ -617,12 +870,14 @@ fn start_export(
     state.label = ctx.t("export.starting");
     state.server = None;
     let targets = profile.targets.clone();
+    let android = state.take_android_options();
     state.job = Some(ExportJob::start(
         project,
         profile,
         targets,
         PathBuf::from(state.out_dir.trim()),
         state.templates(),
+        android,
         ctx.state().waker.clone(),
         &ctx.translator(),
     ));
@@ -667,7 +922,7 @@ fn run_controls(
             .color(warning(ui)),
         );
     }
-    let ready = !state.profile().targets.is_empty();
+    let ready = !state.profile().targets.is_empty() && state.android_ready();
     if ui
         .add_enabled(
             ready,
@@ -684,8 +939,10 @@ fn run_controls(
             start_export(state, ctx, info);
         }
     }
-    if !ready {
+    if state.profile().targets.is_empty() {
         ui.label(RichText::new(texts.t("export.pick_target")).color(faint(ui)));
+    } else if !ready {
+        ui.label(RichText::new(texts.t("export.android.need_signing")).color(faint(ui)));
     }
 }
 
@@ -918,6 +1175,7 @@ mod tests {
             vec![ExportTarget::Linux],
             out.path().to_owned(),
             fake_templates(templates_dir.path()),
+            Default::default(),
             waker,
             &texts(),
         );
@@ -941,6 +1199,7 @@ mod tests {
             vec![ExportTarget::Windows],
             out.path().to_owned(),
             Templates::new(vec![out.path().join("nowhere")]),
+            Default::default(),
             Waker::default(),
             &texts(),
         );
@@ -953,6 +1212,7 @@ mod tests {
             vec![ExportTarget::Linux],
             out.path().to_owned(),
             Templates::default(),
+            Default::default(),
             Waker::default(),
             &texts(),
         );

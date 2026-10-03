@@ -94,11 +94,11 @@ pub fn run_request(
     }
 
     let target_name = target.ok_or_else(|| {
-        ToolFailure::BadRequest("a target is needed (windows, linux or web)".to_owned())
+        ToolFailure::BadRequest("a target is needed (windows, linux, web or android)".to_owned())
     })?;
     let target = ExportTarget::parse(target_name).ok_or_else(|| {
         ToolFailure::BadRequest(format!(
-            "unknown target `{target_name}` (windows, linux or web)"
+            "unknown target `{target_name}` (windows, linux, web or android)"
         ))
     })?;
     let reports =
@@ -140,6 +140,7 @@ mod tests {
         ExportOptions {
             templates: Templates::new(vec![dir.to_owned()]),
             cancel: None,
+            android: Default::default(),
         }
     }
 

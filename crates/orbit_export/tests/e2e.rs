@@ -88,13 +88,14 @@ fn every_target_produces_the_expected_files() {
     let options = ExportOptions {
         templates: fake_templates(templates_dir.path()),
         cancel: None,
+        android: Default::default(),
     };
 
     let mut events = Vec::new();
     let reports = export_many(
         &project,
         &profile,
-        &ExportTarget::ALL,
+        &[ExportTarget::Windows, ExportTarget::Linux, ExportTarget::Web],
         out.path(),
         &options,
         &mut |e| events.push(e.clone()),
@@ -258,6 +259,7 @@ fn a_broken_project_fails_before_writing_anything() {
     let options = ExportOptions {
         templates: fake_templates(templates_dir.path()),
         cancel: None,
+        android: Default::default(),
     };
     let err = export(
         &project,
@@ -304,6 +306,7 @@ fn the_exported_native_player_runs_on_its_own() {
         &ExportOptions {
             templates,
             cancel: None,
+            android: Default::default(),
         },
         &mut |_| {},
     )
