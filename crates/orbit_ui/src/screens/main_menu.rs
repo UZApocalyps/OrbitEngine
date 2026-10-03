@@ -101,6 +101,10 @@ impl MainMenu {
 }
 
 impl Screen for MainMenu {
+    fn widgets(&mut self) -> Option<&mut Ui> {
+        Some(&mut self.ui)
+    }
+
     fn handle(&mut self, input: UiInput) -> Vec<UiEvent> {
         let mut out = Vec::new();
         forward(self.ui.handle(input), &mut out, |ev, out| {

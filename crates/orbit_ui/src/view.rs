@@ -132,6 +132,8 @@ pub struct PrefsView {
     pub skip_mode: SkipMode,
     /// `None` hides the option (unsupported, e.g. on the web).
     pub fullscreen: Option<bool>,
+    /// Screen reader support (`None` hides the option).
+    pub screen_reader: Option<bool>,
     pub languages: Vec<LanguageView>,
     /// Code of the current language.
     pub language: String,
@@ -148,6 +150,7 @@ impl Default for PrefsView {
             auto_delay: 2.0,
             skip_mode: SkipMode::ReadOnly,
             fullscreen: Some(false),
+            screen_reader: Some(true),
             languages: Vec::new(),
             language: String::new(),
         }
@@ -213,6 +216,8 @@ pub enum UiEvent {
     SetAutoDelay(f32),
     SetSkipMode(SkipMode),
     SetFullscreen(bool),
+    /// Screen reader support on / off (ADR 0017).
+    SetScreenReader(bool),
     /// Language code.
     SetLanguage(String),
     ResetPreferences,

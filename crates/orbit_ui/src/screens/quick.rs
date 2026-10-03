@@ -93,6 +93,10 @@ impl QuickMenu {
 }
 
 impl Screen for QuickMenu {
+    fn widgets(&mut self) -> Option<&mut Ui> {
+        Some(&mut self.ui)
+    }
+
     fn handle(&mut self, input: UiInput) -> Vec<UiEvent> {
         // Pointer only.
         if !matches!(

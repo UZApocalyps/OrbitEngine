@@ -19,6 +19,7 @@ const T_FULLSCREEN: Tag = 8;
 const T_LANGUAGE: Tag = 9;
 const T_DEFAULTS: Tag = 10;
 const T_BACK: Tag = 11;
+const T_SCREEN_READER: Tag = 12;
 /// Value readouts are tagged `T_VALUE + slider tag`.
 const T_VALUE: Tag = 50;
 
@@ -147,6 +148,17 @@ impl PreferencesScreen {
             );
             ui.add(r, Node::toggle(T_FULLSCREEN, "", on).w(Size::Fixed(620.0)));
         }
+        if let Some(on) = v.screen_reader {
+            let r = row(&mut ui, panel);
+            ui.add(
+                r,
+                Node::label(self.texts.get("ui.prefs.screen_reader")).w(Size::Fixed(460.0)),
+            );
+            ui.add(
+                r,
+                Node::toggle(T_SCREEN_READER, "", on).w(Size::Fixed(620.0)),
+            );
+        }
         if v.languages.len() > 1 {
             let r = row(&mut ui, panel);
             ui.add(
@@ -194,6 +206,10 @@ fn row(ui: &mut Ui, panel: crate::widgets::NodeId) -> crate::widgets::NodeId {
 }
 
 impl Screen for PreferencesScreen {
+    fn widgets(&mut self) -> Option<&mut Ui> {
+        Some(&mut self.ui)
+    }
+
     fn handle(&mut self, input: UiInput) -> Vec<UiEvent> {
         let mut out = Vec::new();
         let mut changed: Vec<(Tag, f32)> = Vec::new();
@@ -224,6 +240,7 @@ impl Screen for PreferencesScreen {
                 }
             }
             WidgetEvent::Toggled(T_FULLSCREEN, on) => out.push(UiEvent::SetFullscreen(on)),
+            WidgetEvent::Toggled(T_SCREEN_READER, on) => out.push(UiEvent::SetScreenReader(on)),
             _ => {}
         });
         for (tag, unit) in changed {
@@ -299,6 +316,7 @@ mod tests {
                 T_AUTO_DELAY,
                 T_SKIP,
                 T_FULLSCREEN,
+                T_SCREEN_READER,
                 T_LANGUAGE,
                 T_DEFAULTS,
                 T_BACK

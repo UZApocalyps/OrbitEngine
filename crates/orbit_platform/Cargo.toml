@@ -13,12 +13,14 @@ web-time.workspace = true
 log.workspace = true
 thiserror.workspace = true
 sys-locale.workspace = true
+accesskit.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 gilrs.workspace = true
 pollster.workspace = true
 image.workspace = true
 time.workspace = true
+accesskit_winit.workspace = true
 
 # Android (ADR 0017): GameActivity entry point through `android-activity`,
 # re-exported by winit as `winit::platform::android::activity`.
@@ -27,7 +29,7 @@ winit = { workspace = true, features = ["android-game-activity"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true
-web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlCanvasElement", "EventTarget", "Event"] }
+web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlCanvasElement", "EventTarget", "Event", "HtmlElement", "Node", "CssStyleDeclaration", "MouseEvent"] }
 wasm-bindgen.workspace = true
 js-sys.workspace = true
 

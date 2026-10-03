@@ -35,6 +35,10 @@ use orbit_ui::{
     SlotState as UiSlotState, SlotView, TEXT_SPEED_RANGE, TextTable, Texts, Theme, ToastStack,
     UiBundle, UiEvent, UiInput, UiSound, tint,
 };
+use orbit_ui::a11y::{
+    A11yAction, A11yNode, A11yRole, A11yTarget, A11yTree, Announcer, CHOICE_BASE, CHOICES_ID,
+    LINE_ID, ROOT_ID, TOAST_ID,
+};
 use orbit_vm::Vm;
 
 use crate::director::{AudioCommand, Director, Flow};
@@ -144,6 +148,12 @@ pub(crate) struct ThumbnailRequest {
 
 /// Identifies a thumbnail: the slot and the save's creation time.
 pub(crate) type ThumbKey = (UiSlot, u64);
+
+/// Screen reader slots (see [`orbit_ui::a11y::widget_id`]): the quick menu,
+/// the main menu, then the screen stack from `SLOT_STACK` up.
+const SLOT_QUICK: u32 = 1;
+const SLOT_MAIN: u32 = 2;
+const SLOT_STACK: u32 = 3;
 
 enum JobStage {
     NeedsCapture,
@@ -279,6 +289,12 @@ pub(crate) struct Shell {
     views_dirty: bool,
 
     effects: Vec<Effect>,
+
+    /// Screen reader: the live region texts of the dialogue line and of the
+    /// last toast (see [`orbit_ui::a11y`]).
+    announcer: Announcer,
+    last_toast: Option<(u64, String)>,
+    toast_announcer: Announcer,
 }
 
 pub(crate) fn make_texts(language: &str, overrides: &HashMap<String, Vec<(String, String)>>) -> Texts {
@@ -401,6 +417,9 @@ impl Shell {
             stale_textures: Vec::new(),
             views_dirty: false,
             effects: Vec::new(),
+            announcer: Announcer::default(),
+            last_toast: None,
+            toast_announcer: Announcer::default(),
         };
         shell.apply_prefs_effects();
         shell.refresh_slots();
@@ -491,9 +510,15 @@ impl Shell {
         self.refresh_main_menu();
     }
 
+    fn toast(&mut self, text: String) {
+        let seq = self.last_toast.as_ref().map_or(0, |(s, _)| s + 1);
+        self.last_toast = Some((seq, orbit_ui::a11y::plain(&text)));
+        self.toasts.push(text);
+    }
+
     fn toast_key(&mut self, key: &str) {
         let text = self.texts.get(key);
-        self.toasts.push(text);
+        self.toast(text);
     }
 
     /// The storage fell back to memory: saves will not survive the session.
@@ -1114,6 +1139,7 @@ impl Shell {
                 })
                 .collect(),
             language: self.loc.language().to_owned(),
+            screen_reader: Some(self.prefs.screen_reader),
         }
     }
 
@@ -1434,7 +1460,7 @@ impl Shell {
     pub fn apply(&mut self, event: UiEvent) {
         match event {
             UiEvent::Sound(sound) => self.effects.push(Effect::UiSound(sound)),
-            UiEvent::Toast(text) => self.toasts.push(text),
+            UiEvent::Toast(text) => self.toast(text),
             UiEvent::StartGame => self.start_new_game(),
             UiEvent::Continue => self.continue_game(),
             UiEvent::OpenLoad => self.open(Overlay::Load),
@@ -1547,6 +1573,10 @@ impl Shell {
                 if self.cfg.fullscreen_supported {
                     self.effects.push(Effect::SetFullscreen(on));
                 }
+                self.mark_prefs_dirty();
+            }
+            UiEvent::SetScreenReader(on) => {
+                self.prefs.screen_reader = on;
                 self.mark_prefs_dirty();
             }
             UiEvent::SetLanguage(code) => self.set_language(&code),
@@ -1819,6 +1849,145 @@ impl Shell {
             self.autosave_cooldown = cfg.min_interval;
             self.request_save(SaveSlot::Auto(0), false);
         }
+    }
+
+    // ---------------------------------------------------------- screen reader
+
+    /// The accessibility tree of what is on screen (ADR 0017, M7-09): the
+    /// screen on top, or the main menu, or the game view (dialogue line as a
+    /// live region, choices, quick menu), plus the last toast. Only the
+    /// window node when the player turned the screen reader support off.
+    pub fn a11y_tree(&mut self, name: &str) -> A11yTree {
+        let mut tree = A11yTree::root(name);
+        if !self.prefs.screen_reader {
+            return tree;
+        }
+        let top = self.top();
+        let covered = match top {
+            Some(Overlay::Save | Overlay::Load | Overlay::Prefs | Overlay::History) => true,
+            Some(Overlay::Custom(i)) => !self.data[i].is_modal() && !self.data[i].pauses_game(),
+            _ => false,
+        };
+        let mut focus = None;
+        if let Some(game) = &self.game {
+            match game.kind() {
+                FlowKind::Say => {}
+                _ => self.announcer.clear(),
+            }
+            if !covered {
+                match game.kind() {
+                    FlowKind::Say => {
+                        if let Some((key, text)) = &game.spoken {
+                            let mut node =
+                                A11yNode::new(LINE_ID, A11yRole::Live, self.announcer.text(*key, text));
+                            node.bounds = self.theme.textbox.rect;
+                            tree.push(ROOT_ID, node);
+                        }
+                    }
+                    FlowKind::Choice => {
+                        let mut list =
+                            A11yNode::new(CHOICES_ID, A11yRole::List, self.texts.get("ui.a11y.choices"));
+                        list.bounds = [0.0, 0.0, CANVAS[0], CANVAS[1]];
+                        tree.push(ROOT_ID, list);
+                        let (selected, rects) = game
+                            .menu
+                            .as_ref()
+                            .map_or((0, &[][..]), |m| (m.selected(), m.rects()));
+                        for (i, label) in game.choice_labels.iter().enumerate() {
+                            let mut b = A11yNode::new(CHOICE_BASE + i as u64, A11yRole::Button, label.clone());
+                            b.selected = i == selected;
+                            b.bounds = rects.get(i).copied().unwrap_or_default();
+                            tree.push(CHOICES_ID, b);
+                        }
+                        if top.is_none() && !game.choice_labels.is_empty() {
+                            focus = Some(CHOICE_BASE + selected as u64);
+                        }
+                    }
+                    FlowKind::Ended => {
+                        tree.push(ROOT_ID, A11yNode::new(LINE_ID, A11yRole::Live, self.texts.get("ui.the_end")));
+                    }
+                    _ => {}
+                }
+            }
+            if top.is_none() {
+                let quick = self.quick.widgets().expect("the quick menu has widgets");
+                tree.push_ui(ROOT_ID, SLOT_QUICK, "", quick);
+            }
+        } else if top.is_none() {
+            let name = self.story.title.clone();
+            if let Some(ui) = self.main_screen().widgets() {
+                focus = tree.push_ui(ROOT_ID, SLOT_MAIN, &name, ui);
+            }
+        }
+        if let Some(top) = top {
+            let slot = SLOT_STACK + (self.stack.len() - 1) as u32;
+            let name = self.overlay_name(top);
+            if let Some(ui) = self.screen(top).widgets() {
+                focus = tree.push_ui(ROOT_ID, slot, &name, ui);
+            }
+        }
+        if !self.toasts.is_empty()
+            && let Some((seq, text)) = &self.last_toast
+        {
+            let text = self.toast_announcer.text(*seq, text);
+            tree.push(ROOT_ID, A11yNode::new(TOAST_ID, A11yRole::Live, text));
+        }
+        tree.focus = focus.unwrap_or(ROOT_ID);
+        tree
+    }
+
+    /// The accessible name of a screen.
+    fn overlay_name(&self, overlay: Overlay) -> String {
+        match overlay {
+            Overlay::Pause => self.texts.get("ui.pause.title"),
+            Overlay::Save => self.texts.get("ui.save.title"),
+            Overlay::Load => self.texts.get("ui.load.title"),
+            Overlay::Prefs => self.texts.get("ui.prefs.title"),
+            Overlay::History => self.texts.get("ui.history.title"),
+            Overlay::Custom(i) => self.data[i].id().to_owned(),
+        }
+    }
+
+    /// Runs what the screen reader asked of the node `id` (an id of the
+    /// last [`Shell::a11y_tree`]): a click activates a widget or picks a
+    /// choice, a focus moves the widget focus, increment / decrement move a
+    /// slider or a selector. Unknown or stale ids are ignored.
+    pub fn a11y_action(&mut self, id: u64, action: A11yAction) {
+        if !self.prefs.screen_reader {
+            return;
+        }
+        match orbit_ui::a11y::target_of(id) {
+            A11yTarget::Choice(i) => {
+                if action == A11yAction::Click && self.top().is_none() {
+                    self.choose_option(i);
+                }
+            }
+            A11yTarget::Widget(slot, index) => {
+                let screen: &mut dyn Screen = match slot {
+                    SLOT_QUICK if self.game.is_some() && self.top().is_none() => &mut self.quick,
+                    SLOT_MAIN if self.game.is_none() && self.top().is_none() => self.main_screen(),
+                    s if s >= SLOT_STACK && (s - SLOT_STACK) as usize + 1 == self.stack.len() => {
+                        let top = self.stack[self.stack.len() - 1];
+                        self.screen(top)
+                    }
+                    _ => return,
+                };
+                let Some(ui) = screen.widgets() else { return };
+                if !ui.focus_node(index) {
+                    return;
+                }
+                let input = match action {
+                    A11yAction::Focus => return,
+                    A11yAction::Click => UiInput::Confirm,
+                    A11yAction::Increment => UiInput::Right,
+                    A11yAction::Decrement => UiInput::Left,
+                };
+                let events = screen.handle(input);
+                self.apply_all(events);
+            }
+            A11yTarget::Fixed(_) | A11yTarget::Screen(_) => return,
+        }
+        self.after_input();
     }
 
     // --------------------------------------------------------------- drawing

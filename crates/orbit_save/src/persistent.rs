@@ -123,6 +123,12 @@ pub struct Preferences {
     /// name. Missing or unknown entries use the default binding, so files
     /// written before this field existed load unchanged.
     pub gamepad: BTreeMap<String, String>,
+    /// Screen reader support (ADR 0017, M7-09): the accessibility tree and
+    /// the announced dialogue lines. On by default: it is invisible, costs
+    /// nothing until an assistive technology asks for it (desktop), and a
+    /// blind player could not find the option to turn it on. Files written
+    /// before this field existed load with it on.
+    pub screen_reader: bool,
 }
 
 /// The remappable gamepad actions with their default button.
@@ -146,6 +152,7 @@ impl Default for Preferences {
             fullscreen: false,
             language: None,
             gamepad: BTreeMap::new(),
+            screen_reader: true,
         }
     }
 }

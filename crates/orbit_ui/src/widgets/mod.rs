@@ -7,6 +7,7 @@
 //! Layout, state and hit testing never touch the GPU or any font, so they
 //! are unit tested directly; only [`Ui::draw`] needs the renderer.
 
+mod access;
 mod draw;
 mod interact;
 mod layout;

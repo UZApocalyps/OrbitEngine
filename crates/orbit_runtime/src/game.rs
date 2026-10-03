@@ -84,6 +84,11 @@ pub(crate) struct Game {
     pub director: Director,
     pub dialogue: DialogueBox,
     pub menu: Option<ChoiceMenu>,
+    /// What the screen reader says of the current line ("speaker: text"),
+    /// with the generation it was shown at (a new line, a new key).
+    pub spoken: Option<(u64, String)>,
+    /// Plain labels of the current choice options.
+    pub choice_labels: Vec<String>,
     settings: PlaySettings,
     seen_generation: u64,
     seen_progress: u64,
@@ -108,6 +113,8 @@ impl Game {
             director,
             dialogue: DialogueBox::new(textbox_theme(&theme.textbox, &settings)),
             menu: None,
+            spoken: None,
+            choice_labels: Vec::new(),
             settings,
             seen_generation: u64::MAX,
             seen_progress: 0,
@@ -292,6 +299,14 @@ impl Game {
             self.skip_timer = 0.0;
             match self.director.flow() {
                 Flow::Say(line) => {
+                    self.spoken = Some((
+                        self.seen_generation,
+                        orbit_ui::a11y::line_text(
+                            line.speaker.as_ref().map(|(n, _)| n.as_str()),
+                            &line.text,
+                        ),
+                    ));
+                    self.choice_labels.clear();
                     self.dialogue.set_line(
                         line.speaker.as_ref().map(|(n, c)| (n.as_str(), *c)),
                         &line.text,
@@ -302,6 +317,8 @@ impl Game {
                     self.menu = None;
                 }
                 Flow::Choice(labels) => {
+                    self.spoken = None;
+                    self.choice_labels = labels.iter().map(|l| orbit_ui::a11y::plain(l)).collect();
                     self.dialogue.clear();
                     self.menu = Some(ChoiceMenu::new(theme.choice.clone(), labels));
                 }
@@ -310,6 +327,12 @@ impl Game {
         }
         if self.kind() != FlowKind::Choice {
             self.menu = None;
+        }
+        if self.kind() != FlowKind::Choice {
+            self.choice_labels.clear();
+        }
+        if self.kind() != FlowKind::Say {
+            self.spoken = None;
         }
         if matches!(self.kind(), FlowKind::Ended | FlowKind::Failed) {
             self.dialogue.clear();

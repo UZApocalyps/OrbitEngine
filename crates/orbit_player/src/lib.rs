@@ -61,6 +61,9 @@ fn window_config(launch: &Launch) -> AppConfig {
     #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
     let mut config = AppConfig {
         title: "OrbitEngine Player".to_owned(),
+        // Screen readers (ADR 0017, M7-09); the player can turn the support
+        // off in the preferences.
+        accessibility: true,
         ..Default::default()
     };
     #[cfg(not(target_arch = "wasm32"))]
