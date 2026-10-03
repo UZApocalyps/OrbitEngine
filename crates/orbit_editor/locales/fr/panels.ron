@@ -8,6 +8,8 @@
     "profiler.title": "Profileur",
     "profiler.record": "Enregistrer",
     "profiler.clear": "Effacer l'historique",
+    "profiler.gpu_timing": "Temps GPU",
+    "profiler.gpu_timing_hint": "Mesure les passes de rendu avec des requêtes d'horodatage GPU (désactivé par défaut : certains pilotes réinitialisent le GPU)",
     "profiler.empty": "Aucune image enregistrée pour l'instant.",
     "profiler.compiled_out": "Le profileur ne fait pas partie de cette version.",
     "profiler.cpu_summary": "Image CPU : moyenne {mean} ms, p95 {p95} ms, pire {max} ms",

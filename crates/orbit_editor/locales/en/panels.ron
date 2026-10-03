@@ -8,6 +8,8 @@
     "profiler.title": "Profiler",
     "profiler.record": "Record",
     "profiler.clear": "Clear the history",
+    "profiler.gpu_timing": "GPU timings",
+    "profiler.gpu_timing_hint": "Time render passes with GPU timestamp queries (off by default: some drivers reset the GPU under them)",
     "profiler.empty": "No frame recorded yet.",
     "profiler.compiled_out": "The profiler is not part of this build.",
     "profiler.cpu_summary": "CPU frame: mean {mean} ms, p95 {p95} ms, worst {max} ms",

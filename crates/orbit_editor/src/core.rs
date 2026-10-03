@@ -614,6 +614,26 @@ impl EditorCore {
 
     /// Clean shutdown: saves the config, ends the session (a modified
     /// project keeps its recovery snapshot).
+    /// Writes a recovery snapshot of unsaved edits right now (no autosave
+    /// delay): used before an abnormal exit such as a lost GPU device, so
+    /// that the next open offers to restore them. Returns whether one was
+    /// written.
+    pub fn write_recovery_snapshot(&mut self) -> bool {
+        let Some(session) = self.session.as_mut() else {
+            return false;
+        };
+        if !session.modified() {
+            return false;
+        }
+        match session.autosave(Instant::now()) {
+            Ok(()) => true,
+            Err(e) => {
+                log::error!("recovery snapshot failed: {e}");
+                false
+            }
+        }
+    }
+
     pub fn shutdown(&mut self) {
         crate::live::shutdown(self);
         self.flush_layout();
