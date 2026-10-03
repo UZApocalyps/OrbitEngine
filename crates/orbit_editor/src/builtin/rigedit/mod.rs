@@ -17,8 +17,11 @@
 //! the shared [`RigLink`].
 
 mod geom;
+mod meshedit;
+mod meshgen;
 mod model;
 mod panels;
+mod weights;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -156,6 +159,8 @@ pub(super) struct State {
     /// Target bone chosen in the IK form, and its chain length.
     pub ik_target: Option<BoneId>,
     pub ik_two: bool,
+    /// Mesh and weight tools.
+    pub(super) mesh: meshedit::MeshEdit,
 }
 
 impl State {
@@ -184,6 +189,7 @@ impl State {
             image_sizes: HashMap::new(),
             ik_target: None,
             ik_two: true,
+            mesh: meshedit::MeshEdit::default(),
         }
     }
 
@@ -428,7 +434,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
     if response.hovered() || response.has_focus() || st.drag.is_some() {
         keys(ui, ctx, st, rect);
     }
-    interact(ui, st, &response, rect);
+    interact(ui, ctx, st, &response, rect);
 
     // ---- ask the host for a picture when something changed
     if let (Some(doc), Some(prepared), Some(pose)) = (&st.doc, st.prepared.clone(), st.rig_pose()) {
@@ -485,6 +491,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
         painter.text(rect.left_top() + vec2(8.0, 8.0), Align2::LEFT_TOP, e, FontId::proportional(12.0), danger(ui));
     }
     paint_slot_outline(ui, st, &painter, rect);
+    meshedit::paint(ui, st, &painter, rect);
     paint_bones(ui, st, &painter, rect);
     paint_handles(ui, st, &painter, rect);
     let mode = if st.pose_mode { ctx.t("rig.mode.pose") } else { ctx.t("rig.mode.rest") };
@@ -537,6 +544,18 @@ fn navigate(ui: &Ui, st: &mut State, response: &egui::Response, rect: Rect) {
 
 fn keys(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, rect: Rect) {
     st.undo_redo_keys(ui);
+    let (m, p) = ui.input(|i| {
+        let plain = !i.modifiers.command && !i.modifiers.alt;
+        (plain && i.key_pressed(egui::Key::M), plain && i.key_pressed(egui::Key::P))
+    });
+    if meshedit::has_mesh(st) {
+        if m && !st.pose_mode {
+            st.tool = Tool::Mesh;
+        }
+        if p {
+            st.tool = Tool::Weights;
+        }
+    }
     let (b, w, e, r, f, del, tab) = ui.input(|i| {
         let plain = !i.modifiers.command && !i.modifiers.alt;
         (
@@ -567,7 +586,9 @@ fn keys(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, rect: Rect) {
     if tab {
         set_pose_mode(st, !st.pose_mode);
     }
-    if del && let Some(id) = st.selected.clone() {
+    if del && st.tool == Tool::Mesh {
+        meshedit::delete_selected_vertex(ctx, st);
+    } else if del && st.tool != Tool::Weights && let Some(id) = st.selected.clone() {
         panels::delete_bone(ctx, st, &id);
     }
 }
@@ -578,13 +599,17 @@ pub(super) fn set_pose_mode(st: &mut State, pose: bool) {
         st.pose_rev += 1;
         st.drag = None;
         st.create = None;
-        if pose && st.tool == Tool::Create {
+        if pose && matches!(st.tool, Tool::Create | Tool::Mesh) {
             st.tool = Tool::Rotate;
         }
     }
 }
 
-fn interact(ui: &Ui, st: &mut State, response: &egui::Response, rect: Rect) {
+fn interact(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, response: &egui::Response, rect: Rect) {
+    if matches!(st.tool, Tool::Mesh | Tool::Weights) {
+        meshedit::interact(ui, ctx, st, response, rect);
+        return;
+    }
     let Some(doc) = st.doc.as_ref() else { return };
     let center = center_of(rect);
     let pointer = ui.input(|i| i.pointer.latest_pos());
@@ -795,7 +820,7 @@ fn paint_handles(ui: &Ui, st: &State, painter: &egui::Painter, rect: Rect) {
     let (hs, ts) = (to_pos(st.view.to_screen(center, h)), to_pos(st.view.to_screen(center, t)));
     let c = accent(ui);
     match st.tool {
-        Tool::Create => {}
+        Tool::Create | Tool::Mesh | Tool::Weights => {}
         Tool::Move => {
             painter.circle_stroke(hs, geom::GRAB_RADIUS, Stroke::new(2.0, c));
             painter.circle_filled(hs, 3.0, c);
@@ -873,8 +898,11 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             (Tool::Move, icons::ARROWS_OUT_CARDINAL, "rig.tool.move"),
             (Tool::Rotate, icons::ARROWS_CLOCKWISE, "rig.tool.rotate"),
             (Tool::Scale, icons::ARROWS_OUT_SIMPLE, "rig.tool.scale"),
+            (Tool::Mesh, icons::POLYGON, "rig.tool.mesh"),
+            (Tool::Weights, icons::PAINT_BRUSH, "rig.tool.weights"),
         ] {
-            let enabled = !(st.pose_mode && tool == Tool::Create);
+            let mesh_ok = !matches!(tool, Tool::Mesh | Tool::Weights) || meshedit::has_mesh(st);
+            let enabled = !(st.pose_mode && matches!(tool, Tool::Create | Tool::Mesh)) && mesh_ok;
             let on = st.tool == tool;
             let mut text = RichText::new(icon).size(15.0);
             if on {

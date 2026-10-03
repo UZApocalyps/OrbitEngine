@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use orbit_anim::rig::{
-    Affine, Attachment, AttachmentId, Bone, BoneId, IkConstraint, RegionAttachment, Rig, RigIssue, RigIssueKind,
+    Affine, Attachment, AttachmentId, Bone, BoneId, IkConstraint, MeshAttachment, RegionAttachment, Rig, RigIssue, RigIssueKind,
     RigTrack, Severity, Skin, Slot, SlotId, WEB_MAX_BONES, Xform, load_rig, save_rig,
 };
 
@@ -28,6 +28,8 @@ pub enum OpError {
     BadIk,
     /// The `default` skin, or the last skin, cannot be deleted.
     KeepSkin,
+    /// A mesh with out-of-range indices or mismatched lengths.
+    BadMesh,
 }
 
 impl OpError {
@@ -38,6 +40,7 @@ impl OpError {
             OpError::EmptyName => "rig.err.empty_name",
             OpError::BadIk => "rig.err.bad_ik",
             OpError::KeepSkin => "rig.err.keep_skin",
+            OpError::BadMesh => "rig.err.bad_mesh",
         }
     }
 }
@@ -631,6 +634,33 @@ impl RigDoc {
         })
     }
 
+    /// Replaces the slot's attachment in `skin` by `mesh` (a region becomes a
+    /// mesh, a mesh is edited). Weights are normalized (≤ 4 bones, sum 1).
+    pub fn set_mesh(&mut self, slot_id: &SlotId, skin: &str, mut mesh: MeshAttachment) -> Result<(), OpError> {
+        let n = mesh.vertices.len();
+        if n == 0
+            || n > u16::MAX as usize
+            || mesh.uvs.len() != n
+            || (!mesh.weights.is_empty() && mesh.weights.len() != n)
+            || mesh.triangles.iter().flatten().any(|&i| i as usize >= n)
+            || mesh.vertices.iter().flatten().any(|v| !v.is_finite())
+        {
+            return Err(OpError::BadMesh);
+        }
+        for w in &mut mesh.weights {
+            super::weights::normalize(w);
+        }
+        self.mutate(|rig| {
+            let att = slot(rig, slot_id).ok_or(OpError::Unknown)?.attachment.clone().ok_or(OpError::Unknown)?;
+            let k = rig.skins.iter_mut().find(|k| k.name == skin).ok_or(OpError::Unknown)?;
+            if !k.attachments.contains_key(&att) {
+                return Err(OpError::Unknown);
+            }
+            k.attachments.insert(att, Attachment::Mesh(mesh));
+            Ok(())
+        })
+    }
+
     // ---- skins
 
     pub fn add_skin(&mut self, name: &str) -> Result<String, OpError> {
@@ -896,6 +926,34 @@ mod tests {
         assert!(doc.rig().slots[0].attachment.is_some(), "still shown by the default skin");
         doc.detach(&s, DEFAULT_SKIN).unwrap();
         assert!(doc.rig().slots[0].attachment.is_none());
+    }
+
+    #[test]
+    fn set_mesh_replaces_a_region_validates_and_normalizes() {
+        let (mut doc, root, child) = two_bones();
+        let s = doc.add_slot(&root).unwrap();
+        doc.attach_image(&s, DEFAULT_SKIN, "a.png", [10.0, 10.0]).unwrap();
+        let mesh = MeshAttachment {
+            image: "a.png".into(),
+            vertices: vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]],
+            uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+            triangles: vec![[0, 1, 2]],
+            weights: vec![vec![(root.clone(), 2.0), (child.clone(), 2.0)], vec![(root.clone(), 1.0)], vec![(child.clone(), 0.5)]],
+        };
+        let mut bad = mesh.clone();
+        bad.triangles = vec![[0, 1, 5]];
+        assert_eq!(doc.set_mesh(&s, DEFAULT_SKIN, bad), Err(OpError::BadMesh));
+        let mut bad = mesh.clone();
+        bad.uvs.pop();
+        assert_eq!(doc.set_mesh(&s, DEFAULT_SKIN, bad), Err(OpError::BadMesh));
+        doc.set_mesh(&s, DEFAULT_SKIN, mesh).unwrap();
+        let att = doc.rig().slots[0].attachment.clone().unwrap();
+        let Some(Attachment::Mesh(m)) = doc.rig().skins[0].attachments.get(&att) else { panic!("mesh expected") };
+        assert!(near(m.weights[0][0].1, 0.5) && near(m.weights[2][0].1, 1.0));
+        assert!(diagnostics(doc.rig()).iter().all(|d| d.severity != Severity::Error));
+        // Undo brings the region back.
+        doc.undo();
+        assert!(matches!(doc.rig().skins[0].attachments.get(&att), Some(Attachment::Region(_))));
     }
 
     #[test]

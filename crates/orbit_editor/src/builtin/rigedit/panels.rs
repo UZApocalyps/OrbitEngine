@@ -415,7 +415,7 @@ fn bone_section(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
 }
 
 /// Pixel size of a project image, cached.
-fn image_size(st: &mut State, root: &std::path::Path, path: &str) -> [f32; 2] {
+pub(super) fn image_size(st: &mut State, root: &std::path::Path, path: &str) -> [f32; 2] {
     if let Some(s) = st.image_sizes.get(path) {
         return *s;
     }
@@ -513,6 +513,7 @@ fn slot_section(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             let _ = doc.set_region(&sid, &skin_name, size, x);
         }
     }
+    super::meshedit::inspector(ui, ctx, st);
     ui.horizontal(|ui| {
         let n = st.doc.as_ref().map_or(0, |d| d.rig().slots.len());
         let idx = st.doc.as_ref().and_then(|d| d.rig().slots.iter().position(|s| s.id == sid)).unwrap_or(0);
