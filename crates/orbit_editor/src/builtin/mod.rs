@@ -18,6 +18,7 @@ mod importers;
 mod inspector;
 mod inspector_fx;
 mod inspector_screen;
+mod inspector_stage;
 mod library;
 pub mod manual;
 mod nodeinfo;

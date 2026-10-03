@@ -97,7 +97,7 @@ fn leading_version(source: &str) -> Option<u32> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11, v11_to_v12];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11, v11_to_v12, v12_to_v13];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -334,6 +334,16 @@ fn v10_to_v11(source: &str) -> Result<String, CoreError> {
 
     let mut story: Story = ron::from_str(source)?;
     story.schema_version = 11;
+    story.to_ron()
+}
+
+/// v12 -> v13. Additive only (background layers, particle emitters, ADR 0012
+/// addendum M5A-07 / M5A-08): only the version number changes.
+fn v12_to_v13(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 13;
     story.to_ron()
 }
 

@@ -49,6 +49,8 @@ pub fn asset_users(story: &Story, id: AssetId) -> Vec<AssetUser> {
             | NodeKind::PlayMusic { asset, .. }
             | NodeKind::PlaySound { asset }
             | NodeKind::ShowScene3d { scene: asset, .. } => *asset == id,
+            NodeKind::BackgroundLayers { layers, .. } => layers.iter().any(|l| l.asset == id),
+            NodeKind::Particles(e) => e.sprite == Some(id),
             _ => false,
         })
         .map(|n| AssetUser::Node(n.id));

@@ -454,6 +454,13 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
         NodeKind::CloseScreen { screen } => {
             super::inspector_screen::close_screen(ui, ctx, id, &screen);
         }
+        NodeKind::BackgroundLayers { layers, transition } => {
+            super::inspector_stage::layers(ui, ctx, id, &layers, transition);
+        }
+        NodeKind::Particles(emitter) => super::inspector_stage::particles(ui, ctx, id, &emitter),
+        NodeKind::StopParticles { name } => {
+            super::inspector_stage::stop_particles(ui, ctx, id, &name);
+        }
         NodeKind::Return => {
             info(ui, "inspector.return_info");
         }

@@ -123,4 +123,10 @@ pub enum PresentationEvent {
     HideScene3d {
         transition: Option<Transition>,
     },
+    /// The background is now a stack of parallax layers (back to front,
+    /// M5A-07); like `Background`, it clears the 3D layer. Appended last.
+    BackgroundLayers {
+        layers: Vec<orbit_core::BgLayer>,
+        transition: Option<Transition>,
+    },
 }

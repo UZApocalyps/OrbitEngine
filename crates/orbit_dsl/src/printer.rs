@@ -45,7 +45,19 @@
 //! tint <target> "#rrggbb" <strength> over <s> [ease <curve>] [wait] Effect::Tint
 //! timeline over <s> [loop <n> | forever | pingpong] [wait]          Timeline; tracks follow:
 //!     track <target> <prop> <t> <value> [ease <curve>], <t> <value> ...
+//! bg_layers [with <transition>]                  BackgroundLayers (parallax); layers follow:
+//!     layer <asset-ref> depth <f> [repeat_x]
+//! particles "<name>" <preset> [<key> <value> ...]   Particles (an emitter)
+//! stop particles ["<name>"]                      StopParticles
 //! ```
+//!
+//! `particles` keys, all optional after the preset (`rain`, `snow`, `petals`,
+//! `dust`, `sparks` or `custom`, whose values they override), and always
+//! written by the printer: `seed <n> rate <f> lifetime <f> jitter <f>
+//! spawn (x0, y0, x1, y1) direction <deg> spread <deg> speed (min, max)
+//! gravity (x, y) sway (amplitude, hz) size (min, max) stretch <f> spin <f>
+//! color "#rrggbb" to "#rrggbb" opacity <f> fade <f> [sprite <asset-ref>]
+//! front|behind prewarm|cold`.
 //!
 //! `<target>` is `camera`, `screen`, `background` or a character reference.
 //! `<prop>` is `offset`, `scale`, `pan` (values `(x, y)`), `rotation` (degrees),
@@ -124,6 +136,9 @@ pub const KEYWORDS: &[&str] = &[
     "tint",
     "timeline",
     "track",
+    "bg_layers",
+    "layer",
+    "particles",
     "by",
     "over",
     "ease",
@@ -709,6 +724,54 @@ fn write_node(ctx: &Ctx<'_>, scene: SceneId, node: &Node, out: &mut String) {
             s
         }
         NodeKind::CloseScreen { screen } => format!("close screen {}", quote(screen)),
+        NodeKind::BackgroundLayers { layers, transition: t } => {
+            out.push_str(&format!("    bg_layers{} #@{}\n", transition(t), node.id));
+            for l in layers {
+                out.push_str(&format!(
+                    "        layer {} depth {}{}\n",
+                    ctx.asset_ref(l.asset),
+                    fmt_f32(l.depth),
+                    if l.repeat_x { " repeat_x" } else { "" }
+                ));
+            }
+            return;
+        }
+        NodeKind::Particles(e) => {
+            let pair = |p: [f32; 2]| format!("({}, {})", fmt_f32(p[0]), fmt_f32(p[1]));
+            let mut s = format!(
+                "particles {} {} seed {} rate {} lifetime {} jitter {} spawn ({}, {}, {}, {}) direction {} spread {} speed {} gravity {} sway {} size {} stretch {} spin {} color {} to {} opacity {} fade {}",
+                quote(&e.name),
+                e.preset.name(),
+                e.seed,
+                fmt_f32(e.rate),
+                fmt_f32(e.lifetime),
+                fmt_f32(e.lifetime_jitter),
+                fmt_f32(e.spawn[0]),
+                fmt_f32(e.spawn[1]),
+                fmt_f32(e.spawn[2]),
+                fmt_f32(e.spawn[3]),
+                fmt_f32(e.direction),
+                fmt_f32(e.spread),
+                pair(e.speed),
+                pair(e.gravity),
+                pair(e.sway),
+                pair(e.size),
+                fmt_f32(e.stretch),
+                fmt_f32(e.spin),
+                hex(e.color),
+                hex(e.color_end),
+                fmt_f32(e.opacity),
+                fmt_f32(e.fade),
+            );
+            if let Some(sprite) = e.sprite {
+                s.push_str(&format!(" sprite {}", ctx.asset_ref(sprite)));
+            }
+            s.push_str(if e.front { " front" } else { " behind" });
+            s.push_str(if e.prewarm { " prewarm" } else { " cold" });
+            s
+        }
+        NodeKind::StopParticles { name } if name.is_empty() => "stop particles".into(),
+        NodeKind::StopParticles { name } => format!("stop particles {}", quote(name)),
         NodeKind::Timeline {
             duration,
             looping,

@@ -363,6 +363,14 @@ impl NodeKind {
         }
     }
 
+    /// Whether this node is tracked in the VM's running list: an `Effect` /
+    /// `Timeline` animation, or a particle node (`Particles` /
+    /// `StopParticles`, M5A-08), whose state is also just a start time.
+    pub fn is_timed(&self) -> bool {
+        self.animation().is_some()
+            || matches!(self, NodeKind::Particles(_) | NodeKind::StopParticles { .. })
+    }
+
     /// Whether this animating node touches `character`.
     pub fn animates_character(&self, character: CharacterId) -> bool {
         let hit = |t: &AnimTarget| *t == AnimTarget::Character(character);
@@ -426,6 +434,8 @@ pub struct StageFx {
     pub camera: CameraFx,
     /// Straight RGBA full-screen overlay.
     pub screen: [f32; 4],
+    /// The running particle emitters (M5A-08), in start order.
+    pub emitters: Vec<crate::particles::EmitterInstance>,
 }
 
 /// Deterministic shake direction at `t` seconds, each component in
@@ -459,6 +469,26 @@ impl StageFx {
         let mut fx = StageFx::default();
         let resolve = |n: &str| curves.get(n);
         for (kind, elapsed) in items {
+            match kind {
+                NodeKind::Particles(emitter) => {
+                    fx.emitters.push(crate::particles::EmitterInstance {
+                        emitter: emitter.clone(),
+                        elapsed,
+                        ends_at: None,
+                    });
+                    continue;
+                }
+                NodeKind::StopParticles { name } => {
+                    // Applies to the emitters started before it.
+                    for e in &mut fx.emitters {
+                        if e.ends_at.is_none() && (name.is_empty() || e.emitter.name == *name) {
+                            e.ends_at = Some(e.elapsed - elapsed);
+                        }
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             let Some(spec) = kind.animation() else { continue };
             let mut clip = Clip::new(spec.duration);
             clip.looping = spec.looping;
@@ -548,6 +578,7 @@ impl StageFx {
             && self.background.is_identity()
             && self.camera == CameraFx::default()
             && self.screen[3] <= 0.0
+            && self.emitters.is_empty()
     }
 }
 

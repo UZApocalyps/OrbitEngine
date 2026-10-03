@@ -480,6 +480,39 @@ mod tests {
     }
 
     #[test]
+    fn layer_and_particle_nodes_survive_postcard_without_a_version_change() {
+        // M5A-07 / M5A-08 (schema v13): `BackgroundLayers`, `Particles` and
+        // `StopParticles` are appended variants, so a pack written before
+        // them still reads and the pack stays version 3.
+        use orbit_core::{AssetId, BgLayer, Emitter, Node, NodeId, NodeKind, ParticlePreset};
+        let mut pack = fixture_pack();
+        let before = pack.to_bytes().unwrap();
+        assert_eq!(&before[8..12], &PACK_VERSION.to_le_bytes());
+        let image = AssetId::new();
+        let mut custom = Emitter::preset(ParticlePreset::Custom);
+        custom.sprite = Some(image);
+        custom.seed = 7;
+        for kind in [
+            NodeKind::BackgroundLayers {
+                layers: vec![
+                    BgLayer::new(image, 0.0),
+                    BgLayer { asset: image, depth: -0.5, repeat_x: true },
+                ],
+                transition: None,
+            },
+            NodeKind::Particles(Emitter::preset(ParticlePreset::Rain)),
+            NodeKind::Particles(custom),
+            NodeKind::StopParticles { name: "rain".into() },
+        ] {
+            pack.story.scenes[0].nodes.insert(0, Node { id: NodeId::new(), kind });
+        }
+        let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
+        assert_eq!(back, pack);
+        // The pack from before still decodes with the current reader.
+        assert!(GamePack::from_bytes(&before).is_ok());
+    }
+
+    #[test]
     fn bad_packs_are_refused() {
         assert_eq!(
             GamePack::from_bytes(b"(schema_version: 5)").unwrap_err(),

@@ -133,4 +133,7 @@
     "scene.row.timeline": "Timeline",
     "scene.row.open_screen": "Open screen",
     "scene.row.close_screen": "Close screen",
+    "scene.row.background_layers": "Parallax",
+    "scene.row.particles": "Particles",
+    "scene.row.stop_particles": "Stop particles",
 }

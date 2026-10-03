@@ -133,4 +133,7 @@
     "scene.row.timeline": "Chronologie",
     "scene.row.open_screen": "Ouvrir un écran",
     "scene.row.close_screen": "Fermer un écran",
+    "scene.row.background_layers": "Parallaxe",
+    "scene.row.particles": "Particules",
+    "scene.row.stop_particles": "Arrêter les particules",
 }

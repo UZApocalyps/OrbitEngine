@@ -62,7 +62,7 @@ fn a_save_made_while_a_screen_is_open_reopens_it() {
     vm.step();
     assert!(matches!(vm.step(), StepResult::Screen { .. }));
     let save = SaveData::capture(&vm, CaptureInfo::new(1, 1));
-    assert_eq!(save.meta.format_version, 5);
+    assert_eq!(save.meta.format_version, FORMAT_VERSION);
     let back = SaveData::decode(&save.encode().unwrap()).unwrap();
     assert_eq!(back.vm_state, save.vm_state);
 
@@ -107,6 +107,6 @@ fn a_save_from_a_newer_format_is_refused_cleanly() {
     let story = Arc::new(phone_story());
     let vm = Vm::from_start(story).unwrap();
     let mut bytes = SaveData::capture(&vm, CaptureInfo::new(1, 1)).encode().unwrap();
-    bytes[4..8].copy_from_slice(&6u32.to_le_bytes());
+    bytes[4..8].copy_from_slice(&7u32.to_le_bytes());
     assert!(matches!(SaveData::decode(&bytes), Err(SaveError::Incompatible(_))));
 }

@@ -177,6 +177,22 @@ impl Director {
         &self.stage
     }
 
+    /// What the running animations add on top of the staging. With reduced
+    /// motion on, the particles are left out (the other animations already
+    /// jump to their final state).
+    pub fn stage_fx(&self) -> orbit_core::StageFx {
+        let mut fx = self.vm.stage_fx();
+        if self.reduced_motion {
+            fx.emitters.clear();
+        }
+        fx
+    }
+
+    /// Whether the reduced-motion preference is on.
+    pub fn reduced_motion(&self) -> bool {
+        self.reduced_motion
+    }
+
     pub fn vm(&self) -> &Vm {
         &self.vm
     }
@@ -1071,6 +1087,35 @@ mod tests {
         }
         story.scenes.push(Scene { id: SceneId::new(), name: "s".into(), nodes });
         Director::new(Vm::from_start(story).unwrap())
+    }
+
+    /// A rain emitter, then "a", "b".
+    fn raining() -> Director {
+        use orbit_core::{Emitter, Node, NodeId, NodeKind, ParticlePreset, Scene, SceneId};
+        let mut story = Story::new("rain");
+        let mut nodes = vec![Node {
+            id: NodeId::new(),
+            kind: NodeKind::Particles(Emitter::preset(ParticlePreset::Rain)),
+        }];
+        for t in ["a", "b"] {
+            let text_id = story.strings.add(t);
+            nodes.push(Node { id: NodeId::new(), kind: NodeKind::Say { speaker: None, text_id } });
+        }
+        story.scenes.push(Scene { id: SceneId::new(), name: "s".into(), nodes });
+        Director::new(Vm::from_start(story).unwrap())
+    }
+
+    #[test]
+    fn reduced_motion_draws_no_particles_and_turning_it_off_brings_them_back() {
+        let mut d = raining();
+        assert_eq!(d.stage_fx().emitters.len(), 1);
+        d.set_reduced_motion(true);
+        assert!(d.stage_fx().emitters.is_empty());
+        assert!(d.reduced_motion());
+        // The emitter is still running underneath: nothing was lost.
+        assert_eq!(d.vm().stage_fx().emitters.len(), 1);
+        d.set_reduced_motion(false);
+        assert_eq!(d.stage_fx().emitters.len(), 1);
     }
 
     fn bg_x(d: &Director) -> f32 {

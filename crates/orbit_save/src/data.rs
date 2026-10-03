@@ -39,6 +39,11 @@
 //! VM state. Version 4 saves are still decoded (see `legacy_v4`): they come
 //! back with no screen open.
 //!
+//! Version 6 (M5A-07, ADR 0012 addendum) added the parallax layers of the
+//! background to the VM's scene state. Version 5 saves are still decoded (see
+//! `legacy_v5`): they come back with a plain background. Particle emitters
+//! need no layout change: they live in the running-animation list.
+//!
 //! The meta block is separate so the slot list can show the label, date,
 //! preview text and thumbnail without decoding the VM state.
 
@@ -49,7 +54,7 @@ use crate::error::SaveError;
 use crate::hash::story_hash;
 
 /// Version of the container and of the postcard layouts below.
-pub const FORMAT_VERSION: u32 = 5;
+pub const FORMAT_VERSION: u32 = 6;
 const MAGIC: &[u8; 4] = b"ORBS";
 const HEADER_LEN: usize = 12;
 /// Default number of checkpoints embedded in a save.
@@ -228,6 +233,14 @@ impl SaveData {
         }
         if version == 4 {
             let (vm_state, history) = crate::legacy_v4::decode_body(body_bytes)?;
+            return Ok(SaveData {
+                meta,
+                vm_state,
+                history,
+            });
+        }
+        if version == 5 {
+            let (vm_state, history) = crate::legacy_v5::decode_body(body_bytes)?;
             return Ok(SaveData {
                 meta,
                 vm_state,
