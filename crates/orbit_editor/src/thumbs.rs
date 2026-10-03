@@ -141,10 +141,22 @@ pub fn generate(req: &ThumbRequest) -> Result<Thumb, String> {
                 info,
             }
         }
+        AssetKind::Scene3d => Thumb {
+            image: None,
+            info: String::new(),
+        },
         AssetKind::Music | AssetKind::Sound => {
             let bytes = fs::read(&path).map_err(|e| e.to_string())?;
             let pcm = orbit_assets::decode_audio(&req.rel, &bytes)?;
             let info = format_duration(pcm.duration_secs());
+            if fs::create_dir_all(&dir).is_ok() {
+                let _ = fs::write(&info_path, &info);
+            }
+            Thumb { image: None, info }
+        }
+        AssetKind::Font => {
+            let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+            let info = orbit_text::font_family(&bytes).ok_or("not a usable font")?;
             if fs::create_dir_all(&dir).is_ok() {
                 let _ = fs::write(&info_path, &info);
             }

@@ -9,7 +9,7 @@ use crate::theme::Style;
 use crate::layout::{Align, Anchor, Dir, PanelKind, Size};
 
 /// Current version of the screen document format.
-pub const UI_VERSION: u32 = 1;
+pub const UI_VERSION: u32 = 2;
 
 fn default_version() -> u32 {
     UI_VERSION
@@ -77,6 +77,12 @@ pub struct LayoutDef {
     pub cross: Align,
     /// Root widget only: where it sits on the canvas (default: top left).
     pub anchor: Option<Anchor>,
+    /// Grid children: columns taken (0 counts as 1). `ui_version` 2.
+    #[serde(skip_serializing_if = "is_one")]
+    pub col_span: usize,
+    /// Grid children: rows taken (0 counts as 1). `ui_version` 2.
+    #[serde(skip_serializing_if = "is_one")]
+    pub row_span: usize,
 }
 
 impl Default for LayoutDef {
@@ -90,8 +96,14 @@ impl Default for LayoutDef {
             main: Align::Start,
             cross: Align::Start,
             anchor: None,
+            col_span: 1,
+            row_span: 1,
         }
     }
+}
+
+fn is_one(n: &usize) -> bool {
+    *n == 1
 }
 
 fn vertical() -> Dir {
@@ -173,12 +185,18 @@ pub enum WidgetKind {
         text: TextRef,
         bind: BindPath,
     },
-    /// A selector (a real dropdown list comes later). `Language` lists the
-    /// languages of the game; other settings list `options`.
+    /// A dropdown: it shows the current option and opens a popup list.
+    /// `Language` lists the languages of the game; other settings list
+    /// `options`. Bound to a story variable (`BindPath::Var`), option `i`
+    /// sets the variable to `values[i]` (all of the variable's type) and
+    /// the option equal to the variable's value is the selected one.
     Dropdown {
         bind: BindPath,
         #[serde(default)]
         options: Vec<TextRef>,
+        /// Variable binding only: the value of each option.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        values: Vec<orbit_core::Value>,
     },
     ScrollList,
     /// The save slots of the game as a paged grid of cards (thumbnail, date,

@@ -159,6 +159,17 @@ pub fn import_audio(bytes: &[u8]) -> Result<ImportedAsset, String> {
     })
 }
 
+/// Validates a TTF / OTF font by loading it.
+pub fn import_font(bytes: &[u8]) -> Result<ImportedAsset, String> {
+    if orbit_text::font_family(bytes).is_none() {
+        return Err("The file is not a usable TTF or OTF font.".to_owned());
+    }
+    Ok(ImportedAsset {
+        kind: AssetKind::Font,
+        bytes: bytes.to_vec(),
+    })
+}
+
 impl Plugin for ImportersPlugin {
     fn manifest(&self) -> PluginManifest {
         PluginManifest::new(ids::IMPORTERS, "Importeurs de ressources", "0.1.0")
@@ -174,6 +185,11 @@ impl Plugin for ImportersPlugin {
             label: "Audio WAV / OGG".to_owned(),
             extensions: vec!["wav".to_owned(), "ogg".to_owned()],
             import: import_audio,
+        });
+        registry.register_importer(AssetImporter {
+            label: "Font TTF / OTF".to_owned(),
+            extensions: vec!["ttf".to_owned(), "otf".to_owned()],
+            import: import_font,
         });
     }
 }

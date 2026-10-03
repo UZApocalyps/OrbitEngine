@@ -664,92 +664,54 @@ fn version_1_saves_still_load_unscaled() {
     assert!(decoded.apply_to(&mut loaded).unwrap());
 }
 
-/// A frozen save written by the format-2 build (before effects and
-/// timelines) must still load and play on.
 #[test]
-fn version_2_saves_still_load_with_no_animation_running() {
-    let bytes = include_bytes!("../../../examples/fixtures/compat/save_v2/save.orbs");
+fn the_3d_scene_survives_a_save() {
     let story = demo();
-    assert_eq!(SaveData::decode_meta(bytes).unwrap().format_version, 2);
-    let decoded = SaveData::decode(bytes).expect("v2 save must decode");
-    assert!(decoded.vm_state.active_anims.is_empty());
-    assert_eq!(decoded.vm_state.scene_clock, 0.0);
-    assert!(decoded.history.as_ref().is_some_and(|h| !h.checkpoints.is_empty()));
-
-    let mut vm = Vm::from_start(story.clone()).unwrap();
-    assert!(decoded.apply_to(&mut vm).unwrap());
-    assert!(matches!(vm.step(), StepResult::Say { .. } | StepResult::Choice { .. }));
-
-    // Saved again, it is a current-format save that loads back identically.
-    let again = SaveData::capture(&vm, info(9));
-    assert_eq!(again.meta.format_version, FORMAT_VERSION);
-    let back = SaveData::decode(&again.encode().unwrap()).unwrap();
-    assert_eq!(back.vm_state, again.vm_state);
-}
-
-/// `demo()` with a non-blocking 2 s move of the background inserted before
-/// the first line.
-fn story_with_animation() -> (Arc<Story>, NodeId) {
-    use orbit_core::{AnimTarget, Effect};
-    let mut story = (*demo()).clone();
-    let id = NodeId::new();
-    story.scenes[0].nodes.insert(
-        0,
-        Node {
-            id,
-            kind: NodeKind::Effect(Effect::Move {
-                target: AnimTarget::Background,
-                dx: 1.0,
-                dy: 0.0,
-                duration: 2.0,
-                ease: None,
-                wait: false,
-            }),
-        },
-    );
-    (Arc::new(story), id)
+    let mut vm = Vm::from_start(story).unwrap();
+    play(&mut vm, 3, 0);
+    let mut save = SaveData::capture(&vm, info(3));
+    let shown = orbit_vm::Scene3dState {
+        scene: orbit_core::AssetId::new(),
+        camera: Some("close".into()),
+    };
+    save.vm_state.scene.scene3d = Some(shown.clone());
+    if let Some(h) = &mut save.history
+        && let Some(c) = h.checkpoints.last_mut()
+    {
+        c.state.scene.scene3d = Some(shown.clone());
+    }
+    let decoded = SaveData::decode(&save.encode().unwrap()).unwrap();
+    assert_eq!(decoded.meta.format_version, FORMAT_VERSION);
+    assert_eq!(decoded.vm_state.scene.scene3d, Some(shown.clone()));
+    assert_eq!(decoded, save);
 }
 
 #[test]
-fn saving_and_loading_in_the_middle_of_an_animation_resumes_it() {
-    let (story, id) = story_with_animation();
+fn version_2_saves_still_load_without_3d() {
+    let story = demo();
     let mut vm = Vm::from_start(story.clone()).unwrap();
-    play(&mut vm, 3, 0);
-    vm.advance_clock(0.5);
-    let save = SaveData::capture(&vm, info(1));
-    assert!(save.vm_state.active_anims.iter().any(|a| a.node == id));
-    let bytes = save.encode().unwrap();
-    let decoded = SaveData::decode(&bytes).unwrap();
+    play(&mut vm, 8, 0);
+    let save = SaveData::capture(&vm, info(8));
+    assert!(save.meta.has_history);
+
+    // Hand-built v2 container: same meta, v2 body layout.
+    let mut meta = save.meta.clone();
+    meta.format_version = 2;
+    let meta_bytes = postcard::to_stdvec(&meta).unwrap();
+    let body = crate::legacy_v2::encode_body_for_tests(&save.vm_state, save.history.as_ref());
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"ORBS");
+    bytes.extend_from_slice(&2u32.to_le_bytes());
+    bytes.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&meta_bytes);
+    bytes.extend_from_slice(&body);
+
+    let decoded = SaveData::decode(&bytes).expect("v2 save must decode");
+    // Everything but the format version is the same (there was no 3D).
     assert_eq!(decoded.vm_state, save.vm_state);
-
-    let mut loaded = Vm::from_start(story.clone()).unwrap();
-    assert!(decoded.apply_to(&mut loaded).unwrap());
-    assert_eq!(loaded.scene_clock(), 0.5);
-    assert_eq!(loaded.stage_fx(), vm.stage_fx());
-    assert!((loaded.stage_fx().background.offset[0] - 0.25).abs() < 1e-6);
-    // The phase keeps going from where it was.
-    loaded.advance_clock(0.5);
-    assert!((loaded.stage_fx().background.offset[0] - 0.5).abs() < 1e-6);
-
-    // The history checkpoints carry the animation too: roll back to before
-    // anything was read on that clock.
+    assert_eq!(decoded.history, save.history);
+    assert!(decoded.vm_state.scene.scene3d.is_none());
+    assert!(check_compat(&story, &decoded).is_loadable());
     let mut loaded = Vm::from_start(story).unwrap();
     assert!(decoded.apply_to(&mut loaded).unwrap());
-    assert!(loaded.rollback(1).is_some());
-    assert!(loaded.scene_clock() <= 0.5);
-}
-
-#[test]
-fn a_save_whose_animation_node_was_deleted_still_loads() {
-    let (story, id) = story_with_animation();
-    let mut vm = Vm::from_start(story.clone()).unwrap();
-    play(&mut vm, 2, 0);
-    let save = SaveData::capture(&vm, info(1));
-    // The author removed the effect afterwards.
-    let mut edited = (*story).clone();
-    edited.scenes[0].nodes.retain(|n| n.id != id);
-    let mut loaded = Vm::from_start(Arc::new(edited)).unwrap();
-    save.apply_to(&mut loaded).expect("the save loads anyway");
-    assert!(loaded.active_anims().is_empty());
-    assert!(loaded.stage_fx().is_identity());
 }

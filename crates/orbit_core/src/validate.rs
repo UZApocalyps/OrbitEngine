@@ -10,10 +10,10 @@ use crate::defs::{AssetKind, FREE_POSITION_RANGE, Position, scale_is_valid};
 use orbit_anim::Curve;
 
 use crate::error::{CurveOwner, ValidationError, ValidationWarning};
-use crate::expr::Expr;
+use crate::expr::{BinOp, Expr};
 use crate::ids::{AssetId, NodeId};
 use crate::story::{Node, NodeKind, Story};
-use crate::value::ValueType;
+use crate::value::{Value, ValueType};
 
 /// Result of [`validate`].
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -427,6 +427,25 @@ impl Cx<'_> {
                         }
                     }
                 },
+                NodeKind::ShowScene3d {
+                    scene, transition, ..
+                } => {
+                    self.check_asset(Some(id), *scene, AssetKind::Scene3d);
+                    if let Some(t) = transition {
+                        self.check_duration(id, t.duration);
+                        if let Some(c) = &t.ease {
+                            self.check_curve(CurveOwner::Node(id), c);
+                        }
+                    }
+                }
+                NodeKind::Camera3d { transition, .. } | NodeKind::HideScene3d { transition } => {
+                    if let Some(t) = transition {
+                        self.check_duration(id, t.duration);
+                        if let Some(c) = &t.ease {
+                            self.check_curve(CurveOwner::Node(id), c);
+                        }
+                    }
+                }
                 NodeKind::Background { asset, transition } => {
                     self.check_asset(Some(id), *asset, AssetKind::Image);
                     if let Some(t) = transition {
@@ -555,6 +574,19 @@ impl Cx<'_> {
         }
 
         let var_type = |n: &str| types.get(n).copied().flatten();
+        let story_vars: HashMap<&str, &Value> = self
+            .story
+            .variables
+            .iter()
+            .map(|v| (v.name.as_str(), &v.initial))
+            .collect();
+        let assigned: HashSet<&str> = flat
+            .iter()
+            .filter_map(|n| match &n.kind {
+                NodeKind::SetVar { var, .. } => Some(var.as_str()),
+                _ => None,
+            })
+            .collect();
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
         let check_expr = |errors: &mut Vec<ValidationError>,
@@ -594,6 +626,9 @@ impl Cx<'_> {
                 }
                 NodeKind::SetVar { var, value } => {
                     check_expr(&mut errors, &mut warnings, node.id, value, false);
+                    if divides_by_zero(value, &story_vars, &assigned) {
+                        warnings.push(ValidationWarning::DivisionByZero { node: node.id });
+                    }
                     if declared.contains(var)
                         && let (Some(want), Ok(Some(got))) =
                             (var_type(var), value.type_of(&var_type))
@@ -771,6 +806,30 @@ impl Cx<'_> {
                     .push(ValidationWarning::AllOptionsConditional(node.id));
             }
         }
+    }
+}
+
+/// Whether `expr` divides by something statically zero: a literal `0` /
+/// `0.0`, or a variable declared at 0 that no node ever assigns.
+fn divides_by_zero(expr: &Expr, vars: &HashMap<&str, &Value>, assigned: &HashSet<&str>) -> bool {
+    let is_zero = |e: &Expr| match e {
+        Expr::Lit(Value::Int(0)) => true,
+        Expr::Lit(Value::Float(f)) => *f == 0.0,
+        Expr::Var(n) if !assigned.contains(n.as_str()) => match vars.get(n.as_str()) {
+            Some(Value::Int(0)) => true,
+            Some(Value::Float(f)) => *f == 0.0,
+            _ => false,
+        },
+        _ => false,
+    };
+    match expr {
+        Expr::Binary(op, l, r) => {
+            (*op == BinOp::Div && is_zero(r))
+                || divides_by_zero(l, vars, assigned)
+                || divides_by_zero(r, vars, assigned)
+        }
+        Expr::Unary(_, e) => divides_by_zero(e, vars, assigned),
+        _ => false,
     }
 }
 
@@ -1058,6 +1117,39 @@ mod tests {
     }
 
     #[test]
+    fn scene3d_commands_are_checked() {
+        let mut s = Story::new("t");
+        let (_, img) = character(&mut s);
+        let room = asset(&mut s, AssetKind::Scene3d, "assets/3d/room.scene3d.ron");
+        let ok = node(NodeKind::ShowScene3d {
+            scene: room,
+            camera: Some("a".into()),
+            transition: Some(Transition::dissolve(0.5)),
+        });
+        let image_as_scene = node(NodeKind::ShowScene3d {
+            scene: img,
+            camera: None,
+            transition: None,
+        });
+        let unknown = node(NodeKind::ShowScene3d {
+            scene: AssetId::new(),
+            camera: None,
+            transition: None,
+        });
+        let bad_time = node(NodeKind::Camera3d {
+            camera: "a".into(),
+            transition: Some(Transition::dissolve(-1.0)),
+        });
+        let hide = node(NodeKind::HideScene3d { transition: None });
+        let s = with_nodes(s, vec![ok, image_as_scene, unknown, bad_time, hide]);
+        let errs = validate(&s).errors;
+        assert_eq!(errs.len(), 3, "{errs:#?}");
+        assert!(matches!(errs[0], ValidationError::AssetKindMismatch { .. }));
+        assert!(matches!(errs[1], ValidationError::UnknownAsset { .. }));
+        assert!(matches!(errs[2], ValidationError::InvalidDuration { .. }));
+    }
+
+    #[test]
     fn definitions_are_checked() {
         let mut s = Story::new("t");
         let (ana, img) = character(&mut s);
@@ -1170,6 +1262,43 @@ mod tests {
                 var: "ghost".into()
             }]
         );
+    }
+
+    #[test]
+    fn static_division_by_zero_is_a_warning() {
+        let div = |d: Expr| {
+            node(NodeKind::SetVar {
+                var: "x".into(),
+                value: Expr::Binary(BinOp::Div, Box::new(Expr::lit(10i64)), Box::new(d)),
+            })
+        };
+        let mut s = Story::new("t");
+        s.variables.push(VarDecl::game("zero", Value::Int(0)));
+        s.variables.push(VarDecl::game("two", Value::Int(2)));
+        s.variables.push(VarDecl::game("moves", Value::Int(0)));
+        s.variables.push(VarDecl::game("x", Value::Int(0)));
+        let nodes = vec![
+            div(Expr::lit(0i64)),
+            div(Expr::var("zero")),
+            div(Expr::var("two")),
+            div(Expr::var("moves")),
+            node(NodeKind::SetVar {
+                var: "moves".into(),
+                value: Expr::lit(3i64),
+            }),
+            node(NodeKind::End),
+        ];
+        let ids: Vec<_> = nodes.iter().map(|n| n.id).collect();
+        let report = validate(&with_nodes(s, nodes));
+        let flagged: Vec<_> = report
+            .warnings
+            .iter()
+            .filter_map(|w| match w {
+                ValidationWarning::DivisionByZero { node } => Some(*node),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flagged, vec![ids[0], ids[1]], "{report:?}");
     }
 
     #[test]

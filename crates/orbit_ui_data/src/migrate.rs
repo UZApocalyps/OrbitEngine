@@ -28,7 +28,42 @@ pub fn read_version(source: &str) -> Result<u32, String> {
 pub type Step = fn(&str) -> Result<String, String>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2.
-const STEPS: &[Step] = &[];
+const STEPS: &[Step] = &[v1_to_v2];
+
+/// v1 -> v2 (UI-12): everything added is optional (`col_span`, `row_span`,
+/// `Fill::NineSlice`, `Dropdown::values`, `Theme::fonts`), so a document
+/// only changes its version number.
+fn v1_to_v2(source: &str) -> Result<String, String> {
+    Ok(bump_version(source, 1, 2))
+}
+
+/// Rewrites the first `ui_version: from` to `ui_version: to` (a document
+/// without the field already reads as the current version).
+fn bump_version(source: &str, from: u32, to: u32) -> String {
+    let Some(at) = source.find("ui_version") else {
+        return source.to_owned();
+    };
+    let after = at + "ui_version".len();
+    let tail = &source[after..];
+    let Some(colon) = tail.find(':') else {
+        return source.to_owned();
+    };
+    let rest = &tail[colon + 1..];
+    let skipped = rest.len() - rest.trim_start().len();
+    let digits_at = after + colon + 1 + skipped;
+    let digits: String = source[digits_at..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    if digits != from.to_string() {
+        return source.to_owned();
+    }
+    format!(
+        "{}{to}{}",
+        &source[..digits_at],
+        &source[digits_at + digits.len()..]
+    )
+}
 
 /// Brings `source` (declared at `from`) up to [`UI_VERSION`].
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, String> {
@@ -68,10 +103,16 @@ mod tests {
 
     #[test]
     fn current_version_is_untouched() {
-        assert!(matches!(
-            migrate(UI_VERSION, "(ui_version: 1)").unwrap(),
-            Cow::Borrowed(_)
-        ));
+        let doc = format!("(ui_version: {UI_VERSION})");
+        assert!(matches!(migrate(UI_VERSION, &doc).unwrap(), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn v1_documents_are_stamped_with_the_new_version() {
+        let out = migrate(1, "(ui_version: 1, id: \"a\")").unwrap();
+        assert_eq!(out, "(ui_version: 2, id: \"a\")");
+        // A document without the field is already current.
+        assert_eq!(migrate(1, "(id: \"a\")").unwrap(), "(id: \"a\")");
     }
 
     #[test]

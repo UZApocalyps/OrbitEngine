@@ -1,0 +1,289 @@
+(
+    schema_version: 10,
+    title: "Test Effects",
+    strings: (
+        source_lang: "en",
+        entries: {
+            "01M4053TJC0MANDVTGCYA68MQJ": "Alice",
+            "01M4053TJC2GEYHKAMBN54Y1SX": "Watch this.",
+            "01M4053TJC74F8CKY30B86C0PZ": "Effects add up on the staging.",
+            "01M4053TJCF77K14GGWP8RWYJN": "And timelines run while you read.",
+            "01M4053TJCQTAF8RCEW30WSZDP": "The end.",
+        },
+    ),
+    assets: (
+        assets: [
+            (
+                id: "01JBX0A2000000000000000001",
+                kind: Image,
+                path: "fixtures/assets/bg_room.png",
+            ),
+            (
+                id: "01JBX0A2000000000000000002",
+                kind: Image,
+                path: "fixtures/assets/alice_happy.png",
+            ),
+        ],
+    ),
+    characters: [
+        (
+            id: "01JBX0C2000000000000000001",
+            name_id: "01M4053TJC0MANDVTGCYA68MQJ",
+            color: (
+                r: 230,
+                g: 120,
+                b: 120,
+            ),
+            expressions: [
+                (
+                    name: "happy",
+                    image: "01JBX0A2000000000000000002",
+                ),
+            ],
+        ),
+    ],
+    positions: [],
+    variables: [],
+    curves: {
+        "snappy": Bezier(
+            p1: (0.2, 0.0),
+            p2: (0.1, 1.2),
+        ),
+    },
+    scenes: [
+        (
+            id: "01JBX0S2000000000000000001",
+            name: "main",
+            nodes: [
+                (
+                    id: "00000000000000000004000001",
+                    kind: Background(
+                        asset: "01JBX0A2000000000000000001",
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.5,
+                            ease: Some(Preset(InOutSine)),
+                        )),
+                    ),
+                ),
+                (
+                    id: "00000000000000000004000002",
+                    kind: Show(
+                        character: "01JBX0C2000000000000000001",
+                        expression: "happy",
+                        position: Left,
+                        transition: Some((
+                            kind: Dissolve,
+                            duration: 0.3,
+                            ease: Some(Named("snappy")),
+                        )),
+                    ),
+                ),
+                (
+                    id: "00000000000000000004000003",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01M4053TJC2GEYHKAMBN54Y1SX",
+                    ),
+                ),
+                (
+                    id: "00000000000000000004000004",
+                    kind: Effect(Move(
+                        target: Character("01JBX0C2000000000000000001"),
+                        dx: 0.3,
+                        dy: 0.0,
+                        duration: 1.0,
+                        ease: Some(Preset(OutQuad)),
+                        wait: true,
+                    )),
+                ),
+                (
+                    id: "00000000000000000004000005",
+                    kind: Effect(Shake(
+                        target: Camera,
+                        amplitude: 0.02,
+                        duration: 0.5,
+                        ease: None,
+                        wait: false,
+                    )),
+                ),
+                (
+                    id: "00000000000000000004000006",
+                    kind: Effect(Zoom(
+                        factor: 1.3,
+                        duration: 1.0,
+                        ease: Some(Named("snappy")),
+                        wait: false,
+                    )),
+                ),
+                (
+                    id: "00000000000000000004000007",
+                    kind: Effect(Flash(
+                        color: (
+                            r: 255,
+                            g: 255,
+                            b: 255,
+                        ),
+                        duration: 0.3,
+                        ease: None,
+                        wait: false,
+                    )),
+                ),
+                (
+                    id: "00000000000000000004000008",
+                    kind: Effect(Tint(
+                        target: Screen,
+                        color: (
+                            r: 255,
+                            g: 0,
+                            b: 0,
+                        ),
+                        strength: 0.4,
+                        duration: 1.0,
+                        ease: None,
+                        wait: false,
+                    )),
+                ),
+                (
+                    id: "00000000000000000004000009",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01M4053TJC74F8CKY30B86C0PZ",
+                    ),
+                ),
+                (
+                    id: "0000000000000000000400000A",
+                    kind: Timeline(
+                        duration: 3.0,
+                        looping: Loop(2),
+                        wait: false,
+                        tracks: [
+                            (
+                                target: Background,
+                                prop: Offset,
+                                data: Vec2([
+                                    (
+                                        t: 0.0,
+                                        value: (
+                                            x: 0.0,
+                                            y: 0.0,
+                                        ),
+                                    ),
+                                    (
+                                        t: 1.5,
+                                        value: (
+                                            x: 0.05,
+                                            y: 0.0,
+                                        ),
+                                        ease: Preset(InOutQuad),
+                                    ),
+                                    (
+                                        t: 3.0,
+                                        value: (
+                                            x: 0.0,
+                                            y: 0.0,
+                                        ),
+                                    ),
+                                ]),
+                            ),
+                            (
+                                target: Character("01JBX0C2000000000000000001"),
+                                prop: Rotation,
+                                data: Angle([
+                                    (
+                                        t: 0.0,
+                                        value: (0.0),
+                                    ),
+                                    (
+                                        t: 3.0,
+                                        value: (5.0),
+                                    ),
+                                ]),
+                            ),
+                            (
+                                target: Character("01JBX0C2000000000000000001"),
+                                prop: Opacity,
+                                data: Scalar([
+                                    (
+                                        t: 0.0,
+                                        value: 1.0,
+                                    ),
+                                    (
+                                        t: 3.0,
+                                        value: 0.6,
+                                    ),
+                                ]),
+                            ),
+                            (
+                                target: Screen,
+                                prop: Tint,
+                                data: Color([
+                                    (
+                                        t: 0.0,
+                                        value: (
+                                            r: 0.0,
+                                            g: 0.0,
+                                            b: 0.0,
+                                            a: 0.0,
+                                        ),
+                                    ),
+                                    (
+                                        t: 3.0,
+                                        value: (
+                                            r: 0.0,
+                                            g: 0.0,
+                                            b: 0.3,
+                                            a: 0.4,
+                                        ),
+                                    ),
+                                ]),
+                            ),
+                        ],
+                    ),
+                ),
+                (
+                    id: "0000000000000000000400000B",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01M4053TJCF77K14GGWP8RWYJN",
+                    ),
+                ),
+                (
+                    id: "0000000000000000000400000C",
+                    kind: Timeline(
+                        duration: 1.5,
+                        looping: Once,
+                        wait: true,
+                        tracks: [
+                            (
+                                target: Camera,
+                                prop: Zoom,
+                                data: Scalar([
+                                    (
+                                        t: 0.0,
+                                        value: 1.0,
+                                    ),
+                                    (
+                                        t: 1.5,
+                                        value: 1.2,
+                                    ),
+                                ]),
+                            ),
+                        ],
+                    ),
+                ),
+                (
+                    id: "0000000000000000000400000D",
+                    kind: Say(
+                        speaker: None,
+                        text_id: "01M4053TJCQTAF8RCEW30WSZDP",
+                    ),
+                ),
+                (
+                    id: "0000000000000000000400000E",
+                    kind: End,
+                ),
+            ],
+        ),
+    ],
+)

@@ -424,6 +424,23 @@ pub enum CommandSpec {
         /// Free-form JSON data for the plugin.
         data: Option<Json>,
     },
+    /// Show a 3D scene (`.scene3d.ron` asset) as the background, seen from
+    /// one of its cameras. Characters and the textbox stay on top.
+    ShowScene3d {
+        /// 3D scene asset (id, manifest path or file name).
+        scene: String,
+        /// Camera name in the scene (default: its first camera).
+        camera: Option<String>,
+        transition: Option<TransitionArg>,
+    },
+    /// Switch the camera of the 3D scene on screen.
+    Camera3d {
+        /// Camera name in the scene.
+        camera: String,
+        transition: Option<TransitionArg>,
+    },
+    /// Remove the 3D scene: the 2D background shows again.
+    HideScene3d { transition: Option<TransitionArg> },
     /// A quick animated effect on the stage. Effects are **relative to the
     /// staging** and add up: `move` shifts by `(dx, dy)` (move by the opposite
     /// amount to bring it back), `zoom` multiplies the camera zoom, a `shake`
@@ -561,6 +578,9 @@ pub fn spec_variant(spec: &CommandSpec) -> &'static str {
         CommandSpec::Return => "Return",
         CommandSpec::End => "End",
         CommandSpec::Custom { .. } => "Custom",
+        CommandSpec::ShowScene3d { .. } => "ShowScene3d",
+        CommandSpec::Camera3d { .. } => "Camera3d",
+        CommandSpec::HideScene3d { .. } => "HideScene3d",
         CommandSpec::Effect { .. } => "Effect",
         CommandSpec::Timeline { .. } => "Timeline",
     }
@@ -588,6 +608,9 @@ pub const NODE_KIND_TOOLS: &[(&str, &str)] = &[
     ("Return", "add_command type=return"),
     ("End", "add_command type=end"),
     ("Custom", "add_command type=custom"),
+    ("ShowScene3d", "add_command type=show_scene3d"),
+    ("Camera3d", "add_command type=camera3d"),
+    ("HideScene3d", "add_command type=hide_scene3d"),
     ("Effect", "add_command type=effect"),
     ("Timeline", "add_command type=timeline"),
 ];
@@ -712,6 +735,7 @@ enum AssetKindArg {
     Image,
     Music,
     Sound,
+    Font,
 }
 
 impl From<AssetKindArg> for AssetKind {
@@ -720,6 +744,7 @@ impl From<AssetKindArg> for AssetKind {
             AssetKindArg::Image => AssetKind::Image,
             AssetKindArg::Music => AssetKind::Music,
             AssetKindArg::Sound => AssetKind::Sound,
+            AssetKindArg::Font => AssetKind::Font,
         }
     }
 }
@@ -1248,6 +1273,25 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
                 data,
             }
         }
+        CommandSpec::ShowScene3d {
+            scene,
+            camera,
+            transition: t,
+        } => NodeKind::ShowScene3d {
+            scene: find_asset(story, scene, Some(AssetKind::Scene3d))?,
+            camera: camera.clone().filter(|c| !c.trim().is_empty()),
+            transition: transition(t)?,
+        },
+        CommandSpec::Camera3d {
+            camera,
+            transition: t,
+        } => NodeKind::Camera3d {
+            camera: camera.clone(),
+            transition: transition(t)?,
+        },
+        CommandSpec::HideScene3d { transition: t } => NodeKind::HideScene3d {
+            transition: transition(t)?,
+        },
         CommandSpec::Effect { .. } => NodeKind::Effect(build_effect(story, spec)?),
         CommandSpec::Timeline {
             duration,
@@ -1916,6 +1960,9 @@ fn import_asset(cx: &mut ToolCx<'_>, a: ImportAssetArgs) -> Result<String, ToolE
     {
         kind = Some(AssetKind::Image);
     }
+    if kind.is_none() && matches!(ext.as_str(), "ttf" | "otf") {
+        kind = Some(AssetKind::Font);
+    }
     let converted = match importer {
         Some(importer) => {
             let bytes = fs::read(&source)?;
@@ -1956,6 +2003,8 @@ fn import_asset(cx: &mut ToolCx<'_>, a: ImportAssetArgs) -> Result<String, ToolE
                 AssetKind::Image => "assets/images",
                 AssetKind::Music => "assets/music",
                 AssetKind::Sound => "assets/sounds",
+                AssetKind::Scene3d => "assets/3d",
+                AssetKind::Font => "assets/fonts",
             };
             let payload = match &converted {
                 Some(bytes) => bytes.clone(),

@@ -403,7 +403,9 @@ impl Runtime {
             self.config.theme = theme;
             self.ui_sounds = UiSoundBank::new(&self.config.theme, &self.assets_loader);
         }
+        let images = super::theme_images(&self.ctx.theme, &self.store);
         if let Some(shell) = self.shell_mut() {
+            shell.set_ui_images(images);
             shell.set_ui_bundle(&bundle);
         }
         self.emb_mut().dirty = true;
@@ -829,12 +831,17 @@ impl Runtime {
     ) -> Result<(), RenderError> {
         let clock = time.map(|t| crate::stage::AnimClock::at(stage, t));
         let mut scene = Scene::new();
+        self.layer3d.begin_frame();
+        let layer3d = self
+            .layer3d
+            .draw(&mut self.ctx.renderer, &self.store, story, stage);
         stage_scene(
             &self.ctx.renderer,
             &self.store,
             story,
             stage,
             clock.as_ref(),
+            layer3d,
             None,
             &mut scene,
         );

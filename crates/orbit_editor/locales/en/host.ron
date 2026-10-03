@@ -173,6 +173,7 @@
     "problem.duplicate_position": "Duplicate or reserved position name: “{name}”",
     "problem.invalid_position_coords": "Position “{name}” is off screen (0 to 1 expected)",
     "problem.duplicate_scene": "Duplicate scene ID",
+    "problem.division_by_zero": "Division by zero: the divisor is 0 or a variable that is never different from 0",
     "problem.undefined_variable": "Variable “{var}” is neither declared nor assigned",
     "problem.unreachable_node": "This node is never reached",
     "problem.infinite_loop": "Possible loop with no line, choice or wait",

@@ -18,7 +18,7 @@ use crate::migrate;
 use crate::validate;
 
 /// Version of the on-disk schema produced by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 9;
+pub const CURRENT_SCHEMA_VERSION: u32 = 10;
 
 /// A whole story: definitions (characters, assets, strings...) and an ordered
 /// list of scenes. Execution starts at the first node of the first non-empty
@@ -186,6 +186,31 @@ pub enum NodeKind {
         version: u32,
         #[serde(default)]
         data: CustomData,
+    },
+    /// Shows a 3D scene (`.scene3d.ron` asset) as the background layer, seen
+    /// from one of its named cameras (`None`: its first camera). The 2D
+    /// background is hidden but kept (it comes back with `HideScene3d`); a
+    /// later `Background` replaces the 3D scene (ADR 0014, M6-07 / M6-11).
+    /// The three 3D variants are appended last: additive, older stories and
+    /// paks keep their encoding.
+    ShowScene3d {
+        scene: AssetId,
+        #[serde(default)]
+        camera: Option<String>,
+        #[serde(default)]
+        transition: Option<Transition>,
+    },
+    /// Switches the camera of the 3D scene on screen (cut, or a fade /
+    /// dissolve between the two views). Ignored when no 3D scene is shown.
+    Camera3d {
+        camera: String,
+        #[serde(default)]
+        transition: Option<Transition>,
+    },
+    /// Removes the 3D scene: the 2D background (if any) shows again.
+    HideScene3d {
+        #[serde(default)]
+        transition: Option<Transition>,
     },
     /// A simple animated effect (move, shake, zoom, flash, tint), schema v9.
     /// Compiled to a small timeline by [`Effect::tracks`].

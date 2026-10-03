@@ -452,7 +452,66 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
             info(ui, "inspector.end_info");
         }
         NodeKind::Custom { .. } => generic_inspector(ui, ctx, id),
+        kind @ (NodeKind::ShowScene3d { .. }
+        | NodeKind::Camera3d { .. }
+        | NodeKind::HideScene3d { .. }) => scene3d_inspector(ui, ctx, id, kind),
     }
+}
+
+/// The inspector of the 3D scene commands (ADR 0014): scene asset, camera
+/// name (empty: the first camera of the scene) and transition. Choosing the
+/// camera from the scene's list is M6-11 work.
+fn scene3d_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, kind: NodeKind) {
+    let (scene, camera, transition) = match &kind {
+        NodeKind::ShowScene3d {
+            scene,
+            camera,
+            transition,
+        } => (Some(*scene), Some(camera.clone().unwrap_or_default()), transition.clone()),
+        NodeKind::Camera3d { camera, transition } => (None, Some(camera.clone()), transition.clone()),
+        NodeKind::HideScene3d { transition } => (None, None, transition.clone()),
+        _ => return,
+    };
+    let rebuild = |scene_id: Option<orbit_core::AssetId>,
+                   camera: Option<String>,
+                   transition: Option<orbit_core::Transition>| match &kind {
+        NodeKind::ShowScene3d { scene, .. } => NodeKind::ShowScene3d {
+            scene: scene_id.unwrap_or(*scene),
+            camera: camera.filter(|c| !c.trim().is_empty()),
+            transition,
+        },
+        NodeKind::Camera3d { .. } => NodeKind::Camera3d {
+            camera: camera.unwrap_or_default(),
+            transition,
+        },
+        _ => NodeKind::HideScene3d { transition },
+    };
+    if let Some(current) = scene {
+        tfield(ui, "inspector.scene3d", |ui| {
+            asset_row(ui, ctx, id, AssetKind::Scene3d, current, |a| {
+                rebuild(Some(a), camera.clone(), transition.clone())
+            });
+        });
+    }
+    if let Some(name) = &camera {
+        let mut done = false;
+        if let Some(new) = tfield(ui, "inspector.camera3d", |ui| {
+            let hint = ui.t("inspector.camera3d.hint");
+            fields::text_field(ui, ("camera3d", id), name, &hint, 1, &mut done)
+        }) {
+            commit(ctx, id, rebuild(None, Some(new), transition.clone()), "camera");
+        }
+        if done {
+            ctx.end_merge();
+        }
+    }
+    tfield(ui, "inspector.transition", |ui| {
+        if let Some(t) =
+            transition_editor(ui, ("scene3d_transition", id), transition.clone(), &curves_of(ctx))
+        {
+            commit(ctx, id, rebuild(None, camera.clone(), t), "transition");
+        }
+    });
 }
 
 /// A muted paragraph; `key` is a text key (a literal that is not a key is

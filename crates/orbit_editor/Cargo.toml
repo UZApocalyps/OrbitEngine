@@ -24,7 +24,7 @@ orbit_editor_api.workspace = true
 orbit_platform.workspace = true
 orbit_gfx.workspace = true
 orbit_render2d.workspace = true
-orbit_runtime.workspace = true
+orbit_runtime = { workspace = true, features = ["3d"] }
 orbit_vm.workspace = true
 orbit_save.workspace = true
 orbit_assets.workspace = true
@@ -33,6 +33,9 @@ orbit_export.workspace = true
 orbit_i18n.workspace = true
 orbit_mcp.workspace = true
 orbit_ui.workspace = true
+orbit_render3d.workspace = true
+orbit_scene = { path = "../orbit_scene" }
+orbit_text.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
 egui-wgpu.workspace = true

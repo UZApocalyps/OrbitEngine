@@ -1121,6 +1121,31 @@ fn describe(texts: &orbit_editor_api::Translator, story: &Story, node: &Node) ->
             texts.t("scene.row.background"),
             format!("{}{}", asset(*a), transition(t)),
         ),
+        NodeKind::ShowScene3d {
+            scene,
+            camera,
+            transition: t,
+        } => (
+            texts.t("scene.row.scene3d"),
+            format!(
+                "{}{}{}",
+                asset(*scene),
+                camera
+                    .as_ref()
+                    .map_or_else(String::new, |c| format!("  ·  {c}")),
+                transition(t)
+            ),
+        ),
+        NodeKind::Camera3d {
+            camera,
+            transition: t,
+        } => (
+            texts.t("scene.row.camera3d"),
+            format!("{camera}{}", transition(t)),
+        ),
+        NodeKind::HideScene3d { transition: t } => {
+            (texts.t("scene.row.hide_scene3d"), transition(t))
+        }
         NodeKind::Show {
             character,
             expression,

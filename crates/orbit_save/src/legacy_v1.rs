@@ -81,6 +81,7 @@ impl From<SceneStateV1> for SceneState {
                 })
                 .collect(),
             music: old.music,
+            scene3d: None,
         }
     }
 }

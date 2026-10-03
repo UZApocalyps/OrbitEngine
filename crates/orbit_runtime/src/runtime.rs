@@ -489,6 +489,9 @@ pub struct Runtime {
     font_handles: Vec<AssetHandle<Vec<u8>>>,
     fonts_ready: bool,
     targets: [TextureId; 2],
+    /// The 3D background layer (inert without the `3d` feature or before
+    /// the first 3D scene).
+    layer3d: crate::compose3d::Layer3d,
     thumbnail_target: TextureId,
     captures: Vec<(u64, Readback)>,
     mapper: InputMapper,
@@ -627,6 +630,7 @@ impl Runtime {
             font_handles,
             fonts_ready: embedded.is_some(),
             targets,
+            layer3d: crate::compose3d::Layer3d::default(),
             thumbnail_target,
             captures: Vec::new(),
             mapper: InputMapper::default(),
@@ -923,6 +927,7 @@ impl Runtime {
             shell.warn_storage_unavailable();
         }
         shell.set_menu_background(menu_background(&story, &self.store));
+        shell.set_ui_images(theme_images(&self.ctx.theme, &self.store));
         shell
     }
 
@@ -1085,12 +1090,17 @@ impl Runtime {
         let renderer = &mut self.ctx.renderer;
         for request in shell.take_capture_requests() {
             let mut scene = Scene::new();
+            self.layer3d.begin_frame();
+            let layer3d = self
+                .layer3d
+                .draw(renderer, &self.store, shell.story(), &request.stage);
             stage_scene(
                 renderer,
                 &self.store,
                 shell.story(),
                 &request.stage,
                 None,
+                layer3d,
                 None,
                 &mut scene,
             );
@@ -1235,8 +1245,20 @@ impl Runtime {
                             Some(tr) => self.anim_clock.sync([&tr.from, game.director.stage()]),
                             None => self.anim_clock.sync([game.director.stage()]),
                         }
+                        self.layer3d.begin_frame();
                         if let Some(tr) = game.director.transition() {
                             transitioning = true;
+                            // 2D <-> 3D and camera changes blend like any
+                            // stage change: each side has its own 3D view.
+                            let from_3d =
+                                self.layer3d
+                                    .draw(renderer, &self.store, &game.story, &tr.from);
+                            let to_3d = self.layer3d.draw(
+                                renderer,
+                                &self.store,
+                                &game.story,
+                                game.director.stage(),
+                            );
                             let mut from = Scene::new();
                             stage_scene(
                                 renderer,
@@ -1244,6 +1266,7 @@ impl Runtime {
                                 &game.story,
                                 &tr.from,
                                 Some(&self.anim_clock),
+                                from_3d,
                                 Some((&fx, *white)),
                                 &mut from,
                             );
@@ -1253,6 +1276,7 @@ impl Runtime {
                                 &game.story,
                                 game.director.stage(),
                                 Some(&self.anim_clock),
+                                to_3d,
                                 Some((&fx, *white)),
                                 &mut scene,
                             );
@@ -1266,12 +1290,19 @@ impl Runtime {
                                 tr.progress,
                             )?;
                         } else {
+                            let layer3d = self.layer3d.draw(
+                                renderer,
+                                &self.store,
+                                &game.story,
+                                game.director.stage(),
+                            );
                             stage_scene(
                                 renderer,
                                 &self.store,
                                 &game.story,
                                 game.director.stage(),
                                 Some(&self.anim_clock),
+                                layer3d,
                                 Some((&fx, *white)),
                                 &mut scene,
                             );
@@ -1486,6 +1517,20 @@ fn menu_background(story: &Story, store: &AssetStore) -> Option<TextureId> {
     menu_background_path(story).and_then(|path| store.texture(path))
 }
 
+/// Textures of the nine-slice images the styles of `theme` use (the ones
+/// already loaded in `store`), by asset path.
+pub(crate) fn theme_images(
+    theme: &orbit_ui::Theme,
+    store: &AssetStore,
+) -> std::collections::HashMap<String, TextureId> {
+    theme
+        .styles
+        .values()
+        .filter_map(|style| style.nine_slice().map(|(path, _)| path))
+        .filter_map(|path| store.texture(path).map(|t| (path.to_owned(), t)))
+        .collect()
+}
+
 /// Manifest path of the picture behind the main menu.
 fn menu_background_path(story: &Story) -> Option<&str> {
     story
@@ -1671,15 +1716,21 @@ fn character_frame(
 /// Fills `scene` with the stage: opaque black, background (covering the
 /// canvas), then the characters bottom-center anchored at their position.
 /// `anims` gives the animation times (`None`: every animation on frame 0).
+/// When the stage shows a 3D scene, `layer3d` (its rendered view, see
+/// [`crate::compose3d::Layer3d`]) takes the background's place; while it is
+/// not available the background layer stays black. Without a 3D scene this
+/// is exactly the 2D stage.
 /// `fx` is what the running effects and timelines add on top of the staging,
 /// with the white texture the screen overlay (flash, tint) is drawn with
 /// (`None`: the staging as is).
-fn stage_scene(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stage_scene(
     renderer: &Renderer2d,
     store: &AssetStore,
     story: &Story,
     stage: &StageState,
     anims: Option<&AnimClock>,
+    layer3d: Option<TextureId>,
     fx: Option<(&StageFx, TextureId)>,
     scene: &mut Scene,
 ) {
@@ -1690,7 +1741,15 @@ fn stage_scene(
     let identity = StageFx::default();
     let stage_fx = fx.map_or(&identity, |(f, _)| f);
     scene.clear = Some([0.0, 0.0, 0.0, 1.0]);
-    if let Some(tex) = stage.background.and_then(texture) {
+    if stage.scene3d.is_some() {
+        if let Some(tex) = layer3d {
+            scene.push(
+                Sprite2d::new(tex, [CANVAS[0] * 0.5, CANVAS[1] * 0.5], CANVAS)
+                    .anchor([0.5, 0.5])
+                    .layer(Layer::BACKGROUND),
+            );
+        }
+    } else if let Some(tex) = stage.background.and_then(texture) {
         let size = renderer.texture_size(tex).map_or(CANVAS, cover_size);
         let (position, size, tint) = animate_background(size, stage_fx);
         scene.push(
@@ -1789,6 +1848,11 @@ impl App for Runtime {
             self.reload();
         }
         self.poll_loading();
+        for bytes in self.store.take_new_fonts() {
+            if self.ctx.text_engine.add_font_data(bytes) == 0 {
+                log::warn!("a font asset could not be loaded");
+            }
+        }
         let blocked = self.is_blocked();
         self.update_splash(dt_secs);
         if let Phase::Running(shell) = &mut self.phase {

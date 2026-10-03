@@ -222,6 +222,7 @@ pub fn describe_warning(
             Some(*node),
             texts.format("problem.undefined_variable", &[("var", var)]),
         ),
+        W::DivisionByZero { node } => (Some(*node), texts.get("problem.division_by_zero")),
         W::UnreachableNode(n) => (Some(*n), texts.get("problem.unreachable_node")),
         W::PossibleInfiniteLoop(n) => (Some(*n), texts.get("problem.infinite_loop")),
         W::SceneEndsGame { node, .. } => (*node, texts.get("problem.scene_ends_game")),

@@ -24,6 +24,10 @@ pub mod error;
 pub mod hash;
 mod legacy_v1;
 mod legacy_v2;
+mod legacy_v3;
+
+#[cfg(test)]
+mod anim_save_tests;
 pub mod manager;
 pub mod persistent;
 pub mod storage;

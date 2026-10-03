@@ -310,7 +310,7 @@ fn changing_scene_stops_animations_and_restarts_the_clock() {
 #[test]
 fn the_frozen_v9_story_plays_to_the_end() {
     let story = Arc::new(
-        Story::from_ron(include_str!("../../../examples/fixtures/compat/v9/story.ron")).unwrap(),
+        Story::from_ron(include_str!("../../../examples/fixtures/compat/v10/story.ron")).unwrap(),
     );
     let mut vm = Vm::from_start(story).unwrap();
     let mut waits = 0;

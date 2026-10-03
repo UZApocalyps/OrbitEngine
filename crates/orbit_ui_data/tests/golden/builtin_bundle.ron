@@ -138,7 +138,7 @@
     )),
     screens: [
         (
-            ui_version: 1,
+            ui_version: 2,
             id: "main_menu",
             modal: false,
             pauses_game: false,
@@ -660,7 +660,7 @@
             ),
         ),
         (
-            ui_version: 1,
+            ui_version: 2,
             id: "pause",
             modal: false,
             pauses_game: true,
@@ -1069,7 +1069,7 @@
             ),
         ),
         (
-            ui_version: 1,
+            ui_version: 2,
             id: "preferences",
             modal: false,
             pauses_game: false,
@@ -2645,7 +2645,7 @@
             ),
         ),
         (
-            ui_version: 1,
+            ui_version: 2,
             id: "save",
             modal: false,
             pauses_game: true,
@@ -2916,7 +2916,7 @@
             ),
         ),
         (
-            ui_version: 1,
+            ui_version: 2,
             id: "load",
             modal: false,
             pauses_game: true,

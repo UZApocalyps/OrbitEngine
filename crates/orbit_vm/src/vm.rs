@@ -8,7 +8,7 @@ use orbit_core::{NodeId, NodeKind, Story, StringId, Transition, Value, VarScope}
 use crate::error::VmError;
 use crate::event::{ChoiceView, PresentationEvent, StepResult};
 use crate::history::History;
-use crate::state::{CharacterOnStage, Interaction, MusicState, Pending, Rng, VmState};
+use crate::state::{CharacterOnStage, Interaction, MusicState, Pending, Rng, Scene3dState, VmState};
 
 /// Maximum number of nodes executed by one `step()` call without reaching a
 /// blocking node. Guards against `Jump` loops with no `Say`/`Wait`.
@@ -372,12 +372,65 @@ impl Vm {
                 NodeKind::Background { asset, transition } => {
                     self.state.pc = next;
                     self.state.scene.background = Some(*asset);
+                    // A 2D background replaces a 3D scene (ADR 0014).
+                    self.state.scene.scene3d = None;
                     self.events.push(PresentationEvent::Background {
                         asset: *asset,
                         transition: transition.clone(),
                     });
                     if let Some(duration) = blocking_duration(transition) {
                         return Ok(Some(StepResult::WaitTransition { duration }));
+                    }
+                }
+                NodeKind::ShowScene3d {
+                    scene,
+                    camera,
+                    transition,
+                } => {
+                    self.state.pc = next;
+                    self.state.scene.scene3d = Some(Scene3dState {
+                        scene: *scene,
+                        camera: camera.clone(),
+                    });
+                    self.events.push(PresentationEvent::Scene3d {
+                        scene: *scene,
+                        camera: camera.clone(),
+                        transition: transition.clone(),
+                    });
+                    if let Some(duration) = blocking_duration(transition) {
+                        return Ok(Some(StepResult::WaitTransition { duration }));
+                    }
+                }
+                NodeKind::Camera3d { camera, transition } => {
+                    self.state.pc = next;
+                    match &mut self.state.scene.scene3d {
+                        Some(shown) => {
+                            shown.camera = Some(camera.clone());
+                            let scene = shown.scene;
+                            self.events.push(PresentationEvent::Scene3d {
+                                scene,
+                                camera: Some(camera.clone()),
+                                transition: transition.clone(),
+                            });
+                            if let Some(duration) = blocking_duration(transition) {
+                                return Ok(Some(StepResult::WaitTransition { duration }));
+                            }
+                        }
+                        None => self.warnings.push(format!(
+                            "node {pc}: camera `{camera}` but no 3D scene is shown, ignored"
+                        )),
+                    }
+                }
+                NodeKind::HideScene3d { transition } => {
+                    self.state.pc = next;
+                    // Hiding when nothing is shown is a no-op (like `Hide`).
+                    if self.state.scene.scene3d.take().is_some() {
+                        self.events.push(PresentationEvent::HideScene3d {
+                            transition: transition.clone(),
+                        });
+                        if let Some(duration) = blocking_duration(transition) {
+                            return Ok(Some(StepResult::WaitTransition { duration }));
+                        }
                     }
                 }
                 NodeKind::Show {
@@ -900,6 +953,13 @@ impl Vm {
             .is_some_and(|a| story.assets.get(a).is_none())
         {
             scene.background = None;
+        }
+        if scene
+            .scene3d
+            .as_ref()
+            .is_some_and(|s| story.assets.get(s.scene).is_none())
+        {
+            scene.scene3d = None;
         }
         if scene
             .music

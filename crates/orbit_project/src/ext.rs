@@ -47,7 +47,8 @@ pub fn asset_users(story: &Story, id: AssetId) -> Vec<AssetUser> {
         .filter(|n| match &n.kind {
             NodeKind::Background { asset, .. }
             | NodeKind::PlayMusic { asset, .. }
-            | NodeKind::PlaySound { asset } => *asset == id,
+            | NodeKind::PlaySound { asset }
+            | NodeKind::ShowScene3d { scene: asset, .. } => *asset == id,
             _ => false,
         })
         .map(|n| AssetUser::Node(n.id));

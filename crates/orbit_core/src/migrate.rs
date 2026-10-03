@@ -46,7 +46,7 @@ pub fn read_version(source: &str) -> Result<u32, CoreError> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -273,6 +273,16 @@ fn v3_to_v4(source: &str) -> Result<String, CoreError> {
 
     let mut story: Story = ron::from_str(source)?;
     story.schema_version = 4;
+    story.to_ron()
+}
+
+/// v9 -> v10. Additive only (effects and timelines, 3D scene nodes, `Scene3d` /
+/// `Font` asset kinds, ADR 0012 / 0014): only the version number changes.
+fn v9_to_v10(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 10;
     story.to_ron()
 }
 

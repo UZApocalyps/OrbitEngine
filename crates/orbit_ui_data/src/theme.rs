@@ -20,9 +20,18 @@ pub struct Theme {
     /// Named styles that widgets pick with `Node::style` / `style:` in a
     /// screen asset.
     pub styles: BTreeMap<String, Style>,
+    /// Named project fonts the styles pick with `Style::font`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub fonts: BTreeMap<String, FontRef>,
 }
 
 impl Theme {
+    /// The family name to draw a style's `font` with: the `family` of the
+    /// [`Theme::fonts`] entry called `name`, else `name` itself.
+    pub fn font_family<'a>(&'a self, name: &'a str) -> &'a str {
+        self.fonts.get(name).map_or(name, |f| f.family.as_str())
+    }
+
     pub fn from_ron(source: &str) -> Result<Self, ron::error::SpannedError> {
         ron::from_str(source)
     }
@@ -336,6 +345,21 @@ impl Default for WidgetTheme {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Fill {
     Color([u8; 4]),
+    /// A project image cut in nine: the corners keep their size, the edges
+    /// and the center stretch. `image` is the asset path (`assets/ui/x.png`),
+    /// `insets` the `[left, top, right, bottom]` border widths in pixels of
+    /// the image (`ui_version` 2).
+    NineSlice { image: String, insets: [f32; 4] },
+}
+
+/// A font of the project, by name: `Style::font` may name an entry of
+/// [`Theme::fonts`] (else it is taken as a family name).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct FontRef {
+    /// Path of the font asset (`assets/fonts/x.ttf`, `AssetKind::Font`).
+    pub asset: String,
+    /// Family name the font file provides (what the text engine selects).
+    pub family: String,
 }
 
 /// One optional color per widget state.
@@ -428,9 +452,18 @@ impl Style {
 
     /// Background color for a state (`colors`, then `fill`).
     pub fn background(&self, enabled: bool, pressed: bool, hot: bool) -> Option<[u8; 4]> {
-        self.colors
-            .pick(enabled, pressed, hot)
-            .or(self.fill.as_ref().map(|Fill::Color(c)| *c))
+        self.colors.pick(enabled, pressed, hot).or(match &self.fill {
+            Some(Fill::Color(c)) => Some(*c),
+            _ => None,
+        })
+    }
+
+    /// The nine-slice background `(image path, insets)`, when the fill is one.
+    pub fn nine_slice(&self) -> Option<(&str, [f32; 4])> {
+        match &self.fill {
+            Some(Fill::NineSlice { image, insets }) => Some((image.as_str(), *insets)),
+            _ => None,
+        }
     }
 }
 

@@ -33,7 +33,7 @@ pub use camera::{Camera2d, Viewport, letterbox};
 pub use orbit_gfx;
 pub use orbit_gfx::SurfaceFrame;
 pub use readback::{Readback, ReadbackStatus};
-pub use sprite::{Layer, Scene, Sprite2d, intersect_rects};
+pub use sprite::{Layer, Scene, Sprite2d, intersect_rects, nine_slice_quads};
 pub use texture::{TARGET_FORMAT, TextureId, TextureOptions};
 pub use transition::Transition;
 
@@ -405,6 +405,13 @@ impl Renderer2d {
     pub fn poll_readback(&self, readback: &mut Readback) -> ReadbackStatus {
         let _ = self.gfx.device().poll(wgpu::PollType::Poll);
         readback.take()
+    }
+
+    /// The GPU texture behind `id` (always `COPY_DST`; render targets are
+    /// sRGB RGBA8), for content produced outside this renderer, e.g. a 3D
+    /// render copied in to be composited as a sprite.
+    pub fn raw_texture(&self, id: TextureId) -> Option<&wgpu::Texture> {
+        self.textures.get(id).map(|e| &e.texture)
     }
 
     /// Size of a texture in pixels.

@@ -5,7 +5,7 @@ use orbit_core::{
     TrackData, ValidationError, ValidationWarning, Vec2, validate,
 };
 
-const V9: &str = include_str!("../../../examples/fixtures/compat/v9/story.ron");
+const V9: &str = include_str!("../../../examples/fixtures/compat/v10/story.ron");
 
 fn story() -> Story {
     Story::from_ron(V9).expect("the frozen v9 story loads and validates")

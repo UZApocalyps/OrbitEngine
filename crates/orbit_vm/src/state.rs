@@ -49,6 +49,19 @@ pub struct SceneState {
     pub background: Option<AssetId>,
     pub characters: Vec<CharacterOnStage>,
     pub music: Option<MusicState>,
+    /// The 3D scene shown over (instead of) the 2D background, if any
+    /// (ADR 0014). Declarative only: scene and camera, never GPU state.
+    /// Missing in format-2 saves (decoded by `orbit_save::legacy_v2`).
+    #[serde(default)]
+    pub scene3d: Option<Scene3dState>,
+}
+
+/// A 3D scene on screen: which `.scene3d.ron` asset, from which camera.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Scene3dState {
+    pub scene: AssetId,
+    /// Named camera of the scene; `None` is its first camera.
+    pub camera: Option<String>,
 }
 
 impl SceneState {

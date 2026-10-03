@@ -126,6 +126,16 @@ enum Raw {
         version: u32,
         data: CustomData,
     },
+    Scene3d {
+        scene: Ref,
+        camera: Option<String>,
+        transition: Option<Transition>,
+    },
+    Camera3d {
+        camera: String,
+        transition: Option<Transition>,
+    },
+    HideScene3d(Option<Transition>),
     Effect(RawEffect),
     Timeline {
         duration: f32,
@@ -873,6 +883,26 @@ impl LineParser<'_> {
                         Stmt::Track(RawTrack { target, prop, data })
                     }
                     "call" => Stmt::Node(Raw::Call(self.reference("a label")?)),
+                    "scene3d" => {
+                        let scene = self.reference("a 3D scene asset")?;
+                        let camera = if self.eat_word("camera") {
+                            Some(self.string("a camera name")?)
+                        } else {
+                            None
+                        };
+                        let transition = self.transition()?;
+                        Stmt::Node(Raw::Scene3d {
+                            scene,
+                            camera,
+                            transition,
+                        })
+                    }
+                    "camera3d" => {
+                        let camera = self.string("a camera name")?;
+                        let transition = self.transition()?;
+                        Stmt::Node(Raw::Camera3d { camera, transition })
+                    }
+                    "hide_scene3d" => Stmt::Node(Raw::HideScene3d(self.transition()?)),
                     "return" => Stmt::Node(Raw::Return),
                     "end" => Stmt::Node(Raw::End),
                     "custom" => {
@@ -1446,6 +1476,24 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                     kind: kind.clone(),
                     version: *version,
                     data: data.clone(),
+                }),
+                Raw::Scene3d {
+                    scene,
+                    camera,
+                    transition,
+                } => by_name::<AssetId>(d, line, scene, &names.assets, "asset").map(|scene| {
+                    NodeKind::ShowScene3d {
+                        scene,
+                        camera: camera.clone(),
+                        transition: transition.clone(),
+                    }
+                }),
+                Raw::Camera3d { camera, transition } => Some(NodeKind::Camera3d {
+                    camera: camera.clone(),
+                    transition: transition.clone(),
+                }),
+                Raw::HideScene3d(transition) => Some(NodeKind::HideScene3d {
+                    transition: transition.clone(),
                 }),
                 Raw::Effect(effect) => {
                     let mut target = |t: &RawTarget| {

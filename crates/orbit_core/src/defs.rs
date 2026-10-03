@@ -342,6 +342,12 @@ pub enum AssetKind {
     Image,
     Music,
     Sound,
+    /// A `.scene3d.ron` 3D scene (ADR 0014). Appended last so that older
+    /// paks keep their (postcard) encoding.
+    Scene3d,
+    /// A TTF/OTF font. Added without a schema bump: stories that do not use
+    /// it are unchanged, and older builds never wrote it.
+    Font,
 }
 
 impl std::fmt::Display for AssetKind {
@@ -350,6 +356,8 @@ impl std::fmt::Display for AssetKind {
             AssetKind::Image => "image",
             AssetKind::Music => "music",
             AssetKind::Sound => "sound",
+            AssetKind::Scene3d => "scene3d",
+            AssetKind::Font => "font",
         })
     }
 }

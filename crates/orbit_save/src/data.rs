@@ -1,6 +1,6 @@
 //! The save file format and [`SaveData`].
 //!
-//! # Format (version 3)
+//! # Format (version 2)
 //!
 //! A binary container, little endian:
 //!
@@ -27,9 +27,13 @@
 //! character-on-stage entries. Version 1 saves are still decoded (see
 //! `legacy_v1`): their characters come back unscaled and unmirrored.
 //!
-//! Version 3 (effects and timelines) added the running animations and the
-//! scene clock to the VM state. Version 2 saves are still decoded (see
-//! `legacy_v2`): they come back with no animation running.
+//! Version 3 (M6-07, ADR 0014) added the optional 3D scene (scene + camera)
+//! to the VM's scene state. Version 2 saves are still decoded (see
+//! `legacy_v2`): they come back without a 3D scene.
+//!
+//! Version 4 (M5A-04, ADR 0012) added the running animations and the scene
+//! clock to the VM state. Version 3 saves are still decoded (see `legacy_v3`):
+//! they come back with no animation running.
 //!
 //! The meta block is separate so the slot list can show the label, date,
 //! preview text and thumbnail without decoding the VM state.
@@ -41,7 +45,7 @@ use crate::error::SaveError;
 use crate::hash::story_hash;
 
 /// Version of the container and of the postcard layouts below.
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 const MAGIC: &[u8; 4] = b"ORBS";
 const HEADER_LEN: usize = 12;
 /// Default number of checkpoints embedded in a save.
@@ -204,6 +208,14 @@ impl SaveData {
         }
         if version == 2 {
             let (vm_state, history) = crate::legacy_v2::decode_body(body_bytes)?;
+            return Ok(SaveData {
+                meta,
+                vm_state,
+                history,
+            });
+        }
+        if version == 3 {
+            let (vm_state, history) = crate::legacy_v3::decode_body(body_bytes)?;
             return Ok(SaveData {
                 meta,
                 vm_state,

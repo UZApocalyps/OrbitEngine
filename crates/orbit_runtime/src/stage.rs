@@ -81,12 +81,24 @@ impl AnimClock {
     }
 }
 
+/// A 3D scene shown as the background layer (ADR 0014): which
+/// `.scene3d.ron` asset, from which named camera (`None`: the first one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage3d {
+    pub scene: AssetId,
+    pub camera: Option<String>,
+}
+
 /// Background layer + character layer.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StageState {
     pub background: Option<AssetId>,
     /// Back to front.
     pub characters: Vec<StageCharacter>,
+    /// When set, the 3D scene takes the background layer's place (the 2D
+    /// background is kept and shows again once the scene is hidden).
+    /// Sprites, textbox and UI stay on top, unchanged.
+    pub scene3d: Option<Stage3d>,
 }
 
 /// What applying a presentation event did to the stage.
@@ -104,6 +116,23 @@ impl StageState {
         match event {
             PresentationEvent::Background { asset, transition } => {
                 self.background = Some(*asset);
+                // A 2D background replaces a 3D scene (ADR 0014).
+                self.scene3d = None;
+                StageEffect::Visual(transition.clone())
+            }
+            PresentationEvent::Scene3d {
+                scene,
+                camera,
+                transition,
+            } => {
+                self.scene3d = Some(Stage3d {
+                    scene: *scene,
+                    camera: camera.clone(),
+                });
+                StageEffect::Visual(transition.clone())
+            }
+            PresentationEvent::HideScene3d { transition } => {
+                self.scene3d = None;
                 StageEffect::Visual(transition.clone())
             }
             PresentationEvent::Show {
@@ -557,6 +586,48 @@ mod tests {
         });
         assert_eq!(stage.background, Some(asset(1)));
         assert_eq!(effect, StageEffect::Visual(t.clone()));
+    }
+
+    #[test]
+    fn the_3d_scene_takes_the_background_layer_and_gives_it_back() {
+        let mut stage = StageState::default();
+        stage.apply(&PresentationEvent::Background {
+            asset: asset(1),
+            transition: None,
+        });
+        stage.apply(&show(1, 10, 0.5, None));
+        let t = Some(Transition::dissolve(0.5));
+        let effect = stage.apply(&PresentationEvent::Scene3d {
+            scene: asset(7),
+            camera: Some("wide".into()),
+            transition: t.clone(),
+        });
+        assert_eq!(effect, StageEffect::Visual(t));
+        assert_eq!(
+            stage.scene3d,
+            Some(Stage3d {
+                scene: asset(7),
+                camera: Some("wide".into()),
+            })
+        );
+        // Characters and the (hidden) 2D background are untouched.
+        assert_eq!(stage.background, Some(asset(1)));
+        assert_eq!(stage.characters.len(), 1);
+        stage.apply(&PresentationEvent::HideScene3d { transition: None });
+        assert_eq!(stage.scene3d, None);
+        assert_eq!(stage.background, Some(asset(1)));
+        // A background replaces a 3D scene.
+        stage.apply(&PresentationEvent::Scene3d {
+            scene: asset(7),
+            camera: None,
+            transition: None,
+        });
+        stage.apply(&PresentationEvent::Background {
+            asset: asset(2),
+            transition: None,
+        });
+        assert_eq!(stage.scene3d, None);
+        assert_eq!(stage.background, Some(asset(2)));
     }
 
     #[test]
