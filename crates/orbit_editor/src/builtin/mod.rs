@@ -26,7 +26,7 @@ pub mod reveal;
 pub mod sample;
 mod rigedit;
 mod scene;
-mod scene3d;
+pub(crate) mod scene3d;
 mod sceneview;
 mod timeline;
 mod timeline_model;

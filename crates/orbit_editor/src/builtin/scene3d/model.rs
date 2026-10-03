@@ -40,7 +40,35 @@ impl ModelLib {
         self.generation += 1;
     }
 
-    /// Imports every `.glb` / `.gltf` of `dir`. Returns the library and the
+    /// Names of the textures a material slot or the sky can use, sorted.
+    pub fn texture_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.textures.iter().map(|t| t.name.clone()).collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Decodes a PNG / JPEG into a texture called `name` (replacing a
+    /// texture of the same name).
+    pub fn add_texture_file(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
+        let (width, height) = (img.width(), img.height());
+        if width == 0 || height == 0 || width > 8192 || height > 8192 {
+            return Err(format!("unsupported size {width}x{height}"));
+        }
+        self.textures.retain(|t| t.name != name);
+        self.textures.push(TextureAsset {
+            name: name.to_owned(),
+            width,
+            height,
+            rgba8: img.to_rgba8().into_raw(),
+        });
+        self.generation += 1;
+        Ok(())
+    }
+
+    /// Imports every `.glb` / `.gltf` of `dir` and loads its `.png` / `.jpg`
+    /// files as textures (named after the file). Returns the library and the
     /// files that could not be imported.
     pub fn load_dir(dir: &Path) -> (Self, Vec<String>) {
         let mut lib = Self::default();
@@ -54,7 +82,12 @@ impl ModelLib {
             .filter(|p| {
                 p.extension()
                     .and_then(|e| e.to_str())
-                    .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "glb" | "gltf"))
+                    .is_some_and(|e| {
+                        matches!(
+                            e.to_ascii_lowercase().as_str(),
+                            "glb" | "gltf" | "png" | "jpg" | "jpeg"
+                        )
+                    })
             })
             .collect();
         files.sort();
@@ -64,6 +97,19 @@ impl ModelLib {
                 .and_then(|s| s.to_str())
                 .unwrap_or("model")
                 .to_owned();
+            let is_image = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| !e.to_ascii_lowercase().starts_with("gl"));
+            if is_image {
+                if let Err(e) = std::fs::read(&path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|b| lib.add_texture_file(&name, &b))
+                {
+                    errors.push(format!("{}: {e}", path.display()));
+                }
+                continue;
+            }
             match std::fs::read(&path)
                 .map_err(|e| e.to_string())
                 .and_then(|b| orbit_scene::import::import_gltf(&name, &b))
@@ -994,6 +1040,41 @@ mod tests {
         };
         assert!(materials.iter().all(|r| r.0 != "Gold"));
         assert!(doc.scene().materials.iter().all(|m| m.name != "Gold"));
+    }
+
+    fn png_bytes(w: u32, h: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        image::RgbaImage::from_pixel(w, h, image::Rgba([200, 30, 30, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    }
+
+    #[test]
+    fn images_next_to_the_scene_load_as_named_textures() {
+        let dir = tmp("textures");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("sky.png"), png_bytes(8, 4)).unwrap();
+        std::fs::write(dir.join("wall.PNG"), png_bytes(2, 2)).unwrap();
+        std::fs::write(dir.join("broken.png"), b"nope").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"ignored").unwrap();
+        let (lib, errors) = ModelLib::load_dir(&dir);
+        assert_eq!(lib.texture_names(), ["sky", "wall"]);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("broken.png"));
+        let sky = lib.textures.iter().find(|t| t.name == "sky").unwrap();
+        assert_eq!((sky.width, sky.height, sky.rgba8.len()), (8, 4, 8 * 4 * 4));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn adding_a_texture_twice_replaces_it() {
+        let mut lib = ModelLib::default();
+        lib.add_texture_file("a", &png_bytes(2, 2)).unwrap();
+        lib.add_texture_file("a", &png_bytes(4, 4)).unwrap();
+        assert_eq!(lib.textures.len(), 1);
+        assert_eq!(lib.textures[0].width, 4);
+        assert!(lib.add_texture_file("b", b"x").is_err());
     }
 
     #[test]

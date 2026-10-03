@@ -170,6 +170,22 @@ pub fn import_font(bytes: &[u8]) -> Result<ImportedAsset, String> {
     })
 }
 
+/// Validates a `.scene3d.ron` (parsed, migrated, structurally checked).
+pub fn import_scene3d(bytes: &[u8]) -> Result<ImportedAsset, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "not a UTF-8 text file".to_owned())?;
+    let scene = orbit_scene::from_ron(text)?;
+    if let Some(issue) = orbit_scene::validate(&scene)
+        .into_iter()
+        .find(|i| i.severity == orbit_scene::Severity::Error)
+    {
+        return Err(format!("{}: {}", issue.path, issue.message));
+    }
+    Ok(ImportedAsset {
+        kind: AssetKind::Scene3d,
+        bytes: bytes.to_vec(),
+    })
+}
+
 impl Plugin for ImportersPlugin {
     fn manifest(&self) -> PluginManifest {
         PluginManifest::new(ids::IMPORTERS, "Importeurs de ressources", "0.1.0")
@@ -190,6 +206,11 @@ impl Plugin for ImportersPlugin {
             label: "Font TTF / OTF".to_owned(),
             extensions: vec!["ttf".to_owned(), "otf".to_owned()],
             import: import_font,
+        });
+        registry.register_importer(AssetImporter {
+            label: "Scène 3D (.scene3d.ron)".to_owned(),
+            extensions: vec!["ron".to_owned()],
+            import: import_scene3d,
         });
     }
 }

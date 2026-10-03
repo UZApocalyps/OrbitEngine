@@ -101,5 +101,7 @@
     "asset.issue.missing": "Fichier introuvable : « {path} »",
     "asset.issue.case_mismatch": "Casse différente : « {actual} » sur le disque, « {path} » dans le manifeste (introuvable sous Linux et sur le web)",
     "asset.issue.case_collision": "« {path} » et « {other} » ne diffèrent que par la casse (un seul fichier sous Windows)",
+    "asset.issue.scene3d": "Scène 3D « {path} » : {detail}",
+    "asset.issue.camera_missing": "La scène 3D n’a pas de caméra nommée « {camera} »",
 
 }

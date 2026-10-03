@@ -20,6 +20,7 @@ pub const PREVIEW_CHOOSE: &str = "preview_choose";
 pub const PREVIEW_STATE: &str = "preview_state";
 pub const PREVIEW_STOP: &str = "preview_stop";
 pub const PREVIEW_SCREENSHOT: &str = "preview_screenshot";
+pub const CAPTURE_SCENE3D: &str = "capture_scene3d";
 pub const SELECT_NODE: &str = "select_node";
 pub const BUILD_PROJECT: &str = "build_project";
 pub const EXPORT_GAME: &str = "export_game";
@@ -66,6 +67,25 @@ struct ChooseArgs {
     option: OptionSel,
 }
 
+/// Default and bounds of a 3D capture, in pixels.
+pub const CAPTURE3D_DEFAULT: [u32; 2] = [1280, 720];
+pub const CAPTURE3D_MIN: u32 = 64;
+pub const CAPTURE3D_MAX: u32 = 2048;
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CaptureScene3dArgs {
+    /// The 3D scene: asset id, manifest path, file name or name without
+    /// extension (see `list_scenes3d`).
+    scene: String,
+    /// Camera name in the scene (default: its first camera).
+    camera: Option<String>,
+    /// Picture width in pixels (default 1280, 64 to 2048).
+    width: Option<u32>,
+    /// Picture height in pixels (default 720, 64 to 2048).
+    height: Option<u32>,
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SelectArgs {
@@ -103,6 +123,13 @@ pub enum LiveCall {
     PreviewState,
     PreviewStop,
     PreviewScreenshot,
+    /// Renders a 3D scene from one of its cameras (no preview needed).
+    CaptureScene3d {
+        scene: String,
+        camera: Option<String>,
+        width: u32,
+        height: u32,
+    },
     SelectNode { node: String },
     Export(ExportRequest),
 }
@@ -177,6 +204,13 @@ pub fn live_tool_infos() -> Vec<ToolInfo> {
             true,
             false,
         ),
+        info::<CaptureScene3dArgs>(
+            CAPTURE_SCENE3D,
+            "Picture of a 3D scene",
+            "Render a 3D scene of the project as seen from one of its cameras (PNG returned as an image) to check what edit_scene3d did: placement, lights, materials, skybox. Reads the scene file as saved on disk, with the models and images next to it. Does not need the preview. Needs a GPU: without one this returns an `unavailable` error (the structure is still readable with read_scene3d).",
+            true,
+            false,
+        ),
         info::<SelectArgs>(
             SELECT_NODE,
             "Select a node in the editor",
@@ -211,6 +245,7 @@ pub fn is_live_tool(name: &str) -> bool {
             | PREVIEW_STATE
             | PREVIEW_STOP
             | PREVIEW_SCREENSHOT
+            | CAPTURE_SCENE3D
             | SELECT_NODE
             | BUILD_PROJECT
             | EXPORT_GAME
@@ -240,6 +275,18 @@ pub fn parse_live_call(name: &str, value: Json) -> Option<Result<LiveCall, ToolE
         PREVIEW_STATE => args::<NoArgs>(value).map(|_| LiveCall::PreviewState),
         PREVIEW_STOP => args::<NoArgs>(value).map(|_| LiveCall::PreviewStop),
         PREVIEW_SCREENSHOT => args::<NoArgs>(value).map(|_| LiveCall::PreviewScreenshot),
+        CAPTURE_SCENE3D => args::<CaptureScene3dArgs>(value).map(|a| LiveCall::CaptureScene3d {
+            scene: a.scene,
+            camera: a.camera.filter(|c| !c.trim().is_empty()),
+            width: a
+                .width
+                .unwrap_or(CAPTURE3D_DEFAULT[0])
+                .clamp(CAPTURE3D_MIN, CAPTURE3D_MAX),
+            height: a
+                .height
+                .unwrap_or(CAPTURE3D_DEFAULT[1])
+                .clamp(CAPTURE3D_MIN, CAPTURE3D_MAX),
+        }),
         SELECT_NODE => args::<SelectArgs>(value).map(|a| LiveCall::SelectNode { node: a.node }),
         BUILD_PROJECT => args::<BuildArgs>(value).map(|a| {
             LiveCall::Export(ExportRequest {
@@ -296,6 +343,23 @@ mod tests {
             choose.unwrap(),
             LiveCall::PreviewChoose(ChoiceSelector::Text("Left".into()))
         );
+    }
+
+    #[test]
+    fn capture_scene3d_clamps_its_size() {
+        let call = parse_live_call(CAPTURE_SCENE3D, json!({"scene": "room", "width": 99999, "height": 1}))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            call,
+            LiveCall::CaptureScene3d {
+                scene: "room".into(),
+                camera: None,
+                width: CAPTURE3D_MAX,
+                height: CAPTURE3D_MIN
+            }
+        );
+        assert!(parse_live_call(CAPTURE_SCENE3D, json!({})).unwrap().is_err());
     }
 
     #[test]

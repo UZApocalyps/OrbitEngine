@@ -307,7 +307,7 @@ impl EditorCore {
 
     /// Whether the open project has unsaved edits.
     pub fn is_modified(&mut self) -> bool {
-        let ui = self.registry.ui_link.dirty.get();
+        let ui = self.registry.ui_link.dirty.get() || self.registry.ui_link.scene3d_dirty.get();
         self.session.as_mut().is_some_and(|s| s.modified() || ui)
     }
 
@@ -372,6 +372,7 @@ impl EditorCore {
         self.state.pending_reveal = None;
         self.reset_project_services();
         self.registry.ui_link.dirty.set(false);
+        self.registry.ui_link.scene3d_dirty.set(false);
         self.registry.ui_link.focus.set(false);
         dock::show_panel(&mut self.dock, builtin::panels::SCENE);
         self.sync_info();
@@ -529,6 +530,7 @@ impl EditorCore {
         self.watcher = None;
         self.live.reset();
         self.registry.ui_link.dirty.set(false);
+        self.registry.ui_link.scene3d_dirty.set(false);
         self.registry.ui_link.focus.set(false);
         self.shared.search.0.borrow_mut().clear();
         if let Some(session) = self.session.take() {
@@ -1164,7 +1166,7 @@ impl EditorCore {
     }
 
     fn sync_info(&mut self) {
-        let ui_dirty = self.registry.ui_link.dirty.get();
+        let ui_dirty = self.registry.ui_link.dirty.get() || self.registry.ui_link.scene3d_dirty.get();
         self.state.project = self.session.as_mut().map(|s| ProjectInfo {
             name: s.name.clone(),
             root: s.location.root.clone(),

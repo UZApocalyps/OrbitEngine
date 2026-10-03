@@ -142,3 +142,49 @@ impl Scene3dHost {
         changed
     }
 }
+
+/// Renders `scene` once, seen from the named `camera` (the first one when
+/// `None`), into a fresh `size` target and returns it as PNG bytes. Used by
+/// the live MCP `capture_scene3d` tool; independent of the viewport and of
+/// the host's cached renderer.
+pub fn capture_png(
+    device: &orbit_gfx::wgpu::Device,
+    queue: &orbit_gfx::wgpu::Queue,
+    scene: &Scene3d,
+    assets: &ModelAssets,
+    camera: Option<&str>,
+    size: [u32; 2],
+) -> Result<Vec<u8>, String> {
+    let [w, h] = [size[0].clamp(16, 4096), size[1].clamp(16, 4096)];
+    let mut renderer = Renderer3d::new(device, queue);
+    for p in &assets.prefabs {
+        renderer.add_prefab(p.clone());
+    }
+    for t in &assets.textures {
+        renderer.add_texture(t.clone());
+    }
+    for m in &assets.meshes {
+        renderer.upload_mesh(device, m);
+    }
+    let target = RenderTarget3d::new(device, w, h);
+    let select = match camera {
+        Some(name) => CameraSelect::Named(name),
+        None => CameraSelect::First,
+    };
+    renderer
+        .render(device, queue, scene, select, &target)
+        .map_err(|e| e.to_string())?;
+    let rgba = target
+        .read_rgba_blocking(device, queue)
+        .ok_or_else(|| "cannot read the picture back".to_owned())?;
+    let mut png = Vec::new();
+    image::ImageEncoder::write_image(
+        image::codecs::png::PngEncoder::new(&mut png),
+        &rgba,
+        w,
+        h,
+        image::ExtendedColorType::Rgba8,
+    )
+    .map_err(|e| format!("cannot encode the PNG: {e}"))?;
+    Ok(png)
+}

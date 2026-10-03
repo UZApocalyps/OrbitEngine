@@ -12,6 +12,7 @@ orbit_core = { workspace = true, features = ["schema"] }
 orbit_project.workspace = true
 orbit_dsl.workspace = true
 orbit_ui_data.workspace = true
+orbit_scene = { path = "../orbit_scene", default-features = false }
 ron.workspace = true
 orbit_plugin_api.workspace = true
 orbit_vm.workspace = true

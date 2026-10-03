@@ -219,7 +219,7 @@ fn dir_names(dir: &Path) -> HashSet<String> {
 /// A manifest path for a new file named `name` in `dir`, free on disk **and**
 /// in the manifest, compared without regard to case (Windows would merge
 /// `A.png` and `a.png`; Linux and the web would not).
-fn free_path(root: &Path, dir: &str, name: &str, taken: &HashSet<String>) -> String {
+pub(crate) fn free_path(root: &Path, dir: &str, name: &str, taken: &HashSet<String>) -> String {
     let on_disk = dir_names(&root.join(dir));
     let (stem, ext) = match name.rsplit_once('.') {
         Some((s, e)) => (s.to_owned(), format!(".{e}")),
@@ -565,6 +565,15 @@ pub enum AssetIssue {
         path: String,
         other: String,
     },
+    /// A 3D scene file is invalid or has a finding (`orbit_scene::validate`).
+    Scene3d {
+        asset: AssetId,
+        path: String,
+        error: bool,
+        detail: String,
+    },
+    /// A story command names a camera the 3D scene does not have.
+    CameraMissing { asset: AssetId, camera: String },
 }
 
 impl AssetIssue {
@@ -572,12 +581,18 @@ impl AssetIssue {
         match self {
             AssetIssue::Missing { asset, .. }
             | AssetIssue::CaseMismatch { asset, .. }
-            | AssetIssue::CaseCollision { asset, .. } => *asset,
+            | AssetIssue::CaseCollision { asset, .. }
+            | AssetIssue::Scene3d { asset, .. }
+            | AssetIssue::CameraMissing { asset, .. } => *asset,
         }
     }
 
     pub fn is_error(&self) -> bool {
-        matches!(self, AssetIssue::Missing { .. })
+        match self {
+            AssetIssue::Missing { .. } => true,
+            AssetIssue::Scene3d { error, .. } => *error,
+            _ => false,
+        }
     }
 
     pub fn message(&self, texts: &Translator) -> String {
@@ -591,6 +606,13 @@ impl AssetIssue {
                 "asset.issue.case_collision",
                 &[("path", path), ("other", other)],
             ),
+            AssetIssue::Scene3d { path, detail, .. } => texts.tf(
+                "asset.issue.scene3d",
+                &[("path", path), ("detail", detail)],
+            ),
+            AssetIssue::CameraMissing { camera, .. } => {
+                texts.tf("asset.issue.camera_missing", &[("camera", camera)])
+            }
         }
     }
 }
@@ -661,6 +683,7 @@ pub fn lint_asset_files(root: &Path, story: &Story) -> Vec<AssetIssue> {
             });
         }
     }
+    issues.extend(lint_scene3d(root, story));
     issues
 }
 
@@ -741,4 +764,197 @@ mod tests {
             assert!(!ops::is_valid_asset_path(bad), "{bad}");
         }
     }
+}
+
+// ---------------------------------------------------------------- 3D scenes
+
+/// Where a 3D scene goes in the project (see [`plan_scene3d_target`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Scene3dTarget {
+    /// Manifest path (relative, `/`).
+    pub rel: String,
+    pub abs: PathBuf,
+    /// The scene file already lies under `assets/`: only declared.
+    pub in_place: bool,
+}
+
+/// Manifest path of `file` when it lies under `root/assets`, `None` otherwise.
+pub fn asset_rel_path(root: &Path, file: &Path) -> Option<String> {
+    let root = fs::canonicalize(root).ok()?;
+    let abs = fs::canonicalize(file).ok().or_else(|| {
+        // A file that does not exist yet: canonicalize its folder.
+        let parent = fs::canonicalize(file.parent()?).ok()?;
+        Some(parent.join(file.file_name()?))
+    })?;
+    let rel = abs.strip_prefix(&root).ok()?;
+    let rel = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    rel.starts_with("assets/").then_some(rel)
+}
+
+/// Decides where "add to project" puts the 3D scene named `name`: where it
+/// is when `current` is already under `assets/`, otherwise a free
+/// `assets/3d/<name>.scene3d.ron`.
+pub fn plan_scene3d_target(
+    root: &Path,
+    story: &Story,
+    name: &str,
+    current: Option<&Path>,
+) -> Scene3dTarget {
+    if let Some(current) = current
+        && let Some(rel) = asset_rel_path(root, current)
+    {
+        return Scene3dTarget {
+            rel,
+            abs: current.to_owned(),
+            in_place: true,
+        };
+    }
+    let taken: HashSet<String> = story
+        .assets
+        .assets
+        .iter()
+        .map(|a| a.path.to_lowercase())
+        .collect();
+    let stem = sanitize_file_name(name);
+    let stem = stem.rsplit_once('.').map_or(stem.as_str(), |(s, _)| s);
+    // `free_path` numbers collisions before the last dot (`a.scene3d-2.ron`),
+    // which keeps the `.scene3d.ron` suffix readable enough.
+    let wanted = format!("{stem}.scene3d.ron");
+    let rel = free_path(root, asset_dir(AssetKind::Scene3d), &wanted, &taken);
+    let abs = root.join(&rel);
+    Scene3dTarget {
+        rel,
+        abs,
+        in_place: false,
+    }
+}
+
+/// Camera names of the 3D scene asset `asset`, read from its file. `None`
+/// when the asset is not a 3D scene or its file cannot be read.
+pub fn scene3d_cameras(root: &Path, story: &Story, asset: AssetId) -> Option<Vec<String>> {
+    let entry = story.assets.assets.iter().find(|a| a.id == asset)?;
+    if entry.kind != AssetKind::Scene3d {
+        return None;
+    }
+    let text = fs::read_to_string(root.join(&entry.path)).ok()?;
+    let scene = orbit_scene::from_ron(&text).ok()?;
+    Some(scene.cameras().map(|(_, c)| c.name.clone()).collect())
+}
+
+/// Findings about the 3D scene files of the manifest, for the Problems
+/// panel: invalid files, and `ShowScene3d` / `Camera3d` naming a camera the
+/// scene does not have. Files that are missing are reported by the file lint.
+pub fn lint_scene3d(root: &Path, story: &Story) -> Vec<AssetIssue> {
+    use orbit_core::NodeKind;
+    let mut issues = Vec::new();
+    let mut cameras: HashMap<AssetId, Option<Vec<String>>> = HashMap::new();
+    for asset in story
+        .assets
+        .assets
+        .iter()
+        .filter(|a| a.kind == AssetKind::Scene3d)
+    {
+        let Ok(text) = fs::read_to_string(root.join(&asset.path)) else {
+            cameras.insert(asset.id, None);
+            continue;
+        };
+        match orbit_scene::from_ron(&text) {
+            Ok(scene) => {
+                for issue in orbit_scene::validate(&scene) {
+                    issues.push(AssetIssue::Scene3d {
+                        asset: asset.id,
+                        path: asset.path.clone(),
+                        error: issue.severity == orbit_scene::Severity::Error,
+                        detail: format!("{}: {}", issue.path, issue.message),
+                    });
+                }
+                cameras.insert(
+                    asset.id,
+                    Some(scene.cameras().map(|(_, c)| c.name.clone()).collect()),
+                );
+            }
+            Err(e) => {
+                issues.push(AssetIssue::Scene3d {
+                    asset: asset.id,
+                    path: asset.path.clone(),
+                    error: true,
+                    detail: e,
+                });
+                cameras.insert(asset.id, None);
+            }
+        }
+    }
+    // Commands in reading order; a `Camera3d` is checked against the scene
+    // shown last (a straight-line approximation: branches are not followed).
+    for scene in &story.scenes {
+        let mut shown: Option<AssetId> = None;
+        for node in &scene.nodes {
+            match &node.kind {
+                NodeKind::ShowScene3d {
+                    scene: asset,
+                    camera,
+                    ..
+                } => {
+                    shown = Some(*asset);
+                    if let Some(name) = camera {
+                        push_camera_issue(&mut issues, &cameras, *asset, name, true);
+                    }
+                }
+                NodeKind::HideScene3d { .. } => shown = None,
+                NodeKind::Camera3d { camera, .. } => {
+                    if let Some(asset) = shown {
+                        push_camera_issue(&mut issues, &cameras, asset, camera, false);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    issues
+}
+
+fn push_camera_issue(
+    issues: &mut Vec<AssetIssue>,
+    cameras: &HashMap<AssetId, Option<Vec<String>>>,
+    asset: AssetId,
+    name: &str,
+    allow_empty: bool,
+) {
+    if allow_empty && name.trim().is_empty() {
+        return;
+    }
+    if let Some(Some(list)) = cameras.get(&asset)
+        && !list.iter().any(|c| c == name)
+    {
+        let issue = AssetIssue::CameraMissing {
+            asset,
+            camera: name.to_owned(),
+        };
+        if !issues.contains(&issue) {
+            issues.push(issue);
+        }
+    }
+}
+
+/// The 3D scene on screen when node `id` runs, found by reading its scene
+/// upwards for the last `ShowScene3d` (not cancelled by a `HideScene3d`).
+pub fn shown_scene3d_before(story: &Story, id: orbit_core::NodeId) -> Option<AssetId> {
+    use orbit_core::NodeKind;
+    let scene = story
+        .scenes
+        .iter()
+        .find(|s| s.nodes.iter().any(|n| n.id == id))?;
+    let index = scene.nodes.iter().position(|n| n.id == id)?;
+    for node in scene.nodes[..index].iter().rev() {
+        match &node.kind {
+            NodeKind::ShowScene3d { scene, .. } => return Some(*scene),
+            NodeKind::HideScene3d { .. } => return None,
+            _ => {}
+        }
+    }
+    None
 }

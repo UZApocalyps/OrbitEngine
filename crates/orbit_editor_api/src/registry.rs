@@ -241,6 +241,9 @@ impl RegisteredAction {
 pub struct UiEditorLink {
     /// The panel has unsaved edits (counts in the project's "modified").
     pub dirty: std::cell::Cell<bool>,
+    /// The 3D scene editor has unsaved edits (counts in the project's
+    /// "modified"; the open scene is saved with the project).
+    pub scene3d_dirty: std::cell::Cell<bool>,
     /// The panel has the keyboard focus (last click was inside it): the
     /// host routes Ctrl+Z / Ctrl+Y to it instead of the story.
     pub focus: std::cell::Cell<bool>,

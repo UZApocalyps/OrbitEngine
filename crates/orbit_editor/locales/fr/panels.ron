@@ -135,4 +135,7 @@
     "textview.nothing_changed": "Le texte ne change rien.",
     "draft.label.effect": "Effet (déplacer, secouer, zoomer…)",
     "draft.label.timeline": "Chronologie",
+    "draft.label.show_scene3d": "Afficher une scène 3D",
+    "draft.label.camera3d": "Caméra 3D",
+    "draft.label.hide_scene3d": "Masquer la scène 3D",
 }
