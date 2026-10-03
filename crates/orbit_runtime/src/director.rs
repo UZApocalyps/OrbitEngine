@@ -1118,6 +1118,81 @@ mod tests {
         assert_eq!(d.stage_fx().emitters.len(), 1);
     }
 
+    #[test]
+    fn particles_keep_moving_while_a_line_waits_for_the_click() {
+        let mut d = raining();
+        assert!(matches!(d.flow(), Flow::Say(_)), "a line is displayed");
+        assert!(d.vm().has_running_anims(), "the host must keep drawing");
+        let pos = |d: &Director| -> Vec<[f32; 2]> {
+            let mut out = Vec::new();
+            for e in &d.stage_fx().emitters {
+                e.sample(&mut out);
+            }
+            out.iter().map(|p| p.pos).collect()
+        };
+        d.update(0.5);
+        let a = pos(&d);
+        d.update(0.5); // real time passes, no click
+        let b = pos(&d);
+        assert!(!a.is_empty());
+        assert_ne!(a, b, "particles advance without a click");
+        assert!(matches!(d.flow(), Flow::Say(_)));
+    }
+
+    #[test]
+    fn a_non_blocking_effect_keeps_running_under_a_waiting_line() {
+        let mut d = animated();
+        d.advance();
+        d.update(2.1); // the blocking move ends, "b"
+        d.advance(); // the 4 s move starts, "c" is shown
+        assert!(matches!(d.flow(), Flow::Say(_)));
+        assert!(d.vm().has_running_anims());
+        let a = bg_x(&d);
+        d.update(1.0);
+        let b = bg_x(&d);
+        assert!(b > a, "the move progresses with the line displayed");
+        d.update(10.0);
+        assert!(!d.vm().has_running_anims(), "a finished move needs no frames");
+    }
+
+    #[test]
+    fn a_looping_timeline_keeps_running_under_a_waiting_line() {
+        use orbit_core::{
+            AnimProp, AnimTarget, Key, Loop, Node, NodeId, NodeKind, Scene, SceneId,
+            StoryTrack, Track, TrackData, Vec2,
+        };
+        let mut story = Story::new("loop");
+        let text_id = story.strings.add("a");
+        let nodes = vec![
+            Node {
+                id: NodeId::new(),
+                kind: NodeKind::Timeline {
+                    duration: 2.0,
+                    looping: Loop::Forever,
+                    wait: false,
+                    tracks: vec![StoryTrack {
+                        target: AnimTarget::Background,
+                        prop: AnimProp::Offset,
+                        data: TrackData::Vec2(Track::new(vec![
+                            Key::new(0.0, Vec2::new(0.0, 0.0)),
+                            Key::new(2.0, Vec2::new(1.0, 0.0)),
+                        ])),
+                    }],
+                },
+            },
+            Node { id: NodeId::new(), kind: NodeKind::Say { speaker: None, text_id } },
+        ];
+        story.scenes.push(Scene { id: SceneId::new(), name: "s".into(), nodes });
+        let mut d = Director::new(Vm::from_start(story).unwrap());
+        assert!(matches!(d.flow(), Flow::Say(_)));
+        d.update(0.5);
+        let a = bg_x(&d);
+        d.update(0.5);
+        assert_ne!(a, bg_x(&d));
+        d.update(100.0);
+        assert!(d.vm().has_running_anims(), "a loop never ends");
+    }
+
     fn bg_x(d: &Director) -> f32 {
         d.vm().stage_fx().background.offset[0]
     }

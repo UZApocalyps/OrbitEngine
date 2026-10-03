@@ -1083,6 +1083,17 @@ impl Vm {
             .collect()
     }
 
+    /// Whether the scene has ambient motion: a running particle emitter or a
+    /// timed animation that has not finished (endless ones never do). The
+    /// picture then changes with time alone, even while a line waits for the
+    /// player's click, so the host must keep drawing frames.
+    pub fn has_running_anims(&self) -> bool {
+        self.anim_items()
+            .iter()
+            .any(|(kind, elapsed)| kind.animation().is_some_and(|s| !s.is_finished(*elapsed)))
+            || !self.stage_fx().emitters.is_empty()
+    }
+
     /// What the running animations add on top of the staging right now.
     pub fn stage_fx(&self) -> orbit_core::StageFx {
         orbit_core::StageFx::compose(&self.story.curves, self.anim_items())
