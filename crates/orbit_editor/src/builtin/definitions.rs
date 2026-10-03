@@ -837,14 +837,24 @@ fn variable_row(ui: &mut Ui, ctx: &mut EditorContext<'_>, decl: &VarDecl) {
                 .selected_text(type_name(ui, ty))
                 .width(130.0)
                 .show_ui(ui, |ui| {
-                    for t in [
+                    let scalars = [
                         ValueType::Bool,
                         ValueType::Int,
                         ValueType::Float,
                         ValueType::Str,
-                    ] {
-                        if ui.selectable_label(t == ty, type_name(ui, t)).clicked() && t != ty {
-                            action = Some(Do::Type(t));
+                    ];
+                    // Scalars, then lists and maps of each scalar (schema v11).
+                    let lists = orbit_core::ScalarType::ALL.map(ValueType::List);
+                    let maps = orbit_core::ScalarType::ALL.map(ValueType::Map);
+                    for (i, group) in [scalars, lists, maps].into_iter().enumerate() {
+                        if i > 0 {
+                            ui.separator();
+                        }
+                        for t in group {
+                            if ui.selectable_label(t == ty, type_name(ui, t)).clicked() && t != ty
+                            {
+                                action = Some(Do::Type(t));
+                            }
                         }
                     }
                 });

@@ -600,16 +600,35 @@ fn characters_variables_and_assets() {
     for bad in [
         json!({"name": "1x", "initial": 1}),
         json!({"name": "ok", "initial": null}),
-        json!({"name": "ok", "initial": [1]}),
+        json!({"name": "ok", "initial": [[1]]}),
+        json!({"name": "ok", "initial": [1, "a"]}),
+        json!({"name": "ok", "initial": []}),
+        json!({"name": "ok", "initial": {}}),
+        json!({"name": "ok", "initial": [1], "element_type": "list"}),
+        json!({"name": "ok", "initial": ["a"], "element_type": "int"}),
+        json!({"name": "ok", "initial": 1, "element_type": "int"}),
     ] {
         assert_eq!(
             f.err("declare_variable", bad).kind,
             ErrorKind::InvalidArguments
         );
     }
+    // Lists and maps (schema v11): the element type is inferred or given.
+    let bag = f.ok("declare_variable", json!({"name": "bag", "initial": ["sword", "key"]}));
+    assert_eq!(bag["type"], "list of string");
+    assert_eq!(bag["initial"], json!(["sword", "key"]));
+    let nums = f.ok("declare_variable", json!({"name": "nums", "initial": [1, 2.5]}));
+    assert_eq!(nums["type"], "list of float");
+    let empty = f.ok(
+        "declare_variable",
+        json!({"name": "seen", "initial": {}, "element_type": "bool", "scope": "persistent"}),
+    );
+    assert_eq!(empty["type"], "map of bool");
+    let gold = f.ok("declare_variable", json!({"name": "gold", "initial": {"alice": 3}}));
+    assert_eq!(gold["initial"], json!({"alice": 3}));
     assert_eq!(
         f.ok("list_variables", json!({})).as_array().unwrap().len(),
-        3
+        7
     );
     assert_eq!(
         f.ok("list_characters", json!({})).as_array().unwrap().len(),

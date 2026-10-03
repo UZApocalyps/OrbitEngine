@@ -22,6 +22,9 @@ mod tests;
 #[cfg(test)]
 mod anim_tests;
 
+#[cfg(test)]
+mod collection_tests;
+
 pub use error::VmError;
 pub use event::{ChoiceView, PresentationEvent, StepResult};
 pub use history::{

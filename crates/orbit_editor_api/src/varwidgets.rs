@@ -40,10 +40,10 @@ pub fn type_of(vars: &[VarInfo], name: &str) -> Option<ValueType> {
 }
 
 fn compatible(a: ValueType, b: ValueType) -> bool {
-    a == b || (a.is_numeric() && b.is_numeric())
+    ValueType::compatible(a, b)
 }
 
-/// Whether `operand` suits a variable of type `ty`.
+/// Whether `operand` suits an operand of type `ty`.
 fn operand_fits(vars: &[VarInfo], operand: &Operand, ty: ValueType) -> bool {
     match operand {
         Operand::Lit(v) => compatible(v.value_type(), ty),
@@ -51,15 +51,50 @@ fn operand_fits(vars: &[VarInfo], operand: &Operand, ty: ValueType) -> bool {
     }
 }
 
-/// Neutral operand for a type (`0`, `false`, empty text).
+/// Neutral operand for a type (`0`, `false`, empty text, empty collection).
 pub fn blank_operand(ty: ValueType) -> Operand {
     Operand::Lit(ty.default_value())
 }
 
-/// A fresh operation on the first variable ("set it to its neutral value").
+/// A blank text map key.
+fn blank_key() -> Operand {
+    Operand::Lit(Value::Str(String::new()))
+}
+
+/// The operation `kind` on a variable of type `ty`, keeping `value` / `key`
+/// when they fit and resetting them otherwise.
+fn build_op(
+    vars: &[VarInfo],
+    var: &str,
+    ty: ValueType,
+    kind: OpKind,
+    value: &Operand,
+    key: Option<&Operand>,
+) -> VarOp {
+    let value = match kind.operand_type(ty) {
+        Some(t) if !operand_fits(vars, value, t) => blank_operand(t),
+        // An ignored operand keeps a stable neutral value.
+        None => Operand::Lit(Value::Bool(true)),
+        _ => value.clone(),
+    };
+    let mut op = VarOp::new(var, kind, value);
+    if kind.uses_key() {
+        op.key = Some(match key {
+            Some(k) if operand_fits(vars, k, ValueType::Str) => k.clone(),
+            _ => blank_key(),
+        });
+    }
+    op
+}
+
+/// A fresh operation on the first variable ("set it to its neutral value";
+/// "push" for a list, "set an entry" for a map).
 pub fn blank_op(vars: &[VarInfo]) -> VarOp {
     match vars.first() {
-        Some(v) => VarOp::new(v.name.clone(), OpKind::Set, blank_operand(v.ty)),
+        Some(v) => {
+            let kind = OpKind::for_type(v.ty)[0];
+            build_op(vars, &v.name, v.ty, kind, &blank_operand(v.ty), None)
+        }
         None => VarOp::new(String::new(), OpKind::Set, Operand::Lit(Value::Int(0))),
     }
 }
@@ -73,35 +108,39 @@ pub fn with_var(op: &VarOp, vars: &[VarInfo], name: &str) -> VarOp {
             ..op.clone()
         };
     };
-    let kind = if op.op.supports(ty) { op.op } else { OpKind::Set };
-    let value = if operand_fits(vars, &op.value, ty) {
-        op.value.clone()
+    let kind = if op.op.supports(ty) {
+        op.op
     } else {
-        blank_operand(ty)
+        OpKind::for_type(ty)[0]
     };
-    VarOp::new(name, kind, value)
+    build_op(vars, name, ty, kind, &op.value, op.key.as_ref())
 }
 
-/// The operation with another kind (the value is reset when `Toggle` leaves
-/// it meaningless).
+/// The operation with another kind (the value is reset when it does not fit
+/// the new kind, e.g. a list index after "push").
 pub fn with_kind(op: &VarOp, vars: &[VarInfo], kind: OpKind) -> VarOp {
-    let ty = type_of(vars, &op.var);
-    let value = match ty {
-        Some(ty) if !operand_fits(vars, &op.value, ty) => blank_operand(ty),
-        _ => op.value.clone(),
-    };
-    VarOp::new(op.var.clone(), kind, value)
+    match type_of(vars, &op.var) {
+        Some(ty) => build_op(vars, &op.var, ty, kind, &op.value, op.key.as_ref()),
+        None => VarOp {
+            op: kind,
+            ..op.clone()
+        },
+    }
 }
 
-/// A fresh comparison row on the first variable (`is true` for a boolean).
+/// A fresh comparison row on the first variable (`is true` for a boolean,
+/// "contains" for a list, "has key" for a map).
 pub fn blank_row(vars: &[VarInfo]) -> Condition {
     match vars.first() {
         Some(v) if v.ty == ValueType::Bool => Condition::is_true(v.name.clone()),
-        Some(v) => Condition::Cmp {
-            var: v.name.clone(),
-            cmp: Cmp::Eq,
-            value: blank_operand(v.ty),
-        },
+        Some(v) => {
+            let cmp = Cmp::for_type(v.ty)[0];
+            Condition::Cmp {
+                var: v.name.clone(),
+                cmp,
+                value: blank_operand(cmp.operand_type(v.ty)),
+            }
+        }
         None => Condition::Cmp {
             var: String::new(),
             cmp: Cmp::Eq,
@@ -126,13 +165,24 @@ pub fn row_with_var(row: &Condition, vars: &[VarInfo], name: &str) -> Condition 
     if ty == ValueType::Bool {
         return Condition::is_true(name);
     }
+    let cmp = if Cmp::for_type(ty).contains(cmp) {
+        *cmp
+    } else {
+        Cmp::for_type(ty)[0]
+    };
+    row_with_cmp(vars, name, ty, cmp, value)
+}
+
+/// A row `var cmp value` whose value is reset when it does not fit `cmp`.
+fn row_with_cmp(vars: &[VarInfo], var: &str, ty: ValueType, cmp: Cmp, value: &Operand) -> Condition {
+    let want = cmp.operand_type(ty);
     Condition::Cmp {
-        var: name.to_owned(),
-        cmp: if Cmp::for_type(ty).contains(cmp) { *cmp } else { Cmp::Eq },
-        value: if operand_fits(vars, value, ty) {
+        var: var.to_owned(),
+        cmp,
+        value: if operand_fits(vars, value, want) {
             value.clone()
         } else {
-            blank_operand(ty)
+            blank_operand(want)
         },
     }
 }
@@ -166,6 +216,16 @@ fn cmp_key(cmp: Cmp) -> &'static str {
         Cmp::Ge => "field.cmp.ge",
         Cmp::Lt => "field.cmp.lt",
         Cmp::Le => "field.cmp.le",
+        Cmp::Contains => "field.cmp.contains",
+        Cmp::NotContains => "field.cmp.not_contains",
+        Cmp::HasKey => "field.cmp.has_key",
+        Cmp::NotHasKey => "field.cmp.not_has_key",
+        Cmp::LenEq => "field.cmp.len_eq",
+        Cmp::LenNe => "field.cmp.len_ne",
+        Cmp::LenLt => "field.cmp.len_lt",
+        Cmp::LenLe => "field.cmp.len_le",
+        Cmp::LenGt => "field.cmp.len_gt",
+        Cmp::LenGe => "field.cmp.len_ge",
     }
 }
 
@@ -300,8 +360,22 @@ pub fn varop_editor(
                 out = Some(with_kind(&cur, vars, chosen));
             }
             let cur = out.clone().unwrap_or_else(|| op.clone());
-            if cur.op != OpKind::Toggle
-                && let Some(v) = operand_editor(ui, (salt, "val"), vars, ty, &cur.value)
+            if cur.op.uses_key() {
+                ui.label(ui.t("varop.key"));
+                let key = cur.key.clone().unwrap_or_else(blank_key);
+                if let Some(k) = operand_editor(ui, (salt, "key"), vars, ValueType::Str, &key) {
+                    out = Some(VarOp {
+                        key: Some(k),
+                        ..cur.clone()
+                    });
+                }
+                if cur.op == OpKind::MapSet {
+                    ui.label(ui.t("varop.to"));
+                }
+            }
+            let cur = out.clone().unwrap_or_else(|| op.clone());
+            if let Some(want) = cur.op.operand_type(ty)
+                && let Some(v) = operand_editor(ui, (salt, "val"), vars, want, &cur.value)
             {
                 out = Some(VarOp { value: v, ..cur });
             }
@@ -356,15 +430,16 @@ fn row_editor(ui: &mut Ui, salt: impl Salt, vars: &[VarInfo], row: &mut Conditio
                     ui.selectable_value(&mut chosen, c, label);
                 }
             });
-        let mut new_value = value.clone();
-        if let Some(v) = operand_editor(ui, (salt, "val"), vars, ty, &value) {
-            new_value = v;
+        if chosen != cmp {
+            // The operand may change type (an element, a key, a length).
+            *row = row_with_cmp(vars, &var, ty, chosen, &value);
+            return;
         }
-        if chosen != cmp || new_value != value {
+        if let Some(v) = operand_editor(ui, (salt, "val"), vars, cmp.operand_type(ty), &value) {
             *row = Condition::Cmp {
                 var: var.clone(),
-                cmp: chosen,
-                value: new_value,
+                cmp,
+                value: v,
             };
         }
     });
@@ -592,11 +667,8 @@ pub fn setvar_value_editor(
         }
         if op.is_none() && mode_button(ui, "varop.reset_visual") {
             // Back to the visual mode, with a neutral operation.
-            let blank = VarOp::new(
-                var,
-                OpKind::Set,
-                blank_operand(type_of(&vars, var).unwrap_or(ValueType::Int)),
-            );
+            let ty = type_of(&vars, var).unwrap_or(ValueType::Int);
+            let blank = build_op(&vars, var, ty, OpKind::for_type(ty)[0], &blank_operand(ty), None);
             ui.data_mut(|d| d.insert_temp(mode_id, false));
             return Some(Some(blank.to_expr()));
         }
@@ -664,6 +736,47 @@ mod tests {
         assert_eq!((div.op, div.value), (OpKind::Div, Operand::Lit(Value::Int(5))));
         let toggle = with_kind(&VarOp::set("met", true), &v, OpKind::Toggle);
         assert_eq!(toggle.op, OpKind::Toggle);
+    }
+
+    #[test]
+    fn collections_get_their_own_operations_and_rows() {
+        use orbit_core::ScalarType;
+        let v = vec![
+            VarInfo { name: "bag".into(), ty: ValueType::List(ScalarType::Str) },
+            VarInfo { name: "gold".into(), ty: ValueType::Map(ScalarType::Int) },
+            VarInfo { name: "n".into(), ty: ValueType::Int },
+            VarInfo { name: "item".into(), ty: ValueType::Str },
+        ];
+        // A list starts with "push" and an element operand.
+        let push = blank_op(&v);
+        assert_eq!(push, VarOp::new("bag", OpKind::Push, Operand::Lit(Value::Str(String::new()))));
+        assert!(push.issues(&|n| type_of(&v, n)).is_empty());
+        // "remove at" wants an index: the text operand is reset to 0.
+        let at = with_kind(&push, &v, OpKind::RemoveAt);
+        assert_eq!(at.value, Operand::Lit(Value::Int(0)));
+        // A variable operand of the element type is kept for "remove".
+        let by_var = VarOp::new("bag", OpKind::Push, Operand::Var("item".into()));
+        assert_eq!(with_kind(&by_var, &v, OpKind::Remove).value, Operand::Var("item".into()));
+        // Moving to the map: "push" is not offered, "set an entry" with a key.
+        let moved = with_var(&push, &v, "gold");
+        assert_eq!(moved.op, OpKind::MapSet);
+        assert_eq!(moved.key, Some(Operand::Lit(Value::Str(String::new()))));
+        assert_eq!(moved.value, Operand::Lit(Value::Int(0)));
+        assert!(moved.issues(&|n| type_of(&v, n)).is_empty());
+        // Back to a number: the key goes away.
+        let back = with_var(&moved, &v, "n");
+        assert_eq!(back, VarOp::set("n", 0i64));
+        // Clear ignores its operand.
+        assert_eq!(with_kind(&push, &v, OpKind::Clear).to_expr().to_string(), "clear(bag)");
+        // Rows: "contains" for a list, "has key" for a map, lengths are ints.
+        assert_eq!(blank_row(&v), Condition::cmp("bag", Cmp::Contains, ""));
+        let row = row_with_var(&blank_row(&v), &v, "gold");
+        assert_eq!(row, Condition::cmp("gold", Cmp::HasKey, ""));
+        assert_eq!(
+            row_with_cmp(&v, "gold", ValueType::Map(ScalarType::Int), Cmp::LenGt, &Operand::Lit("".into())),
+            Condition::cmp("gold", Cmp::LenGt, 0i64)
+        );
+        assert_eq!(cmp_key(Cmp::NotHasKey), "field.cmp.not_has_key");
     }
 
     #[test]

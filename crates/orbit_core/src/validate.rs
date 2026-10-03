@@ -185,6 +185,27 @@ impl Cx<'_> {
                 self.errors
                     .push(ValidationError::DuplicateVariable(v.name.clone()));
             }
+            if !v.initial.is_well_formed() {
+                self.errors.push(ValidationError::InvalidVariableValue {
+                    name: v.name.clone(),
+                    reason: format!(
+                        "every element must be a {}",
+                        v.initial
+                            .value_type()
+                            .element()
+                            .map_or(String::new(), |t| t.to_string())
+                    ),
+                });
+            } else if !v.initial.within_limits() {
+                self.errors.push(ValidationError::InvalidVariableValue {
+                    name: v.name.clone(),
+                    reason: format!(
+                        "at most {} elements and {} bytes of text",
+                        crate::value::MAX_COLLECTION_LEN,
+                        crate::value::MAX_COLLECTION_TEXT
+                    ),
+                });
+            }
         }
     }
 
@@ -829,7 +850,14 @@ fn divides_by_zero(expr: &Expr, vars: &HashMap<&str, &Value>, assigned: &HashSet
                 || divides_by_zero(r, vars, assigned)
         }
         Expr::Unary(_, e) => divides_by_zero(e, vars, assigned),
-        _ => false,
+        Expr::Index(c, i) => {
+            divides_by_zero(c, vars, assigned) || divides_by_zero(i, vars, assigned)
+        }
+        Expr::List(items) | Expr::Call(_, items) => {
+            items.iter().any(|e| divides_by_zero(e, vars, assigned))
+        }
+        Expr::Map(entries) => entries.iter().any(|(_, e)| divides_by_zero(e, vars, assigned)),
+        Expr::Lit(_) | Expr::Var(_) => false,
     }
 }
 

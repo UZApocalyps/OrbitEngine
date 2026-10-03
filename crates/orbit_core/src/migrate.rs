@@ -23,6 +23,10 @@
 //! * v8 -> v9 (animation): `Story::curves` (named easing curves) and an
 //!   optional `ease` on transitions. Absent = no curves / linear, so a v8
 //!   document is a valid v9 document.
+//! * v9 -> v10 (effects, timelines, 3D scenes): purely additive.
+//! * v10 -> v11 (UI-13, ADR 0016): `Value::List` / `Value::Map`, list and map
+//!   expressions (`Expr::List`, `Map`, `Index`, `Call`). Purely additive: a
+//!   v10 document is a valid v11 document.
 
 use std::borrow::Cow;
 
@@ -46,7 +50,7 @@ pub fn read_version(source: &str) -> Result<u32, CoreError> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -273,6 +277,16 @@ fn v3_to_v4(source: &str) -> Result<String, CoreError> {
 
     let mut story: Story = ron::from_str(source)?;
     story.schema_version = 4;
+    story.to_ron()
+}
+
+/// v10 -> v11. Additive only (list and map values, collection expressions,
+/// ADR 0016 §1): only the version number changes.
+fn v10_to_v11(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 11;
     story.to_ron()
 }
 

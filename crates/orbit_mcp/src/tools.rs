@@ -15,7 +15,7 @@ use serde_json::{Value as Json, json};
 
 use crate::convert::{
     build_transition, parse_curve, check_identifier, check_scale, find_asset, find_character, find_label,
-    find_scene, find_speaker, free_position, insertion_index, json_to_custom, json_to_value,
+    find_scene, find_speaker, free_position, insertion_index, json_to_custom,
     parse_color, parse_id, parse_position,
 };
 use crate::error::{ErrorKind, ToolError};
@@ -375,12 +375,12 @@ pub enum CommandSpec {
     SetVar {
         /// Variable name (declare it with declare_variable).
         var: String,
-        /// Expression in the expression language, e.g. `trust + 1`, `true`, `"forest"`.
+        /// Expression in the expression language, e.g. `trust + 1`, `true`, `"forest"`, `push(bag, "key")`, `insert(gold, "alice", 3)`.
         value: String,
     },
     /// Conditional jump.
     If {
-        /// Condition, e.g. `trust > 2 && route == "forest"`.
+        /// Condition, e.g. `trust > 2 && route == "forest"`, `contains(bag, "key")`, `len(bag) > 0`, `has_key(gold, "alice")`.
         condition: String,
         /// Label id or name to jump to when true.
         then_target: String,
@@ -713,8 +713,10 @@ enum ScopeArg {
 struct DeclareVariableArgs {
     /// Variable name (letters, digits, `_`).
     name: String,
-    /// Initial value: a boolean, a number or a string. It fixes the variable's type.
+    /// Initial value: a boolean, a number, a string, an array (a list, e.g. `["sword"]`) or an object (a map from text keys, e.g. `{"alice": 0}`). It fixes the variable's type. Lists and maps hold one type of element and cannot be nested.
     initial: Json,
+    /// Element type of a list or map: `bool`, `int`, `float` or `string`. Required for an empty `[]` / `{}`; otherwise inferred from the elements.
+    element_type: Option<String>,
     /// `game` (saved with the playthrough, default) or `persistent` (survives across playthroughs).
     scope: Option<ScopeArg>,
 }
@@ -1851,7 +1853,7 @@ fn edit_character(cx: &mut ToolCx<'_>, a: EditCharacterArgs) -> Result<String, T
 
 fn declare_variable(cx: &mut ToolCx<'_>, a: DeclareVariableArgs) -> Result<String, ToolError> {
     check_identifier(&a.name)?;
-    let initial = json_to_value(&a.initial)?;
+    let initial = crate::convert::json_to_value_typed(&a.initial, a.element_type.as_deref())?;
     let scope = match a.scope {
         Some(ScopeArg::Persistent) => VarScope::Persistent,
         _ => VarScope::Game,
@@ -2375,7 +2377,7 @@ pub fn builtin_tools() -> Vec<ToolDef> {
         def::<DeclareVariableArgs>(
             "declare_variable",
             "Declare a variable",
-            "Declare (or redeclare) a variable with its initial value, which fixes its type (boolean, number or string).",
+            "Declare (or redeclare) a variable with its initial value, which fixes its type (boolean, number, string, list or map). Change lists and maps with a SetVar node whose value is push(bag, \"key\"), remove(bag, \"key\"), remove_at(bag, 0), insert(m, \"k\", 1), remove_key(m, \"k\"), clear(bag); read them with len(x), contains(list, v), has_key(map, k), list[0], map[\"k\"].",
             Kind::Edit,
             declare_variable,
         ),

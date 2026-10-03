@@ -31,9 +31,9 @@ pub use defs::{
     VarScope, scale_is_valid,
 };
 pub use error::{AnimationIssue, CoreError, CurveOwner, ValidationError, ValidationWarning};
-pub use expr::{BinOp, EvalError, Expr, ParseError, TypeError, UnOp};
+pub use expr::{BinOp, EvalError, Expr, Func, ParseError, TypeError, UnOp, fold_list, fold_map};
 pub use ids::{AssetId, CharacterId, Node3dId, NodeId, SceneId, StringId};
 pub use story::{CURRENT_SCHEMA_VERSION, ChoiceOption, Node, NodeKind, Scene, Story};
 pub use validate::{ValidationReport, check_asset_files, validate};
-pub use value::{Value, ValueType};
+pub use value::{MAX_COLLECTION_LEN, MAX_COLLECTION_TEXT, ScalarType, Value, ValueType};
 pub use varops::{Cmp, Condition, OpError, OpKind, Operand, VarOp, coerce};
