@@ -187,6 +187,33 @@ impl UiBundle {
             .collect()
     }
 
+    /// Warnings for the story's `OpenScreen` / `CloseScreen` nodes that name
+    /// a screen the bundle does not have (the screen is the `story` side of
+    /// the cross-check; `issue.screen` is the missing id).
+    pub fn story_issues(&self, story: &orbit_core::Story) -> Vec<Issue> {
+        let mut out = Vec::new();
+        for scene in &story.scenes {
+            for node in &scene.nodes {
+                let (screen, verb) = match &node.kind {
+                    orbit_core::NodeKind::OpenScreen { screen, .. } => (screen, "opens"),
+                    orbit_core::NodeKind::CloseScreen { screen } => (screen, "closes"),
+                    _ => continue,
+                };
+                if self.screen(screen).is_none() {
+                    out.push(Issue::warning(
+                        screen,
+                        "",
+                        format!(
+                            "scene `{}` {verb} screen `{screen}` (node {}), which is not in the UI bundle",
+                            scene.name, node.id
+                        ),
+                    ));
+                }
+            }
+        }
+        out
+    }
+
     /// Problems of every screen and splash (errors make a bundle unusable).
     pub fn validate(&self) -> Vec<Issue> {
         let mut out = Vec::new();

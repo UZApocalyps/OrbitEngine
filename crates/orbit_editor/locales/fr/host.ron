@@ -181,4 +181,5 @@
     "problem.all_options_conditional": "Toutes les options ont une condition : le joueur peut être bloqué",
     "problem.missing_plugin": "Plugin absent : « {plugin} » ; ce nœud est conservé en lecture seule",
     "problem.timeline_key_after_end": "Une clé se trouve après la fin de la chronologie : elle n'est jamais atteinte",
+    "problem.invalid_screen_node": "Nœud d'écran : {message}",
 }

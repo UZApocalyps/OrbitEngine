@@ -130,6 +130,17 @@ struct Build {
     styles: BTreeMap<String, Style>,
     counter: usize,
     paths: Vec<(NodeId, Vec<usize>)>,
+    /// The rows of the `Repeat` templates being built, innermost last.
+    items: Vec<ItemCtx>,
+}
+
+/// One row of a generated list (`WidgetKind::Repeat`, UI-15).
+#[derive(Clone, Debug, PartialEq)]
+struct ItemCtx {
+    value: Value,
+    index: usize,
+    /// The key of the entry, for a list generated from a map.
+    key: Option<String>,
 }
 
 /// A screen defined by data. The shell keeps its [`DataContext`] current
@@ -154,10 +165,24 @@ pub struct DataScreen {
     unsupported: Vec<UiAction>,
     /// A variable changed locally: the tree is rebuilt after the event.
     vars_dirty: bool,
+    /// Values the story gave the screen (`OpenScreen::params`), read by
+    /// `BindPath::Param` and `Operand::Param`.
+    params: Vec<(String, Value)>,
 }
 
 impl DataScreen {
     pub fn new(asset: ScreenAsset, theme: &Theme, texts: &Texts, ctx: DataContext) -> Self {
+        Self::with_params(asset, theme, texts, ctx, Vec::new())
+    }
+
+    /// A screen opened by the story with its parameters (UI-14).
+    pub fn with_params(
+        asset: ScreenAsset,
+        theme: &Theme,
+        texts: &Texts,
+        ctx: DataContext,
+        params: Vec<(String, Value)>,
+    ) -> Self {
         let mut s = Self {
             asset,
             ui: Ui::new(theme.clone()),
@@ -172,9 +197,114 @@ impl DataScreen {
             confirm: Confirm::default(),
             unsupported: Vec::new(),
             vars_dirty: false,
+            params,
         };
         s.rebuild();
         s
+    }
+
+    /// The parameters the story gave the screen.
+    pub fn params(&self) -> &[(String, Value)] {
+        &self.params
+    }
+
+    /// Replaces the parameters (rebuilds when they changed).
+    pub fn set_params(&mut self, params: Vec<(String, Value)>) {
+        if params != self.params {
+            self.params = params;
+            self.rebuild();
+        }
+    }
+
+    /// Whether the screen is a HUD (drawn under the textbox, never pausing).
+    pub fn is_hud(&self) -> bool {
+        self.asset.hud
+    }
+
+    /// Value of a variable, a screen parameter (`@param.name`) or, inside a
+    /// row, the row's element (`@item`, `@index`, `@key`).
+    fn lookup(&self, name: &str, item: Option<&ItemCtx>) -> Option<Value> {
+        match name {
+            orbit_core::ITEM_VAR => item.map(|i| i.value.clone()),
+            orbit_core::ITEM_INDEX_VAR => item.map(|i| Value::Int(i.index as i64)),
+            orbit_core::ITEM_KEY_VAR => item.and_then(|i| i.key.clone()).map(Value::Str),
+            _ => match name.strip_prefix(orbit_core::PARAM_VAR_PREFIX) {
+                Some(p) => self.param(p).cloned(),
+                None => self.ctx.vars.get(name).cloned(),
+            },
+        }
+    }
+
+    fn param(&self, name: &str) -> Option<&Value> {
+        self.params.iter().find(|(n, _)| n == name).map(|(_, v)| v)
+    }
+
+    /// Value of a binding that is not a setting.
+    fn bind_value(&self, bind: &BindPath, item: Option<&ItemCtx>) -> Option<Value> {
+        let name = match bind {
+            BindPath::Setting(_) => return None,
+            BindPath::Var(n) => n.clone(),
+            BindPath::Item => orbit_core::ITEM_VAR.to_owned(),
+            BindPath::ItemIndex => orbit_core::ITEM_INDEX_VAR.to_owned(),
+            BindPath::ItemKey => orbit_core::ITEM_KEY_VAR.to_owned(),
+            BindPath::Param(p) => format!("{}{p}", orbit_core::PARAM_VAR_PREFIX),
+        };
+        self.lookup(&name, item)
+    }
+
+    /// `operand` with the row and parameter values written in (they are not
+    /// known any more when the button is pressed).
+    fn resolve_operand(&self, operand: &orbit_core::Operand, item: Option<&ItemCtx>) -> orbit_core::Operand {
+        if operand.is_contextual()
+            && let Some(v) = operand.eval(&|n| self.lookup(n, item))
+        {
+            return orbit_core::Operand::Lit(v);
+        }
+        operand.clone()
+    }
+
+    fn resolve_actions(&self, actions: &[UiAction], item: Option<&ItemCtx>) -> Vec<UiAction> {
+        actions
+            .iter()
+            .map(|a| match a {
+                UiAction::VarSet(op) => {
+                    let mut op = op.clone();
+                    op.value = self.resolve_operand(&op.value, item);
+                    op.key = op.key.as_ref().map(|k| self.resolve_operand(k, item));
+                    UiAction::VarSet(op)
+                }
+                UiAction::CloseWith(o) => UiAction::CloseWith(self.resolve_operand(o, item)),
+                other => other.clone(),
+            })
+            .collect()
+    }
+
+    /// The rows a `Repeat` builds from `source` (at most `MAX_REPEAT_ITEMS`).
+    fn repeat_items(&self, source: &BindPath, item: Option<&ItemCtx>) -> Vec<ItemCtx> {
+        let max = orbit_ui_data::MAX_REPEAT_ITEMS;
+        match self.bind_value(source, item) {
+            Some(Value::List(_, list)) => list
+                .iter()
+                .take(max)
+                .enumerate()
+                .map(|(index, value)| ItemCtx {
+                    value: value.clone(),
+                    index,
+                    key: None,
+                })
+                .collect(),
+            Some(Value::Map(_, map)) => map
+                .iter()
+                .take(max)
+                .enumerate()
+                .map(|(index, (k, value))| ItemCtx {
+                    value: value.clone(),
+                    index,
+                    key: Some(k.clone()),
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 
     pub fn id(&self) -> &str {
@@ -216,7 +346,12 @@ impl DataScreen {
             styles: BTreeMap::new(),
             counter: 0,
             paths: Vec::new(),
+            items: Vec::new(),
         };
+        if self.asset.hud {
+            // Under the textbox (`Layer::UI`), above the stage.
+            st.ui.set_layer(orbit_render2d::Layer(orbit_render2d::Layer::UI.0 - 1));
+        }
         if self.asset.dim_background {
             st.ui
                 .add_root(Node::panel(PanelKind::Dim, Dir::Stack).fill());
@@ -240,12 +375,21 @@ impl DataScreen {
     }
 
     fn text(&self, t: &TextRef) -> String {
+        self.text_in(t, None)
+    }
+
+    /// A text inside the row `item` of a generated list (if any).
+    fn text_in(&self, t: &TextRef, item: Option<&ItemCtx>) -> String {
         match t {
             TextRef::Key(k) if k == "game.title" => self.ctx.title.clone(),
             TextRef::Key(k) => self.texts.get(k),
             TextRef::Literal(s) => s.clone(),
             TextRef::Bind(BindPath::Setting(key)) => self.format_setting(*key),
             TextRef::Bind(BindPath::Var(name)) => self.format_var(name),
+            TextRef::Bind(b) => self
+                .bind_value(b, item)
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
         }
     }
 
@@ -311,14 +455,17 @@ impl DataScreen {
         let index = st.counter;
         st.counter += 1;
         let p = &self.ctx.prefs;
+        let item = st.items.last().cloned();
+        let item = item.as_ref();
         let node = match &def.kind {
             WidgetKind::Panel { kind, dir } => Node::panel(*kind, *dir),
-            WidgetKind::Stack { dir } => Node::container(*dir),
+            WidgetKind::Stack { dir } | WidgetKind::Repeat { dir, .. } => Node::container(*dir),
             WidgetKind::Grid { columns } => Node::grid(*columns),
             WidgetKind::Button { text, action } => {
                 let tag = Self::new_tag(st);
-                st.binds.insert(tag, Bound::Button(action.clone()));
-                Node::button(tag, self.text(text))
+                st.binds
+                    .insert(tag, Bound::Button(self.resolve_actions(action, item)));
+                Node::button(tag, self.text_in(text, item))
             }
             WidgetKind::Label {
                 text,
@@ -326,7 +473,7 @@ impl DataScreen {
                 center,
                 dim,
             } => {
-                let mut n = Node::label(self.text(text));
+                let mut n = Node::label(self.text_in(text, item));
                 if let Some(size) = size {
                     n = n.font(*size);
                 }
@@ -340,6 +487,8 @@ impl DataScreen {
                     let readout = match bind {
                         BindPath::Setting(key) => Some(Readout::Setting(*key)),
                         BindPath::Var(name) => Some(Readout::Var(name.clone())),
+                        // Rows and parameters are fixed until a rebuild.
+                        _ => None,
                     };
                     if let Some(readout) = readout {
                         let tag = Self::new_tag(st);
@@ -412,7 +561,7 @@ impl DataScreen {
                     };
                     let tag = Self::new_tag(st);
                     st.binds.insert(tag, Bound::VarToggle(name.to_owned()));
-                    let n = Node::toggle(tag, self.text(text), *on);
+                    let n = Node::toggle(tag, self.text_in(text, item), *on);
                     return self.finish(n, def, parent, path, index, st);
                 }
                 // The host may not offer fullscreen (or the screen reader
@@ -428,7 +577,7 @@ impl DataScreen {
                 let Some(on) = on else { return };
                 let tag = Self::new_tag(st);
                 st.binds.insert(tag, Bound::Toggle(key));
-                let n = Node::toggle(tag, self.text(text), on);
+                let n = Node::toggle(tag, self.text_in(text, item), on);
                 return self.finish(n, def, parent, path, index, st);
             }
             WidgetKind::Dropdown {
@@ -457,7 +606,7 @@ impl DataScreen {
                             values: values.clone(),
                         },
                     );
-                    let names = options.iter().map(|o| self.text(o)).collect();
+                    let names = options.iter().map(|o| self.text_in(o, item)).collect();
                     let n = Node::dropdown(tag, names, selected);
                     return self.finish(n, def, parent, path, index, st);
                 }
@@ -552,6 +701,28 @@ impl DataScreen {
             for (tag, action) in bound {
                 st.binds.insert(tag, Bound::Slot(action));
             }
+        }
+        if let WidgetKind::Repeat { source, empty, .. } = &def.kind {
+            // The children are the template of one row, built per element.
+            let outer = st.items.last().cloned();
+            let rows = self.repeat_items(source, outer.as_ref());
+            if rows.is_empty() {
+                if let Some(text) = empty {
+                    let label = Node::label(self.text_in(text, outer.as_ref())).dimmed();
+                    st.ui.add(id, label);
+                }
+                return;
+            }
+            for row in rows {
+                st.items.push(row);
+                for (i, child) in def.children.iter().enumerate() {
+                    path.push(i);
+                    self.build(child, Some(id), path, st);
+                    path.pop();
+                }
+                st.items.pop();
+            }
+            return;
         }
         for (i, child) in def.children.iter().enumerate() {
             path.push(i);
@@ -739,6 +910,12 @@ impl DataScreen {
                 Some(UiEvent::VarOp(op.clone()))
             }
             UiAction::SceneGoto(scene) => Some(UiEvent::SceneGoto(scene.clone())),
+            // Row values were written in when the button was built.
+            UiAction::CloseWith(operand) => Some(match operand.eval(&|n| self.lookup(n, None)) {
+                Some(value) => UiEvent::BackWith(value),
+                // No value (e.g. an unknown variable): a plain close.
+                None => UiEvent::Back,
+            }),
         });
     }
 }
@@ -1488,5 +1665,76 @@ mod tests {
         let mut s = DataScreen::new(from_ron(A11Y_SCREEN).unwrap(), &Theme::default(), &Texts::builtin("en"), c);
         assert!(s.ui().find(5).is_none());
         assert!(s.ui().find(4).is_some());
+    }
+
+    const BAG_SCREEN: &str = r#"(id: "bag", root: (kind: Stack(dir: Vertical), children: [
+        (kind: Repeat(source: Var("bag"), empty: Some(Literal("Nothing"))), children: [
+            (kind: Button(text: Bind(Item), action: [
+                VarSet((var: "bag", op: Remove, value: Item)),
+                CloseWith(Item),
+            ])),
+            (kind: Label(text: Bind(ItemIndex))),
+        ]),
+        (kind: Button(text: Bind(Param("who")), action: [CloseWith(Param("who"))])),
+    ]))"#;
+
+    fn bag_screen(items: &[&str]) -> DataScreen {
+        let mut c = ctx();
+        c.vars.insert(
+            "bag".into(),
+            Value::list(orbit_core::ScalarType::Str, items.iter().map(|s| Value::from(*s))),
+        );
+        DataScreen::with_params(
+            from_ron(BAG_SCREEN).unwrap(),
+            &Theme::default(),
+            &Texts::builtin("en"),
+            c,
+            vec![("who".into(), Value::from("Aiko"))],
+        )
+    }
+
+    #[test]
+    fn a_repeat_builds_one_row_per_element_with_item_actions() {
+        let mut s = bag_screen(&["key", "map"]);
+        // Tags: row 0 button (1), row 1 button (2), the param button (3).
+        let remove = |v: &str| {
+            UiEvent::VarOp(VarOp::new(
+                "bag",
+                orbit_core::OpKind::Remove,
+                orbit_core::Operand::Lit(Value::from(v)),
+            ))
+        };
+        assert_eq!(
+            click(&mut s, 2),
+            vec![remove("map"), UiEvent::BackWith(Value::from("map"))]
+        );
+        // The local change rebuilt the list: one row left.
+        assert!(s.ui().find(3).is_none());
+        assert_eq!(
+            click(&mut s, 2),
+            vec![UiEvent::BackWith(Value::from("Aiko"))],
+            "parameters are read by bindings and close values"
+        );
+        let mut s = bag_screen(&["key", "map"]);
+        assert_eq!(
+            click(&mut s, 1),
+            vec![remove("key"), UiEvent::BackWith(Value::from("key"))]
+        );
+    }
+
+    #[test]
+    fn an_empty_repeat_shows_its_empty_text() {
+        let mut s = bag_screen(&[]);
+        // Only the parameter button remains.
+        assert!(s.ui().find(1).is_some() && s.ui().find(2).is_none());
+        assert_eq!(s.params(), &[("who".to_owned(), Value::from("Aiko"))]);
+        // A bigger list from the shell rebuilds the rows.
+        let mut c = ctx();
+        c.vars.insert(
+            "bag".into(),
+            Value::list(orbit_core::ScalarType::Str, [Value::from("x")]),
+        );
+        s.set_context(c);
+        assert!(s.ui().find(2).is_some());
     }
 }

@@ -151,4 +151,6 @@
     "textview.nothing_changed": "Le texte ne change rien.",
     "draft.label.effect": "Effet (déplacer, secouer, zoomer…)",
     "draft.label.timeline": "Chronologie",
+    "draft.label.open_screen": "Ouvrir un écran",
+    "draft.label.close_screen": "Fermer un écran",
 }

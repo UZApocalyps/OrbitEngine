@@ -20,6 +20,30 @@ fn json_of(text: String) -> Value {
 }
 
 #[test]
+fn list_ui_shows_hud_and_warns_about_missing_screens() {
+    let (_dir, mut h) = host("hud");
+    h.call_tool("write_ui_screen", json!({"ron": "(id: \"hud\", hud: true, transition_in: Some((kind: SlideUp, duration: 0.3)), root: (kind: Stack(dir: Vertical)))"})).unwrap();
+    h.call_tool("create_scene", json!({"name": "s"})).unwrap();
+    for screen in ["hud", "ghost"] {
+        h.call_tool(
+            "add_command",
+            json!({"scene": "s", "command": {"type": "open_screen", "screen": screen}}),
+        )
+        .unwrap();
+    }
+    let r = json_of(h.call_tool("list_ui", json!({})).unwrap());
+    let s = &r["screens"][0];
+    assert_eq!(s["hud"], true);
+    assert_eq!(s["transition_in"]["kind"], "SlideUp");
+    let issues = r["issues"].as_array().unwrap();
+    assert!(
+        issues.iter().any(|i| i["message"].as_str().unwrap().contains("`ghost`")),
+        "{issues:?}"
+    );
+    assert!(!issues.iter().any(|i| i["message"].as_str().unwrap().contains("screen `hud`")));
+}
+
+#[test]
 fn screens_styles_and_splashes_round_trip() {
     let (dir, mut h) = host("rt");
     let r = json_of(h.call_tool("list_ui", json!({})).unwrap());

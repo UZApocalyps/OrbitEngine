@@ -679,6 +679,7 @@ pub fn preview_state_json(story: &Story, status: &str, snapshot: Option<&Preview
             json!({"kind": "transition", "elapsed": elapsed, "duration": duration})
         }
         Flow::Ended => json!({"kind": "ended"}),
+        Flow::Screen(screen) => json!({"kind": "screen", "screen": screen}),
         Flow::Failed(message) => json!({"kind": "failed", "message": message}),
     };
     let node = snap.node.map(|id| {

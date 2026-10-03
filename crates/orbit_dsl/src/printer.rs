@@ -36,6 +36,8 @@
 //! scene3d <asset-ref> [camera "<name>"] [with <transition>]   ShowScene3d
 //! camera3d "<name>" [with <transition>]          Camera3d
 //! hide_scene3d [with <transition>]               HideScene3d
+//! open screen "<id>" [wait] [-> <var>] [with <p> = <expr>, ...]   OpenScreen
+//! close screen "<id>"                            CloseScreen
 //! move <target> by (<dx>, <dy>) over <s> [ease <curve>] [wait]      Effect::Move
 //! shake <target> <amplitude> over <s> [ease <curve>] [wait]         Effect::Shake
 //! zoom <factor> over <s> [ease <curve>] [wait]                      Effect::Zoom
@@ -96,6 +98,8 @@ pub const KEYWORDS: &[&str] = &[
     "scene3d",
     "camera3d",
     "hide_scene3d",
+    "open",
+    "close",
     "at",
     "with",
     "scale",
@@ -682,6 +686,29 @@ fn write_node(ctx: &Ctx<'_>, scene: SceneId, node: &Node, out: &mut String) {
                 over(*duration, ease, *wait)
             ),
         },
+        NodeKind::OpenScreen {
+            screen,
+            wait,
+            result,
+            params,
+        } => {
+            let mut s = format!("open screen {}", quote(screen));
+            if *wait {
+                s.push_str(" wait");
+            }
+            if let Some(r) = result {
+                s.push_str(&format!(" -> {}", fmt_name(r)));
+            }
+            if !params.is_empty() {
+                let list: Vec<String> = params
+                    .iter()
+                    .map(|p| format!("{} = {}", fmt_name(&p.name), print_expr(&p.value.to_expr())))
+                    .collect();
+                s.push_str(&format!(" with {}", list.join(", ")));
+            }
+            s
+        }
+        NodeKind::CloseScreen { screen } => format!("close screen {}", quote(screen)),
         NodeKind::Timeline {
             duration,
             looping,

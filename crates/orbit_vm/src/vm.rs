@@ -16,6 +16,10 @@ pub const MAX_NODES_PER_STEP: usize = 10_000;
 /// Maximum depth of nested `Call`s.
 pub const MAX_CALL_DEPTH: usize = 256;
 
+/// Screens the story can keep open at once (the oldest non-waiting one is
+/// closed beyond that).
+pub const MAX_OPEN_SCREENS: usize = 16;
+
 /// Animations kept at once (finished ones stay until the scene changes).
 pub const MAX_ACTIVE_ANIMS: usize = 256;
 /// Seconds past the end `complete_anim` puts an animation, so that rounding
@@ -114,6 +118,7 @@ impl Vm {
                 shown: None,
                 active_anims: Vec::new(),
                 scene_clock: 0.0,
+                open_screens: Vec::new(),
             },
             read: BTreeSet::new(),
             events: Vec::new(),
@@ -140,13 +145,13 @@ impl Vm {
         if let Some(err) = &self.fault {
             return StepResult::Error(err.clone());
         }
-        if let Pending::Choice { node, visible } = &self.state.pending {
-            return self.choice_result(*node, visible);
+        if let Some(result) = self.pending_result() {
+            return result;
         }
         self.history.ahead = true;
         match self.run() {
             Ok(result) => {
-                if matches!(result, StepResult::Say { .. } | StepResult::Choice { .. }) {
+                if result.is_interaction() {
                     self.history.record(&self.state);
                 }
                 result
@@ -167,14 +172,14 @@ impl Vm {
         if let Some(err) = &self.fault {
             return Some(StepResult::Error(err.clone()));
         }
-        if let Pending::Choice { node, visible } = &self.state.pending {
-            return Some(self.choice_result(*node, visible));
+        if let Some(result) = self.pending_result() {
+            return Some(result);
         }
         self.history.ahead = true;
         match self.run_until(Some(target)) {
             Ok(None) => None,
             Ok(Some(result)) => {
-                if matches!(result, StepResult::Say { .. } | StepResult::Choice { .. }) {
+                if result.is_interaction() {
                     self.history.record(&self.state);
                 }
                 Some(result)
@@ -234,6 +239,23 @@ impl Vm {
         match self.eval(node, expr)? {
             Value::Bool(b) => Ok(b),
             _ => Err(VmError::ConditionNotBool(node)),
+        }
+    }
+
+    /// What `step()` returns again while a choice or a screen is pending.
+    fn pending_result(&self) -> Option<StepResult> {
+        match &self.state.pending {
+            Pending::None => None,
+            Pending::Choice { node, visible } => Some(self.choice_result(*node, visible)),
+            Pending::Screen { node } => Some(
+                match self.state.open_screens.iter().find(|s| s.node == *node && s.waiting) {
+                    Some(s) => StepResult::Screen {
+                        node: *node,
+                        screen: s.screen.clone(),
+                    },
+                    None => StepResult::Error(VmError::UnknownNode(*node)),
+                },
+            ),
         }
     }
 
@@ -593,6 +615,66 @@ impl Vm {
                         }
                     }
                 }
+                NodeKind::OpenScreen {
+                    screen,
+                    wait,
+                    params,
+                    ..
+                } => {
+                    self.state.pc = next;
+                    let mut values = Vec::with_capacity(params.len());
+                    for p in params {
+                        let value = match &p.value {
+                            orbit_core::Operand::Lit(v) => v.clone(),
+                            orbit_core::Operand::Var(name) => self
+                                .variable(name)
+                                .cloned()
+                                .ok_or_else(|| VmError::Eval {
+                                    node: pc,
+                                    source: orbit_core::EvalError::UnknownVariable(name.clone()),
+                                })?,
+                            // Refused by validation: there is no screen
+                            // context in the story.
+                            _ => {
+                                self.warnings.push(format!(
+                                    "node {pc}: parameter `{}` has no value outside a screen, ignored",
+                                    p.name
+                                ));
+                                continue;
+                            }
+                        };
+                        values.push((p.name.clone(), value));
+                    }
+                    // Opening a screen that is open replaces it.
+                    self.state.open_screens.retain(|s| s.screen != *screen);
+                    self.state.open_screens.push(crate::state::OpenScreenState {
+                        screen: screen.clone(),
+                        node: pc,
+                        params: values,
+                        waiting: *wait,
+                    });
+                    if self.state.open_screens.len() > MAX_OPEN_SCREENS
+                        && let Some(oldest) =
+                            self.state.open_screens.iter().position(|s| !s.waiting)
+                    {
+                        self.state.open_screens.remove(oldest);
+                    }
+                    if *wait {
+                        self.state.pending = Pending::Screen { node: pc };
+                        self.state.shown = Some(Interaction::Screen {
+                            node: pc,
+                            screen: screen.clone(),
+                        });
+                        return Ok(Some(StepResult::Screen {
+                            node: pc,
+                            screen: screen.clone(),
+                        }));
+                    }
+                }
+                NodeKind::CloseScreen { screen } => {
+                    self.state.pc = next;
+                    self.state.open_screens.retain(|s| s.screen != *screen);
+                }
                 NodeKind::Custom {
                     plugin_id,
                     kind,
@@ -837,12 +919,89 @@ impl Vm {
             .ok_or(VmError::UnknownScene(scene))?;
         self.state.pc = target.nodes.first().map(|n| n.id);
         self.state.pending = Pending::None;
+        // A screen the story was waiting for is left with the scene; other
+        // screens (HUDs) stay open.
+        self.state.open_screens.retain(|s| !s.waiting);
         self.state.call_stack.clear();
         self.clear_anims();
         self.fault = None;
         self.events.clear();
         self.history.on_goto();
         Ok(())
+    }
+
+    // --------------------------------------------------------------- screens
+
+    /// Screens opened by the story (`OpenScreen`) and not closed yet, in
+    /// opening order. The host shows them; they come back with rollback and
+    /// loads.
+    pub fn open_screens(&self) -> &[crate::state::OpenScreenState] {
+        &self.state.open_screens
+    }
+
+    /// The player closed `screen`, a screen the story opened (UI-14). With a
+    /// `result` (the value of `UiAction::CloseWith`), the `result` variable
+    /// of its `OpenScreen` node receives it, keeping its declared type (a
+    /// value of another type is ignored with a warning); `None` (Escape, a
+    /// plain `Close`) leaves the variable unchanged.
+    ///
+    /// Returns `true` when the story was waiting for this screen: the next
+    /// `step()` continues after the node. For rollback, closing a screen the
+    /// story waits for is like answering a choice (one rollback step reopens
+    /// it, the known future is cut); closing any other screen is recorded in
+    /// the checkpoint on screen, like a variable changed from a screen.
+    /// Unknown screen: `VmError::ScreenNotOpen`, nothing changes.
+    pub fn close_screen(&mut self, screen: &str, result: Option<Value>) -> Result<bool, VmError> {
+        let at = self
+            .state
+            .open_screens
+            .iter()
+            .position(|s| s.screen == screen)
+            .ok_or_else(|| VmError::ScreenNotOpen(screen.to_owned()))?;
+        let entry = self.state.open_screens.remove(at);
+        let mut patched_var = None;
+        if let Some(value) = result {
+            let target = match self.node(entry.node).map(|n| &n.kind) {
+                Ok(NodeKind::OpenScreen {
+                    result: Some(var), ..
+                }) => Some(var.clone()),
+                _ => None,
+            };
+            match target {
+                Some(var) => match self.variable(&var).map(Value::value_type) {
+                    Some(ty) => match orbit_core::coerce(value, ty) {
+                        Ok(v) => {
+                            if !self.persistent_names.contains(&var) {
+                                patched_var = Some((var.clone(), v.clone()));
+                            }
+                            self.store_var(&var, v);
+                        }
+                        Err(e) => self
+                            .warnings
+                            .push(format!("screen `{screen}`: result ignored, {e}")),
+                    },
+                    None => self
+                        .warnings
+                        .push(format!("screen `{screen}`: unknown result variable `{var}`")),
+                },
+                None => self.warnings.push(format!(
+                    "screen `{screen}` closed with a value but its node has no result variable"
+                )),
+            }
+        }
+        let waited = entry.waiting && self.state.pending == Pending::Screen { node: entry.node };
+        if waited {
+            self.state.pending = Pending::None;
+            self.history.on_screen_closed();
+        } else {
+            self.history.patch_cursor(|s| {
+                s.open_screens.retain(|o| o.screen != screen);
+                if let Some((name, value)) = &patched_var {
+                    s.vars.insert(name.clone(), value.clone());
+                }
+            });
+        }
+        Ok(waited)
     }
 
     // ------------------------------------------------------------ animations
@@ -1057,6 +1216,17 @@ impl Vm {
             );
             if !ok {
                 return Err(VmError::UnknownNode(*node));
+            }
+        }
+        // A waiting screen must be an open screen of an `OpenScreen` node.
+        if let Pending::Screen { node } = &state.pending
+            && !state.open_screens.iter().any(|s| s.node == *node && s.waiting)
+        {
+            return Err(VmError::UnknownNode(*node));
+        }
+        for s in &state.open_screens {
+            if !matches!(self.node(s.node).map(|n| &n.kind), Ok(NodeKind::OpenScreen { .. })) {
+                return Err(VmError::UnknownNode(s.node));
             }
         }
         if let Some(missing) = referenced.iter().find(|id| !known(id)) {

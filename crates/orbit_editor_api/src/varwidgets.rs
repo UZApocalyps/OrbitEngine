@@ -48,6 +48,9 @@ fn operand_fits(vars: &[VarInfo], operand: &Operand, ty: ValueType) -> bool {
     match operand {
         Operand::Lit(v) => compatible(v.value_type(), ty),
         Operand::Var(n) => type_of(vars, n).is_some_and(|t| compatible(t, ty)),
+        // Contextual operands only exist inside a screen (see
+        // `screen_operand_editor`); the story-side widgets never offer them.
+        _ => false,
     }
 }
 
@@ -312,8 +315,192 @@ pub fn operand_editor(
                 out = Some(Operand::Var(chosen));
             }
         }
+        // A screen-only operand shown in a story editor: read-only.
+        other => {
+            ui.label(RichText::new(contextual_label(other)).weak());
+        }
     }
     out
+}
+
+fn contextual_label(operand: &Operand) -> String {
+    match operand {
+        Operand::Item => "@item".to_owned(),
+        Operand::ItemIndex => "@index".to_owned(),
+        Operand::ItemKey => "@key".to_owned(),
+        Operand::Param(p) => format!("@param.{p}"),
+        Operand::Lit(_) | Operand::Var(_) => String::new(),
+    }
+}
+
+/// Which family an operand belongs to (the kind combo of the screen
+/// operand editor).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum OperandKindTag {
+    Lit,
+    Var,
+    Item,
+    ItemIndex,
+    ItemKey,
+    Param,
+}
+
+impl OperandKindTag {
+    const ALL: [OperandKindTag; 6] = [
+        OperandKindTag::Lit,
+        OperandKindTag::Var,
+        OperandKindTag::Item,
+        OperandKindTag::ItemIndex,
+        OperandKindTag::ItemKey,
+        OperandKindTag::Param,
+    ];
+
+    fn of(o: &Operand) -> Self {
+        match o {
+            Operand::Lit(_) => Self::Lit,
+            Operand::Var(_) => Self::Var,
+            Operand::Item => Self::Item,
+            Operand::ItemIndex => Self::ItemIndex,
+            Operand::ItemKey => Self::ItemKey,
+            Operand::Param(_) => Self::Param,
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::Lit => "varop.value",
+            Self::Var => "varop.variable",
+            Self::Item => "varop.item",
+            Self::ItemIndex => "varop.item_index",
+            Self::ItemKey => "varop.item_key",
+            Self::Param => "varop.param",
+        }
+    }
+
+    /// A fresh operand of this family.
+    fn blank(self, vars: &[VarInfo], ty: ValueType) -> Operand {
+        match self {
+            Self::Lit => blank_operand(ty),
+            Self::Var => Operand::Var(
+                vars.iter()
+                    .find(|v| compatible(v.ty, ty))
+                    .map(|v| v.name.clone())
+                    .unwrap_or_default(),
+            ),
+            Self::Item => Operand::Item,
+            Self::ItemIndex => Operand::ItemIndex,
+            Self::ItemKey => Operand::ItemKey,
+            Self::Param => Operand::Param(String::new()),
+        }
+    }
+}
+
+/// The operand editor of a UI screen: a literal, a variable, or one of the
+/// contextual values (the item / index / key of the row of a generated
+/// list, a parameter the story gave the screen). `ty` is the type wanted for
+/// literals and variables.
+pub fn screen_operand_editor(
+    ui: &mut Ui,
+    salt: impl Salt,
+    vars: &[VarInfo],
+    ty: ValueType,
+    operand: &Operand,
+) -> Option<Operand> {
+    let mut out = None;
+    let tag = OperandKindTag::of(operand);
+    let mut want = tag;
+    ComboBox::from_id_salt((salt, "skind"))
+        .selected_text(ui.t(tag.key()))
+        .width(110.0)
+        .show_ui(ui, |ui| {
+            for k in OperandKindTag::ALL {
+                let label = ui.t(k.key());
+                ui.selectable_value(&mut want, k, label);
+            }
+        });
+    if want != tag {
+        return Some(want.blank(vars, ty));
+    }
+    match operand {
+        Operand::Lit(v) => {
+            // A returned / passed value has no declared type: choose it.
+            if let Some(t) = lit_type_combo(ui, salt, v.value_type()) {
+                return Some(blank_operand(t));
+            }
+            if let Some(nv) = value_editor(ui, v) {
+                out = Some(Operand::Lit(nv));
+            }
+        }
+        Operand::Var(name) => {
+            let mut chosen = name.clone();
+            ComboBox::from_id_salt((salt, "svar"))
+                .selected_text(if name.is_empty() {
+                    ui.t("varop.choose_var")
+                } else {
+                    name.clone()
+                })
+                .show_ui(ui, |ui| {
+                    for v in vars {
+                        ui.selectable_value(&mut chosen, v.name.clone(), &v.name);
+                    }
+                });
+            if chosen != *name {
+                out = Some(Operand::Var(chosen));
+            }
+        }
+        Operand::Param(name) => {
+            let mut done = false;
+            let hint = ui.t("varop.param_hint");
+            if let Some(t) = fields::text_field(ui, (salt, "sparam"), name, &hint, 1, &mut done) {
+                out = Some(Operand::Param(t));
+            }
+        }
+        Operand::Item | Operand::ItemIndex | Operand::ItemKey => {}
+    }
+    out
+}
+
+/// A combo of the scalar types of a literal; `Some(new)` when changed.
+fn lit_type_combo(ui: &mut Ui, salt: impl Salt, ty: ValueType) -> Option<ValueType> {
+    let mut chosen = ty;
+    let name = |t: ValueType| match t {
+        ValueType::Bool => "varop.type_bool",
+        ValueType::Int => "varop.type_int",
+        ValueType::Float => "varop.type_float",
+        _ => "varop.type_text",
+    };
+    ComboBox::from_id_salt((salt, "ptype"))
+        .selected_text(ui.t(name(ty)))
+        .width(70.0)
+        .show_ui(ui, |ui| {
+            for t in [ValueType::Str, ValueType::Int, ValueType::Float, ValueType::Bool] {
+                let label = ui.t(name(t));
+                ui.selectable_value(&mut chosen, t, label);
+            }
+        });
+    (chosen != ty).then_some(chosen)
+}
+
+/// A literal operand whose type is chosen by the user too (the parameters of
+/// an `OpenScreen` node have no declared type): a type combo for literals,
+/// then the usual literal / variable editor.
+pub fn untyped_operand_editor(
+    ui: &mut Ui,
+    salt: impl Salt,
+    vars: &[VarInfo],
+    operand: &Operand,
+) -> Option<Operand> {
+    let ty = match operand {
+        Operand::Lit(v) => v.value_type(),
+        Operand::Var(n) => type_of(vars, n).unwrap_or(ValueType::Str),
+        _ => ValueType::Str,
+    };
+    if matches!(operand, Operand::Lit(_))
+        && let Some(chosen) = lit_type_combo(ui, salt, ty)
+    {
+        return Some(blank_operand(chosen));
+    }
+    operand_editor(ui, salt, vars, ty, operand)
 }
 
 /// The no-code operation editor: variable, operation (only the ones the

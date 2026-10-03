@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::action::{BindPath, SettingKey, UiAction};
-use orbit_core::ValueType;
+use orbit_core::{Operand, ValueType};
 
 use crate::widget::{Cond, ScreenAsset, TextRef, WidgetDef, WidgetKind};
 use crate::theme::Theme;
@@ -97,11 +97,27 @@ pub fn variable_issues(
         match &w.kind {
             WidgetKind::Button { action, .. } => {
                 for a in action {
-                    if let UiAction::VarSet(op) = a {
-                        add(wid, op.issues(ty_of), &mut out);
+                    match a {
+                        UiAction::VarSet(op) => add(wid, op.issues(ty_of), &mut out),
+                        UiAction::CloseWith(Operand::Var(name)) if ty_of(name).is_none() => {
+                            add(wid, vec![format!("unknown variable `{name}`")], &mut out);
+                        }
+                        _ => {}
                     }
                 }
             }
+            WidgetKind::Repeat {
+                source: BindPath::Var(name),
+                ..
+            } => match ty_of(name) {
+                None => add(wid, vec![format!("unknown variable `{name}`")], &mut out),
+                Some(t) if !t.is_collection() => add(
+                    wid,
+                    vec![format!("a generated list needs a list or map, `{name}` is {t}")],
+                    &mut out,
+                ),
+                _ => {}
+            },
             WidgetKind::Slider { bind, .. } => {
                 if let Some(name) = bind.var() {
                     match ty_of(name) {
@@ -180,6 +196,20 @@ pub fn validate(screen: &ScreenAsset, theme: Option<&Theme>) -> Vec<Issue> {
     for action in &screen.on_cancel {
         check_action(sid, "", action, &mut out);
     }
+    if screen.hud && screen.pauses_game {
+        out.push(Issue::warning(sid, "", "a HUD never pauses the game: `pauses_game` is ignored"));
+    }
+    for t in [&screen.transition_in, &screen.transition_out].into_iter().flatten() {
+        if !t.duration.is_finite() || t.duration < 0.0 {
+            out.push(Issue::error(sid, "", "a transition duration must be a number of seconds, 0 or more"));
+        }
+    }
+    check_items(sid, &screen.root, false, 1, &mut out);
+    for action in &screen.on_cancel {
+        if action_uses_item(action) {
+            out.push(Issue::warning(sid, "", "on_cancel uses the element of a row, outside a generated list it has no value"));
+        }
+    }
     let mut ids = HashSet::new();
     let mut slot_lists = 0;
     walk(&screen.root, 1, &mut |w, depth| {
@@ -199,6 +229,62 @@ pub fn validate(screen: &ScreenAsset, theme: Option<&Theme>) -> Vec<Issue> {
         check_widget(sid, w, theme, &mut out);
     });
     out
+}
+
+/// Whether an action reads the element of a generated row.
+fn action_uses_item(action: &UiAction) -> bool {
+    let item = |o: &Operand| matches!(o, Operand::Item | Operand::ItemIndex | Operand::ItemKey);
+    match action {
+        UiAction::CloseWith(o) => item(o),
+        UiAction::VarSet(op) => item(&op.value) || op.key.as_ref().is_some_and(item),
+        _ => false,
+    }
+}
+
+/// `Repeat` sources and templates; row bindings used outside a template.
+fn check_items(sid: &str, w: &WidgetDef, inside: bool, depth: usize, out: &mut Vec<Issue>) {
+    if depth > MAX_DEPTH {
+        return;
+    }
+    let wid = w.id.as_str();
+    let text_item = |t: &TextRef| matches!(t, TextRef::Bind(b) if b.is_item());
+    if !inside {
+        let uses = match &w.kind {
+            WidgetKind::Label { text, .. } => text_item(text),
+            WidgetKind::Button { text, action } => {
+                text_item(text) || action.iter().any(action_uses_item)
+            }
+            WidgetKind::Toggle { text, bind } => text_item(text) || bind.is_item(),
+            WidgetKind::Slider { bind, .. } | WidgetKind::Dropdown { bind, .. } => bind.is_item(),
+            _ => false,
+        };
+        if uses {
+            out.push(Issue::warning(sid, wid, "uses the element of a row outside a generated list: it has no value there"));
+        }
+    }
+    let mut inside = inside;
+    if let WidgetKind::Repeat { source, .. } = &w.kind {
+        match source {
+            BindPath::Var(name) if name.trim().is_empty() => {
+                out.push(Issue::error(sid, wid, "empty variable name"));
+            }
+            BindPath::Param(name) if name.trim().is_empty() => {
+                out.push(Issue::error(sid, wid, "empty parameter name"));
+            }
+            BindPath::Var(_) | BindPath::Param(_) => {}
+            BindPath::Item if inside => {
+                out.push(Issue::error(sid, wid, "lists cannot hold lists: a generated list needs a list or map variable or parameter"));
+            }
+            _ => out.push(Issue::error(sid, wid, "a generated list needs a list or map variable or parameter")),
+        }
+        if w.children.is_empty() {
+            out.push(Issue::warning(sid, wid, "the generated list has no row template (add children)"));
+        }
+        inside = true;
+    }
+    for c in &w.children {
+        check_items(sid, c, inside, depth + 1, out);
+    }
 }
 
 fn walk<'a>(w: &'a WidgetDef, depth: usize, f: &mut impl FnMut(&'a WidgetDef, usize)) {
@@ -229,6 +315,9 @@ fn check_action(sid: &str, wid: &str, action: &UiAction, out: &mut Vec<Issue>) {
 fn check_bind(sid: &str, wid: &str, bind: &BindPath, out: &mut Vec<Issue>) -> Option<SettingKey> {
     if bind.var().is_some_and(|v| v.trim().is_empty()) {
         out.push(Issue::error(sid, wid, "empty variable name"));
+    }
+    if matches!(bind, BindPath::Param(p) if p.trim().is_empty()) {
+        out.push(Issue::error(sid, wid, "empty parameter name"));
     }
     bind.setting()
 }

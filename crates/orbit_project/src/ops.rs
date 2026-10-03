@@ -766,6 +766,12 @@ pub fn variable_users(story: &Story, name: &str) -> Vec<NodeId> {
                     .as_ref()
                     .is_some_and(|c| c.variables().contains(&name))
             }),
+            NodeKind::OpenScreen { result, params, .. } => {
+                result.as_deref() == Some(name)
+                    || params
+                        .iter()
+                        .any(|p| matches!(&p.value, orbit_core::Operand::Var(v) if v == name))
+            }
             _ => false,
         })
         .map(|n| n.id)
@@ -898,6 +904,28 @@ pub fn rename_variable(project: &mut Project, old: &str, new: &str) -> Result<()
                             let mut o = o.clone();
                             o.condition = o.condition.as_ref().map(|c| rename_in_expr(c, old, new));
                             o
+                        })
+                        .collect(),
+                },
+                NodeKind::OpenScreen {
+                    screen,
+                    wait,
+                    result,
+                    params,
+                } => NodeKind::OpenScreen {
+                    screen: screen.clone(),
+                    wait: *wait,
+                    result: result.as_ref().map(|r| {
+                        if r == old { new.to_owned() } else { r.clone() }
+                    }),
+                    params: params
+                        .iter()
+                        .map(|p| {
+                            let mut p = p.clone();
+                            if matches!(&p.value, orbit_core::Operand::Var(v) if v == old) {
+                                p.value = orbit_core::Operand::Var(new.to_owned());
+                            }
+                            p
                         })
                         .collect(),
                 },

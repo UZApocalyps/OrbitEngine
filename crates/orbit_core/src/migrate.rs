@@ -27,6 +27,10 @@
 //! * v10 -> v11 (UI-13, ADR 0016): `Value::List` / `Value::Map`, list and map
 //!   expressions (`Expr::List`, `Map`, `Index`, `Call`). Purely additive: a
 //!   v10 document is a valid v11 document.
+//! * v11 -> v12 (UI-14 / UI-15, ADR 0016): `NodeKind::OpenScreen` /
+//!   `CloseScreen` and the contextual operands (`Operand::Item`, `ItemIndex`,
+//!   `ItemKey`, `Param`). Purely additive: a v11 document is a valid v12
+//!   document.
 
 use std::borrow::Cow;
 
@@ -93,7 +97,7 @@ fn leading_version(source: &str) -> Option<u32> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11, v11_to_v12];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -330,6 +334,16 @@ fn v10_to_v11(source: &str) -> Result<String, CoreError> {
 
     let mut story: Story = ron::from_str(source)?;
     story.schema_version = 11;
+    story.to_ron()
+}
+
+/// v11 -> v12. Additive only (screens opened by the story, contextual
+/// operands, ADR 0016 §2 / §4): only the version number changes.
+fn v11_to_v12(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 12;
     story.to_ron()
 }
 

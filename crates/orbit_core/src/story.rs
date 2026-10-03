@@ -18,7 +18,7 @@ use crate::migrate;
 use crate::validate;
 
 /// Version of the on-disk schema produced by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 11;
+pub const CURRENT_SCHEMA_VERSION: u32 = 12;
 
 /// A whole story: definitions (characters, assets, strings...) and an ordered
 /// list of scenes. Execution starts at the first node of the first non-empty
@@ -227,6 +227,37 @@ pub enum NodeKind {
         wait: bool,
         tracks: Vec<StoryTrack>,
     },
+    /// Opens a data-driven screen of the project (`ui/*.screen.ron`, by its
+    /// id) over the game (schema v12, UI-14, ADR 0016). With `wait` the story
+    /// stops on this node until the screen closes; `result` receives the
+    /// value of its `Close` action (`UiAction::CloseWith`). `params` are
+    /// copied into the screen (`BindPath::Param`) when it opens. Opening a
+    /// screen that is already open replaces it. Which screens are open is
+    /// part of the VM state: rollback, saves and skip handle it.
+    OpenScreen {
+        screen: String,
+        #[serde(default)]
+        wait: bool,
+        #[serde(default)]
+        result: Option<String>,
+        #[serde(default)]
+        params: Vec<ScreenParam>,
+    },
+    /// Closes a screen opened by `OpenScreen` (typically a HUD). Closing a
+    /// screen that is not open does nothing.
+    CloseScreen {
+        screen: String,
+    },
+}
+
+/// A value handed to a screen by [`NodeKind::OpenScreen`]: `name` is what
+/// the screen binds (`BindPath::Param(name)`), `value` a literal or a story
+/// variable read when the node runs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ScreenParam {
+    pub name: String,
+    pub value: crate::varops::Operand,
 }
 
 impl NodeKind {

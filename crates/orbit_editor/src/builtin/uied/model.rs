@@ -38,10 +38,11 @@ pub enum KindTag {
     Dropdown,
     ScrollList,
     SaveSlots,
+    Repeat,
 }
 
 impl KindTag {
-    pub const ALL: [KindTag; 11] = [
+    pub const ALL: [KindTag; 12] = [
         KindTag::Panel,
         KindTag::Stack,
         KindTag::Grid,
@@ -53,6 +54,7 @@ impl KindTag {
         KindTag::Dropdown,
         KindTag::ScrollList,
         KindTag::SaveSlots,
+        KindTag::Repeat,
     ];
 
     pub fn of(kind: &WidgetKind) -> Self {
@@ -68,6 +70,7 @@ impl KindTag {
             WidgetKind::Dropdown { .. } => Self::Dropdown,
             WidgetKind::ScrollList => Self::ScrollList,
             WidgetKind::SaveSlots { .. } => Self::SaveSlots,
+            WidgetKind::Repeat { .. } => Self::Repeat,
         }
     }
 
@@ -85,6 +88,7 @@ impl KindTag {
             Self::Dropdown => "dropdown",
             Self::ScrollList => "scroll_list",
             Self::SaveSlots => "save_slots",
+            Self::Repeat => "repeat",
         }
     }
 
@@ -102,6 +106,7 @@ impl KindTag {
             Self::Dropdown => icons::CARET_CIRCLE_DOWN,
             Self::ScrollList => icons::LIST,
             Self::SaveSlots => icons::FLOPPY_DISK,
+            Self::Repeat => icons::REPEAT,
         }
     }
 
@@ -109,7 +114,7 @@ impl KindTag {
     pub fn is_container(self) -> bool {
         matches!(
             self,
-            Self::Panel | Self::Stack | Self::Grid | Self::ScrollList
+            Self::Panel | Self::Stack | Self::Grid | Self::ScrollList | Self::Repeat
         )
     }
 
@@ -154,6 +159,23 @@ impl KindTag {
                 columns: 3,
                 rows: 2,
             },
+            Self::Repeat => {
+                // The row template: one label showing the element.
+                let mut def = WidgetDef::new(WidgetKind::Repeat {
+                    source: BindPath::Var(String::new()),
+                    dir: Dir::Vertical,
+                    empty: None,
+                });
+                let mut row = Self::Label.default_widget();
+                row.kind = WidgetKind::Label {
+                    text: TextRef::Bind(BindPath::Item),
+                    size: None,
+                    center: false,
+                    dim: false,
+                };
+                def.children.push(row);
+                return def;
+            }
         };
         WidgetDef::new(kind)
     }
@@ -427,6 +449,9 @@ fn blank_screen() -> ScreenAsset {
         modal: false,
         pauses_game: false,
         dim_background: true,
+        hud: false,
+        transition_in: None,
+        transition_out: None,
         on_cancel: vec![UiAction::Close],
         root,
     }
@@ -1188,6 +1213,44 @@ mod tests {
         let back = UiDoc::load(&t.0).unwrap();
         let id = doc.bundle.screens[0].id.clone();
         assert_eq!(back.bundle.screen(&id), doc.bundle.screen(&id));
+    }
+
+    #[test]
+    fn a_repeat_widget_with_a_close_with_button_round_trips() {
+        use orbit_core::{ScalarType, ValueType};
+        let t = TempDir::new("repeat");
+        let mut doc = UiDoc::load(&t.0).unwrap();
+        let mut screen = blank_screen();
+        screen.id = "bag".into();
+        screen.hud = false;
+        screen.transition_in = Some(orbit_ui::ScreenTransition::default());
+        let path = add_child(&mut screen, &[], KindTag::Repeat.default_widget()).unwrap();
+        // The template is one label showing the row item.
+        let rep = get_mut(&mut screen.root, &path).unwrap();
+        assert!(KindTag::Repeat.is_container());
+        assert!(matches!(
+            &rep.children[0].kind,
+            WidgetKind::Label { text: TextRef::Bind(BindPath::Item), .. }
+        ));
+        rep.kind = WidgetKind::Repeat {
+            source: BindPath::Var("items".into()),
+            dir: Dir::Vertical,
+            empty: Some(TextRef::Literal("Nothing".into())),
+        };
+        rep.children.push(WidgetDef::new(WidgetKind::Button {
+            text: TextRef::Bind(BindPath::ItemKey),
+            action: vec![UiAction::CloseWith(orbit_core::Operand::Item)],
+        }));
+        doc.edit(|b| b.screens.push(screen));
+        let ty = |n: &str| (n == "items").then_some(ValueType::List(ScalarType::Str));
+        let issues = doc.diagnostics_with(&ty, true);
+        assert!(
+            !issues.iter().any(|i| i.severity == Severity::Error),
+            "{issues:?}"
+        );
+        doc.save().unwrap();
+        let back = UiDoc::load(&t.0).unwrap();
+        assert_eq!(back.bundle.screen("bag"), doc.bundle.screen("bag"));
     }
 
     #[test]

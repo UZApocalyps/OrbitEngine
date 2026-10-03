@@ -1,5 +1,5 @@
 (
-    schema_version: 8,
+    schema_version: 12,
     title: "Demo",
     strings: (
         source_lang: "en",
@@ -46,6 +46,7 @@
             "01JBX0T0000000000000000040": "Leave the market.",
             "01JBX0T0000000000000000041": "Sell some stolen data (+40 credits, more heat).",
             "01JBX0T0000000000000000042": "Pleasure doing business. Do not lose it.",
+            "01JBX0T0000000000000000900": "Before leaving, let me check what I am carrying.",
             "01JBX0T0000000000000000043": "Stolen data attracts attention. Be careful.",
             "01JBX0T0000000000000000044": "The ripperdoc\'s clinic smells of ozone and antiseptic. Chrome gleams on every shelf.",
             "01JBX0T0000000000000000045": "One implant, please. Something to help me sneak into a corporate tower.",
@@ -293,6 +294,16 @@
             initial: Int(0),
             scope: Persistent,
         ),
+        (
+            name: "inventory",
+            initial: List(Str, [Str("Cred stick"), Str("Lockpick")]),
+            scope: Game,
+        ),
+        (
+            name: "used_item",
+            initial: Str(""),
+            scope: Game,
+        ),
     ],
     scenes: [
         (
@@ -325,6 +336,12 @@
                         asset: "01JBX0A0000000000000000007",
                         fade_in: 2.0,
                         looping: true,
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000903",
+                    kind: OpenScreen(
+                        screen: "status",
                     ),
                 ),
                 (
@@ -1129,6 +1146,13 @@
                     ),
                 ),
                 (
+                    id: "01JBX0N0000000000000000902",
+                    kind: SetVar(
+                        var: "inventory",
+                        value: Call(Push, [Var("inventory"), Lit(Str("Neural chip"))]),
+                    ),
+                ),
+                (
                     id: "01JBX0N0000000000000000104",
                     kind: PlaySound(
                         asset: "01JBX0A0000000000000000008",
@@ -1198,6 +1222,27 @@
                     id: "01JBX0N0000000000000000099",
                     kind: Label(
                         name: "leave",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000900",
+                    kind: Say(
+                        speaker: Some("01JBX0C0000000000000000001"),
+                        text_id: "01JBX0T0000000000000000900",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000901",
+                    kind: OpenScreen(
+                        screen: "inventory",
+                        wait: true,
+                        result: Some("used_item"),
+                        params: [
+                            (
+                                name: "owner",
+                                value: Lit(Str("Alice")),
+                            ),
+                        ],
                     ),
                 ),
                 (

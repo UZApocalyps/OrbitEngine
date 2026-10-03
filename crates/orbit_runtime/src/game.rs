@@ -23,6 +23,8 @@ pub(crate) enum FlowKind {
     Transition,
     Waiting,
     Ended,
+    /// The story waits for a screen it opened to close.
+    Screen,
     Failed,
 }
 
@@ -34,6 +36,7 @@ impl FlowKind {
             Flow::Transition { .. } => Self::Transition,
             Flow::Waiting { .. } => Self::Waiting,
             Flow::Ended => Self::Ended,
+            Flow::Screen(_) => Self::Screen,
             Flow::Failed(_) => Self::Failed,
         }
     }
@@ -187,7 +190,7 @@ impl Game {
         let by_flow = match self.kind() {
             FlowKind::Waiting | FlowKind::Transition => true,
             FlowKind::Say => !self.dialogue.is_complete() || self.skipping() || self.auto,
-            FlowKind::Choice | FlowKind::Ended | FlowKind::Failed => false,
+            FlowKind::Choice | FlowKind::Screen | FlowKind::Ended | FlowKind::Failed => false,
         };
         by_flow || self.stage_is_animated()
     }
@@ -264,12 +267,13 @@ impl Game {
                     self.director.skip_timer();
                 }
             }
-            FlowKind::Choice | FlowKind::Ended | FlowKind::Failed => {}
+            FlowKind::Choice | FlowKind::Screen | FlowKind::Ended | FlowKind::Failed => {}
         }
         // Skip stops at every choice and at the end; auto only at the end
         // (it waits on a choice, it never decides).
         match self.kind() {
-            FlowKind::Choice => self.skip_toggled = false,
+            // A screen the story waits for is a decision too.
+            FlowKind::Choice | FlowKind::Screen => self.skip_toggled = false,
             FlowKind::Ended | FlowKind::Failed => {
                 self.skip_toggled = false;
                 self.auto = false;
@@ -380,7 +384,7 @@ impl Game {
             // Clicks skip the transition instead of being ignored.
             FlowKind::Transition => self.director.advance(),
             FlowKind::Ended => outcome = InputOutcome::Finished,
-            FlowKind::Waiting | FlowKind::Failed => {}
+            FlowKind::Waiting | FlowKind::Screen | FlowKind::Failed => {}
         }
         self.sync(theme);
         outcome
@@ -442,6 +446,20 @@ impl Game {
         let moved = self.director.goto_scene(scene);
         self.sync(theme);
         moved
+    }
+
+    /// The player closed `screen`, opened by the story, with its close value.
+    /// Like a choice, it stops skip and auto.
+    pub fn close_screen(
+        &mut self,
+        screen: &str,
+        result: Option<orbit_core::Value>,
+        theme: &Theme,
+    ) -> bool {
+        self.interrupt();
+        let done = self.director.close_screen(screen, result);
+        self.sync(theme);
+        done
     }
 
     /// One step back in time. Returns whether anything changed.

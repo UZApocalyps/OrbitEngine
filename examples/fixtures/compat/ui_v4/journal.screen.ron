@@ -1,0 +1,42 @@
+(
+    ui_version: 4,
+    id: "journal",
+    modal: true,
+    pauses_game: true,
+    dim_background: true,
+    on_cancel: [Close],
+    root: (
+        id: "frame",
+        kind: Panel(kind: Normal, dir: Vertical),
+        layout: (
+            width: Fixed(900.0),
+            height: Fit,
+            pad: (32.0, 32.0),
+            gap: 16.0,
+            anchor: Some((canvas: (0.5, 0.5), pivot: (0.5, 0.5), offset: (0.0, 0.0))),
+        ),
+        children: [
+            (kind: Label(text: Literal("Journal"), size: Some(40.0), center: true)),
+            (kind: Label(text: Bind(Var("gold")))),
+            (kind: Label(text: Bind(Var("bag")))),
+            (
+                id: "take",
+                kind: Button(
+                    text: Literal("Take the key"),
+                    action: [VarSet((var: "bag", op: Push, value: Lit(Str("key")))), PlaySound("ui/pick.ogg")],
+                ),
+                visible: Vars(Cmp(var: "gold", cmp: Ge, value: Lit(Int(0)))),
+            ),
+            (
+                kind: Dropdown(
+                    bind: Var("mode"),
+                    options: [Literal("Easy"), Literal("Hard")],
+                    values: [Str("easy"), Str("hard")],
+                ),
+            ),
+            (kind: Toggle(text: Literal("Reduced motion"), bind: Setting(ReducedMotion))),
+            (kind: Slider(bind: Setting(TextScale), min: 1.0, max: 1.6, step: Some(0.1))),
+            (kind: Button(text: Key("ui.back"), action: [Close])),
+        ],
+    ),
+)

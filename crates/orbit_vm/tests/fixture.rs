@@ -41,6 +41,9 @@ fn play_from(mut vm: Vm, script: &[&str]) -> (Run, Vm) {
             StepResult::WaitTime(_)
             | StepResult::WaitTransition { .. }
             | StepResult::WaitAnimation { .. } => {}
+            StepResult::Screen { screen, .. } => {
+                vm.close_screen(&screen, None).unwrap();
+            }
             StepResult::End => return (run, vm),
             StepResult::Error(e) => panic!("VM error: {e}"),
         }

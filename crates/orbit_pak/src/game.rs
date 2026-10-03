@@ -440,6 +440,46 @@ mod tests {
     }
 
     #[test]
+    fn screen_nodes_survive_postcard_without_a_version_change() {
+        // UI-14 (schema v12): `OpenScreen` / `CloseScreen` and the contextual
+        // operands are appended variants, the pack stays version 3.
+        use orbit_core::{Node, NodeId, NodeKind, Operand, ScreenParam, Value};
+        let mut pack = fixture_pack();
+        let before = pack.to_bytes().unwrap();
+        assert_eq!(&before[8..12], &PACK_VERSION.to_le_bytes());
+        for kind in [
+            NodeKind::OpenScreen {
+                screen: "phone".into(),
+                wait: true,
+                result: Some("called".into()),
+                params: vec![
+                    ScreenParam {
+                        name: "contact".into(),
+                        value: Operand::Lit(Value::from("Aiko")),
+                    },
+                    ScreenParam {
+                        name: "gold".into(),
+                        value: Operand::Var("gold".into()),
+                    },
+                ],
+            },
+            NodeKind::CloseScreen {
+                screen: "hud".into(),
+            },
+        ] {
+            pack.story.scenes[0].nodes.insert(
+                0,
+                Node {
+                    id: NodeId::new(),
+                    kind,
+                },
+            );
+        }
+        let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
+        assert_eq!(back, pack);
+    }
+
+    #[test]
     fn bad_packs_are_refused() {
         assert_eq!(
             GamePack::from_bytes(b"(schema_version: 5)").unwrap_err(),

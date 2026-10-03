@@ -178,6 +178,10 @@ pub fn describe_error(
             texts.format("problem.invalid_position_coords", &[("name", name)]),
         ),
         E::DuplicateSceneId(_) => (None, t("problem.duplicate_scene")),
+        E::InvalidScreenNode { node, message } => (
+            Some(*node),
+            texts.format("problem.invalid_screen_node", &[("message", message)]),
+        ),
         other => (None, other.to_string()),
     }
 }

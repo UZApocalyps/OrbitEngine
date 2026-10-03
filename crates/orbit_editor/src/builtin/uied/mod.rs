@@ -620,6 +620,7 @@ fn screens_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         .map(|t| t.styles.keys().cloned().collect())
         .unwrap_or_default();
     let images = images_of(ctx);
+    let curves = crate::builtin::inspector::curves_of(ctx);
     let fonts = theme_font_names(st);
     let vars = ctx.story().map(orbit_editor_api::varwidgets::story_vars).unwrap_or_default();
     let scenes = story_scenes(ctx);
@@ -631,6 +632,7 @@ fn screens_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         fonts: &fonts,
         vars: &vars,
         scenes: &scenes,
+        curves: &curves,
     };
     let enable_card = st
         .doc
@@ -985,8 +987,34 @@ fn properties(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, env: &En
     // ---- the screen flags, the widget: edit a copy, commit if it changed
     let mut screen = original.clone();
     ui.checkbox(&mut screen.modal, env.tr.t("uied.modal"));
-    ui.checkbox(&mut screen.pauses_game, env.tr.t("uied.pauses_game"));
+    ui.add_enabled(
+        !screen.hud,
+        egui::Checkbox::new(&mut screen.pauses_game, env.tr.t("uied.pauses_game")),
+    );
     ui.checkbox(&mut screen.dim_background, env.tr.t("uied.dim_background"));
+    ui.checkbox(&mut screen.hud, env.tr.t("uied.hud"))
+        .on_hover_text(env.tr.t("uied.hud_tip"));
+    if screen.hud {
+        ui.label(
+            RichText::new(env.tr.t("uied.hud_ignores_pause"))
+                .small()
+                .color(weak(ui)),
+        );
+    }
+    props::screen_transition_editor(
+        ui,
+        env,
+        "tr_in",
+        &env.tr.t("uied.transition_in"),
+        &mut screen.transition_in,
+    );
+    props::screen_transition_editor(
+        ui,
+        env,
+        "tr_out",
+        &env.tr.t("uied.transition_out"),
+        &mut screen.transition_out,
+    );
     ui.label(RichText::new(env.tr.t("uied.on_cancel")).small().color(weak(ui)));
     props::actions_editor(ui, env, "cancel", &mut screen.on_cancel);
     let path = st.widget.clone();
@@ -1032,6 +1060,7 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         .map(|t| t.styles.keys().cloned().collect())
         .unwrap_or_default();
     let images = images_of(ctx);
+    let curves = crate::builtin::inspector::curves_of(ctx);
     let fonts = theme_font_names(st);
     let font_assets = font_assets_of(ctx);
     let root = ctx.project_info().map(|p| p.root.clone());
@@ -1046,6 +1075,7 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         fonts: &fonts,
         vars: &[],
         scenes: &[],
+        curves: &curves,
     };
     let contrast = st
         .doc

@@ -7,9 +7,10 @@ use crate::action::{BindPath, UiAction};
 use crate::migrate;
 use crate::theme::Style;
 use crate::layout::{Align, Anchor, Dir, PanelKind, Size};
+use crate::transition::ScreenTransition;
 
 /// Current version of the screen document format.
-pub const UI_VERSION: u32 = 4;
+pub const UI_VERSION: u32 = 5;
 
 fn default_version() -> u32 {
     UI_VERSION
@@ -35,6 +36,30 @@ pub struct ScreenAsset {
     #[serde(default)]
     pub on_cancel: Vec<UiAction>,
     pub root: WidgetDef,
+    /// A heads-up display (`ui_version` 4, UI-14): opened by the story, it is
+    /// drawn over the stage and *under* the textbox, never pauses the game,
+    /// takes no keyboard focus and lets clicks outside its controls reach
+    /// the game. Hidden while a menu (pause, save...) is open.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hud: bool,
+    /// Played when the screen opens (`ui_version` 4, UI-16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition_in: Option<ScreenTransition>,
+    /// Played when the screen closes (`ui_version` 4, UI-16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition_out: Option<ScreenTransition>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+impl ScreenAsset {
+    /// Whether the game keeps running while the screen is open: a HUD never
+    /// pauses it, whatever `pauses_game` says.
+    pub fn effective_pauses_game(&self) -> bool {
+        self.pauses_game && !self.hud
+    }
 }
 
 /// A text: a key of the interface table, a literal, or a bound value.
@@ -210,7 +235,26 @@ pub enum WidgetKind {
         #[serde(default = "two")]
         rows: usize,
     },
+    /// A list generated from a story variable or a screen parameter
+    /// (`ui_version` 4, UI-15, ADR 0016 §4): the children of the widget are
+    /// the template of one row, built once per element of the list (or
+    /// entry of the map, in key order) — at most [`MAX_REPEAT_ITEMS`] rows.
+    /// Inside the template, `BindPath::Item` / `ItemIndex` / `ItemKey` show
+    /// the element, its position (from 0) and its key, and the actions can
+    /// use `Operand::Item` & co. ("use this object", "call this contact").
+    /// `empty` is shown instead when there is no element.
+    Repeat {
+        source: BindPath,
+        /// How the rows are laid out (`Grid(n)` for a grid of `n` columns).
+        #[serde(default = "vertical")]
+        dir: Dir,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        empty: Option<TextRef>,
+    },
 }
+
+/// Rows a [`WidgetKind::Repeat`] builds at most (the rest is left out).
+pub const MAX_REPEAT_ITEMS: usize = 500;
 
 /// One widget of a screen.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

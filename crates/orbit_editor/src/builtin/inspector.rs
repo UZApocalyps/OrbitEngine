@@ -445,6 +445,15 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
             wait,
             tracks,
         } => super::inspector_fx::timeline(ui, ctx, id, duration, looping, wait, tracks),
+        NodeKind::OpenScreen {
+            screen,
+            wait,
+            result,
+            params,
+        } => super::inspector_screen::open_screen(ui, ctx, id, &screen, wait, &result, &params),
+        NodeKind::CloseScreen { screen } => {
+            super::inspector_screen::close_screen(ui, ctx, id, &screen);
+        }
         NodeKind::Return => {
             info(ui, "inspector.return_info");
         }

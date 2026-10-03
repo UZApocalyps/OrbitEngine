@@ -243,6 +243,29 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
         NodeKind::HideScene3d { transition } => {
             format!("hide 3d scene{}", describe_transition(transition))
         }
+        NodeKind::OpenScreen {
+            screen,
+            wait,
+            result,
+            params,
+        } => {
+            let mut s = format!("open screen {}", quote(screen));
+            if *wait {
+                s.push_str(", waits for it to close");
+            }
+            if let Some(r) = result {
+                s.push_str(&format!(", result -> {r}"));
+            }
+            if !params.is_empty() {
+                let p: Vec<String> = params
+                    .iter()
+                    .map(|p| format!("{}={}", p.name, p.value.to_expr()))
+                    .collect();
+                s.push_str(&format!(" with {}", p.join(", ")));
+            }
+            s
+        }
+        NodeKind::CloseScreen { screen } => format!("close screen {}", quote(screen)),
         NodeKind::Effect(e) => describe_effect(story, e),
         NodeKind::Timeline {
             duration,
@@ -599,6 +622,11 @@ pub fn simulate(
             }
             StepResult::WaitTime(_) | StepResult::WaitTransition { .. } => {}
             StepResult::WaitAnimation { node, .. } => vm.complete_anim(node),
+            StepResult::Screen { screen, .. } => {
+                let _ = writeln!(out, "[screen {} opened and closed without a value]", quote(&screen));
+                vm.close_screen(&screen, None)
+                    .map_err(|e| ToolError::refused(format!("cannot close screen: {e}")))?;
+            }
             StepResult::End => {
                 ended = "story ended";
                 break;

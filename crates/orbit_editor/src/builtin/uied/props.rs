@@ -3,7 +3,7 @@
 //! the caller compares it with the original to know whether something changed.
 
 use egui::{ComboBox, DragValue, RichText, Ui};
-use orbit_core::{Condition, Expr};
+use orbit_core::{Condition, Expr, Operand};
 use orbit_editor_api::varwidgets::{self, VarInfo};
 use orbit_editor_api::{Translator, icons};
 use orbit_ui::{
@@ -29,6 +29,8 @@ pub struct Env<'a> {
     pub vars: &'a [VarInfo],
     /// Scenes of the story as `(id, name)` (targets of `SceneGoto`).
     pub scenes: &'a [(String, String)],
+    /// The story's named curves (easings of the screen transitions).
+    pub curves: &'a std::collections::BTreeMap<String, orbit_core::Curve>,
 }
 
 impl Env<'_> {
@@ -329,23 +331,50 @@ fn expr_text(ui: &mut Ui, salt: impl std::hash::Hash + std::fmt::Debug, e: &Expr
     out
 }
 
-fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath) {
-    let is_setting = matches!(bind, BindPath::Setting(_));
-    let mut new = is_setting;
-    pick(
-        ui,
-        (salt, "kind"),
-        &mut new,
-        &[(true, env.v("setting")), (false, env.v("var"))],
-    );
-    if new != is_setting {
-        *bind = if new {
-            BindPath::Setting(SettingKey::MasterVolume)
-        } else {
-            BindPath::Var(String::new())
+/// Family of a bind path (the kind combo of [`bind_editor`]).
+fn bind_tag(bind: &BindPath) -> usize {
+    match bind {
+        BindPath::Setting(_) => 0,
+        BindPath::Var(_) => 1,
+        BindPath::Item => 2,
+        BindPath::ItemIndex => 3,
+        BindPath::ItemKey => 4,
+        BindPath::Param(_) => 5,
+    }
+}
+
+/// `contextual`: also offer the values only a screen has (the item, index
+/// or key of a generated row, a screen parameter): for texts.
+fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath, contextual: bool) {
+    let tag = bind_tag(bind);
+    let mut new = tag;
+    let mut options = vec![(0, env.v("setting")), (1, env.v("var"))];
+    if contextual || tag >= 2 {
+        options.push((2, env.v("item")));
+        options.push((3, env.v("item_index")));
+        options.push((4, env.v("item_key")));
+        options.push((5, env.v("param")));
+    }
+    pick(ui, (salt, "kind"), &mut new, &options);
+    if new != tag {
+        *bind = match new {
+            0 => BindPath::Setting(SettingKey::MasterVolume),
+            1 => BindPath::Var(String::new()),
+            2 => BindPath::Item,
+            3 => BindPath::ItemIndex,
+            4 => BindPath::ItemKey,
+            _ => BindPath::Param(String::new()),
         };
     }
     match bind {
+        BindPath::Item | BindPath::ItemIndex | BindPath::ItemKey => {}
+        BindPath::Param(name) => {
+            ui.add(
+                egui::TextEdit::singleline(name)
+                    .hint_text(env.t("uied.param_hint"))
+                    .desired_width(120.0),
+            );
+        }
         BindPath::Setting(key) => {
             let options: Vec<(SettingKey, String)> = SETTINGS
                 .iter()
@@ -395,7 +424,7 @@ fn text_ref_editor(ui: &mut Ui, env: &Env, salt: &str, text: &mut TextRef) {
         TextRef::Key(s) | TextRef::Literal(s) => {
             ui.add(egui::TextEdit::singleline(s).desired_width(f32::INFINITY));
         }
-        TextRef::Bind(bind) => bind_editor(ui, env, &format!("{salt}b"), bind),
+        TextRef::Bind(bind) => bind_editor(ui, env, &format!("{salt}b"), bind, true),
     }
 }
 
@@ -486,7 +515,7 @@ fn action_index(a: &UiAction) -> usize {
         UiAction::ReturnToTitle => 3,
         UiAction::Open(_) => 4,
         UiAction::Replace(_) => 5,
-        UiAction::Close => 6,
+        UiAction::Close | UiAction::CloseWith(_) => 6,
         UiAction::CloseAll => 7,
         UiAction::QuickSave => 8,
         UiAction::QuickLoad => 9,
@@ -566,13 +595,146 @@ fn action_editor(ui: &mut Ui, env: &Env, salt: &str, action: &mut UiAction) {
                 if let Some(new) = varwidgets::varop_editor(ui, (salt, "op"), env.vars, op, true) {
                     *op = new;
                 }
+                // Inside a screen the value can also be the item / index /
+                // key of a generated row or a screen parameter.
+                if let Some(new) = contextual_value_editor(ui, env, (salt, "opctx"), op) {
+                    *op = new;
+                }
             });
+        }
+        UiAction::Close | UiAction::CloseWith(_) => {
+            let mut result = match action {
+                UiAction::CloseWith(o) => Some(o.clone()),
+                _ => None,
+            };
+            let mut on = result.is_some();
+            if ui
+                .checkbox(&mut on, env.t("uied.return_value"))
+                .on_hover_text(env.t("uied.return_value_tip"))
+                .changed()
+            {
+                result = on.then(|| Operand::Lit(orbit_core::Value::Bool(true)));
+            }
+            if let Some(o) = &result
+                && let Some(new) = varwidgets::screen_operand_editor(
+                    ui,
+                    (salt, "ret"),
+                    env.vars,
+                    orbit_core::ValueType::Str,
+                    o,
+                )
+            {
+                result = Some(new);
+            }
+            *action = match result {
+                Some(o) => UiAction::CloseWith(o),
+                None => UiAction::Close,
+            };
         }
         _ => {}
     }
     if !action.is_supported() {
         ui.label(RichText::new(icons::WARNING).color(ui.visuals().warn_fg_color))
             .on_hover_text(env.t("uied.unsupported"));
+    }
+}
+
+/// The contextual operands (item / index / key / parameter) as a value of a
+/// `VarSet`: a menu to use one, and the full picker once one is used.
+fn contextual_value_editor(
+    ui: &mut Ui,
+    env: &Env,
+    salt: impl orbit_editor_api::fields::Salt,
+    op: &orbit_core::VarOp,
+) -> Option<orbit_core::VarOp> {
+    let ty = varwidgets::type_of(env.vars, &op.var)?;
+    let elem = match ty {
+        orbit_core::ValueType::List(s) | orbit_core::ValueType::Map(s) => s.value_type(),
+        other => other,
+    };
+    if op.value.is_contextual() {
+        let new = varwidgets::screen_operand_editor(ui, salt, env.vars, elem, &op.value)?;
+        return Some(orbit_core::VarOp {
+            value: new,
+            ..op.clone()
+        });
+    }
+    let mut picked = None;
+    ui.menu_button(env.t("uied.value_from_screen"), |ui| {
+        for (key, operand) in [
+            ("item", Operand::Item),
+            ("item_index", Operand::ItemIndex),
+            ("item_key", Operand::ItemKey),
+            ("param", Operand::Param(String::new())),
+        ] {
+            if ui.button(env.v(key)).clicked() {
+                picked = Some(operand);
+                ui.close();
+            }
+        }
+    });
+    picked.map(|value| orbit_core::VarOp {
+        value,
+        ..op.clone()
+    })
+}
+
+/// A screen's opening / closing transition: none, or kind + duration +
+/// easing curve.
+pub fn screen_transition_editor(
+    ui: &mut Ui,
+    env: &Env,
+    salt: &str,
+    caption: &str,
+    value: &mut Option<orbit_ui::ScreenTransition>,
+) {
+    use orbit_ui::{ScreenTransition, ScreenTransitionKind};
+    ui.horizontal(|ui| {
+        let mut on = value.is_some();
+        if ui.checkbox(&mut on, caption).changed() {
+            *value = on.then(ScreenTransition::default);
+        }
+        if let Some(t) = value {
+            let options: Vec<(ScreenTransitionKind, String)> = ScreenTransitionKind::ALL
+                .iter()
+                .map(|k| (*k, env.t(&format!("uied.transition.{}", k.key()))))
+                .collect();
+            pick(ui, (salt, "tkind"), &mut t.kind, &options);
+            ui.add(
+                DragValue::new(&mut t.duration)
+                    .range(0.0..=5.0)
+                    .speed(0.01)
+                    .max_decimals(2)
+                    .suffix(" s"),
+            );
+        }
+    });
+    if let Some(t) = value
+        && t.duration > 0.0
+    {
+        let ease = t.ease.clone().unwrap_or_default();
+        let header = format!(
+            "{}: {}",
+            env.t("curve.easing"),
+            orbit_editor_api::curve_editor::curve_label(&ease)
+        );
+        egui::CollapsingHeader::new(header)
+            .id_salt((salt, "ease"))
+            .show(ui, |ui| {
+                let options = orbit_editor_api::curve_editor::CurveEditorOptions {
+                    graph_size: 110.0,
+                    ..Default::default()
+                };
+                if let Some(c) = orbit_editor_api::curve_editor::curve_editor(
+                    ui,
+                    (salt, "curve"),
+                    &ease,
+                    env.curves,
+                    options,
+                ) {
+                    t.ease = (c != orbit_core::Curve::LINEAR).then_some(c);
+                }
+            });
     }
 }
 
@@ -697,7 +859,7 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
             max,
             step,
         } => {
-            row(ui, &env.t("uied.bind"), |ui| bind_editor(ui, env, "bind", bind));
+            row(ui, &env.t("uied.bind"), |ui| bind_editor(ui, env, "bind", bind, false));
             row(ui, &env.t("uied.range"), |ui| {
                 num(ui, min, 0.05);
                 ui.label("→");
@@ -711,14 +873,14 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
             row(ui, &env.t("uied.text"), |ui| {
                 text_ref_editor(ui, env, "text", text);
             });
-            row(ui, &env.t("uied.bind"), |ui| bind_editor(ui, env, "bind", bind));
+            row(ui, &env.t("uied.bind"), |ui| bind_editor(ui, env, "bind", bind, false));
         }
         WidgetKind::Dropdown {
             bind,
             options,
             values,
         } => {
-            row(ui, &env.t("uied.bind"), |ui| bind_editor(ui, env, "bind", bind));
+            row(ui, &env.t("uied.bind"), |ui| bind_editor(ui, env, "bind", bind, false));
             // A variable dropdown gives each option the value it sets.
             let var_ty = bind
                 .var()
@@ -770,6 +932,77 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
             }
         }
         WidgetKind::ScrollList => {}
+        WidgetKind::Repeat { source, dir, empty } => {
+            row(ui, &env.t("uied.repeat_source"), |ui| {
+                let is_param = matches!(source, BindPath::Param(_));
+                let mut want_param = is_param;
+                pick(
+                    ui,
+                    "repeat_src_kind",
+                    &mut want_param,
+                    &[(false, env.v("var")), (true, env.v("param"))],
+                );
+                if want_param != is_param {
+                    *source = if want_param {
+                        BindPath::Param(String::new())
+                    } else {
+                        BindPath::Var(String::new())
+                    };
+                }
+                match source {
+                    BindPath::Param(name) => {
+                        ui.add(
+                            egui::TextEdit::singleline(name)
+                                .hint_text(env.t("uied.param_hint"))
+                                .desired_width(120.0),
+                        );
+                    }
+                    BindPath::Var(name) => {
+                        // Only list and map variables can be repeated.
+                        let lists: Vec<&VarInfo> = env
+                            .vars
+                            .iter()
+                            .filter(|v| {
+                                matches!(
+                                    v.ty,
+                                    orbit_core::ValueType::List(_) | orbit_core::ValueType::Map(_)
+                                )
+                            })
+                            .collect();
+                        if lists.is_empty() && env.vars.is_empty() {
+                            ui.add(egui::TextEdit::singleline(name).desired_width(120.0));
+                        } else {
+                            let text = if name.is_empty() {
+                                env.t("uied.repeat_pick_list")
+                            } else {
+                                name.clone()
+                            };
+                            ComboBox::from_id_salt("repeat_src_var")
+                                .selected_text(text)
+                                .show_ui(ui, |ui| {
+                                    for v in &lists {
+                                        ui.selectable_value(name, v.name.clone(), &v.name);
+                                    }
+                                });
+                        }
+                    }
+                    _ => {}
+                }
+            });
+            row(ui, &env.t("uied.dir"), |ui| dir_editor(ui, env, "dir", dir));
+            row(ui, &env.t("uied.repeat_empty"), |ui| {
+                ui.vertical(|ui| {
+                    optional(ui, empty, TextRef::Literal(String::new()), |ui, t| {
+                        text_ref_editor(ui, env, "empty", t);
+                    });
+                });
+            });
+            ui.label(
+                RichText::new(env.t("uied.repeat_tip"))
+                    .small()
+                    .color(weak(ui)),
+            );
+        }
         WidgetKind::SaveSlots { mode, columns, rows } => {
             row(ui, &env.t("uied.slots_mode"), |ui| {
                 pick(

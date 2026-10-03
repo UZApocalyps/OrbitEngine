@@ -55,4 +55,5 @@
     // ---- console line
     "preview.ui_reload_failed": "The ui/ folder was not reloaded (the previous screens stay): {error}",
     "preview.console":"Preview: {text}",
+    "preview.flow.screen": "screen",
 }

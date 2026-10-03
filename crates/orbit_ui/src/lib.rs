@@ -36,6 +36,7 @@ mod banner;
 mod choice;
 mod dialogue;
 mod input;
+mod screen_fx;
 mod screens;
 mod texts;
 mod theme;
@@ -55,6 +56,8 @@ pub use theme::{
     Border, ButtonTheme, ChoiceTheme, ControlTheme, ListTheme, PanelTheme, ScreenTheme, TextBoxTheme,
     Fill, FontRef, StateColors, Style, StyleSounds, Theme, UiSounds, WidgetTheme, resolve_style, tint,
 };
+pub use screen_fx::{apply_screen_fx, transition_shown};
+pub use orbit_ui_data::{ScreenFx, ScreenTransition, ScreenTransitionKind};
 pub use view::*;
 pub use widgets::{
     Align, Anchor, ButtonData, ButtonKind, CANVAS, Dir, DrawCtx, Kind, LabelData, NO_TAG, Node,

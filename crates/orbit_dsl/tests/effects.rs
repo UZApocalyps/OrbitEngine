@@ -103,6 +103,51 @@ fn transition_ease_is_no_longer_dropped() {
 }
 
 #[test]
+fn screen_nodes_round_trip() {
+    let story = load("test_minimal.ron");
+    let scene = story.scenes[0].id;
+    let (head, rest) = bare(&story);
+    let extra = r#"    open screen "hud"
+    open screen "inventory" wait
+    open screen "phone" wait -> picked with contact = "Aiko", gold = gold, n = 3
+    close screen "hud"
+"#;
+    let text = format!("{head}\n{extra}{rest}");
+    let parsed = parse(&text, &story, Scope::Scene(scene)).unwrap_or_else(|e| panic!("{e:?}"));
+    let nodes = &parsed.scene(scene).unwrap().nodes;
+    assert!(matches!(
+        &nodes[0].kind,
+        NodeKind::OpenScreen { wait: false, result: None, .. }
+    ));
+    match &nodes[2].kind {
+        NodeKind::OpenScreen { screen, wait, result, params } => {
+            assert_eq!(screen, "phone");
+            assert!(*wait);
+            assert_eq!(result.as_deref(), Some("picked"));
+            assert_eq!(params.len(), 3);
+            assert_eq!(params[1].value, orbit_core::Operand::Var("gold".into()));
+        }
+        k => panic!("{k:?}"),
+    }
+    assert!(matches!(&nodes[3].kind, NodeKind::CloseScreen { screen } if screen == "hud"));
+    let printed = print_scene(&parsed, scene).unwrap();
+    assert!(printed.contains(
+        r#"open screen "phone" wait -> picked with contact = "Aiko", gold = gold, n = 3"#
+    ));
+    assert_eq!(parse(&printed, &parsed, Scope::Scene(scene)).unwrap(), parsed);
+
+    for bad in [
+        "    open \"x\"",
+        "    open screen x",
+        "    open screen \"x\" with a = 1 + 2",
+        "    close screen",
+    ] {
+        let text = format!("{head}\n{bad}\n{rest}");
+        assert!(parse(&text, &story, Scope::Scene(scene)).is_err(), "{bad}");
+    }
+}
+
+#[test]
 fn bad_effect_lines_are_reported_with_a_position() {
     let story = load("test_minimal.ron");
     let scene = story.scenes[0].id;

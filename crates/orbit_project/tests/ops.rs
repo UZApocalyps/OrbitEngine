@@ -107,6 +107,18 @@ fn replace_node_kind_round_trips_for_every_kind() {
             version: 1,
             data: CustomData::Map(vec![("n".into(), CustomData::Int(3))]),
         },
+        NodeKind::OpenScreen {
+            screen: "phone".into(),
+            wait: true,
+            result: Some("picked".into()),
+            params: vec![orbit_core::ScreenParam {
+                name: "gold".into(),
+                value: orbit_core::Operand::Var("a".into()),
+            }],
+        },
+        NodeKind::CloseScreen {
+            screen: "phone".into(),
+        },
     ];
     ops::insert_drafts(&mut p, scene, 0, vec![label], "label").unwrap();
     let host = say(&mut p, scene, 1, "host");
@@ -459,6 +471,36 @@ fn variables_rename_updates_every_usage_or_refuses() {
     undoable(&mut p, |p| {
         ops::update_variable(p, "affinity", Value::Int(5), VarScope::Persistent).unwrap();
     });
+}
+
+#[test]
+fn renaming_a_variable_follows_open_screen_result_and_params() {
+    let (mut p, scene) = project();
+    ops::add_variable(&mut p, orbit_core::VarDecl::game("gold", Value::Int(0))).unwrap();
+    ops::add_variable(&mut p, orbit_core::VarDecl::game("picked", Value::Int(0))).unwrap();
+    let open = NodeDraft::plain(NodeKind::OpenScreen {
+        screen: "shop".into(),
+        wait: true,
+        result: Some("picked".into()),
+        params: vec![orbit_core::ScreenParam {
+            name: "g".into(),
+            value: orbit_core::Operand::Var("gold".into()),
+        }],
+    });
+    let id = open.node.id;
+    ops::insert_drafts(&mut p, scene, 0, vec![open], "x").unwrap();
+    assert_eq!(ops::variable_users(p.story(), "gold"), vec![id]);
+    assert_eq!(ops::variable_users(p.story(), "picked"), vec![id]);
+    assert!(ops::delete_variable(&mut p, "gold").is_err());
+    ops::rename_variable(&mut p, "gold", "coins").unwrap();
+    ops::rename_variable(&mut p, "picked", "choice").unwrap();
+    match &p.story().node(id).unwrap().kind {
+        NodeKind::OpenScreen { result, params, .. } => {
+            assert_eq!(result.as_deref(), Some("choice"));
+            assert_eq!(params[0].value, orbit_core::Operand::Var("coins".into()));
+        }
+        k => panic!("{k:?}"),
+    }
 }
 
 #[test]

@@ -13,6 +13,7 @@ Ajoutez des étapes avec les boutons de l'éditeur de scène ou de l'Explorateur
 - **Décor**, **Afficher** / **Masquer** un personnage, **Musique**, **Son**, **Attendre**.
 - **Condition** (si) : aller d'un côté ou de l'autre selon une variable.
 - **Appel** / **Retour** : réutiliser un petit morceau d'histoire depuis plusieurs endroits.
+- **Ouvrir un écran** / **Fermer un écran** : afficher un écran du projet (un inventaire, un HUD) depuis l'histoire, en attendant ou non que le joueur le ferme. Voir le chapitre Interface.
 - **Fin** : l'histoire s'arrête.
 
 Sélectionnez une étape pour modifier tous ses réglages dans l'Inspecteur. Les transitions (fondu enchaîné, fondu au noir) se règlent sur les décors et sur l'affichage ou le masquage des personnages.

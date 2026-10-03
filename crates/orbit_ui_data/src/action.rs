@@ -1,6 +1,6 @@
 //! Actions a button runs and the values a control edits.
 
-use orbit_core::VarOp;
+use orbit_core::{Operand, VarOp};
 use serde::{Deserialize, Serialize};
 
 /// A player setting a control can edit.
@@ -35,6 +35,14 @@ pub enum SettingKey {
 pub enum BindPath {
     Setting(SettingKey),
     Var(String),
+    /// Inside a `Repeat` template: the element of the row (`ui_version` 4).
+    Item,
+    /// Inside a `Repeat` template: the position of the row, from 0.
+    ItemIndex,
+    /// Inside a `Repeat` template over a map: the key of the row.
+    ItemKey,
+    /// A parameter the story gave the screen (`OpenScreen::params`).
+    Param(String),
 }
 
 impl BindPath {
@@ -42,7 +50,7 @@ impl BindPath {
     pub fn setting(&self) -> Option<SettingKey> {
         match self {
             BindPath::Setting(key) => Some(*key),
-            BindPath::Var(_) => None,
+            _ => None,
         }
     }
 
@@ -50,8 +58,13 @@ impl BindPath {
     pub fn var(&self) -> Option<&str> {
         match self {
             BindPath::Var(name) => Some(name),
-            BindPath::Setting(_) => None,
+            _ => None,
         }
+    }
+
+    /// Whether the path reads the row of a `Repeat` template.
+    pub fn is_item(&self) -> bool {
+        matches!(self, BindPath::Item | BindPath::ItemIndex | BindPath::ItemKey)
     }
 }
 
@@ -92,6 +105,14 @@ pub enum UiAction {
     /// A no-code story variable operation (set, add, toggle...). The shell
     /// applies it to the running game.
     VarSet(VarOp),
+    /// Closes the top screen like `Close`, handing a value back to the story
+    /// (`ui_version` 4, UI-14): a screen opened by an `OpenScreen` node puts
+    /// it in the node's `result` variable. The value is a literal, a story
+    /// variable, the element of a generated row (`Operand::Item`...) or a
+    /// screen parameter. On a screen the story did not open it is a `Close`.
+    /// (A separate variant keeps the plain `Close` unchanged in older
+    /// documents and packs.)
+    CloseWith(Operand),
 }
 
 impl UiAction {

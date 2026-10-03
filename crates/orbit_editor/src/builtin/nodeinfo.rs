@@ -23,6 +23,8 @@ pub fn kind_key(kind: &NodeKind) -> String {
         NodeKind::Wait { .. } => "Wait".into(),
         NodeKind::Effect(_) => "Effect".into(),
         NodeKind::Timeline { .. } => "Timeline".into(),
+        NodeKind::OpenScreen { .. } => "OpenScreen".into(),
+        NodeKind::CloseScreen { .. } => "CloseScreen".into(),
         NodeKind::Call { .. } => "Call".into(),
         NodeKind::Return => "Return".into(),
         NodeKind::End => "End".into(),
@@ -54,6 +56,8 @@ pub fn kind_label(texts: &Translator, kind: &NodeKind) -> String {
         NodeKind::Wait { .. } => "node.kind.wait",
         NodeKind::Effect(_) => "node.kind.effect",
         NodeKind::Timeline { .. } => "node.kind.timeline",
+        NodeKind::OpenScreen { .. } => "node.kind.open_screen",
+        NodeKind::CloseScreen { .. } => "node.kind.close_screen",
         NodeKind::Call { .. } => "node.kind.call",
         NodeKind::Return => "node.kind.return",
         NodeKind::End => "node.kind.end",
@@ -82,6 +86,8 @@ pub fn kind_icon(kind: &NodeKind) -> &'static str {
         NodeKind::Wait { .. } => icons::TIMER,
         NodeKind::Effect(_) => icons::SPARKLE,
         NodeKind::Timeline { .. } => icons::FILM_STRIP,
+        NodeKind::OpenScreen { .. } => icons::BROWSER,
+        NodeKind::CloseScreen { .. } => icons::X_SQUARE,
         NodeKind::Call { .. } => icons::PHONE_CALL,
         NodeKind::Return => icons::ARROW_U_UP_LEFT,
         NodeKind::End => icons::STOP,
@@ -119,6 +125,7 @@ pub fn kind_color(kind: &NodeKind) -> egui::Color32 {
         | NodeKind::End => Color32::from_rgb(98, 190, 168),
         NodeKind::Wait { .. } => Color32::from_rgb(150, 156, 170),
         NodeKind::Effect(_) | NodeKind::Timeline { .. } => Color32::from_rgb(236, 120, 96),
+        NodeKind::OpenScreen { .. } | NodeKind::CloseScreen { .. } => Color32::from_rgb(120, 200, 120),
         NodeKind::Custom { .. } => Color32::from_rgb(232, 110, 160),
     }
 }
@@ -272,6 +279,14 @@ pub fn summary(texts: &Translator, story: &Story, node: &Node) -> String {
             wait,
             tracks,
         } => super::fx_text::timeline_detail(texts, *duration, *looping, *wait, tracks),
+        NodeKind::OpenScreen { screen, params, .. } => {
+            if params.is_empty() {
+                screen.clone()
+            } else {
+                format!("{screen} ({})", params.len())
+            }
+        }
+        NodeKind::CloseScreen { screen } => screen.clone(),
         NodeKind::Custom {
             plugin_id, kind, ..
         } => format!("{plugin_id}.{kind}"),

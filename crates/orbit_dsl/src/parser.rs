@@ -136,6 +136,13 @@ enum Raw {
         transition: Option<Transition>,
     },
     HideScene3d(Option<Transition>),
+    OpenScreen {
+        screen: String,
+        wait: bool,
+        result: Option<String>,
+        params: Vec<(String, Expr)>,
+    },
+    CloseScreen(String),
     Effect(RawEffect),
     Timeline {
         duration: f32,
@@ -903,6 +910,37 @@ impl LineParser<'_> {
                         Stmt::Node(Raw::Camera3d { camera, transition })
                     }
                     "hide_scene3d" => Stmt::Node(Raw::HideScene3d(self.transition()?)),
+                    "open" => {
+                        self.expect_word("screen")?;
+                        let screen = self.string("a screen id")?;
+                        let wait = self.eat_word("wait");
+                        let result = if self.eat_sym("->") {
+                            Some(self.name("a result variable")?)
+                        } else {
+                            None
+                        };
+                        let mut params = Vec::new();
+                        if self.eat_word("with") {
+                            loop {
+                                let name = self.name("a parameter name")?;
+                                self.expect_sym("=")?;
+                                params.push((name, self.expr()?));
+                                if !self.eat_sym(",") {
+                                    break;
+                                }
+                            }
+                        }
+                        Stmt::Node(Raw::OpenScreen {
+                            screen,
+                            wait,
+                            result,
+                            params,
+                        })
+                    }
+                    "close" => {
+                        self.expect_word("screen")?;
+                        Stmt::Node(Raw::CloseScreen(self.string("a screen id")?))
+                    }
                     "return" => Stmt::Node(Raw::Return),
                     "end" => Stmt::Node(Raw::End),
                     "custom" => {
@@ -1464,6 +1502,46 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                     .map(|asset| NodeKind::PlaySound { asset }),
                 Raw::Wait(seconds) => Some(NodeKind::Wait { seconds: *seconds }),
                 Raw::Call(r) => label_ref(d, line, ps.id, r).map(|label| NodeKind::Call { label }),
+                Raw::OpenScreen {
+                    screen,
+                    wait,
+                    result,
+                    params,
+                } => {
+                    let mut out = Vec::new();
+                    let mut ok = true;
+                    for (name, e) in params {
+                        match e {
+                            Expr::Lit(v) => out.push(orbit_core::ScreenParam {
+                                name: name.clone(),
+                                value: orbit_core::Operand::Lit(v.clone()),
+                            }),
+                            Expr::Var(v) if !v.starts_with('@') => {
+                                out.push(orbit_core::ScreenParam {
+                                    name: name.clone(),
+                                    value: orbit_core::Operand::Var(v.clone()),
+                                })
+                            }
+                            _ => {
+                                ok = false;
+                                d.push(
+                                    line,
+                                    1,
+                                    format!("parameter `{name}` must be a literal or a variable"),
+                                );
+                            }
+                        }
+                    }
+                    ok.then(|| NodeKind::OpenScreen {
+                        screen: screen.clone(),
+                        wait: *wait,
+                        result: result.clone(),
+                        params: out,
+                    })
+                }
+                Raw::CloseScreen(screen) => Some(NodeKind::CloseScreen {
+                    screen: screen.clone(),
+                }),
                 Raw::Return => Some(NodeKind::Return),
                 Raw::End => Some(NodeKind::End),
                 Raw::Custom {
