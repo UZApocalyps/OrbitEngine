@@ -1219,6 +1219,25 @@ fn describe(texts: &orbit_editor_api::Translator, story: &Story, node: &Node) ->
         ),
         NodeKind::OpenScreen { screen, .. } => (texts.t("scene.row.open_screen"), screen.clone()),
         NodeKind::CloseScreen { screen } => (texts.t("scene.row.close_screen"), screen.clone()),
+        NodeKind::BackgroundLayers {
+            layers,
+            transition: t,
+        } => (
+            texts.t("scene.row.background_layers"),
+            format!(
+                "{}{}",
+                layers.iter().map(|l| asset(l.asset)).collect::<Vec<_>>().join(" + "),
+                transition(t)
+            ),
+        ),
+        NodeKind::Particles(e) => (
+            texts.t("scene.row.particles"),
+            format!("{}  ·  {}", e.name, e.preset.name()),
+        ),
+        NodeKind::StopParticles { name } => (
+            texts.t("scene.row.stop_particles"),
+            if name.is_empty() { texts.t("inspector.stop_particles.all") } else { name.clone() },
+        ),
         NodeKind::Return => (texts.t("scene.row.return"), String::new()),
         NodeKind::End => (texts.t("scene.row.end"), String::new()),
         NodeKind::Custom {

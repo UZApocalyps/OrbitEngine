@@ -186,6 +186,11 @@ impl Game {
 
     /// Whether anything moves without input: a typewriter, a timed pause, a
     /// transition, skip or auto mode.
+    ///
+    /// Ambient motion (particles, non-blocking effects, timelines, character
+    /// animations) counts too: the scene clock runs on real time whatever the
+    /// flow (line, choice, wait). Only a pause menu or modal screen freezes it
+    /// (`Shell::game_paused`); HUD screens do not.
     pub fn is_animating(&self) -> bool {
         let by_flow = match self.kind() {
             FlowKind::Waiting | FlowKind::Transition => true,
@@ -197,7 +202,8 @@ impl Game {
 
     /// Whether a character on stage plays a frame animation.
     pub fn stage_is_animated(&self) -> bool {
-        self.director.stage().characters.iter().any(|c| {
+        (!self.director.reduced_motion() && self.director.vm().has_running_anims())
+            || self.director.stage().characters.iter().any(|c| {
             self.story
                 .character(c.character)
                 .and_then(|ch| ch.expression(&c.expression))

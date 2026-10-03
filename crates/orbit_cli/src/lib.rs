@@ -606,6 +606,14 @@ fn describe_event(story: &Story, event: &PresentationEvent) -> String {
         PresentationEvent::HideScene3d { transition } => {
             format!("[hide 3d scene{}]", describe_transition(transition))
         }
+        PresentationEvent::BackgroundLayers { layers, transition } => {
+            let names: Vec<String> = layers.iter().map(|l| asset(l.asset)).collect();
+            format!(
+                "[parallax background {}{}]",
+                names.join(" + "),
+                describe_transition(transition)
+            )
+        }
         PresentationEvent::Background {
             asset: a,
             transition,

@@ -40,8 +40,8 @@ use crate::shell::{AutosaveConfig, Effect, Shell, ShellConfig};
 use crate::splash::{AfterLoad, SplashPhase, SplashState};
 use crate::splash_draw::SplashAssets;
 use crate::stage::{
-    AnimClock, CANVAS, StageCharacter, StageState, animate_background, animate_placement,
-    character_placement, cover_size, frame_scale, screen_overlay,
+    AnimClock, CANVAS, StageCharacter, StageState, animate_background, animate_layer, animate_placement,
+    character_placement, cover_size, frame_scale, particle_quads, screen_overlay, tiled_centers, LAYER_OVERSCAN,
 };
 use orbit_core::anim::{FrameRef, sheet_cell_size, sheet_uv};
 use orbit_core::AnimFrames;
@@ -1260,7 +1260,7 @@ impl Runtime {
                 match shell.game() {
                     Some(game) => {
                         let mut scene = Scene::new();
-                        let fx = game.director.vm().stage_fx();
+                        let fx = game.director.stage_fx();
                         match game.director.transition() {
                             Some(tr) => self.anim_clock.sync([&tr.from, game.director.stage()]),
                             None => self.anim_clock.sync([game.director.stage()]),
@@ -1573,6 +1573,7 @@ fn menu_background_path(story: &Story) -> Option<&str> {
         .flat_map(|scene| &scene.nodes)
         .find_map(|node| match &node.kind {
             orbit_core::NodeKind::Background { asset, .. } => Some(*asset),
+            orbit_core::NodeKind::BackgroundLayers { layers, .. } => layers.first().map(|l| l.asset),
             _ => None,
         })
         .and_then(|asset| story.assets.get(asset))
@@ -1783,6 +1784,31 @@ pub(crate) fn stage_scene(
                     .layer(Layer::BACKGROUND),
             );
         }
+    } else if !stage.bg_layers.is_empty() {
+        for (i, layer) in stage.bg_layers.iter().enumerate() {
+            let Some(tex) = texture(layer.asset) else { continue };
+            // A little larger than the screen, so a gentle pan never shows
+            // the edge of a layer that moves less than the camera.
+            let size = renderer
+                .texture_size(tex)
+                .map_or(CANVAS, cover_size)
+                .map(|v| v * LAYER_OVERSCAN);
+            let (position, size, tint) = animate_layer(size, layer.depth, stage_fx);
+            let centers = if layer.repeat_x {
+                tiled_centers(position[0], size[0])
+            } else {
+                vec![position[0]]
+            };
+            for x in centers {
+                scene.push(
+                    Sprite2d::new(tex, [x, position[1]], size)
+                        .anchor([0.5, 0.5])
+                        .tint(tint)
+                        .layer(Layer::BACKGROUND)
+                        .z(i as f32),
+                );
+            }
+        }
     } else if let Some(tex) = stage.background.and_then(texture) {
         let size = renderer.texture_size(tex).map_or(CANVAS, cover_size);
         let (position, size, tint) = animate_background(size, stage_fx);
@@ -1815,6 +1841,23 @@ pub(crate) fn stage_scene(
                 .layer(Layer::CHARACTERS)
                 .z(i as f32),
         );
+    }
+    if let Some((f, white)) = fx {
+        // Particles: behind the characters (layer 5) or over them (layer 12),
+        // always under the screen overlay and the UI.
+        for (sprite, front, quads) in particle_quads(f) {
+            let tex = sprite.and_then(texture).unwrap_or(white);
+            let layer = if front { Layer(12) } else { Layer(5) };
+            for q in quads {
+                scene.push(
+                    Sprite2d::new(tex, q.position, q.size)
+                        .anchor([0.5, 0.5])
+                        .tint(q.tint)
+                        .rotation(q.rotation)
+                        .layer(layer),
+                );
+            }
+        }
     }
     if let Some((f, white)) = fx
         && let Some(color) = screen_overlay(f)

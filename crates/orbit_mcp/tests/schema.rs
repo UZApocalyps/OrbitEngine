@@ -141,6 +141,19 @@ fn command_fields_match_the_ir_fields() {
             assert_eq!(fields, expected, "`add_command type=effect` vs IR Effect");
             continue;
         }
+        if variant == "Particles" {
+            // `NodeKind::Particles(Emitter)` wraps a struct: the command is
+            // the emitter's fields flat.
+            let emitter: BTreeSet<String> = schema
+                .pointer("/$defs/Emitter/properties")
+                .and_then(Value::as_object)
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect();
+            assert_eq!(fields, emitter, "`add_command type=particles` vs IR Emitter");
+            continue;
+        }
         let ir_fields = ir_variant_fields(&schema, &variant);
         // `repeat` is the pass count of the IR's `looping: Loop(n)`.
         let mut fields = fields;

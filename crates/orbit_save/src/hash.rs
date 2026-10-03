@@ -52,6 +52,9 @@ fn kind_tag(kind: &NodeKind) -> u8 {
         NodeKind::Timeline { .. } => 23,
         NodeKind::OpenScreen { .. } => 24,
         NodeKind::CloseScreen { .. } => 25,
+        NodeKind::BackgroundLayers { .. } => 26,
+        NodeKind::Particles(_) => 27,
+        NodeKind::StopParticles { .. } => 28,
     }
 }
 

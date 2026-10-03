@@ -68,6 +68,7 @@ impl From<VmStateV2> for VmState {
                 characters: old.scene.characters,
                 music: old.scene.music,
                 scene3d: None,
+                bg_layers: Vec::new(),
             },
             rng: old.rng,
             shown: old.shown,

@@ -12,7 +12,7 @@ use std::fmt;
 use orbit_core::{
     AnimLoop, AnimProp, AnimTarget, AssetId, CharacterId, ChoiceOption, Color, CustomData, Curve,
     Ease, Effect, Expr, Key, Node, NodeId, NodeKind, Position, Rgba, Scene, SceneId, Story,
-    StoryTrack, StringId, Track, TrackData, Transition, Vec2, Angle,
+    StoryTrack, StringId, Track, TrackData, Transition, Vec2, Angle, BgLayer, Emitter, ParticlePreset,
 };
 
 use crate::expr::{number, parse_expr};
@@ -144,6 +144,13 @@ enum Raw {
     },
     CloseScreen(String),
     Effect(RawEffect),
+    BgLayers {
+        transition: Option<Transition>,
+        layers: Vec<RawLayer>,
+    },
+    /// The emitter (its `sprite` still `None`) and the sprite reference.
+    Particles(Box<Emitter>, Option<Ref>),
+    StopParticles(String),
     Timeline {
         duration: f32,
         looping: AnimLoop,
@@ -207,11 +214,19 @@ struct RawTrack {
     data: TrackData,
 }
 
+#[derive(Clone, Debug)]
+struct RawLayer {
+    asset: Ref,
+    depth: f32,
+    repeat_x: bool,
+}
+
 enum Stmt {
     Scene(String),
     Node(Raw),
     Option(RawOption),
     Track(RawTrack),
+    Layer(RawLayer),
 }
 
 type LineError = (usize, String);
@@ -437,6 +452,76 @@ impl LineParser<'_> {
         let col = self.col();
         let hex = self.string("a color `\"#rrggbb\"`")?;
         parse_color(&hex).ok_or((col, format!("invalid color `{hex}`, expected `#rrggbb`")))
+    }
+
+    /// `(a, b)`.
+    fn pair(&mut self) -> Result<[f32; 2], LineError> {
+        let v = self.vec2()?;
+        Ok([v.x, v.y])
+    }
+
+    /// `(a, b, c, d)`.
+    fn quad(&mut self) -> Result<[f32; 4], LineError> {
+        self.expect_sym("(")?;
+        let mut out = [0.0; 4];
+        for (i, slot) in out.iter_mut().enumerate() {
+            if i > 0 {
+                self.expect_sym(",")?;
+            }
+            *slot = self.f32()?;
+        }
+        self.expect_sym(")")?;
+        Ok(out)
+    }
+
+    /// The rest of a `particles` line: `"<name>" <preset> [<key> <value> ...]`.
+    fn emitter(&mut self) -> Result<(Emitter, Option<Ref>), LineError> {
+        let name = self.string("an emitter name")?;
+        let col = self.col();
+        let preset_name = self.name("a preset (`rain`, `snow`, `petals`, `dust`, `sparks`, `custom`)")?;
+        let preset = ParticlePreset::from_name(&preset_name)
+            .ok_or((col, format!("unknown particle preset `{preset_name}`")))?;
+        let mut e = Emitter::preset(preset);
+        e.name = name;
+        let mut sprite = None;
+        while let Some(Tok::Ident(key)) = self.peek().cloned() {
+            self.at += 1;
+            match key.as_str() {
+                "seed" => e.seed = self.u32()?,
+                "rate" => e.rate = self.f32()?,
+                "lifetime" => e.lifetime = self.f32()?,
+                "jitter" => e.lifetime_jitter = self.f32()?,
+                "spawn" => e.spawn = self.quad()?,
+                "direction" => e.direction = self.f32()?,
+                "spread" => e.spread = self.f32()?,
+                "speed" => e.speed = self.pair()?,
+                "gravity" => e.gravity = self.pair()?,
+                "sway" => e.sway = self.pair()?,
+                "size" => e.size = self.pair()?,
+                "stretch" => e.stretch = self.f32()?,
+                "spin" => e.spin = self.f32()?,
+                "color" => {
+                    e.color = self.hex_color()?;
+                    if self.eat_word("to") {
+                        e.color_end = self.hex_color()?;
+                    } else {
+                        e.color_end = e.color;
+                    }
+                }
+                "opacity" => e.opacity = self.f32()?,
+                "fade" => e.fade = self.f32()?,
+                "sprite" => sprite = Some(self.reference("an image")?),
+                "front" => e.front = true,
+                "behind" => e.front = false,
+                "prewarm" => e.prewarm = true,
+                "cold" => e.prewarm = false,
+                other => {
+                    self.at -= 1;
+                    return self.err(format!("unknown particle setting `{other}`"));
+                }
+            }
+        }
+        Ok((e, sprite))
     }
 
     /// `(x, y)`.
@@ -781,6 +866,28 @@ impl LineParser<'_> {
                             fade_in,
                             looping,
                         })
+                    }
+                    "bg_layers" => {
+                        let transition = self.transition()?;
+                        Stmt::Node(Raw::BgLayers { transition, layers: Vec::new() })
+                    }
+                    "layer" => {
+                        let asset = self.reference("an image")?;
+                        self.expect_word("depth")?;
+                        let depth = self.f32()?;
+                        let repeat_x = self.eat_word("repeat_x");
+                        Stmt::Layer(RawLayer { asset, depth, repeat_x })
+                    }
+                    "particles" => {
+                        let (emitter, sprite) = self.emitter()?;
+                        Stmt::Node(Raw::Particles(Box::new(emitter), sprite))
+                    }
+                    "stop" if self.eat_word("particles") => {
+                        let name = match self.peek() {
+                            Some(Tok::Str(_)) => self.string("an emitter name")?,
+                            _ => String::new(),
+                        };
+                        Stmt::Node(Raw::StopParticles(name))
                     }
                     "stop" => {
                         self.expect_word("music")?;
@@ -1176,8 +1283,24 @@ pub fn parse(text: &str, base: &Story, scope: Scope) -> Result<Story, Vec<Diagno
                     ),
                 }
             }
+            Stmt::Layer(layer) => {
+                if let Some((_, col)) = annotation {
+                    diags.push(line_no, col, "background layers carry no id");
+                }
+                match scenes.last_mut().and_then(|s| s.nodes.last_mut()) {
+                    Some(PNode {
+                        raw: Raw::BgLayers { layers, .. },
+                        ..
+                    }) if menu_open => layers.push(layer),
+                    _ => diags.push(
+                        line_no,
+                        1,
+                        "a `layer` must follow `bg_layers` or another layer",
+                    ),
+                }
+            }
             Stmt::Node(raw) => {
-                menu_open =matches!(raw, Raw::Menu(_) | Raw::Timeline { .. });
+                menu_open = matches!(raw, Raw::Menu(_) | Raw::Timeline { .. } | Raw::BgLayers { .. });
                 let id = match &annotation {
                     None => NodeId::new(),
                     Some((s, col)) => match s.parse::<NodeId>() {
@@ -1622,6 +1745,33 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                     }
                     .map(NodeKind::Effect)
                 }
+                Raw::BgLayers { transition, layers } => {
+                    let mut out = Vec::new();
+                    let mut ok = true;
+                    for l in layers {
+                        match by_name::<AssetId>(d, line, &l.asset, &names.assets, "asset") {
+                            Some(asset) => out.push(BgLayer {
+                                asset,
+                                depth: l.depth,
+                                repeat_x: l.repeat_x,
+                            }),
+                            None => ok = false,
+                        }
+                    }
+                    ok.then(|| NodeKind::BackgroundLayers {
+                        layers: out,
+                        transition: transition.clone(),
+                    })
+                }
+                Raw::Particles(emitter, sprite) => match sprite {
+                    None => Some(NodeKind::Particles((**emitter).clone())),
+                    Some(r) => by_name::<AssetId>(d, line, r, &names.assets, "asset").map(|asset| {
+                        let mut e = (**emitter).clone();
+                        e.sprite = Some(asset);
+                        NodeKind::Particles(e)
+                    }),
+                },
+                Raw::StopParticles(name) => Some(NodeKind::StopParticles { name: name.clone() }),
                 Raw::Timeline { duration, looping, wait, tracks } => {
                     let mut out = Vec::new();
                     let mut ok = true;

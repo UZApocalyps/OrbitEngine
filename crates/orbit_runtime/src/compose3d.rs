@@ -462,6 +462,7 @@ mod tests {
     fn stage_2d(f: &Fixture) -> StageState {
         StageState {
             background: Some(f.bg),
+            bg_layers: Vec::new(),
             characters: vec![StageCharacter {
                 character: f.hero,
                 expression: "neutral".into(),

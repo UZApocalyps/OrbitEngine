@@ -25,6 +25,9 @@ pub fn kind_key(kind: &NodeKind) -> String {
         NodeKind::Timeline { .. } => "Timeline".into(),
         NodeKind::OpenScreen { .. } => "OpenScreen".into(),
         NodeKind::CloseScreen { .. } => "CloseScreen".into(),
+        NodeKind::BackgroundLayers { .. } => "BackgroundLayers".into(),
+        NodeKind::Particles(_) => "Particles".into(),
+        NodeKind::StopParticles { .. } => "StopParticles".into(),
         NodeKind::Call { .. } => "Call".into(),
         NodeKind::Return => "Return".into(),
         NodeKind::End => "End".into(),
@@ -58,6 +61,9 @@ pub fn kind_label(texts: &Translator, kind: &NodeKind) -> String {
         NodeKind::Timeline { .. } => "node.kind.timeline",
         NodeKind::OpenScreen { .. } => "node.kind.open_screen",
         NodeKind::CloseScreen { .. } => "node.kind.close_screen",
+        NodeKind::BackgroundLayers { .. } => "node.kind.background_layers",
+        NodeKind::Particles(_) => "node.kind.particles",
+        NodeKind::StopParticles { .. } => "node.kind.stop_particles",
         NodeKind::Call { .. } => "node.kind.call",
         NodeKind::Return => "node.kind.return",
         NodeKind::End => "node.kind.end",
@@ -88,6 +94,9 @@ pub fn kind_icon(kind: &NodeKind) -> &'static str {
         NodeKind::Timeline { .. } => icons::FILM_STRIP,
         NodeKind::OpenScreen { .. } => icons::BROWSER,
         NodeKind::CloseScreen { .. } => icons::X_SQUARE,
+        NodeKind::BackgroundLayers { .. } => icons::STACK,
+        NodeKind::Particles(_) => icons::CLOUD_RAIN,
+        NodeKind::StopParticles { .. } => icons::STOP_CIRCLE,
         NodeKind::Call { .. } => icons::PHONE_CALL,
         NodeKind::Return => icons::ARROW_U_UP_LEFT,
         NodeKind::End => icons::STOP,
@@ -104,6 +113,7 @@ pub fn kind_color(kind: &NodeKind) -> egui::Color32 {
     match kind {
         NodeKind::Say { .. } => Color32::from_rgb(130, 140, 160),
         NodeKind::Background { .. }
+        | NodeKind::BackgroundLayers { .. }
         | NodeKind::Show { .. }
         | NodeKind::Hide { .. }
         | NodeKind::ShowScene3d { .. }
@@ -124,7 +134,10 @@ pub fn kind_color(kind: &NodeKind) -> egui::Color32 {
         | NodeKind::Return
         | NodeKind::End => Color32::from_rgb(98, 190, 168),
         NodeKind::Wait { .. } => Color32::from_rgb(150, 156, 170),
-        NodeKind::Effect(_) | NodeKind::Timeline { .. } => Color32::from_rgb(236, 120, 96),
+        NodeKind::Effect(_)
+        | NodeKind::Timeline { .. }
+        | NodeKind::Particles(_)
+        | NodeKind::StopParticles { .. } => Color32::from_rgb(236, 120, 96),
         NodeKind::OpenScreen { .. } | NodeKind::CloseScreen { .. } => Color32::from_rgb(120, 200, 120),
         NodeKind::Custom { .. } => Color32::from_rgb(232, 110, 160),
     }
@@ -287,6 +300,13 @@ pub fn summary(texts: &Translator, story: &Story, node: &Node) -> String {
             }
         }
         NodeKind::CloseScreen { screen } => screen.clone(),
+        NodeKind::BackgroundLayers { layers, .. } => layers
+            .iter()
+            .map(|l| asset_name(story, l.asset))
+            .collect::<Vec<_>>()
+            .join(" + "),
+        NodeKind::Particles(e) => format!("{} · {}", e.name, e.preset.name()),
+        NodeKind::StopParticles { name } => name.clone(),
         NodeKind::Custom {
             plugin_id, kind, ..
         } => format!("{plugin_id}.{kind}"),

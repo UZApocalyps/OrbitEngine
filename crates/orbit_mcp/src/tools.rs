@@ -504,6 +504,71 @@ pub enum CommandSpec {
         /// false: it plays while the next lines are read; a click skips a wait).
         wait: Option<bool>,
     },
+    /// A parallax background: image layers, back to front, each with a depth
+    /// factor (1 = moves like the stage, 0 = glued to the screen, between =
+    /// parallax, above 1 = a foreground). The camera pan and zoom (`effect`
+    /// zoom, `timeline` tracks on `camera`) move each layer by its depth.
+    /// Replaces the background; a later `background` replaces the layers.
+    BackgroundLayers {
+        /// 1 to 8 layers, back to front.
+        layers: Vec<BgLayerArg>,
+        transition: Option<TransitionArg>,
+    },
+    /// Start a 2D particle emitter (rain, snow, petals, dust, sparks, or a
+    /// custom one). It runs until `stop_particles`, a `particles` with the
+    /// same name, or the next scene; it is recomputed from its start time
+    /// (rollback and saves are exact). Every setting but `name` is optional
+    /// and overrides the preset. Lengths are screen fractions, angles in
+    /// degrees (0 right, 90 down, 270 up). Check the result with
+    /// `particles_sample`.
+    Particles {
+        /// Names the emitter (for `stop_particles` and replacement).
+        name: String,
+        /// Starting point; default `custom`.
+        preset: Option<ParticlePresetArg>,
+        seed: Option<u32>,
+        /// Births per second.
+        rate: Option<f32>,
+        /// Seconds a particle lives.
+        lifetime: Option<f32>,
+        /// Random lifetime variation 0 to 1.
+        lifetime_jitter: Option<f32>,
+        /// Birth area `[x0, y0, x1, y1]`.
+        spawn: Option<[f32; 4]>,
+        direction: Option<f32>,
+        spread: Option<f32>,
+        /// `[min, max]` initial speed (screen fractions per second).
+        speed: Option<[f32; 2]>,
+        /// `[x, y]` acceleration.
+        gravity: Option<[f32; 2]>,
+        /// `[amplitude, hertz]` sideways sway.
+        sway: Option<[f32; 2]>,
+        /// `[min, max]` width as a fraction of the screen height.
+        size: Option<[f32; 2]>,
+        /// Length / width of a particle (streaks > 1).
+        stretch: Option<f32>,
+        /// Random spin in degrees per second.
+        spin: Option<f32>,
+        /// `#rrggbb` or a name, at birth.
+        color: Option<String>,
+        /// Color at death (default: same as `color`).
+        color_end: Option<String>,
+        /// Peak opacity 0 to 1.
+        opacity: Option<f32>,
+        /// Fraction of the life spent fading in and out, 0 to 0.5.
+        fade: Option<f32>,
+        /// Image asset used for each particle (default: a plain quad).
+        sprite: Option<String>,
+        /// Over the characters (true) or behind them.
+        front: Option<bool>,
+        /// Start already running (true) or fill up progressively.
+        prewarm: Option<bool>,
+    },
+    /// Stop the births of an emitter (live particles finish their life).
+    StopParticles {
+        /// Emitter name; default: every emitter.
+        name: Option<String>,
+    },
     /// Parallel keyframe tracks (target x property x keys). Animated values
     /// are relative to the staging, like `effect`. A timeline that does not
     /// `wait` keeps playing while the story goes on until the scene changes.
@@ -519,6 +584,29 @@ pub enum CommandSpec {
         wait: Option<bool>,
         tracks: Vec<TrackArg>,
     },
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BgLayerArg {
+    /// Image asset (id, manifest path or file name).
+    pub asset: String,
+    /// 1 = follows the camera like a normal background, 0 = fixed on screen,
+    /// -4..4 allowed.
+    pub depth: f32,
+    /// Tile the image horizontally (it wraps when the camera pans).
+    pub repeat_x: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum ParticlePresetArg {
+    Rain,
+    Snow,
+    Petals,
+    Dust,
+    Sparks,
+    Custom,
 }
 
 #[derive(Deserialize, JsonSchema, Clone, Copy)]
@@ -613,6 +701,9 @@ pub fn spec_variant(spec: &CommandSpec) -> &'static str {
         CommandSpec::HideScene3d { .. } => "HideScene3d",
         CommandSpec::Effect { .. } => "Effect",
         CommandSpec::Timeline { .. } => "Timeline",
+        CommandSpec::BackgroundLayers { .. } => "BackgroundLayers",
+        CommandSpec::Particles { .. } => "Particles",
+        CommandSpec::StopParticles { .. } => "StopParticles",
     }
 }
 
@@ -645,6 +736,9 @@ pub const NODE_KIND_TOOLS: &[(&str, &str)] = &[
     ("Timeline", "add_command type=timeline"),
     ("OpenScreen", "add_command type=open_screen"),
     ("CloseScreen", "add_command type=close_screen"),
+    ("BackgroundLayers", "add_command type=background_layers"),
+    ("Particles", "add_command type=particles"),
+    ("StopParticles", "add_command type=stop_particles"),
 ];
 
 #[derive(Deserialize, JsonSchema)]
@@ -666,6 +760,15 @@ struct TimelineSampleArgs {
     /// Id of an `effect` or `timeline` node.
     node: String,
     /// Seconds since the animation started (>= 0).
+    time: f32,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ParticlesSampleArgs {
+    /// Id of a `particles` node.
+    node: String,
+    /// Seconds since the emitter started (>= 0).
     time: f32,
 }
 
@@ -1387,6 +1490,35 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
         CommandSpec::HideScene3d { transition: t } => NodeKind::HideScene3d {
             transition: transition(t)?,
         },
+        CommandSpec::BackgroundLayers { layers, transition: t } => {
+            if layers.is_empty() {
+                return Err(ToolError::invalid("give at least one layer"));
+            }
+            if layers.len() > orbit_core::MAX_BG_LAYERS {
+                return Err(ToolError::invalid(format!(
+                    "at most {} layers",
+                    orbit_core::MAX_BG_LAYERS
+                )));
+            }
+            let layers = layers
+                .iter()
+                .map(|l| {
+                    if !l.depth.is_finite() || !(-4.0..=4.0).contains(&l.depth) {
+                        return Err(ToolError::invalid("a layer depth must be between -4 and 4"));
+                    }
+                    Ok(orbit_core::BgLayer {
+                        asset: find_asset(story, &l.asset, Some(AssetKind::Image))?,
+                        depth: l.depth,
+                        repeat_x: l.repeat_x.unwrap_or(false),
+                    })
+                })
+                .collect::<Result<Vec<_>, ToolError>>()?;
+            NodeKind::BackgroundLayers { layers, transition: transition(t)? }
+        }
+        CommandSpec::Particles { .. } => NodeKind::Particles(build_emitter(story, spec)?),
+        CommandSpec::StopParticles { name } => NodeKind::StopParticles {
+            name: name.clone().unwrap_or_default(),
+        },
         CommandSpec::Effect { .. } => NodeKind::Effect(build_effect(story, spec)?),
         CommandSpec::Timeline {
             duration,
@@ -1422,6 +1554,89 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
             }
         }
     })
+}
+
+fn build_emitter(
+    story: &orbit_core::Story,
+    spec: &CommandSpec,
+) -> Result<orbit_core::Emitter, ToolError> {
+    use orbit_core::{Emitter, ParticlePreset};
+    let CommandSpec::Particles {
+        name,
+        preset,
+        seed,
+        rate,
+        lifetime,
+        lifetime_jitter,
+        spawn,
+        direction,
+        spread,
+        speed,
+        gravity,
+        sway,
+        size,
+        stretch,
+        spin,
+        color,
+        color_end,
+        opacity,
+        fade,
+        sprite,
+        front,
+        prewarm,
+    } = spec
+    else {
+        unreachable!("only called for Particles")
+    };
+    let name = non_empty(name, "emitter name")?;
+    let preset = match preset.unwrap_or(ParticlePresetArg::Custom) {
+        ParticlePresetArg::Rain => ParticlePreset::Rain,
+        ParticlePresetArg::Snow => ParticlePreset::Snow,
+        ParticlePresetArg::Petals => ParticlePreset::Petals,
+        ParticlePresetArg::Dust => ParticlePreset::Dust,
+        ParticlePresetArg::Sparks => ParticlePreset::Sparks,
+        ParticlePresetArg::Custom => ParticlePreset::Custom,
+    };
+    let mut e = Emitter::preset(preset);
+    e.name = name;
+    macro_rules! set {
+        ($field:ident, $value:expr) => {
+            if let Some(v) = $value {
+                e.$field = *v;
+            }
+        };
+    }
+    set!(seed, seed);
+    set!(rate, rate);
+    set!(lifetime, lifetime);
+    set!(lifetime_jitter, lifetime_jitter);
+    set!(spawn, spawn);
+    set!(direction, direction);
+    set!(spread, spread);
+    set!(speed, speed);
+    set!(gravity, gravity);
+    set!(sway, sway);
+    set!(size, size);
+    set!(stretch, stretch);
+    set!(spin, spin);
+    set!(opacity, opacity);
+    set!(fade, fade);
+    set!(front, front);
+    set!(prewarm, prewarm);
+    if let Some(c) = color {
+        e.color = parse_color(c)?;
+        e.color_end = e.color;
+    }
+    if let Some(c) = color_end {
+        e.color_end = parse_color(c)?;
+    }
+    if let Some(s) = sprite {
+        e.sprite = Some(find_asset(story, s, Some(AssetKind::Image))?);
+    }
+    if let Some(problem) = e.problem() {
+        return Err(ToolError::invalid(format!("these particle settings do not work: {problem}")));
+    }
+    Ok(e)
 }
 
 fn anim_target(story: &orbit_core::Story, key: &str) -> Result<orbit_core::AnimTarget, ToolError> {
@@ -2308,6 +2523,42 @@ fn timeline_sample(cx: &mut ToolCx<'_>, a: TimelineSampleArgs) -> Result<String,
     })))
 }
 
+fn particles_sample(cx: &mut ToolCx<'_>, a: ParticlesSampleArgs) -> Result<String, ToolError> {
+    let id: NodeId = parse_id(&a.node, "node")?;
+    let story = cx.project.story();
+    let node = story
+        .node(id)
+        .ok_or_else(|| ToolError::not_found(format!("no node {id}")))?;
+    let NodeKind::Particles(emitter) = &node.kind else {
+        return Err(ToolError::invalid("that node is not a particles node"));
+    };
+    if !a.time.is_finite() || a.time < 0.0 {
+        return Err(ToolError::invalid("`time` must be a number of seconds >= 0"));
+    }
+    let mut live = Vec::new();
+    emitter.sample(a.time, None, &mut live);
+    let shown: Vec<Json> = live
+        .iter()
+        .take(12)
+        .map(|p| {
+            json!({
+                "position": [num(p.pos[0]), num(p.pos[1])],
+                "width": num(p.size),
+                "opacity": num(p.color[3]),
+            })
+        })
+        .collect();
+    Ok(pretty(&json!({
+        "node": id.to_string(),
+        "time": a.time,
+        "alive": live.len(),
+        "peak_alive": emitter.peak_count().ceil(),
+        "limit_per_emitter": orbit_core::MAX_PARTICLES_PER_EMITTER,
+        "problem": emitter.problem(),
+        "first_particles": shown,
+    })))
+}
+
 fn list_curves(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
     Ok(pretty(&crate::views::curves_json(cx.project.story())))
 }
@@ -2478,6 +2729,13 @@ pub fn builtin_tools() -> Vec<ToolDef> {
             "Value of every track of an Effect or Timeline node at a time (seconds since the node started; loops and ping-pong are folded, a finished animation shows its final values). Values: number (opacity, shake, zoom, rotation in degrees), [x, y] (offset, scale, pan), [r, g, b, a] (tint).",
             Kind::Read,
             timeline_sample,
+        ),
+        def::<ParticlesSampleArgs>(
+            "particles_sample",
+            "Sample a particle emitter",
+            "How many particles of a `particles` node are alive at a time (seconds since it started), the first few with their screen position (fractions), width and opacity, the peak count and the per-emitter limit. Pure computation: it needs no rendering.",
+            Kind::Read,
+            particles_sample,
         ),
         def::<SetCurveArgs>(
             "set_curve",

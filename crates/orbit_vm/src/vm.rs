@@ -405,6 +405,7 @@ impl Vm {
                     self.state.pc = next;
                     self.state.scene.background = Some(*asset);
                     self.record_image(*asset);
+                    self.state.scene.bg_layers.clear();
                     // A 2D background replaces a 3D scene (ADR 0014).
                     self.state.scene.scene3d = None;
                     self.events.push(PresentationEvent::Background {
@@ -414,6 +415,39 @@ impl Vm {
                     if let Some(duration) = blocking_duration(transition) {
                         return Ok(Some(StepResult::WaitTransition { duration }));
                     }
+                }
+                NodeKind::BackgroundLayers { layers, transition } => {
+                    self.state.pc = next;
+                    if let Some(first) = layers.first() {
+                        self.state.scene.background = Some(first.asset);
+                        self.state.scene.bg_layers = layers.clone();
+                        self.state.scene.scene3d = None;
+                        self.events.push(PresentationEvent::BackgroundLayers {
+                            layers: layers.clone(),
+                            transition: transition.clone(),
+                        });
+                        if let Some(duration) = blocking_duration(transition) {
+                            return Ok(Some(StepResult::WaitTransition { duration }));
+                        }
+                    }
+                }
+                NodeKind::Particles(emitter) => {
+                    self.state.pc = next;
+                    // Same name = same emitter: the new one replaces it.
+                    let index = &self.index;
+                    let story = &self.story;
+                    let name = &emitter.name;
+                    self.state.active_anims.retain(|a| {
+                        index.get(&a.node).is_none_or(|&(s, n)| {
+                            !matches!(&story.scenes[s].nodes[n].kind,
+                                NodeKind::Particles(e) if e.name == *name)
+                        })
+                    });
+                    self.start_anim(pc);
+                }
+                NodeKind::StopParticles { .. } => {
+                    self.state.pc = next;
+                    self.start_anim(pc);
                 }
                 NodeKind::ShowScene3d {
                     scene,
@@ -1043,10 +1077,21 @@ impl Vm {
             .filter_map(|a| {
                 let node = self.node(a.node).ok()?;
                 node.kind
-                    .animation()
-                    .map(|_| (&node.kind, (clock - a.started_at).max(0.0) as f32))
+                    .is_timed()
+                    .then(|| (&node.kind, (clock - a.started_at).max(0.0) as f32))
             })
             .collect()
+    }
+
+    /// Whether the scene has ambient motion: a running particle emitter or a
+    /// timed animation that has not finished (endless ones never do). The
+    /// picture then changes with time alone, even while a line waits for the
+    /// player's click, so the host must keep drawing frames.
+    pub fn has_running_anims(&self) -> bool {
+        self.anim_items()
+            .iter()
+            .any(|(kind, elapsed)| kind.animation().is_some_and(|s| !s.is_finished(*elapsed)))
+            || !self.stage_fx().emitters.is_empty()
     }
 
     /// What the running animations add on top of the staging right now.
@@ -1273,6 +1318,13 @@ impl Vm {
         {
             scene.background = None;
         }
+        scene
+            .bg_layers
+            .retain(|l| story.assets.get(l.asset).is_some());
+        if scene.background.is_none() {
+            // The layers stand for the background: without it, none.
+            scene.bg_layers.clear();
+        }
         if scene
             .scene3d
             .as_ref()
@@ -1299,7 +1351,7 @@ impl Vm {
         state.active_anims.retain(|a| {
             index
                 .get(&a.node)
-                .is_some_and(|&(s, n)| story.scenes[s].nodes[n].kind.animation().is_some())
+                .is_some_and(|&(s, n)| story.scenes[s].nodes[n].kind.is_timed())
         });
         if !state.scene_clock.is_finite() || state.scene_clock < 0.0 {
             state.scene_clock = 0.0;
