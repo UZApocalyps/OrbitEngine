@@ -111,6 +111,26 @@ fn a_blocking_effect_waits_its_duration_and_a_skip_lands_on_the_final_state() {
 }
 
 #[test]
+fn the_editor_can_scrub_a_running_animation_without_moving_the_clock() {
+    let mut f = Fx::new();
+    let m = f.mv(0.4, 2.0, true);
+    f.say("after");
+    let (story, _) = f.build();
+    let mut vm = Vm::from_start(story).unwrap();
+    assert_eq!(vm.step(), StepResult::WaitAnimation { node: m, duration: 2.0 });
+    let clock = vm.scene_clock();
+    assert!(vm.set_anim_elapsed(m, 1.0));
+    assert!((bg_x(&vm) - 0.2).abs() < 1e-6);
+    assert!(vm.set_anim_elapsed(m, 0.5));
+    assert!((bg_x(&vm) - 0.1).abs() < 1e-6);
+    assert_eq!(vm.scene_clock(), clock);
+    // Bad values land on the start; a node that does not animate is refused.
+    assert!(vm.set_anim_elapsed(m, f32::NAN));
+    assert_eq!(bg_x(&vm), 0.0);
+    assert!(!vm.set_anim_elapsed(NodeId::new(), 1.0));
+}
+
+#[test]
 fn a_non_blocking_timeline_runs_while_the_story_goes_on() {
     let mut f = Fx::new();
     f.say("a");

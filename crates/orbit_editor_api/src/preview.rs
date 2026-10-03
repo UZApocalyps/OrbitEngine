@@ -41,6 +41,9 @@ pub enum PreviewCommand {
     /// The Skip button.
     SetSkip(bool),
     SetMuted(bool),
+    /// Timeline editor: show the animation of this `Effect` / `Timeline`
+    /// node at this time (milliseconds), the game paused on it.
+    ScrubAnimation(NodeId, u32),
 }
 
 /// Input for the game, already local to the panel: pointer positions are in

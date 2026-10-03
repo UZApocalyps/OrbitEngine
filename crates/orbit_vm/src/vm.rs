@@ -787,6 +787,21 @@ impl Vm {
         }
     }
 
+    /// Editor scrubbing: puts the running animation of `node` `elapsed`
+    /// seconds into its playback (the clock is not moved). `false` when that
+    /// node has no animation running.
+    pub fn set_anim_elapsed(&mut self, node: NodeId, elapsed: f32) -> bool {
+        let clock = self.state.scene_clock;
+        let elapsed = if elapsed.is_finite() { f64::from(elapsed.max(0.0)) } else { 0.0 };
+        match self.state.active_anims.iter_mut().find(|a| a.node == node) {
+            Some(a) => {
+                a.started_at = clock - elapsed;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Skip: every finite animation jumps to its final state.
     pub fn complete_anims(&mut self) {
         let nodes: Vec<NodeId> = self.state.active_anims.iter().map(|a| a.node).collect();

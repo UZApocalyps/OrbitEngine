@@ -26,6 +26,8 @@ pub mod sample;
 mod scene;
 mod scene3d;
 mod sceneview;
+mod timeline;
+mod timeline_model;
 mod translations;
 mod search;
 pub mod thumbs;
@@ -71,6 +73,7 @@ pub mod ids {
     pub const ASSISTANT: &str = "orbit.assistant";
     pub const UI_EDITOR: &str = "orbit.ui";
     pub const TEXTVIEW: &str = "orbit.textview";
+    pub const TIMELINE: &str = "orbit.timeline";
 }
 
 /// Full ids of the built-in panels.
@@ -129,6 +132,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(definitions::CharactersPlugin),
         Box::new(definitions::VariablesPlugin),
         Box::new(curves::CurvesPlugin),
+        Box::new(timeline::TimelinePlugin),
         Box::new(library::LibraryPlugin::new(shared.moves.clone())),
         Box::new(preview::PreviewPlugin),
         Box::new(sceneview::SceneViewPlugin),

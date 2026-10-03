@@ -18,7 +18,7 @@ type Curves = std::collections::BTreeMap<String, Curve>;
 
 /// Every target a property can animate: camera, screen, background and each
 /// character of the story.
-fn candidate_targets(story: &Story, prop: AnimProp) -> Vec<AnimTarget> {
+pub(super) fn candidate_targets(story: &Story, prop: AnimProp) -> Vec<AnimTarget> {
     [AnimTarget::Camera, AnimTarget::Screen, AnimTarget::Background]
         .into_iter()
         .chain(story.characters.iter().map(|c| AnimTarget::Character(c.id)))
@@ -299,7 +299,7 @@ pub(super) fn effect(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, curre
 
 // -------------------------------------------------------------- timeline
 
-fn prop_data(prop: AnimProp) -> TrackData {
+pub(super) fn prop_data(prop: AnimProp) -> TrackData {
     match prop {
         AnimProp::Offset | AnimProp::Scale | AnimProp::Pan => {
             let one = if prop == AnimProp::Scale { 1.0 } else { 0.0 };

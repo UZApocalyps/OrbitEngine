@@ -1109,6 +1109,37 @@ fn effects_and_timelines_are_added_checked_and_described() {
 }
 
 #[test]
+fn timeline_sample_reads_the_animated_values() {
+    let mut f = Fixture::new("timeline_sample");
+    f.ok("create_scene", json!({"name": "s"}));
+    let tl = f.ok(
+        "add_command",
+        json!({"scene": "s", "command": {"type": "timeline", "duration": 2.0, "looping": "loop", "repeat": 2,
+            "tracks": [
+                {"target": "background", "property": "opacity", "keys": [{"t": 0, "value": 0.0}, {"t": 2, "value": 1.0}]},
+                {"target": "background", "property": "offset", "keys": [{"t": 0, "value": [0.0, 0.0]}, {"t": 2, "value": [0.4, 0.2]}]}]}}),
+    );
+    let node = id_of(&tl, "/node/id");
+    let at = |f: &mut Fixture, t: f64| f.ok("timeline_sample", json!({"node": node, "time": t}));
+    let s = at(&mut f, 1.0);
+    assert_eq!(s["tracks"][0]["value"], json!(0.5));
+    assert_eq!(s["tracks"][1]["value"], json!([0.2, 0.1]));
+    assert_eq!(s["finished"], json!(false));
+    // Second pass of the loop: 3 s is 1 s into the pass.
+    assert_eq!(at(&mut f, 3.0)["tracks"][0]["value"], json!(0.5));
+    // Past the two passes: finished, final values.
+    let end = at(&mut f, 50.0);
+    assert_eq!(end["finished"], json!(true));
+    assert_eq!(end["tracks"][0]["value"], json!(1.0));
+    // Not an animation, unknown node, bad time.
+    f.ok("create_scene", json!({"name": "t"}));
+    let label = f.ok("add_command", json!({"scene": "t", "command": {"type": "label", "name": "l"}}));
+    assert!(f.call("timeline_sample", json!({"node": id_of(&label, "/node/id"), "time": 0.0})).is_err());
+    assert!(f.call("timeline_sample", json!({"node": node, "time": -1.0})).is_err());
+    assert!(f.call("timeline_sample", json!({"node": "nope", "time": 0.0})).is_err());
+}
+
+#[test]
 fn story_survives_a_restart() {
     let mut f = Fixture::new("restart");
     build_story(&mut f);

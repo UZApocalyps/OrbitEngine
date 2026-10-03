@@ -735,6 +735,10 @@ impl PreviewHost {
             }),
             PreviewCommand::SetSkip(on) => self.runtime.set_skip(on),
             PreviewCommand::SetMuted(muted) => self.user_muted = muted,
+            PreviewCommand::ScrubAnimation(node, ms) => {
+                self.runtime.clear_ui_preview();
+                self.runtime.scrub_animation(node, ms as f32 / 1000.0);
+            }
         }
     }
 

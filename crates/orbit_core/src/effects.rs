@@ -317,6 +317,25 @@ impl AnimSpec {
     pub fn is_finished(&self, elapsed: f32) -> bool {
         self.total_duration().is_some_and(|total| elapsed >= total)
     }
+
+    /// Time inside one pass `elapsed` seconds after the start (loops and
+    /// ping-pong folded; a finished animation is at its end).
+    pub fn local_time(&self, elapsed: f32) -> f32 {
+        let mut clip = Clip::new(self.duration);
+        clip.looping = self.looping;
+        clip.local_time(elapsed)
+    }
+
+    /// The value of every track `elapsed` seconds after the start (`None`
+    /// for a track without keys), in track order. Named curves resolve
+    /// through `curves`.
+    pub fn sample(&self, curves: &BTreeMap<String, Curve>, elapsed: f32) -> Vec<Option<Value>> {
+        let t = self.local_time(elapsed);
+        self.tracks
+            .iter()
+            .map(|tr| tr.data.sample(t, |n| curves.get(n)))
+            .collect()
+    }
 }
 
 impl NodeKind {

@@ -484,6 +484,10 @@ impl Shell {
         self.game.as_ref()
     }
 
+    pub fn game_mut(&mut self) -> Option<&mut Game> {
+        self.game.as_mut()
+    }
+
     pub fn top(&self) -> Option<Overlay> {
         self.stack.last().copied()
     }
