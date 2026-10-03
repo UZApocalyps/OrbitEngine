@@ -113,6 +113,8 @@ impl UiBundle {
                 include_str!("../../../assets/ui/default/preferences.screen.ron"),
                 include_str!("../../../assets/ui/default/save.screen.ron"),
                 include_str!("../../../assets/ui/default/load.screen.ron"),
+                include_str!("../../../assets/ui/default/gallery.screen.ron"),
+                include_str!("../../../assets/ui/default/replay.screen.ron"),
             ],
         )
         .expect("the built-in UI assets are valid")

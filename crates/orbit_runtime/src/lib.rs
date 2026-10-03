@@ -63,7 +63,7 @@ pub use runtime::{
     parse_translation_index,
 };
 pub use orbit_vm::SharedPluginHost;
-pub use shell::AutosaveConfig;
+pub use shell::{AutosaveConfig, REPLAY_SCREEN, gallery_paths};
 pub use stage::{
     CharacterPlacement, Stage3d, StageCharacter, StageEffect, StageState, character_placement,
 };

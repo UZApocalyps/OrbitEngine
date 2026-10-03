@@ -58,3 +58,17 @@ L'histoire de démonstration (`examples/stories`) utilise les deux sortes d'écr
 
 - Quand Alice quitte la boutique, une étape **Ouvrir un écran** avec **Attendre** ouvre l'écran `inventory` avec le paramètre `owner` réglé sur « Alice ». L'écran répète la liste `inventory` ; chaque bouton ferme l'écran avec son objet, qui atterrit dans la variable `used_item`. Le bouton **Retour** et Échap ferment sans valeur. Il glisse vers le haut à l'ouverture et disparaît en fondu à la fermeture.
 - Au début du jeu, une étape **Ouvrir un écran** sans **Attendre** ouvre le HUD `status` : un petit panneau en haut à droite qui affiche la variable `credits`, mise à jour au fil de l'histoire.
+
+## Galerie et rejouer les scènes
+
+L'interface standard compte deux écrans de plus, ouverts depuis le menu principal : **Galerie** et **Rejouer**.
+
+* **Ce qui les débloque.** Toute image montrée en fond pendant une partie est débloquée dans la galerie, et toute scène où le joueur entre est « vue » et peut être rejouée. Cette progression est conservée d'une partie à l'autre et survit à la suppression des sauvegardes (elle est rangée avec les variables persistantes). L'aperçu de l'éditeur ne l'enregistre jamais.
+* **Galerie.** Les images débloquées sont affichées en vignettes, les autres sous forme de carte « Verrouillée ».
+* **Rejouer.** Les scènes vues sont listées dans l'ordre de l'histoire ; en choisir une joue cette scène seule. Elle démarre avec les variables qu'avait la scène la première fois que le joueur y est entré (les valeurs initiales déclarées si on ne les connaît pas), et rien de ce qu'elle fait n'est conservé : ni sauvegarde, sauvegarde rapide ou automatique, ni changement des variables persistantes ou des déblocages. À la fin de la scène (ou si le joueur revient au menu principal), le jeu revient à l'écran Rejouer. Une scène *appelée* par l'histoire s'exécute normalement ; un saut vers une autre scène termine le rejouer.
+
+### Choisir ce que proposent la galerie et le menu Rejouer
+
+Dans l'éditeur **Interface**, sélectionner la liste générée de l'écran `gallery` (ou `replay`). Sa **Liste** peut être **Images de la galerie** ou **Scènes à rejouer** ; cocher les images ou scènes proposées (aucune cochée = tous les fonds de l'histoire / toutes les scènes). Ce choix est rangé dans l'écran, pas dans l'histoire.
+
+Pour composer ses propres écrans : dans une liste générée, une **Image** avec **Image de la ligne** affiche l'image de la ligne ; la condition **l'élément de la ligne est renseigné** distingue une image débloquée d'une image verrouillée ; un bouton avec l'action **Rejouer une scène** (case **Scène de la ligne** cochée) rejoue la scène de la ligne. « Rejouer une scène » peut aussi viser une scène fixe. Un rejouer ne démarre que depuis l'écran titre.

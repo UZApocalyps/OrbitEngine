@@ -1,6 +1,6 @@
 //! [`DataScreen`]: a [`Screen`] built from a [`ScreenAsset`].
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use orbit_core::{Value, VarOp};
 use orbit_render2d::TextureId;
@@ -35,12 +35,49 @@ pub struct DataContext {
     /// Story variables (both scopes) the conditions and bindings read.
     pub vars: BTreeMap<String, Value>,
     /// Textures of the project images the theme uses (nine-slice
-    /// backgrounds), by asset path.
+    /// backgrounds) and of the gallery images, by asset path.
     pub images: HashMap<String, TextureId>,
+    /// Gallery (M7-03): the images a `Gallery` source with no list shows
+    /// (every background of the story, in story order), by asset path.
+    pub gallery: Vec<String>,
+    /// Asset paths of the images unlocked in a played game.
+    pub unlocked: BTreeSet<String>,
+    /// Scene replay (M7-04): every scene of the story in order, as
+    /// (id, name, seen in a played game).
+    pub scenes: Vec<(String, String, bool)>,
+}
+
+impl DataContext {
+    /// The rows of a `Gallery` source: the path of each unlocked image of
+    /// `list` (or of [`DataContext::gallery`] when empty), `""` when locked.
+    pub fn gallery_rows(&self, list: &[String]) -> Vec<Value> {
+        let list = if list.is_empty() { &self.gallery } else { list };
+        list.iter()
+            .map(|p| Value::Str(if self.unlocked.contains(p) { p.clone() } else { String::new() }))
+            .collect()
+    }
+
+    /// The rows of a `ReplayScenes` source: the names of the seen scenes
+    /// named (by id or name) in `list`, every seen scene when it is empty.
+    pub fn replay_rows(&self, list: &[String]) -> Vec<Value> {
+        self.scenes
+            .iter()
+            .filter(|(id, name, seen)| {
+                *seen && (list.is_empty() || list.iter().any(|k| k.trim() == id || k.trim() == name))
+            })
+            .map(|(_, name, _)| Value::Str(name.clone()))
+            .collect()
+    }
 }
 
 impl DataContext {
     pub fn eval(&self, cond: &Cond) -> bool {
+        self.eval_with(cond, None)
+    }
+
+    /// [`DataContext::eval`] inside a generated row whose element is `item`
+    /// (read by `Cond::Item`).
+    pub fn eval_with(&self, cond: &Cond, item: Option<&Value>) -> bool {
         match cond {
             Cond::Always => true,
             Cond::Never => false,
@@ -48,8 +85,16 @@ impl DataContext {
             Cond::CanSave => self.can_save,
             Cond::ShowQuit => self.show_quit,
             Cond::InGame => self.in_game,
-            Cond::Not(c) => !self.eval(c),
+            Cond::Not(c) => !self.eval_with(c, item),
             Cond::Vars(c) => c.eval(&|n| self.vars.get(n).cloned()).unwrap_or(false),
+            Cond::Item => item.is_some_and(|v| match v {
+                Value::Bool(b) => *b,
+                Value::Int(i) => *i != 0,
+                Value::Float(f) => *f != 0.0,
+                Value::Str(s) => !s.is_empty(),
+                Value::List(_, l) => !l.is_empty(),
+                Value::Map(_, m) => !m.is_empty(),
+            }),
         }
     }
 
@@ -248,6 +293,12 @@ impl DataScreen {
             BindPath::ItemIndex => orbit_core::ITEM_INDEX_VAR.to_owned(),
             BindPath::ItemKey => orbit_core::ITEM_KEY_VAR.to_owned(),
             BindPath::Param(p) => format!("{}{p}", orbit_core::PARAM_VAR_PREFIX),
+            BindPath::Gallery(list) => {
+                return Some(Value::list(orbit_core::ScalarType::Str, self.ctx.gallery_rows(list)));
+            }
+            BindPath::ReplayScenes(list) => {
+                return Some(Value::list(orbit_core::ScalarType::Str, self.ctx.replay_rows(list)));
+            }
         };
         self.lookup(&name, item)
     }
@@ -274,6 +325,7 @@ impl DataScreen {
                     UiAction::VarSet(op)
                 }
                 UiAction::CloseWith(o) => UiAction::CloseWith(self.resolve_operand(o, item)),
+                UiAction::ReplayScene(o) => UiAction::ReplayScene(self.resolve_operand(o, item)),
                 other => other.clone(),
             })
             .collect()
@@ -449,7 +501,7 @@ impl DataScreen {
         path: &mut Vec<usize>,
         st: &mut Build,
     ) {
-        if !self.ctx.eval(&def.visible) {
+        if !self.ctx.eval_with(&def.visible, st.items.last().map(|i| &i.value)) {
             return;
         }
         let index = st.counter;
@@ -498,10 +550,18 @@ impl DataScreen {
                 }
                 n
             }
-            WidgetKind::Image { asset } => Node::image(match asset.as_deref() {
-                Some(MENU_BACKGROUND) => self.ctx.background,
-                _ => None,
-            }),
+            WidgetKind::Image { asset, bind } => {
+                let bound = bind.as_ref().map(|b| match self.bind_value(b, item) {
+                    Some(Value::Str(path)) => path,
+                    _ => String::new(),
+                });
+                Node::image(match bound.as_deref().or(asset.as_deref()) {
+                    Some(MENU_BACKGROUND) => self.ctx.background,
+                    // A gallery image (loaded by the host), or nothing.
+                    Some(path) if bind.is_some() => self.ctx.images.get(path).copied(),
+                    _ => None,
+                })
+            }
             WidgetKind::Slider {
                 bind,
                 min,
@@ -658,7 +718,7 @@ impl DataScreen {
         node.row_span = l.row_span.max(1);
         node.main = l.main;
         node.cross = l.cross;
-        node.enabled = self.ctx.eval(&def.enabled);
+        node.enabled = self.ctx.eval_with(&def.enabled, st.items.last().map(|i| &i.value));
         if parent.is_none() {
             node.anchor = l.anchor.unwrap_or(crate::widgets::Anchor::FULL);
         }
@@ -910,6 +970,11 @@ impl DataScreen {
                 Some(UiEvent::VarOp(op.clone()))
             }
             UiAction::SceneGoto(scene) => Some(UiEvent::SceneGoto(scene.clone())),
+            // The row was written in when the button was built.
+            UiAction::ReplayScene(operand) => match operand.eval(&|n| self.lookup(n, None)) {
+                Some(Value::Str(scene)) if !scene.trim().is_empty() => Some(UiEvent::ReplayScene(scene)),
+                _ => None,
+            },
             // Row values were written in when the button was built.
             UiAction::CloseWith(operand) => Some(match operand.eval(&|n| self.lookup(n, None)) {
                 Some(value) => UiEvent::BackWith(value),
@@ -1665,6 +1730,47 @@ mod tests {
         let mut s = DataScreen::new(from_ron(A11Y_SCREEN).unwrap(), &Theme::default(), &Texts::builtin("en"), c);
         assert!(s.ui().find(5).is_none());
         assert!(s.ui().find(4).is_some());
+    }
+
+    fn stock(id: &str) -> crate::ScreenAsset {
+        orbit_ui_data::UiBundle::builtin().screen(id).unwrap().clone()
+    }
+
+    #[test]
+    fn the_stock_gallery_shows_unlocked_images_and_locked_cards() {
+        let mut c = ctx();
+        c.gallery = vec!["bg/a.png".into(), "bg/b.png".into(), "bg/c.png".into()];
+        c.unlocked.insert("bg/b.png".into());
+        let mut s = DataScreen::new(stock("gallery"), &Theme::default(), &Texts::builtin("en"), c);
+        let nodes = &s.ui().nodes;
+        let images = nodes.iter().filter(|n| matches!(n.kind, crate::widgets::Kind::Image { .. })).count();
+        let locked = nodes
+            .iter()
+            .filter(|n| matches!(&n.kind, crate::widgets::Kind::Label(l) if l.text == "Locked"))
+            .count();
+        assert_eq!((images, locked), (1, 2));
+        // Nothing unlocked and no image at all: the empty text.
+        let mut c = ctx();
+        c.gallery.clear();
+        let mut s = DataScreen::new(stock("gallery"), &Theme::default(), &Texts::builtin("en"), c);
+        assert!(s.ui().nodes.iter().any(
+            |n| matches!(&n.kind, crate::widgets::Kind::Label(l) if l.text == "Nothing to see yet.")
+        ));
+    }
+
+    #[test]
+    fn the_stock_replay_screen_lists_seen_scenes_and_replays_them() {
+        let mut c = ctx();
+        c.scenes = vec![
+            ("01A".into(), "intro".into(), true),
+            ("01B".into(), "secret".into(), false),
+            ("01C".into(), "ending".into(), true),
+        ];
+        let mut s = DataScreen::new(stock("replay"), &Theme::default(), &Texts::builtin("en"), c);
+        // Tags: one button per seen scene, then Back.
+        assert_eq!(click(&mut s, 2), vec![UiEvent::ReplayScene("ending".into())]);
+        assert_eq!(click(&mut s, 1), vec![UiEvent::ReplayScene("intro".into())]);
+        assert_eq!(click(&mut s, 3), vec![UiEvent::Back]);
     }
 
     const BAG_SCREEN: &str = r#"(id: "bag", root: (kind: Stack(dir: Vertical), children: [

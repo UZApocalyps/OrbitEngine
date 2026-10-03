@@ -9,6 +9,17 @@ const PREFERENCES_V1: &str =
     include_str!("../../../examples/fixtures/compat/ui_v1/preferences.screen.ron");
 const THEME_V1: &str = include_str!("../../../examples/fixtures/compat/ui_v1/theme.ron");
 
+/// The stock main menu without the buttons M7-03 / M7-04 added.
+fn stock_menu_before_m7_03() -> ScreenAsset {
+    let mut menu = UiBundle::builtin().screen("main_menu").unwrap().clone();
+    fn strip(w: &mut orbit_ui_data::WidgetDef) {
+        w.children.retain(|c| c.id != "gallery" && c.id != "replay");
+        w.children.iter_mut().for_each(strip);
+    }
+    strip(&mut menu.root);
+    menu
+}
+
 #[test]
 fn v1_fixtures_declare_version_1() {
     for src in [BUNDLE_V1, MAIN_MENU_V1, PREFERENCES_V1] {
@@ -20,7 +31,7 @@ fn v1_fixtures_declare_version_1() {
 fn a_v1_screen_loads_migrated_and_equals_the_stock_screen() {
     let menu: ScreenAsset = from_ron(MAIN_MENU_V1).unwrap();
     assert_eq!(menu.ui_version, UI_VERSION);
-    assert_eq!(&menu, UiBundle::builtin().screen("main_menu").unwrap());
+    assert_eq!(menu, stock_menu_before_m7_03());
     // The stock preferences screen gained the accessibility controls in
     // version 3: the old one loads, migrated, without them.
     let prefs: ScreenAsset = from_ron(PREFERENCES_V1).unwrap();
@@ -42,7 +53,7 @@ fn v2_fixtures_load_and_migrate_to_the_current_version() {
     }
     let menu: ScreenAsset = from_ron(MAIN_MENU_V2).unwrap();
     assert_eq!(menu.ui_version, UI_VERSION);
-    assert_eq!(&menu, UiBundle::builtin().screen("main_menu").unwrap());
+    assert_eq!(menu, stock_menu_before_m7_03());
     let prefs: ScreenAsset = from_ron(PREFERENCES_V2).unwrap();
     assert_eq!(prefs.ui_version, UI_VERSION);
     assert!(!PREFERENCES_V2.contains("TextScale"));
@@ -74,13 +85,18 @@ fn a_v1_bundle_and_theme_load() {
     let bundle = UiBundle::from_ron(BUNDLE_V1).unwrap();
     let stock = UiBundle::builtin();
     assert_eq!(bundle.theme, stock.theme);
-    assert_eq!(bundle.screens.len(), stock.screens.len());
-    for (old, new) in bundle.screens.iter().zip(&stock.screens) {
+    // The stock bundle gained the gallery and replay screens (M7-03, M7-04)
+    // and their main menu buttons.
+    assert_eq!(bundle.screens.len() + 2, stock.screens.len());
+    for old in &bundle.screens {
         assert_eq!(old.ui_version, UI_VERSION);
-        if new.id != "preferences" {
-            assert_eq!(old, new, "{}", new.id);
+        match old.id.as_str() {
+            "preferences" => {}
+            "main_menu" => assert_eq!(*old, stock_menu_before_m7_03()),
+            id => assert_eq!(Some(old), stock.screen(id), "{id}"),
         }
     }
+    assert!(stock.screen("gallery").is_some() && stock.screen("replay").is_some());
     let theme = Theme::from_ron(THEME_V1).unwrap();
     assert!(theme.fonts.is_empty());
     assert_eq!(theme, Theme::default());
@@ -115,7 +131,7 @@ fn v3_and_v4_screens_load_unchanged_as_version_5() {
     assert_eq!(from_ron(JOURNAL_V3).unwrap(), from_ron(JOURNAL_V4).unwrap());
     let screen = from_ron(JOURNAL_V4).unwrap();
     assert_eq!(screen.ui_version, UI_VERSION);
-    assert_eq!(UI_VERSION, 5);
+    assert!(UI_VERSION >= 5);
     assert!(!screen.hud);
     assert!(screen.transition_in.is_none() && screen.transition_out.is_none());
     assert_eq!(screen.on_cancel, vec![orbit_ui_data::UiAction::Close]);
@@ -167,4 +183,65 @@ fn item_bindings_outside_a_repeat_and_hud_pauses_are_flagged() {
     assert!(has("outside a generated list"), "{issues:?}");
     assert!(has("duration"), "{issues:?}");
     assert!(has("list or map"), "{issues:?}");
+}
+
+const BAG_V5: &str = include_str!("../../../examples/fixtures/compat/ui_v5/bag.screen.ron");
+
+/// M7-03 / M7-04 (`ui_version` 6): a frozen version 5 document (story
+/// screen features: repeat, parameters, `CloseWith`, transitions) loads,
+/// is stamped version 6, means the same and writes none of the new fields.
+#[test]
+fn v5_screens_load_unchanged_as_version_6() {
+    assert!(BAG_V5.contains("ui_version: 5"));
+    let screen = from_ron(BAG_V5).unwrap();
+    assert_eq!(screen.ui_version, UI_VERSION);
+    assert!(UI_VERSION >= 6);
+    // Same document as if it had been written at version 6.
+    let as_v6 = BAG_V5.replace("ui_version: 5", &format!("ui_version: {UI_VERSION}"));
+    assert_eq!(from_ron(&as_v6).unwrap(), screen);
+    assert!(orbit_ui_data::validate(&screen, None).is_empty());
+    let text = orbit_ui_data::to_ron(&screen).unwrap();
+    for new_field in ["bind", "Gallery", "ReplayScenes", "ReplayScene", "Item)"] {
+        assert!(!text.contains(&format!("{new_field}:")), "{new_field}");
+    }
+    assert!(!text.contains("bind:"));
+    assert_eq!(from_ron(&text).unwrap(), screen);
+}
+
+#[test]
+fn version_6_gallery_and_replay_round_trip_and_validate() {
+    let src = r#"(ui_version: 6, id: "extras", root: (kind: Stack(dir: Vertical), children: [
+            (kind: Repeat(source: Gallery(["bg/a.png", "bg/b.png"]), dir: Grid(4)), children: [
+                (kind: Image(bind: Some(Item)), visible: Item),
+                (kind: Label(text: Literal("locked")), visible: Not(Item)),
+            ]),
+            (kind: Repeat(source: ReplayScenes([])), children: [
+                (kind: Button(text: Bind(Item), action: [ReplayScene(Item)])),
+            ]),
+            (kind: Button(text: Literal("x"), action: [ReplayScene(Lit(Str("intro")))])),
+        ]))"#;
+    let screen = from_ron(src).unwrap();
+    let issues = orbit_ui_data::validate(&screen, None);
+    assert!(issues.is_empty(), "{issues:?}");
+    let text = orbit_ui_data::to_ron(&screen).unwrap();
+    assert_eq!(from_ron(&text).unwrap(), screen);
+    // The stock screens use them and are valid.
+    let stock = UiBundle::builtin();
+    for id in ["gallery", "replay"] {
+        let s = stock.screen(id).unwrap();
+        assert!(orbit_ui_data::validate(s, None).is_empty(), "{id}");
+    }
+    // Row-only values outside a list, unknown scenes and empty targets.
+    let bad = r#"(id: "s", root: (kind: Stack(dir: Vertical), children: [
+            (kind: Image(bind: Some(Item))),
+            (kind: Button(text: Literal("x"), action: [ReplayScene(Item), ReplayScene(Lit(Str(" ")))])),
+            (kind: Repeat(source: ReplayScenes(["nowhere"])), children: [(kind: Label(text: Bind(Item)))]),
+        ]))"#;
+    let screen = from_ron(bad).unwrap();
+    let issues = orbit_ui_data::validate(&screen, None);
+    let has = |s: &str| issues.iter().any(|i| i.message.contains(s));
+    assert!(has("outside a generated list"), "{issues:?}");
+    assert!(has("ReplayScene needs a scene"), "{issues:?}");
+    let scenes = orbit_ui_data::scene_issues(&screen, &|s| s == "intro");
+    assert_eq!(scenes.len(), 1, "{scenes:?}");
 }

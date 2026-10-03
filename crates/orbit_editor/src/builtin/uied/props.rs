@@ -240,6 +240,7 @@ fn cond_editor(ui: &mut Ui, env: &Env, salt: &str, cond: &mut Cond) {
         (Cond::CanSave, "can_save"),
         (Cond::ShowQuit, "show_quit"),
         (Cond::InGame, "in_game"),
+        (Cond::Item, "item_set"),
     ];
     let vars_index = names.len();
     let mut index = match &base {
@@ -340,6 +341,8 @@ fn bind_tag(bind: &BindPath) -> usize {
         BindPath::ItemIndex => 3,
         BindPath::ItemKey => 4,
         BindPath::Param(_) => 5,
+        BindPath::Gallery(_) => 6,
+        BindPath::ReplayScenes(_) => 7,
     }
 }
 
@@ -367,7 +370,7 @@ fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath, contextu
         };
     }
     match bind {
-        BindPath::Item | BindPath::ItemIndex | BindPath::ItemKey => {}
+        BindPath::Item | BindPath::ItemIndex | BindPath::ItemKey | BindPath::Gallery(_) | BindPath::ReplayScenes(_) => {}
         BindPath::Param(name) => {
             ui.add(
                 egui::TextEdit::singleline(name)
@@ -485,9 +488,60 @@ fn scene_label(scenes: &[(String, String)], key: &str) -> Option<String> {
         .map(|(_, name)| name.clone())
 }
 
+/// Target of a `ReplayScene`: the scene of the row (in a
+/// `ReplayScenes` list) or a fixed scene.
+fn replay_target_editor(ui: &mut Ui, env: &Env, salt: &str, o: &mut Operand) {
+    let mut row = matches!(o, Operand::Item);
+    if ui
+        .checkbox(&mut row, env.t("uied.replay_row"))
+        .on_hover_text(env.t("uied.replay_row_tip"))
+        .changed()
+    {
+        *o = if row { Operand::Item } else { Operand::Lit(orbit_core::Value::Str(String::new())) };
+    }
+    if let Operand::Lit(orbit_core::Value::Str(scene)) = o {
+        scene_editor(ui, env, salt, scene);
+    }
+}
+
+/// The eligible entries of a gallery / replay list: a checkbox per
+/// candidate `(key, label)`; none checked = all of them.
+fn eligible_editor(ui: &mut Ui, env: &Env, list: &mut Vec<String>, candidates: &[(String, String)]) {
+    ui.vertical(|ui| {
+        ui.label(RichText::new(env.t("uied.eligible_tip")).small().color(weak(ui)));
+        for (key, label) in candidates {
+            let mut on = list.contains(key);
+            if ui.checkbox(&mut on, label).changed() {
+                if on {
+                    // Keep the story order.
+                    list.push(key.clone());
+                    let order = |k: &String| candidates.iter().position(|(c, _)| c == k);
+                    list.sort_by_key(order);
+                } else {
+                    list.retain(|k| k != key);
+                }
+            }
+        }
+        // Entries that are no longer candidates (renamed, deleted).
+        let stale: Vec<String> = list
+            .iter()
+            .filter(|k| !candidates.iter().any(|(c, _)| c == *k))
+            .cloned()
+            .collect();
+        for key in stale {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("{key} ({})", env.t("uied.scene_unknown"))).color(ui.visuals().warn_fg_color));
+                if ui.small_button(icons::X).clicked() {
+                    list.retain(|k| *k != key);
+                }
+            });
+        }
+    });
+}
+
 // ---------------------------------------------------------------- actions
 
-const ACTION_NAMES: [&str; 17] = [
+const ACTION_NAMES: [&str; 18] = [
     "game_new",
     "game_continue",
     "game_quit",
@@ -505,6 +559,7 @@ const ACTION_NAMES: [&str; 17] = [
     "custom",
     "scene_goto",
     "var_set",
+    "replay_scene",
 ];
 
 fn action_index(a: &UiAction) -> usize {
@@ -526,6 +581,7 @@ fn action_index(a: &UiAction) -> usize {
         UiAction::Custom { .. } => 14,
         UiAction::SceneGoto(_) => 15,
         UiAction::VarSet(_) => 16,
+        UiAction::ReplayScene(_) => 17,
     }
 }
 
@@ -550,6 +606,7 @@ fn action_from_index(i: usize, vars: &[VarInfo]) -> UiAction {
             args: Vec::new(),
         },
         15 => UiAction::SceneGoto(String::new()),
+        17 => UiAction::ReplayScene(Operand::Item),
         _ => UiAction::VarSet(varwidgets::blank_op(vars)),
     }
 }
@@ -572,6 +629,7 @@ fn action_editor(ui: &mut Ui, env: &Env, salt: &str, action: &mut UiAction) {
             ui.add(egui::TextEdit::singleline(path).desired_width(140.0));
         }
         UiAction::SceneGoto(scene) => scene_editor(ui, env, salt, scene),
+        UiAction::ReplayScene(o) => replay_target_editor(ui, env, salt, o),
         UiAction::Custom { name, args } => {
             ui.add(egui::TextEdit::singleline(name).desired_width(90.0));
             let mut joined = args.join(", ");
@@ -834,24 +892,37 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
                 ui.checkbox(dim, env.t("uied.dim_text"));
             });
         }
-        WidgetKind::Image { asset } => {
-            row(ui, &env.t("uied.image"), |ui| {
-                let mut path = asset.clone().unwrap_or_default();
-                ui.add(egui::TextEdit::singleline(&mut path).desired_width(140.0));
-                ui.menu_button(icons::CARET_DOWN, |ui| {
-                    if ui.button("@menu_background").clicked() {
-                        path = "@menu_background".into();
-                        ui.close();
-                    }
-                    for img in env.images {
-                        if ui.button(img).clicked() {
-                            path.clone_from(img);
+        WidgetKind::Image { asset, bind } => {
+            row(ui, "", |ui| {
+                let mut from_row = bind.is_some();
+                if ui
+                    .checkbox(&mut from_row, env.t("uied.image_from_row"))
+                    .on_hover_text(env.t("uied.image_from_row_tip"))
+                    .changed()
+                {
+                    *bind = from_row.then_some(BindPath::Item);
+                }
+            });
+            // A row image shows the element of the row instead of `asset`.
+            if bind.is_none() {
+                row(ui, &env.t("uied.image"), |ui| {
+                    let mut path = asset.clone().unwrap_or_default();
+                    ui.add(egui::TextEdit::singleline(&mut path).desired_width(140.0));
+                    ui.menu_button(icons::CARET_DOWN, |ui| {
+                        if ui.button("@menu_background").clicked() {
+                            path = "@menu_background".into();
                             ui.close();
                         }
-                    }
+                        for img in env.images {
+                            if ui.button(img).clicked() {
+                                path.clone_from(img);
+                                ui.close();
+                            }
+                        }
+                    });
+                    *asset = (!path.is_empty()).then_some(path);
                 });
-                *asset = (!path.is_empty()).then_some(path);
-            });
+            }
         }
         WidgetKind::Slider {
             bind,
@@ -934,19 +1005,31 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
         WidgetKind::ScrollList => {}
         WidgetKind::Repeat { source, dir, empty } => {
             row(ui, &env.t("uied.repeat_source"), |ui| {
-                let is_param = matches!(source, BindPath::Param(_));
-                let mut want_param = is_param;
+                // 0 variable, 1 parameter, 2 gallery, 3 scene replay.
+                let kind = match source {
+                    BindPath::Param(_) => 1,
+                    BindPath::Gallery(_) => 2,
+                    BindPath::ReplayScenes(_) => 3,
+                    _ => 0,
+                };
+                let mut want = kind;
                 pick(
                     ui,
                     "repeat_src_kind",
-                    &mut want_param,
-                    &[(false, env.v("var")), (true, env.v("param"))],
+                    &mut want,
+                    &[
+                        (0, env.v("var")),
+                        (1, env.v("param")),
+                        (2, env.v("gallery")),
+                        (3, env.v("replay_scenes")),
+                    ],
                 );
-                if want_param != is_param {
-                    *source = if want_param {
-                        BindPath::Param(String::new())
-                    } else {
-                        BindPath::Var(String::new())
+                if want != kind {
+                    *source = match want {
+                        1 => BindPath::Param(String::new()),
+                        2 => BindPath::Gallery(Vec::new()),
+                        3 => BindPath::ReplayScenes(Vec::new()),
+                        _ => BindPath::Var(String::new()),
                     };
                 }
                 match source {
@@ -989,6 +1072,23 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
                     _ => {}
                 }
             });
+            // Which images / scenes the gallery and the replay menu offer
+            // (M7-03, M7-04): stored in the screen, not in the story.
+            match source {
+                BindPath::Gallery(list) => {
+                    let candidates: Vec<(String, String)> =
+                        env.images.iter().map(|p| (p.clone(), p.clone())).collect();
+                    row(ui, &env.t("uied.gallery_images"), |ui| {
+                        eligible_editor(ui, env, list, &candidates);
+                    });
+                }
+                BindPath::ReplayScenes(list) => {
+                    row(ui, &env.t("uied.replay_scenes"), |ui| {
+                        eligible_editor(ui, env, list, env.scenes);
+                    });
+                }
+                _ => {}
+            }
             row(ui, &env.t("uied.dir"), |ui| dir_editor(ui, env, "dir", dir));
             row(ui, &env.t("uied.repeat_empty"), |ui| {
                 ui.vertical(|ui| {

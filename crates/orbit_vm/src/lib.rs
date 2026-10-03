@@ -12,6 +12,7 @@ mod error;
 mod event;
 mod history;
 mod plugin;
+mod replay;
 mod rollback;
 mod seek;
 mod state;
@@ -28,6 +29,9 @@ mod collection_tests;
 
 #[cfg(test)]
 mod screen_tests;
+
+#[cfg(test)]
+mod replay_tests;
 
 pub use error::VmError;
 pub use event::{ChoiceView, PresentationEvent, StepResult};

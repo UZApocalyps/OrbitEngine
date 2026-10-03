@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use orbit_core::{NodeId, Value};
+use orbit_core::{NodeId, SceneId, Value};
 use orbit_vm::Vm;
 use serde::{Deserialize, Serialize};
 
@@ -30,18 +30,45 @@ pub struct PersistentData {
     /// Lines already read in any playthrough (for "skip read text").
     #[serde(default)]
     pub read_nodes: BTreeSet<NodeId>,
+    /// Scenes entered in any playthrough (the scene replay menu, M7-04),
+    /// with the playthrough variables of the first entry (what a replay
+    /// starts from). Files written before this field existed have none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub seen_scenes: BTreeMap<SceneId, BTreeMap<String, Value>>,
+    /// Asset paths of the images shown as a background in any playthrough
+    /// (the gallery unlocks, M7-03).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub unlocked_images: BTreeSet<String>,
 }
 
 impl PersistentData {
     pub const FORMAT_VERSION: u32 = 1;
 
-    /// Collects the persistent state from a running VM.
+    /// Collects the persistent state from a running VM. Never call it on a
+    /// replay VM (`Vm::is_replay`): a replay must not write anything.
     pub fn from_vm(vm: &Vm) -> Self {
+        let story = vm.story();
         Self {
             format_version: Self::FORMAT_VERSION,
             vars: vm.persistent_vars().clone(),
             read_nodes: vm.read_nodes().clone(),
+            seen_scenes: vm.scene_visits().clone(),
+            unlocked_images: vm
+                .shown_images()
+                .iter()
+                .filter_map(|id| story.assets.get(*id).map(|a| a.path.clone()))
+                .collect(),
         }
+    }
+
+    /// Whether the scene `id` was entered in a playthrough.
+    pub fn has_seen(&self, id: SceneId) -> bool {
+        self.seen_scenes.contains_key(&id)
+    }
+
+    /// Whether the image at `path` was shown in a playthrough.
+    pub fn is_unlocked(&self, path: &str) -> bool {
+        self.unlocked_images.contains(path)
     }
 
     /// Loads this data into `vm`. Variables that are no longer declared (or
@@ -61,6 +88,22 @@ impl PersistentData {
             .copied()
             .collect();
         vm.set_read_nodes(read);
+        let story = vm.story().clone();
+        let visits = self
+            .seen_scenes
+            .iter()
+            .filter(|(id, _)| story.scene(**id).is_some())
+            .map(|(id, vars)| (*id, vars.clone()))
+            .collect();
+        vm.set_scene_visits(visits);
+        let images = story
+            .assets
+            .assets
+            .iter()
+            .filter(|a| self.unlocked_images.contains(&a.path))
+            .map(|a| a.id)
+            .collect();
+        vm.set_shown_images(images);
     }
 
     pub fn to_ron(&self) -> Result<String, SaveError> {

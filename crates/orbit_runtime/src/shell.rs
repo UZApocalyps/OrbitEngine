@@ -217,6 +217,24 @@ enum EntryState {
     Corrupt,
 }
 
+/// Id of the data screen a scene replay comes back to (M7-04).
+pub const REPLAY_SCREEN: &str = "replay";
+
+/// The images of the gallery when a `Gallery` source lists none (M7-03):
+/// every image the story shows as a background, in story order, by path.
+pub fn gallery_paths(story: &Story) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for node in story.scenes.iter().flat_map(|s| &s.nodes) {
+        if let orbit_core::NodeKind::Background { asset, .. } = &node.kind
+            && let Some(entry) = story.assets.get(*asset)
+            && !out.contains(&entry.path)
+        {
+            out.push(entry.path.clone());
+        }
+    }
+    out
+}
+
 fn to_save_slot(id: UiSlot) -> SaveSlot {
     match id.category {
         SlotCategory::Manual => SaveSlot::Manual(id.index + 1),
@@ -785,6 +803,7 @@ impl Shell {
     /// Back to the main menu (game over, or the player's choice). The editor
     /// preview has no main menu: the story starts again.
     fn leave_game(&mut self) {
+        let replay = self.replaying();
         if self.cfg.embedded {
             self.start_new_game();
             return;
@@ -797,6 +816,9 @@ impl Shell {
         self.stack.clear();
         self.refresh_slots();
         self.refresh_main_menu();
+        if replay {
+            self.open_screen(REPLAY_SCREEN);
+        }
     }
 
     /// Saves what must survive the process: persistent data, preferences, and
@@ -819,9 +841,97 @@ impl Shell {
         self.story.locate(node).map(|(scene, _)| scene)
     }
 
+    // ---------------------------------------------------- gallery and replay
+
+    /// Whether the running game replays a scene (M7-04): nothing is saved,
+    /// autosaved or written to the persistent data.
+    pub fn replaying(&self) -> bool {
+        self.game.as_ref().is_some_and(|g| g.director.vm().is_replay())
+    }
+
+    /// Asset paths of the images unlocked so far (M7-03): the saved ones and,
+    /// during a playthrough, the ones it showed.
+    fn unlocked_images(&self) -> std::collections::BTreeSet<String> {
+        let mut out = self.persistent.unlocked_images.clone();
+        if let Some(game) = &self.game
+            && !game.director.vm().is_replay()
+        {
+            let vm = game.director.vm();
+            out.extend(
+                vm.shown_images()
+                    .iter()
+                    .filter_map(|id| self.story.assets.get(*id).map(|a| a.path.clone())),
+            );
+        }
+        out
+    }
+
+    /// Whether the scene was entered in a playthrough (saved, or the
+    /// running one).
+    fn scene_seen(&self, id: orbit_core::SceneId) -> bool {
+        self.persistent.has_seen(id)
+            || self.game.as_ref().is_some_and(|g| {
+                let vm = g.director.vm();
+                !vm.is_replay() && vm.scene_visits().contains_key(&id)
+            })
+    }
+
+    /// Every scene in story order as (id, name, seen), for the replay menu.
+    fn replay_scenes(&self) -> Vec<(String, String, bool)> {
+        self.story
+            .scenes
+            .iter()
+            .map(|s| (s.id.to_string(), s.name.clone(), self.scene_seen(s.id)))
+            .collect()
+    }
+
+    /// `UiAction::ReplayScene` (M7-04): replays a seen scene (id or name)
+    /// from the title, on the variables it was first entered with (declared
+    /// initial values for those not recorded) and a copy of the persistent
+    /// ones. Nothing of the replay is saved; its end or the menu comes back
+    /// to the title with the `replay` screen. Refused (with a log line)
+    /// during a playthrough, which it would end, and for unseen scenes.
+    pub fn start_replay(&mut self, scene: &str) -> bool {
+        if self.game.is_some() && !self.replaying() {
+            log::warn!("scene replay of `{scene}` ignored: a game is running");
+            return false;
+        }
+        let key = scene.trim();
+        let found = self
+            .story
+            .scenes
+            .iter()
+            .find(|s| s.id.to_string() == key)
+            .or_else(|| self.story.scenes.iter().find(|s| s.name == key))
+            .map(|s| s.id);
+        let Some(id) = found.filter(|id| self.scene_seen(*id)) else {
+            log::warn!("scene replay of `{scene}` ignored: not a seen scene");
+            return false;
+        };
+        let vars = self.persistent.seen_scenes.get(&id);
+        let mut vm = match Vm::replay(self.story.clone(), id, vars, &self.persistent.vars) {
+            Ok(vm) => vm,
+            Err(err) => {
+                log::warn!("scene replay of `{scene}` failed: {err}");
+                return false;
+            }
+        };
+        vm.set_plugin_host(self.plugins.clone());
+        // Lines read in a playthrough can be skipped in the replay.
+        vm.set_read_nodes(self.persistent.read_nodes.clone());
+        self.leave_music();
+        self.cut_screen_fx = true;
+        let director = Director::with_localizer(vm, self.loc.clone());
+        self.install_game(director);
+        self.play_time = 0.0;
+        self.last_progress = 0;
+        self.last_scene = None;
+        true
+    }
+
     /// Persistent variables and read lines of the running game, to disk.
     fn flush_persistent(&mut self) {
-        if self.cfg.embedded {
+        if self.cfg.embedded || self.replaying() {
             return;
         }
         if let Some(game) = &self.game {
@@ -849,6 +959,7 @@ impl Shell {
         self.game
             .as_ref()
             .is_some_and(|g| g.director.shown().is_some())
+            && !self.replaying()
     }
 
     /// Freezes the current progress into a save job.
@@ -1399,6 +1510,9 @@ impl Shell {
             },
             vars: self.story_vars(),
             images: self.ui_images.clone(),
+            gallery: gallery_paths(&self.story),
+            unlocked: self.unlocked_images(),
+            scenes: self.replay_scenes(),
         }
     }
 
@@ -1492,7 +1606,7 @@ impl Shell {
                 for w in vm.take_warnings() {
                     log::warn!("{w}");
                 }
-                if handled && &before != vm.persistent_vars() {
+                if handled && !vm.is_replay() && &before != vm.persistent_vars() {
                     persistent = Some(PersistentData::from_vm(vm));
                 }
             } else {
@@ -1842,6 +1956,9 @@ impl Shell {
             UiEvent::Custom { name, args } => self.custom_action(name, args),
             UiEvent::VarOp(op) => self.apply_var_op(&op),
             UiEvent::SceneGoto(scene) => self.goto_scene(&scene),
+            UiEvent::ReplayScene(scene) => {
+                self.start_replay(&scene);
+            }
             UiEvent::Back | UiEvent::BackWith(_) => self.close_top(),
             UiEvent::ReturnToMainMenu => self.leave_game(),
             UiEvent::Quit => {
@@ -2258,6 +2375,10 @@ impl Shell {
             Flow::Failed(message) => {
                 self.failure = Some(format!("The story stopped: {message}"));
             }
+            Flow::Ended if self.replaying() => {
+                // The replayed scene is over: back to the replay menu.
+                self.leave_game();
+            }
             Flow::Ended if !self.end_handled => {
                 self.end_handled = true;
                 // The playthrough is over: its persistent progress (counters,
@@ -2271,6 +2392,9 @@ impl Shell {
     fn check_autosave(&mut self, _dt: f32) {
         let cfg = self.cfg.autosave;
         let Some(game) = &self.game else { return };
+        if game.director.vm().is_replay() {
+            return;
+        }
         let progress = game.director.progress();
         if progress == self.last_progress {
             return;

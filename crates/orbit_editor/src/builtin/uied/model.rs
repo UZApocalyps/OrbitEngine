@@ -137,7 +137,7 @@ impl KindTag {
                 center: false,
                 dim: false,
             },
-            Self::Image => WidgetKind::Image { asset: None },
+            Self::Image => WidgetKind::Image { asset: None, bind: None },
             Self::Slider => WidgetKind::Slider {
                 bind: BindPath::Setting(SettingKey::MasterVolume),
                 min: 0.0,

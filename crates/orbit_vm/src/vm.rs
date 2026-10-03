@@ -75,6 +75,9 @@ pub struct Vm {
     pub(crate) history: History,
     /// Runtime plugins (M8-04); not part of the state.
     plugins: Option<crate::plugin::SharedPluginHost>,
+    /// Scene seen / replay tracking (M7-03, M7-04), see `crate::replay`;
+    /// not part of the state.
+    pub(crate) tracking: crate::replay::Tracking,
 }
 
 impl Vm {
@@ -128,6 +131,7 @@ impl Vm {
             warnings: Vec::new(),
             history: History::default(),
             plugins: None,
+            tracking: Default::default(),
         })
     }
 
@@ -302,6 +306,9 @@ impl Vm {
                 return Ok(None);
             }
             let &(si, ni) = self.index.get(&pc).ok_or(VmError::UnknownNode(pc))?;
+            if let Some(end) = self.enter_scene(si) {
+                return Ok(Some(end));
+            }
             let node = &story.scenes[si].nodes[ni];
             let next = self.next_after(pc);
 
@@ -397,6 +404,7 @@ impl Vm {
                 NodeKind::Background { asset, transition } => {
                     self.state.pc = next;
                     self.state.scene.background = Some(*asset);
+                    self.record_image(*asset);
                     // A 2D background replaces a 3D scene (ADR 0014).
                     self.state.scene.scene3d = None;
                     self.events.push(PresentationEvent::Background {

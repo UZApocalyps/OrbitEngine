@@ -935,7 +935,9 @@ impl Runtime {
             shell.warn_storage_unavailable();
         }
         shell.set_menu_background(menu_background(&story, &self.store));
-        shell.set_ui_images(theme_images(&self.ctx.theme, &self.store));
+        let mut images = theme_images(&self.ctx.theme, &self.store);
+        images.extend(gallery_images(&story, &self.store));
+        shell.set_ui_images(images);
         shell
     }
 
@@ -1547,6 +1549,17 @@ pub(crate) fn theme_images(
         .values()
         .filter_map(|style| style.nine_slice().map(|(path, _)| path))
         .filter_map(|path| store.texture(path).map(|t| (path.to_owned(), t)))
+        .collect()
+}
+
+/// Textures of the gallery images (M7-03) that are loaded, by path.
+pub(crate) fn gallery_images(
+    story: &Story,
+    store: &AssetStore,
+) -> std::collections::HashMap<String, TextureId> {
+    crate::shell::gallery_paths(story)
+        .into_iter()
+        .filter_map(|path| store.texture(&path).map(|t| (path, t)))
         .collect()
 }
 

@@ -253,6 +253,9 @@ pub enum UiEvent {
     /// Jump the running game to a scene (scene id, or name), see
     /// `UiAction::SceneGoto`.
     SceneGoto(String),
+    /// Replay a seen scene (scene id, or name) in replay mode, see
+    /// `UiAction::ReplayScene` (M7-04).
+    ReplayScene(String),
     /// Show a short notification (already localized).
     Toast(String),
     /// Play a UI sound (see `Theme::sounds`).

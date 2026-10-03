@@ -10,7 +10,7 @@ use crate::layout::{Align, Anchor, Dir, PanelKind, Size};
 use crate::transition::ScreenTransition;
 
 /// Current version of the screen document format.
-pub const UI_VERSION: u32 = 5;
+pub const UI_VERSION: u32 = 6;
 
 fn default_version() -> u32 {
     UI_VERSION
@@ -87,6 +87,11 @@ pub enum Cond {
     Not(Box<Cond>),
     /// A no-code condition on story variables (`gold >= 10`, all / any).
     Vars(Condition),
+    /// Inside a `Repeat` template (`ui_version` 6): the element of the row
+    /// is set (`true`, a non-zero number, a non-empty text or collection).
+    /// A gallery row tells an unlocked image (its path) from a locked one
+    /// (empty) with it. Always false outside a generated list.
+    Item,
 }
 
 /// Size, spacing and placement of a widget.
@@ -198,6 +203,11 @@ pub enum WidgetKind {
     Image {
         #[serde(default)]
         asset: Option<String>,
+        /// Shows the image whose asset path this binding holds (`ui_version`
+        /// 6), e.g. `Item` in a gallery row; nothing when it is empty or not
+        /// loaded. Takes over `asset` when set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bind: Option<BindPath>,
     },
     Slider {
         bind: BindPath,

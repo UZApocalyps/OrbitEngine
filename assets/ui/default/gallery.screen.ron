@@ -1,0 +1,47 @@
+(
+    ui_version: 6,
+    id: "gallery",
+    pauses_game: true,
+    dim_background: true,
+    on_cancel: [Close],
+    root: (
+        kind: Panel(kind: Normal, dir: Vertical),
+        layout: (
+            width: Fixed(1760.0),
+            height: Fixed(980.0),
+            pad: (40.0, 28.0),
+            gap: 14.0,
+            cross: Stretch,
+            anchor: Some((canvas: (0.5, 0.5), pivot: (0.5, 0.5), offset: (0.0, 0.0))),
+        ),
+        children: [
+            (kind: Label(text: Key("ui.gallery.title")), style: Some("heading")),
+            (
+                id: "images",
+                kind: Repeat(source: Gallery([]), dir: Grid(4), empty: Some(Key("ui.gallery.empty"))),
+                layout: (height: Fill(1.0), gap: 16.0),
+                children: [
+                    (
+                        kind: Image(bind: Some(Item)),
+                        layout: (width: Fixed(400.0), height: Fixed(225.0)),
+                        visible: Item,
+                    ),
+                    (
+                        kind: Panel(kind: Normal, dir: Vertical),
+                        layout: (width: Fixed(400.0), height: Fixed(225.0), main: Center, cross: Center),
+                        visible: Not(Item),
+                        children: [
+                            (kind: Label(text: Key("ui.gallery.locked"), center: true, dim: true)),
+                        ],
+                    ),
+                ],
+            ),
+            (
+                kind: Stack(dir: Horizontal),
+                children: [
+                    (id: "back", kind: Button(text: Key("ui.menu.back"), action: [Close]), layout: (width: Fixed(300.0))),
+                ],
+            ),
+        ],
+    ),
+)

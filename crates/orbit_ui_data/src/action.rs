@@ -43,6 +43,17 @@ pub enum BindPath {
     ItemKey,
     /// A parameter the story gave the screen (`OpenScreen::params`).
     Param(String),
+    /// `Repeat` source (`ui_version` 6, M7-03): the gallery images, in
+    /// order, as a list of texts: the asset path of an unlocked image (one
+    /// shown in a played game), an empty text for a locked one. The list
+    /// names the eligible images (asset paths); empty = every background of
+    /// the story, in story order.
+    Gallery(Vec<String>),
+    /// `Repeat` source (`ui_version` 6, M7-04): the scenes the player can
+    /// replay (the eligible ones already seen in a played game) as a list of
+    /// scene names in story order; `ReplayScene(Item)` replays the row. The
+    /// list names the eligible scenes (ids or names); empty = every scene.
+    ReplayScenes(Vec<String>),
 }
 
 impl BindPath {
@@ -113,6 +124,11 @@ pub enum UiAction {
     /// (A separate variant keeps the plain `Close` unchanged in older
     /// documents and packs.)
     CloseWith(Operand),
+    /// Replays a scene (id or name; `Item` in a `ReplayScenes` row) in
+    /// replay mode (`ui_version` 6, M7-04): the scene runs on its own copy of
+    /// the variables, nothing is saved, and its end (or the menu) comes back
+    /// to the title with the `replay` screen open. Only seen scenes replay.
+    ReplayScene(Operand),
 }
 
 impl UiAction {

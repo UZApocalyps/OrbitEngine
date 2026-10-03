@@ -1,0 +1,33 @@
+(
+    ui_version: 5,
+    id: "bag",
+    hud: false,
+    pauses_game: true,
+    dim_background: true,
+    on_cancel: [Close],
+    transition_in: Some((kind: SlideUp, duration: 0.25)),
+    root: (
+        id: "frame",
+        kind: Panel(kind: Normal, dir: Vertical),
+        layout: (
+            width: Fixed(900.0),
+            height: Fit,
+            pad: (32.0, 32.0),
+            gap: 16.0,
+            anchor: Some((canvas: (0.5, 0.5), pivot: (0.5, 0.5), offset: (0.0, 0.0))),
+        ),
+        children: [
+            (kind: Image(asset: Some("@menu_background")), layout: (width: Fixed(300.0), height: Fixed(160.0))),
+            (kind: Label(text: Bind(Param("title")), size: Some(40.0), center: true)),
+            (
+                id: "items",
+                kind: Repeat(source: Var("bag"), dir: Grid(3), empty: Some(Literal("Empty"))),
+                children: [
+                    (kind: Button(text: Bind(Item), action: [VarSet((var: "bag", op: Remove, value: Item)), CloseWith(Item)])),
+                    (kind: Label(text: Bind(ItemIndex)), visible: Not(InGame)),
+                ],
+            ),
+            (kind: Button(text: Key("ui.back"), action: [Close, SceneGoto("epilogue")])),
+        ],
+    ),
+)

@@ -17,7 +17,14 @@ fn v3_fixtures_load_and_migrate_to_the_current_version() {
     }
     let menu: ScreenAsset = from_ron(MAIN_MENU_V3).unwrap();
     assert_eq!(menu.ui_version, UI_VERSION);
-    assert_eq!(&menu, UiBundle::builtin().screen("main_menu").unwrap());
+    // The stock menu gained the gallery and replay buttons (M7-03, M7-04).
+    let mut stock = UiBundle::builtin().screen("main_menu").unwrap().clone();
+    fn strip(w: &mut orbit_ui_data::WidgetDef) {
+        w.children.retain(|c| c.id != "gallery" && c.id != "replay");
+        w.children.iter_mut().for_each(strip);
+    }
+    strip(&mut stock.root);
+    assert_eq!(menu, stock);
     let prefs: ScreenAsset = from_ron(PREFERENCES_V3).unwrap();
     assert_eq!(&prefs, UiBundle::builtin().screen("preferences").unwrap());
     let theme = Theme::from_ron(THEME_V3).unwrap();

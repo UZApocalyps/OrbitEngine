@@ -169,10 +169,12 @@ pub fn scene_issues(screen: &ScreenAsset, known: &dyn Fn(&str) -> bool) -> Vec<I
     let sid = screen.id.as_str();
     let mut check = |actions: &[UiAction], wid: &str| {
         for a in actions {
-            if let UiAction::SceneGoto(scene) = a
-                && !scene.trim().is_empty()
-                && !known(scene.trim())
-            {
+            let scene = match a {
+                UiAction::SceneGoto(scene) => scene.as_str(),
+                UiAction::ReplayScene(Operand::Lit(orbit_core::Value::Str(scene))) => scene.as_str(),
+                _ => continue,
+            };
+            if !scene.trim().is_empty() && !known(scene.trim()) {
                 out.push(Issue::warning(sid, wid, format!("jumps to `{scene}`, which is not a scene of the story")));
             }
         }
@@ -181,6 +183,13 @@ pub fn scene_issues(screen: &ScreenAsset, known: &dyn Fn(&str) -> bool) -> Vec<I
     screen.root.walk(&mut |w| {
         if let WidgetKind::Button { action, .. } = &w.kind {
             check(action, &w.id);
+        }
+    });
+    screen.root.walk(&mut |w| {
+        if let WidgetKind::Repeat { source: BindPath::ReplayScenes(list), .. } = &w.kind {
+            for scene in list.iter().filter(|s| !s.trim().is_empty() && !known(s.trim())) {
+                out.push(Issue::warning(sid, &w.id, format!("lists `{scene}` for replay, which is not a scene of the story")));
+            }
         }
     });
     out
@@ -237,6 +246,7 @@ fn action_uses_item(action: &UiAction) -> bool {
     match action {
         UiAction::CloseWith(o) => item(o),
         UiAction::VarSet(op) => item(&op.value) || op.key.as_ref().is_some_and(item),
+        UiAction::ReplayScene(o) => item(o),
         _ => false,
     }
 }
@@ -256,6 +266,7 @@ fn check_items(sid: &str, w: &WidgetDef, inside: bool, depth: usize, out: &mut V
             }
             WidgetKind::Toggle { text, bind } => text_item(text) || bind.is_item(),
             WidgetKind::Slider { bind, .. } | WidgetKind::Dropdown { bind, .. } => bind.is_item(),
+            WidgetKind::Image { bind: Some(bind), .. } => bind.is_item(),
             _ => false,
         };
         if uses {
@@ -271,7 +282,7 @@ fn check_items(sid: &str, w: &WidgetDef, inside: bool, depth: usize, out: &mut V
             BindPath::Param(name) if name.trim().is_empty() => {
                 out.push(Issue::error(sid, wid, "empty parameter name"));
             }
-            BindPath::Var(_) | BindPath::Param(_) => {}
+            BindPath::Var(_) | BindPath::Param(_) | BindPath::Gallery(_) | BindPath::ReplayScenes(_) => {}
             BindPath::Item if inside => {
                 out.push(Issue::error(sid, wid, "lists cannot hold lists: a generated list needs a list or map variable or parameter"));
             }
@@ -307,6 +318,9 @@ fn check_action(sid: &str, wid: &str, action: &UiAction, out: &mut Vec<Issue>) {
         }
         UiAction::SceneGoto(scene) if scene.trim().is_empty() => {
             out.push(Issue::error(sid, wid, "SceneGoto needs a scene"));
+        }
+        UiAction::ReplayScene(Operand::Lit(orbit_core::Value::Str(scene))) if scene.trim().is_empty() => {
+            out.push(Issue::error(sid, wid, "ReplayScene needs a scene"));
         }
         _ => {}
     }

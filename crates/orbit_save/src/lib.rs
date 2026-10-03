@@ -33,6 +33,8 @@ mod anim_save_tests;
 mod collection_save_tests;
 #[cfg(test)]
 mod screen_save_tests;
+#[cfg(test)]
+mod unlock_tests;
 pub mod manager;
 pub mod persistent;
 pub mod storage;

@@ -58,3 +58,17 @@ The demo story (`examples/stories`) uses both kinds of screen:
 
 - When Alice leaves the shop, an **Open screen** step with **Wait** opens the `inventory` screen with the parameter `owner` set to "Alice". The screen repeats the `inventory` list; each button closes the screen with its item, which lands in the `used_item` variable. The **Back** button and Escape close without a value. It slides up when opening and fades out when closing.
 - At the start of the game, an **Open screen** step without **Wait** opens the `status` HUD: a small panel in the top-right corner showing the `credits` variable, which keeps updating as the story changes it.
+
+## Gallery and scene replay
+
+The stock interface has two more screens, opened from the main menu: **Gallery** and **Replay**.
+
+* **What unlocks them.** Every image shown as a background in a played game is unlocked for the gallery, and every scene the player enters is "seen" and can be replayed. This progress is kept across playthroughs and survives deleting the saves (it lives with the persistent variables). The editor preview never records it.
+* **Gallery.** Unlocked images are shown as thumbnails, locked ones as a "Locked" card.
+* **Replay.** The seen scenes are listed in story order; picking one plays that scene alone. It starts with the variables the scene had the first time the player entered it (the declared initial values when that is unknown), and nothing it does is kept: no save, quicksave or autosave, no change to persistent variables or to the unlocks. When the scene ends (or the player goes to the main menu) the game comes back to the Replay screen. A scene the story *calls* runs normally; jumping to another scene ends the replay.
+
+### Choosing what the gallery and the replay menu offer
+
+In the **Interface** editor, select the generated list of the `gallery` (or `replay`) screen. Its **List** can be **Gallery images** or **Replayable scenes**; tick the images or scenes to offer (none ticked = every background of the story / every scene). This choice is stored in the screen, not in the story.
+
+To build your own screens: in a generated list, an **Image** with **Image of the row** shows the row's image; the condition **the row's element is set** tells an unlocked image from a locked one; a button with the action **Replay a scene** (ticked **Scene of the row**) replays the row's scene. "Replay a scene" can also target a fixed scene. A replay can only start from the title.
