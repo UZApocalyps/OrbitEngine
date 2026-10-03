@@ -18,6 +18,15 @@ pub enum SettingKey {
     SkipMode,
     Fullscreen,
     Language,
+    /// Screen reader support (toggle; ADR 0017, M7-09).
+    ScreenReader,
+    /// Dialogue, choice and UI text scale, `1.0..=1.6` (slider; M7-07).
+    TextScale,
+    /// High-contrast theme override (toggle; M7-07).
+    HighContrast,
+    /// Reduced motion: animations, shakes and transitions become cuts
+    /// (toggle; M7-07).
+    ReducedMotion,
 }
 
 /// What a widget reads and writes: a player setting, or a story variable

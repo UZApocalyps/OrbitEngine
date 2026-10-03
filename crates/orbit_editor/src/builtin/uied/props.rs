@@ -42,7 +42,7 @@ impl Env<'_> {
     }
 }
 
-const SETTINGS: [(SettingKey, &str); 9] = [
+const SETTINGS: [(SettingKey, &str); 13] = [
     (SettingKey::MasterVolume, "master_volume"),
     (SettingKey::MusicVolume, "music_volume"),
     (SettingKey::SfxVolume, "sfx_volume"),
@@ -52,6 +52,10 @@ const SETTINGS: [(SettingKey, &str); 9] = [
     (SettingKey::SkipMode, "skip_mode"),
     (SettingKey::Fullscreen, "fullscreen"),
     (SettingKey::Language, "language"),
+    (SettingKey::ScreenReader, "screen_reader"),
+    (SettingKey::TextScale, "text_scale"),
+    (SettingKey::HighContrast, "high_contrast"),
+    (SettingKey::ReducedMotion, "reduced_motion"),
 ];
 
 fn setting_name(key: SettingKey) -> &'static str {

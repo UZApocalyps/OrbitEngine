@@ -101,6 +101,9 @@ pub struct Director {
     music: Option<MusicState>,
     generation: u64,
     progress: u64,
+    /// Reduced motion (M7-07): finite animations jump to their final state,
+    /// visual transitions are cuts.
+    reduced_motion: bool,
 }
 
 impl Director {
@@ -141,6 +144,25 @@ impl Director {
             music: None,
             generation: 0,
             progress: 0,
+            reduced_motion: false,
+        }
+    }
+
+    /// Turns reduced motion on or off (accessibility preference). Turning it
+    /// on cuts what is playing: transitions end, finite animations reach
+    /// their exact final state and a story waiting for one resumes.
+    pub fn set_reduced_motion(&mut self, on: bool) {
+        if self.reduced_motion == on {
+            return;
+        }
+        self.reduced_motion = on;
+        if on {
+            self.pending = None;
+            self.vm.complete_anims();
+            if matches!(self.flow, Flow::Transition { .. }) {
+                self.finish_anim_wait();
+                self.run();
+            }
         }
     }
 
@@ -493,6 +515,12 @@ impl Director {
         for _ in 0..MAX_STEPS_PER_RUN {
             let result = self.vm.step();
             self.apply_events();
+            if self.reduced_motion {
+                // No transition, every finite animation already at its end
+                // (endless decorations are left alone).
+                self.pending = None;
+                self.vm.complete_anims();
+            }
             match result {
                 StepResult::Say {
                     node,
@@ -526,7 +554,7 @@ impl Director {
                 }
                 StepResult::WaitAnimation { node, duration } => {
                     self.pending = None;
-                    if duration.is_finite() && duration > 0.0 {
+                    if duration.is_finite() && duration > 0.0 && !self.reduced_motion {
                         self.anim_wait = Some(node);
                         self.flow = Flow::Transition {
                             elapsed: 0.0,
@@ -1060,6 +1088,63 @@ mod tests {
         // Back before the move started: nothing of it is left.
         assert!(d.rollback(1));
         assert!((bg_x(&d) - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reduced_motion_cuts_animations_and_lands_on_the_exact_final_state() {
+        let mut d = animated();
+        d.set_reduced_motion(true);
+        d.advance();
+        // The blocking move did not make the story wait.
+        assert!(matches!(d.flow(), Flow::Say(_)), "{:?}", d.flow());
+        assert_eq!(bg_x(&d), 0.4);
+        d.advance();
+        // The non-blocking 4 s move is finished as soon as it starts.
+        assert!(matches!(d.flow(), Flow::Say(_)));
+        assert_eq!(bg_x(&d), 1.4);
+        d.update(0.5);
+        assert_eq!(bg_x(&d), 1.4);
+        // The final state is the same as the one reached by playing it out.
+        let mut slow = animated();
+        slow.advance();
+        slow.update(2.5);
+        slow.advance();
+        slow.update(10.0);
+        assert_eq!(bg_x(&slow), bg_x(&d));
+    }
+
+    #[test]
+    fn turning_reduced_motion_on_cuts_a_wait_and_a_transition_in_progress() {
+        let mut d = animated();
+        d.advance();
+        d.update(0.3);
+        assert!(matches!(d.flow(), Flow::Transition { .. }));
+        d.set_reduced_motion(true);
+        assert!(matches!(d.flow(), Flow::Say(_)));
+        assert_eq!(bg_x(&d), 0.4);
+
+        let mut d = demo();
+        assert!(matches!(d.flow(), Flow::Transition { .. }));
+        d.set_reduced_motion(true);
+        assert!(d.transition().is_none());
+        assert!(!matches!(d.flow(), Flow::Transition { .. }));
+        // Off again: later transitions play as usual.
+        d.set_reduced_motion(false);
+        let mut played = 0;
+        for _ in 0..40 {
+            match d.flow() {
+                Flow::Transition { duration, .. } => {
+                    played += 1;
+                    d.update(duration + 0.01);
+                }
+                Flow::Say(_) => d.advance(),
+                Flow::Choice(_) => {
+                    d.choose(0);
+                }
+                _ => break,
+            }
+        }
+        assert!(played >= 1);
     }
 
     #[test]

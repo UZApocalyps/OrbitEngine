@@ -466,6 +466,20 @@ fn old_preferences_without_gamepad_still_load() {
     // M7-09: the screen reader support is on for older files too.
     assert!(prefs.screen_reader);
     assert_eq!(prefs.volumes.master, 0.5);
+    // M7-07: the accessibility options keep today's behavior for old files.
+    assert_eq!(prefs.text_scale, 1.0);
+    assert!(!prefs.high_contrast);
+    assert!(!prefs.reduced_motion);
+}
+
+#[test]
+fn text_scale_is_clamped_and_nan_resets() {
+    let big = Preferences::from_ron("(text_scale: 9.0)").unwrap();
+    assert_eq!(big.text_scale, 1.6);
+    let small = Preferences::from_ron("(text_scale: 0.2)").unwrap();
+    assert_eq!(small.text_scale, 1.0);
+    let nan = Preferences::from_ron("(text_scale: NaN)").unwrap();
+    assert_eq!(nan.text_scale, 1.0);
 }
 
 #[test]
@@ -489,6 +503,9 @@ fn preferences_roundtrip_default_and_sanitize() {
         language: Some("fr".into()),
         gamepad: [("advance".to_owned(), "East".to_owned())].into(),
         screen_reader: false,
+        text_scale: 1.3,
+        high_contrast: true,
+        reduced_motion: true,
     };
     mgr.save_prefs(&prefs).unwrap();
     assert_eq!(mgr.load_prefs().unwrap(), prefs);

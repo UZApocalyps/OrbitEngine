@@ -197,6 +197,13 @@ impl UiBundle {
             }
             out.extend(validate(screen, theme));
         }
+        if let Some(theme) = theme {
+            // M7-07: a project theme under WCAG AA is worth a warning (the
+            // player's high-contrast mode replaces it anyway).
+            for issue in theme.contrast_issues() {
+                out.push(Issue::warning("theme", "", issue.message()));
+            }
+        }
         for (system, id) in &self.system_screens {
             if !SYSTEM_SCREENS.contains(&system.as_str()) {
                 out.push(Issue::error(id, "", format!("`{system}` is not a system screen")));
@@ -266,6 +273,17 @@ mod tests {
             assert!(b.system_screen(name).is_some(), "{name}");
         }
         assert!(b.splashes.is_empty());
+    }
+
+    #[test]
+    fn a_low_contrast_theme_is_a_warning_not_an_error() {
+        let mut b = UiBundle::builtin();
+        b.theme.as_mut().unwrap().widgets.dim_text_color = [40, 50, 80, 255];
+        let issues = b.validate();
+        assert!(issues.iter().any(|i| i.screen == "theme"
+            && i.severity == Severity::Warning
+            && i.message.contains("dimmed text")));
+        assert!(b.is_valid(), "warnings do not make a bundle unusable");
     }
 
     #[test]

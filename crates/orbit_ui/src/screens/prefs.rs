@@ -5,6 +5,7 @@ use crate::input::UiInput;
 use crate::texts::Texts;
 use crate::theme::Theme;
 use crate::view::{AUTO_DELAY_RANGE, AudioBus, PrefsView, SkipMode, TEXT_SPEED_RANGE, UiEvent};
+use orbit_ui_data::TEXT_SCALE_RANGE;
 use crate::widgets::{Align, Dir, DrawCtx, Node, PanelKind, Size, Tag, Ui, WidgetEvent};
 use orbit_text::TextAlign;
 
@@ -20,6 +21,9 @@ const T_LANGUAGE: Tag = 9;
 const T_DEFAULTS: Tag = 10;
 const T_BACK: Tag = 11;
 const T_SCREEN_READER: Tag = 12;
+const T_TEXT_SCALE: Tag = 13;
+const T_HIGH_CONTRAST: Tag = 14;
+const T_REDUCED_MOTION: Tag = 15;
 /// Value readouts are tagged `T_VALUE + slider tag`.
 const T_VALUE: Tag = 50;
 
@@ -70,6 +74,7 @@ impl PreferencesScreen {
                 "ui.prefs.seconds",
                 &[("v", &format!("{:.1}", from_unit(unit, AUTO_DELAY_RANGE)))],
             ),
+            T_TEXT_SCALE => format!("{:.0}%", from_unit(unit, TEXT_SCALE_RANGE) * 100.0),
             _ => format!("{:.0}%", unit * 100.0),
         }
     }
@@ -85,7 +90,8 @@ impl PreferencesScreen {
         let panel = ui.add(
             root,
             Node::panel(PanelKind::Normal, Dir::Vertical)
-                .fixed(1500.0, 960.0)
+                .w(Size::Fixed(1500.0))
+                .h(Size::Fit)
                 .pad(50.0, 30.0)
                 .gap(12.0)
                 .align(Align::Start, Align::Stretch),
@@ -107,11 +113,21 @@ impl PreferencesScreen {
                 "ui.prefs.auto_delay",
                 to_unit(v.auto_delay, AUTO_DELAY_RANGE),
             ),
+            (
+                T_TEXT_SCALE,
+                "ui.prefs.text_scale",
+                to_unit(v.text_scale, TEXT_SCALE_RANGE),
+            ),
         ];
         for (tag, key, unit) in sliders {
             let row = row(&mut ui, panel);
             ui.add(row, Node::label(self.texts.get(key)).w(Size::Fixed(460.0)));
-            ui.add(row, Node::slider(tag, unit).w(Size::Fixed(620.0)));
+            let mut slider = Node::slider(tag, unit).w(Size::Fixed(620.0));
+            if tag == T_TEXT_SCALE {
+                // Steps of 10 %.
+                slider = slider.step(0.1 / (TEXT_SCALE_RANGE[1] - TEXT_SCALE_RANGE[0]));
+            }
+            ui.add(row, slider);
             ui.add(
                 row,
                 Node::label(self.value_text(tag, unit))
@@ -140,24 +156,26 @@ impl PreferencesScreen {
             Node::selector(T_SKIP, skip_options, skip_index).w(Size::Fixed(620.0)),
         );
 
-        if let Some(on) = v.fullscreen {
-            let r = row(&mut ui, panel);
-            ui.add(
-                r,
-                Node::label(self.texts.get("ui.prefs.fullscreen")).w(Size::Fixed(460.0)),
-            );
-            ui.add(r, Node::toggle(T_FULLSCREEN, "", on).w(Size::Fixed(620.0)));
-        }
-        if let Some(on) = v.screen_reader {
-            let r = row(&mut ui, panel);
-            ui.add(
-                r,
-                Node::label(self.texts.get("ui.prefs.screen_reader")).w(Size::Fixed(460.0)),
-            );
-            ui.add(
-                r,
-                Node::toggle(T_SCREEN_READER, "", on).w(Size::Fixed(620.0)),
-            );
+        // Toggles go two per row: the screen stays inside the canvas even
+        // at the largest text scale.
+        let toggles = [
+            (T_FULLSCREEN, "ui.prefs.fullscreen", v.fullscreen),
+            (T_SCREEN_READER, "ui.prefs.screen_reader", v.screen_reader),
+            (T_HIGH_CONTRAST, "ui.prefs.high_contrast", Some(v.high_contrast)),
+            (T_REDUCED_MOTION, "ui.prefs.reduced_motion", Some(v.reduced_motion)),
+        ];
+        for pair in toggles.chunks(2) {
+            let shown: Vec<_> = pair.iter().filter_map(|(t, k, on)| on.map(|on| (*t, *k, on))).collect();
+            if shown.is_empty() {
+                continue;
+            }
+            let r = ui.add(panel, Node::hbox().gap(20.0).align(Align::Start, Align::Center));
+            for (tag, key, on) in shown {
+                ui.add(
+                    r,
+                    Node::toggle(tag, self.texts.get(key), on).w(Size::Fixed(640.0)),
+                );
+            }
         }
         if v.languages.len() > 1 {
             let r = row(&mut ui, panel);
@@ -226,6 +244,9 @@ impl Screen for PreferencesScreen {
                     T_VOICE => UiEvent::SetVolume(AudioBus::Voice, unit),
                     T_TEXT_SPEED => UiEvent::SetTextSpeed(from_unit(unit, TEXT_SPEED_RANGE)),
                     T_AUTO_DELAY => UiEvent::SetAutoDelay(from_unit(unit, AUTO_DELAY_RANGE)),
+                    T_TEXT_SCALE => UiEvent::SetTextScale(
+                        (from_unit(unit, TEXT_SCALE_RANGE) * 10.0).round() / 10.0,
+                    ),
                     _ => return,
                 });
             }
@@ -241,6 +262,8 @@ impl Screen for PreferencesScreen {
             }
             WidgetEvent::Toggled(T_FULLSCREEN, on) => out.push(UiEvent::SetFullscreen(on)),
             WidgetEvent::Toggled(T_SCREEN_READER, on) => out.push(UiEvent::SetScreenReader(on)),
+            WidgetEvent::Toggled(T_HIGH_CONTRAST, on) => out.push(UiEvent::SetHighContrast(on)),
+            WidgetEvent::Toggled(T_REDUCED_MOTION, on) => out.push(UiEvent::SetReducedMotion(on)),
             _ => {}
         });
         for (tag, unit) in changed {
@@ -314,9 +337,12 @@ mod tests {
                 T_VOICE,
                 T_TEXT_SPEED,
                 T_AUTO_DELAY,
+                T_TEXT_SCALE,
                 T_SKIP,
                 T_FULLSCREEN,
                 T_SCREEN_READER,
+                T_HIGH_CONTRAST,
+                T_REDUCED_MOTION,
                 T_LANGUAGE,
                 T_DEFAULTS,
                 T_BACK
@@ -329,6 +355,36 @@ mod tests {
                 "{tag}: {r:?}"
             );
         }
+    }
+
+    #[test]
+    fn stays_inside_the_canvas_at_the_largest_text_scale_and_in_high_contrast() {
+        let theme = Theme::default().accessible(1.6, true);
+        let mut s = PreferencesScreen::new(&theme, &Texts::builtin("fr"), view());
+        for tag in s.ui.focus_order() {
+            let r = s.ui.rect_of(tag).unwrap();
+            assert!(
+                r[1] >= 0.0 && r[1] + r[3] <= 1080.0 && r[0] >= 0.0 && r[0] + r[2] <= 1920.0,
+                "{tag}: {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn accessibility_controls_emit_their_events() {
+        let mut s = screen(view());
+        s.ui.set_focus_tag(T_HIGH_CONTRAST);
+        assert_eq!(real(s.handle(UiInput::Confirm)), vec![UiEvent::SetHighContrast(true)]);
+        s.ui.set_focus_tag(T_REDUCED_MOTION);
+        assert_eq!(real(s.handle(UiInput::Confirm)), vec![UiEvent::SetReducedMotion(true)]);
+        s.ui.set_focus_tag(T_TEXT_SCALE);
+        assert_eq!(real(s.handle(UiInput::Right)), vec![UiEvent::SetTextScale(1.1)]);
+        assert_eq!(real(s.handle(UiInput::Right)), vec![UiEvent::SetTextScale(1.2)]);
+        let mut v = view();
+        v.text_scale = 1.6;
+        let mut s = screen(v);
+        s.ui.set_focus_tag(T_TEXT_SCALE);
+        assert_eq!(real(s.handle(UiInput::Right)), Vec::<UiEvent>::new());
     }
 
     #[test]

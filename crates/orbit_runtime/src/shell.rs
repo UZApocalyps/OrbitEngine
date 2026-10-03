@@ -237,6 +237,10 @@ fn from_ui_skip(mode: UiSkipMode) -> orbit_save::SkipMode {
 
 pub(crate) struct Shell {
     story: Arc<Story>,
+    /// The theme as the project wrote it.
+    base_theme: Theme,
+    /// What the shell draws with: `base_theme` with the text scale and the
+    /// high-contrast preferences applied (M7-07).
     theme: Theme,
     cfg: ShellConfig,
     saves: SaveManager,
@@ -341,6 +345,8 @@ impl Shell {
         Self::pick_language(&mut loc, &prefs, &cfg);
         let texts = make_texts(loc.language(), &cfg.ui_overrides);
         let loc = Arc::new(loc);
+        let base_theme = theme;
+        let theme = base_theme.accessible(prefs.text_scale, prefs.high_contrast);
 
         let mut shell = Self {
             main: MainMenu::new(
@@ -390,6 +396,7 @@ impl Shell {
             sys_load: None,
             slots_wanted: false,
             story,
+            base_theme,
             theme,
             cfg,
             saves,
@@ -549,6 +556,7 @@ impl Shell {
             text_speed: self.prefs.text_speed,
             auto_delay: self.prefs.auto_delay,
             skip_all: self.prefs.skip_mode == orbit_save::SkipMode::All,
+            reduced_motion: self.prefs.reduced_motion,
         }
     }
 
@@ -1156,6 +1164,9 @@ impl Shell {
                 .collect(),
             language: self.loc.language().to_owned(),
             screen_reader: Some(self.prefs.screen_reader),
+            text_scale: self.prefs.text_scale,
+            high_contrast: self.prefs.high_contrast,
+            reduced_motion: self.prefs.reduced_motion,
         }
     }
 
@@ -1224,8 +1235,37 @@ impl Shell {
         Self::pick_language(&mut loc, &self.prefs, &self.cfg);
         self.install_language(Arc::new(loc));
         self.apply_prefs_effects();
+        self.refresh_theme();
         self.prefs_screen.set_view(self.prefs_view());
         self.mark_prefs_dirty();
+    }
+
+    /// Derives the drawing theme from the project theme and the text scale
+    /// and high-contrast preferences, and re-skins every screen with it.
+    fn refresh_theme(&mut self) {
+        let theme = self
+            .base_theme
+            .accessible(self.prefs.text_scale, self.prefs.high_contrast);
+        if theme == self.theme {
+            return;
+        }
+        self.theme = theme;
+        let theme = self.theme.clone();
+        self.main.set_theme(&theme);
+        self.pause.set_theme(&theme);
+        self.save_screen.set_theme(&theme);
+        self.load_screen.set_theme(&theme);
+        self.prefs_screen.set_theme(&theme);
+        self.history.set_theme(&theme);
+        self.quick.set_theme(&theme);
+        self.toasts.set_theme(&theme);
+        for screen in &mut self.data {
+            screen.set_theme(&theme);
+        }
+        if let Some(game) = &mut self.game {
+            game.set_theme(&theme);
+        }
+        self.views_dirty = true;
     }
 
     // -------------------------------------------------------------- screens
@@ -1240,7 +1280,11 @@ impl Shell {
         self.stack.clear();
         let ctx = self.data_context();
         let texts = self.texts.clone();
-        let theme = bundle.theme.clone().unwrap_or_else(|| self.theme.clone());
+        if let Some(project_theme) = &bundle.theme {
+            self.base_theme = project_theme.clone();
+            self.refresh_theme();
+        }
+        let theme = self.theme.clone();
         for asset in &bundle.screens {
             self.data
                 .push(DataScreen::new(asset.clone(), &theme, &texts, ctx.clone()));
@@ -1594,6 +1638,21 @@ impl Shell {
             }
             UiEvent::SetScreenReader(on) => {
                 self.prefs.screen_reader = on;
+                self.mark_prefs_dirty();
+            }
+            UiEvent::SetTextScale(v) => {
+                self.prefs.text_scale = orbit_ui::clamp_text_scale(v);
+                self.refresh_theme();
+                self.mark_prefs_dirty();
+            }
+            UiEvent::SetHighContrast(on) => {
+                self.prefs.high_contrast = on;
+                self.refresh_theme();
+                self.mark_prefs_dirty();
+            }
+            UiEvent::SetReducedMotion(on) => {
+                self.prefs.reduced_motion = on;
+                self.apply_play_settings();
                 self.mark_prefs_dirty();
             }
             UiEvent::SetLanguage(code) => self.set_language(&code),
