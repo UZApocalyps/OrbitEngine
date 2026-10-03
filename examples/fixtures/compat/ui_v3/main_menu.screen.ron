@@ -1,0 +1,37 @@
+(
+    ui_version: 3,
+    id: "main_menu",
+    root: (
+        kind: Stack(dir: Stack),
+        layout: (width: Fill(1.0), height: Fill(1.0)),
+        children: [
+            (
+                kind: Panel(kind: Solid, dir: Stack),
+                layout: (width: Fill(1.0), height: Fill(1.0)),
+            ),
+            (
+                kind: Image(asset: Some("@menu_background")),
+                layout: (width: Fill(1.0), height: Fill(1.0)),
+            ),
+            (
+                kind: Stack(dir: Vertical),
+                layout: (width: Fill(1.0), height: Fill(1.0), pad: (170.0, 150.0), gap: 16.0),
+                children: [
+                    (kind: Label(text: Key("game.title")), style: Some("title")),
+                    (kind: Stack(dir: Vertical), layout: (height: Fixed(60.0))),
+                    (
+                        kind: Stack(dir: Vertical),
+                        layout: (width: Fixed(560.0), gap: 18.0, cross: Stretch),
+                        children: [
+                            (id: "new", kind: Button(text: Key("ui.menu.new_game"), action: [GameNew])),
+                            (id: "continue", kind: Button(text: Key("ui.menu.continue"), action: [GameContinue]), visible: CanContinue),
+                            (id: "load", kind: Button(text: Key("ui.menu.load"), action: [OpenLoad])),
+                            (id: "prefs", kind: Button(text: Key("ui.menu.preferences"), action: [Open("preferences")])),
+                            (id: "quit", kind: Button(text: Key("ui.menu.quit"), action: [GameQuit]), visible: ShowQuit),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    ),
+)

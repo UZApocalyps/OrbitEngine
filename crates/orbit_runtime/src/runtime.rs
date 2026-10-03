@@ -1211,6 +1211,12 @@ impl Runtime {
             self.screens_language = language;
             self.boot_texts = Texts::builtin(&self.screens_language);
         }
+        // M7-02: the language selects the font chain of every text (dialogue,
+        // choices, widgets) and the text direction.
+        self.ctx.text_engine.set_language(&self.screens_language);
+        self.ctx
+            .text_engine
+            .set_language_fonts(self.ctx.theme.language_font_families());
         let Ctx {
             renderer,
             text_engine,

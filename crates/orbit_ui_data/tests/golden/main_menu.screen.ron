@@ -1,5 +1,5 @@
 (
-    ui_version: 3,
+    ui_version: 4,
     id: "main_menu",
     modal: false,
     pauses_game: false,

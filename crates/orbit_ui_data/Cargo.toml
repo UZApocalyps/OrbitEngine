@@ -11,6 +11,7 @@ publish.workspace = true
 orbit_core.workspace = true
 serde.workspace = true
 ron.workspace = true
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true

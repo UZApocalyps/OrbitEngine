@@ -15,6 +15,7 @@ pub struct TextBlock {
     box_width: Option<f32>,
     layout: Option<TextLayout>,
     laid_scale: f32,
+    laid_generation: u32,
     typewriter: Typewriter,
 }
 
@@ -39,6 +40,7 @@ impl TextBlock {
             box_width,
             layout: None,
             laid_scale: 0.0,
+            laid_generation: 0,
             typewriter,
         }
     }
@@ -79,9 +81,13 @@ impl TextBlock {
         params: &DrawParams,
     ) {
         let scale = renderer.pixel_ratio();
-        if self.layout.is_none() || (self.laid_scale - scale).abs() > 1e-3 {
+        if self.layout.is_none()
+            || (self.laid_scale - scale).abs() > 1e-3
+            || self.laid_generation != engine.generation()
+        {
             self.layout = Some(engine.layout(&self.parsed, &self.style, self.box_width, scale));
             self.laid_scale = scale;
+            self.laid_generation = engine.generation();
         }
         if let Some(layout) = &self.layout {
             let params = DrawParams {

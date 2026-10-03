@@ -19,11 +19,16 @@
 mod atlas;
 mod block;
 mod engine;
+mod linebreak;
 mod markup;
 mod typewriter;
 
 pub use atlas::{DrawParams, TextRenderer};
 pub use block::TextBlock;
+pub use linebreak::{
+    cjk_break_between, cjk_break_opportunities, is_cjk, is_rtl_language, no_line_end,
+    no_line_start,
+};
 pub use engine::{TextAlign, TextEngine, TextLayout, TextStyle, font_family};
 pub use markup::{
     ParsedText, Pause, Segment, SegmentStyle, parse_color, parse_markup, srgb_to_linear,
@@ -152,6 +157,176 @@ mod tests {
             ..Default::default()
         };
         let _ = e.layout(&arabic, &style, Some(500.0), 1.0);
+    }
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn fallback_selection_picks_the_first_family_that_covers_the_text() {
+        let mut e = engine(&[INTER, JP, ARABIC]);
+        let jp = font_family(JP).unwrap();
+        let ar = font_family(ARABIC).unwrap();
+        let chain = vec!["Inter".to_owned(), jp.clone(), ar.clone()];
+        assert_eq!(e.select_family(&chain, "Hello"), Some(0));
+        assert_eq!(e.select_family(&chain, "こんにちは"), Some(1));
+        assert_eq!(e.select_family(&chain, "مرحبا"), Some(2));
+        // Nothing covers everything: the best partial cover wins.
+        assert_eq!(e.select_family(&chain, "مرحبا שלום"), Some(2));
+        // A family that is not loaded never wins over one that is.
+        let chain = vec!["Nope".to_owned(), jp];
+        assert_eq!(e.select_family(&chain, "日本"), Some(1));
+        assert_eq!(e.select_family(&[], "x"), None);
+    }
+
+    #[test]
+    fn a_language_chain_makes_the_engine_draw_with_the_covering_font() {
+        let mut e = engine(&[INTER, JP]);
+        let jp = font_family(JP).unwrap();
+        let mut chains = std::collections::BTreeMap::new();
+        chains.insert("ja".to_owned(), vec![jp]);
+        e.set_language_fonts(chains);
+        let g0 = e.generation();
+        e.set_language("ja-JP"); // regional code uses the primary subtag
+        assert_ne!(e.generation(), g0);
+        assert_eq!(e.language_chain().len(), 1);
+        let l = e.layout(&parse_markup("日本語"), &TextStyle::default(), Some(400.0), 1.0);
+        let glyphs = l.glyphs.clone();
+        assert_eq!(glyphs.len(), 3);
+        for g in glyphs {
+            assert!(e.rasterize(g.key).is_some(), "the JP font draws it");
+        }
+        e.set_language("fr");
+        assert!(e.language_chain().is_empty());
+    }
+
+    #[test]
+    fn glyph_coverage_reports_what_a_chain_cannot_draw() {
+        let mut e = engine(&[INTER, JP, ARABIC]);
+        let jp = font_family(JP).unwrap();
+        assert_eq!(e.missing_chars(&names(&["Inter"]), "a あ b あ"), vec!['あ']);
+        assert!(e.missing_chars(&names(&["Inter", &jp]), "a あ 日本。").is_empty());
+        // Empty chain = default family; spaces and controls never count.
+        assert!(e.missing_chars(&[], "Hello,\n world").is_empty());
+        // Hebrew is covered by none of the loaded fonts.
+        let m = e.missing_chars(&names(&["Inter", &jp, &font_family(ARABIC).unwrap()]), "שלום");
+        assert_eq!(m.len(), 4);
+    }
+
+    /// First character of every visual line (by smallest x of each row).
+    fn line_first_chars(text: &str, l: &TextLayout) -> Vec<char> {
+        let graphemes: Vec<&str> = unicode_segmentation::UnicodeSegmentation::graphemes(text, true).collect();
+        let mut rows: Vec<(i32, i32, usize)> = Vec::new(); // (y, x, grapheme)
+        for g in &l.glyphs {
+            match rows.iter_mut().find(|r| r.0 == g.y) {
+                Some(r) => {
+                    if g.x < r.1 {
+                        r.1 = g.x;
+                        r.2 = g.grapheme;
+                    }
+                }
+                None => rows.push((g.y, g.x, g.grapheme)),
+            }
+        }
+        rows.sort_by_key(|r| r.0);
+        rows.iter()
+            .filter_map(|r| graphemes[r.2].chars().next())
+            .collect()
+    }
+
+    #[test]
+    fn kinsoku_keeps_closing_punctuation_off_the_start_of_a_line() {
+        let mut e = engine(&[INTER, JP]);
+        let source = "吾輩は猫である。名前はまだ無い。どこで生れたか、とんと見当がつかぬ。「何でも」薄暗い所で、ニャーニャー泣いていた事だけは記憶している。";
+        let text = parse_markup(source);
+        let mut checked = 0;
+        for w in (150..420).step_by(6) {
+            let l = e.layout(&text, &TextStyle::default(), Some(w as f32), 1.0);
+            assert_eq!(l.glyph_count(), text.grapheme_count(), "w={w}");
+            assert!(l.width <= w as f32 + 0.5, "w={w} width {}", l.width);
+            for c in line_first_chars(source, &l) {
+                assert!(!crate::no_line_start(c), "line starts with {c} at w={w}");
+                checked += 1;
+            }
+            // And no line ends with an opening bracket: the char before a
+            // line start is never one.
+        }
+        assert!(checked > 40);
+    }
+
+    #[test]
+    fn kinsoku_keeps_opening_brackets_off_the_end_of_a_line() {
+        let mut e = engine(&[INTER, JP]);
+        let source = "彼は言った「行こう」と言ってまた「帰ろう」と言ったのでみんな「笑った」のだ";
+        let text = parse_markup(source);
+        let chars: Vec<char> = source.chars().collect();
+        for w in (120..400).step_by(5) {
+            let l = e.layout(&text, &TextStyle::default(), Some(w as f32), 1.0);
+            let firsts = line_first_chars(source, &l);
+            assert!(firsts.iter().all(|c| !crate::no_line_start(*c)), "w={w}");
+            // Rebuild line starts as char indices and check the char before.
+            let mut starts: Vec<usize> = Vec::new();
+            let mut rows: Vec<(i32, i32, usize)> = Vec::new();
+            for g in &l.glyphs {
+                match rows.iter_mut().find(|r| r.0 == g.y) {
+                    Some(r) if g.x < r.1 => {
+                        r.1 = g.x;
+                        r.2 = g.grapheme;
+                    }
+                    Some(_) => {}
+                    None => rows.push((g.y, g.x, g.grapheme)),
+                }
+            }
+            starts.extend(rows.iter().map(|r| r.2));
+            for s in starts.into_iter().filter(|s| *s > 0) {
+                assert!(!crate::no_line_end(chars[s - 1]), "line ends with an opening bracket at w={w}");
+            }
+        }
+    }
+
+    #[test]
+    fn latin_wrapping_is_unchanged_by_the_kinsoku_pass() {
+        let mut e = engine(&[INTER]);
+        let t = parse_markup("The quick brown fox jumps over the lazy dog and keeps running.");
+        let a = e.layout(&t, &TextStyle::default(), Some(260.0), 1.0);
+        assert!(a.line_count >= 3);
+        // Every letter is drawn (spaces may or may not be glyphs).
+        let letters = t.plain().chars().filter(|c| !c.is_whitespace()).count();
+        assert!(a.glyph_count() >= letters && a.glyph_count() <= t.grapheme_count());
+    }
+
+    #[test]
+    fn bidi_orders_arabic_glyphs_right_to_left() {
+        let mut e = engine(&[INTER, ARABIC]);
+        let t = parse_markup("مرحبا بالعالم");
+        let l = e.layout(&t, &TextStyle::default(), Some(600.0), 1.0);
+        let first = l.glyphs.iter().filter(|g| g.grapheme == 0).map(|g| g.x).max().unwrap();
+        let last_g = l.glyphs.iter().map(|g| g.grapheme).max().unwrap();
+        let last = l.glyphs.iter().filter(|g| g.grapheme == last_g).map(|g| g.x).min().unwrap();
+        assert!(first > last, "first letter {first} must sit right of the last {last}");
+        // Latin stays left to right.
+        let l = e.layout(&parse_markup("abc"), &TextStyle::default(), Some(600.0), 1.0);
+        assert!(l.glyphs[0].x < l.glyphs[2].x);
+    }
+
+    #[test]
+    fn rtl_languages_right_align_left_aligned_text() {
+        let mut e = engine(&[INTER, ARABIC]);
+        let t = parse_markup("مرحبا");
+        let left_edge = |e: &mut TextEngine| {
+            let l = e.layout(&t, &TextStyle::default(), Some(600.0), 1.0);
+            l.glyphs.iter().map(|g| g.x).min().unwrap()
+        };
+        let ltr = left_edge(&mut e);
+        e.set_language("ar");
+        let rtl = left_edge(&mut e);
+        assert!(rtl > ltr + 300, "ltr {ltr} rtl {rtl}: text hugs the right edge");
+        // Centered text stays centered.
+        let centered = TextStyle { align: TextAlign::Center, ..Default::default() };
+        let l = e.layout(&t, &centered, Some(600.0), 1.0);
+        let min = l.glyphs.iter().map(|g| g.x).min().unwrap();
+        assert!(min > 100 && min < 400);
     }
 
     #[test]

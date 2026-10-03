@@ -4,8 +4,12 @@ use cosmic_text::{
     Align, Attrs, Buffer, CacheKey, Color, Family, FontSystem, Metrics, Shaping, Style, SwashCache,
     SwashContent, Weight, Wrap, fontdb,
 };
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::linebreak::{has_kinsoku_chars, is_invisible, is_rtl_language, no_line_end, no_line_start};
 use crate::markup::ParsedText;
 
 /// Horizontal alignment of lines inside the layout box.
@@ -101,6 +105,12 @@ pub struct TextEngine {
     fonts: FontSystem,
     swash: SwashCache,
     default_family: String,
+    /// Current language code and the font chain of each language (M7-02).
+    language: String,
+    language_fonts: BTreeMap<String, Vec<String>>,
+    /// Bumped whenever fonts or the language profile change, so cached
+    /// layouts know they are stale.
+    generation: u32,
 }
 
 impl Default for TextEngine {
@@ -119,6 +129,9 @@ impl TextEngine {
             fonts: FontSystem::new_with_locale_and_db("en-US".to_owned(), db),
             swash: SwashCache::new(),
             default_family: "sans-serif".to_owned(),
+            language: String::new(),
+            language_fonts: BTreeMap::new(),
+            generation: 0,
         }
     }
 
@@ -128,7 +141,111 @@ impl TextEngine {
         let db = self.fonts.db_mut();
         let before = db.len();
         db.load_font_data(data);
-        db.len() - before
+        let added = db.len() - before;
+        if added > 0 {
+            self.generation = self.generation.wrapping_add(1);
+        }
+        added
+    }
+
+    /// Changes whenever fonts or the language profile change: a cached
+    /// [`TextLayout`] made at an older generation must be recomputed.
+    pub fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    /// Language of the text drawn from now on: selects its font chain and,
+    /// for right-to-left languages, right-aligns left-aligned text.
+    pub fn set_language(&mut self, code: &str) {
+        if self.language != code {
+            self.language = code.to_owned();
+            self.generation = self.generation.wrapping_add(1);
+        }
+    }
+
+    pub fn language(&self) -> &str {
+        &self.language
+    }
+
+    /// Per-language font fallback chains (family names, first = preferred),
+    /// keyed by language code (`"ja"`; a regional code falls back to its
+    /// primary subtag).
+    pub fn set_language_fonts(&mut self, chains: BTreeMap<String, Vec<String>>) {
+        if self.language_fonts != chains {
+            self.language_fonts = chains;
+            self.generation = self.generation.wrapping_add(1);
+        }
+    }
+
+    /// The font chain configured for the current language.
+    pub fn language_chain(&self) -> &[String] {
+        self.chain_for(&self.language)
+    }
+
+    fn chain_for(&self, code: &str) -> &[String] {
+        let primary = code.split(['-', '_']).next().unwrap_or("");
+        self.language_fonts
+            .get(code)
+            .or_else(|| self.language_fonts.get(primary))
+            .map_or(&[][..], Vec::as_slice)
+    }
+
+    /// Faces of `family` (case-insensitive), ready to be asked for glyphs.
+    fn family_fonts(&mut self, family: &str) -> Vec<Arc<cosmic_text::Font>> {
+        let ids: Vec<fontdb::ID> = self
+            .fonts
+            .db()
+            .faces()
+            .filter(|f| f.families.iter().any(|(n, _)| n.eq_ignore_ascii_case(family)))
+            .map(|f| f.id)
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| self.fonts.get_font(id, fontdb::Weight::NORMAL))
+            .collect()
+    }
+
+    /// The characters of `text` that no family of `chain` can draw (spaces
+    /// and control characters excluded), each reported once, in order. An
+    /// empty `chain` means the default family. Basis of the "this language
+    /// needs a font that covers its text" warning.
+    pub fn missing_chars(&mut self, chain: &[String], text: &str) -> Vec<char> {
+        let default = [self.default_family.clone()];
+        let chain = if chain.is_empty() { &default[..] } else { chain };
+        let faces: Vec<_> = chain.iter().flat_map(|f| self.family_fonts(f)).collect();
+        let mut missing = Vec::new();
+        for c in text.chars() {
+            if is_invisible(c) || missing.contains(&c) {
+                continue;
+            }
+            if !faces.iter().any(|f| f.as_swash().charmap().map(c) != 0) {
+                missing.push(c);
+            }
+        }
+        missing
+    }
+
+    /// Index in `candidates` of the first family that draws every visible
+    /// character of `text`; else the one that draws the most (the first on a
+    /// tie). `None` for an empty candidate list.
+    pub fn select_family(&mut self, candidates: &[String], text: &str) -> Option<usize> {
+        let mut chars: Vec<char> = text.chars().filter(|c| !is_invisible(*c)).collect();
+        chars.sort_unstable();
+        chars.dedup();
+        let mut best: Option<(usize, usize)> = None;
+        for (i, family) in candidates.iter().enumerate() {
+            let faces = self.family_fonts(family);
+            let covered = chars
+                .iter()
+                .filter(|&&c| faces.iter().any(|f| f.as_swash().charmap().map(c) != 0))
+                .count();
+            if covered == chars.len() && !faces.is_empty() {
+                return Some(i);
+            }
+            if best.is_none_or(|(_, n)| covered > n) {
+                best = Some((i, covered));
+            }
+        }
+        best.map(|(i, _)| i)
     }
 
     /// Family used when a [`TextStyle`] does not name one.
@@ -174,6 +291,57 @@ impl TextEngine {
                 ..Default::default()
             };
         }
+        // Font: the style's family (else the default) first, then the chain
+        // of the current language; the first that draws the whole text wins.
+        let plain_text = text.plain();
+        let mut candidates = vec![
+            style
+                .family
+                .clone()
+                .unwrap_or_else(|| self.default_family.clone()),
+        ];
+        candidates.extend(self.language_chain().iter().cloned());
+        let family = match self.select_family(&candidates, &plain_text) {
+            Some(i) => candidates.swap_remove(i),
+            None => candidates.swap_remove(0),
+        };
+        let mut style = style.clone();
+        if is_rtl_language(&self.language) && style.align == TextAlign::Left {
+            style.align = TextAlign::Right;
+        }
+        let style = &style;
+        // CJK kinsoku: the shaper may break anywhere between ideographs, so
+        // lines that would start with closing punctuation (or end with an
+        // opening bracket) get an explicit break before the offending
+        // character, until no line breaks the rules.
+        let mut breaks: Vec<usize> = Vec::new();
+        let kinsoku = has_kinsoku_chars(&plain_text);
+        for _ in 0..24 {
+            let (layout, forced) = self.layout_pass(text, style, &family, box_width, scale, &breaks, kinsoku);
+            if forced.is_empty() {
+                return layout;
+            }
+            breaks.extend(forced);
+            breaks.sort_unstable();
+            breaks.dedup();
+        }
+        self.layout_pass(text, style, &family, box_width, scale, &breaks, false).0
+    }
+
+    /// One shaping pass. `breaks` are original byte offsets that get a hard
+    /// line break. With `kinsoku` the second value lists the extra break
+    /// offsets needed to satisfy the line-start/line-end rules.
+    #[allow(clippy::too_many_arguments)]
+    fn layout_pass(
+        &mut self,
+        text: &ParsedText,
+        style: &TextStyle,
+        family: &str,
+        box_width: Option<f32>,
+        scale: f32,
+        breaks: &[usize],
+        kinsoku: bool,
+    ) -> (TextLayout, Vec<usize>) {
         let font_size = (style.font_size * scale).max(1.0);
         let metrics = Metrics::new(font_size, font_size * style.line_height.max(0.5));
         let mut buffer = Buffer::new(&mut self.fonts, metrics);
@@ -182,7 +350,6 @@ impl TextEngine {
 
         // Normalize line endings so line indices map to '\n'-separated lines.
         let plain: String = text.plain().replace("\r\n", "\n").replace('\r', "\n");
-        let family = style.family.as_deref().unwrap_or(&self.default_family);
         let base = |bold: bool, italic: bool, color: [u8; 4]| {
             Attrs::new()
                 .family(Family::Name(family))
@@ -191,12 +358,16 @@ impl TextEngine {
                 .style(if italic { Style::Italic } else { Style::Normal })
         };
         let defaults = base(false, false, style.color);
+        let mut seg_start = 0usize;
         let spans: Vec<(String, Attrs)> = text
             .segments
             .iter()
             .map(|s| {
+                let normalized = s.text.replace("\r\n", "\n").replace('\r', "\n");
+                let shaped = with_breaks(&normalized, seg_start, breaks);
+                seg_start += normalized.len();
                 (
-                    s.text.replace("\r\n", "\n").replace('\r', "\n"),
+                    shaped,
                     base(
                         s.style.bold,
                         s.style.italic,
@@ -214,10 +385,21 @@ impl TextEngine {
         buffer.shape_until_scroll(&mut self.fonts, false);
 
         let grapheme_starts: Vec<usize> = plain.grapheme_indices(true).map(|(i, _)| i).collect();
+        let shaped_plain = with_breaks(&plain, 0, breaks);
         let mut line_starts = vec![0usize];
-        line_starts.extend(plain.match_indices('\n').map(|(i, _)| i + 1));
+        line_starts.extend(shaped_plain.match_indices('\n').map(|(i, _)| i + 1));
+        // Shaped byte -> original byte (inserted breaks take one byte each).
+        let to_orig = |shaped: usize| {
+            shaped
+                - breaks
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, o)| **o + *k < shaped)
+                    .count()
+        };
 
         let mut glyphs = Vec::new();
+        let mut forced: Vec<usize> = Vec::new();
         let (mut width, mut height) = (0.0f32, 0.0f32);
         let mut line_count = 0;
         for run in buffer.layout_runs() {
@@ -225,9 +407,36 @@ impl TextEngine {
             width = width.max(run.line_w);
             height = height.max(run.line_top + run.line_height);
             let line_start = line_starts.get(run.line_i).copied().unwrap_or(0);
+            if kinsoku && !run.rtl && run.glyphs.len() > 1 {
+                let first = run.glyphs.iter().map(|g| g.start).min().unwrap_or(0);
+                let last = run.glyphs.iter().map(|g| g.start).max().unwrap_or(0);
+                let first_byte = to_orig(line_start + first);
+                let last_byte = to_orig(line_start + last);
+                if first > 0
+                    && let Some(c) = plain[first_byte..].chars().next()
+                    && no_line_start(c)
+                    && let Some((p, pc)) = plain[..first_byte].char_indices().next_back()
+                    && pc != '\n'
+                    && !breaks.contains(&p)
+                    && plain[..p].chars().next_back().is_some_and(|b| b != '\n')
+                {
+                    forced.push(p);
+                }
+                if let Some(c) = plain[last_byte..].chars().next()
+                    && no_line_end(c)
+                    && last_byte > first_byte
+                    && !breaks.contains(&last_byte)
+                    && plain[last_byte + c.len_utf8()..]
+                        .chars()
+                        .next()
+                        .is_some_and(|n| n != '\n')
+                {
+                    forced.push(last_byte);
+                }
+            }
             for g in run.glyphs {
                 let physical = g.physical((0.0, run.line_y), 1.0);
-                let byte = line_start + g.start;
+                let byte = to_orig(line_start + g.start);
                 let grapheme = grapheme_starts
                     .partition_point(|&s| s <= byte)
                     .saturating_sub(1);
@@ -246,14 +455,15 @@ impl TextEngine {
                 });
             }
         }
-        TextLayout {
+        let layout = TextLayout {
             glyphs,
             width: width / scale,
             height: height / scale,
             line_count,
             grapheme_count: grapheme_starts.len(),
             scale,
-        }
+        };
+        (layout, forced)
     }
 
     /// Rasterizes one glyph to RGBA8. `None` for glyphs without an image
@@ -303,4 +513,20 @@ pub fn font_family(data: &[u8]) -> Option<String> {
     db.faces()
         .next()
         .and_then(|f| f.families.first().map(|(n, _)| n.clone()))
+}
+
+/// `text` (which starts at byte `start` of the whole text) with a newline
+/// inserted at each original offset of `breaks` that falls inside it.
+fn with_breaks(text: &str, start: usize, breaks: &[usize]) -> String {
+    let mut out = String::with_capacity(text.len() + breaks.len());
+    let mut last = 0;
+    for &b in breaks {
+        if b > start && b < start + text.len() && text.is_char_boundary(b - start) {
+            out.push_str(&text[last..b - start]);
+            out.push('\n');
+            last = b - start;
+        }
+    }
+    out.push_str(&text[last..]);
+    out
 }

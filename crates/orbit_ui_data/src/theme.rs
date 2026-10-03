@@ -23,9 +23,31 @@ pub struct Theme {
     /// Named project fonts the styles pick with `Style::font`.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub fonts: BTreeMap<String, FontRef>,
+    /// Per-language font fallback chains (M7-02): language code (`"ja"`) to
+    /// font names, preferred first. Each name is an entry of
+    /// [`Theme::fonts`] or a family name. Applied to the dialogue box,
+    /// choices and every widget; a language without an entry uses the
+    /// default font.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub language_fonts: BTreeMap<String, Vec<String>>,
 }
 
 impl Theme {
+    /// [`Theme::language_fonts`] with every name resolved to the family the
+    /// text engine selects (see [`Theme::font_family`]).
+    pub fn language_font_families(&self) -> BTreeMap<String, Vec<String>> {
+        self.language_fonts
+            .iter()
+            .map(|(lang, names)| {
+                let families = names
+                    .iter()
+                    .map(|n| self.font_family(n).to_owned())
+                    .collect();
+                (lang.clone(), families)
+            })
+            .collect()
+    }
+
     /// The family name to draw a style's `font` with: the `family` of the
     /// [`Theme::fonts`] entry called `name`, else `name` itself.
     pub fn font_family<'a>(&'a self, name: &'a str) -> &'a str {
