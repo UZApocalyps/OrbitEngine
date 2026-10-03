@@ -18,7 +18,7 @@ use crate::migrate;
 use crate::validate;
 
 /// Version of the on-disk schema produced by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 14;
+pub const CURRENT_SCHEMA_VERSION: u32 = 15;
 
 /// A whole story: definitions (characters, assets, strings...) and an ordered
 /// list of scenes. Execution starts at the first node of the first non-empty
@@ -267,6 +267,34 @@ pub enum NodeKind {
         #[serde(default)]
         name: String,
     },
+    /// Runs a Rhai script (schema v15, ADR 0015 §1-§3), synchronously and
+    /// within the sandbox limits. The script reads variables (`get_var`),
+    /// queues writes (`set_var`), draws from the VM's seeded RNG and may
+    /// choose a branch (`branch("name")` or by returning the name). The VM
+    /// applies the writes after the script, all or nothing: a failing
+    /// script changes nothing and jumps to `on_error` (or goes on with the
+    /// next node, with a warning). Shared modules (`scripts/*.rhai`) are
+    /// reached with `import "name" as m;` (a "module function call" is an
+    /// inline source such as `import "shop" as shop; shop::buy("sword")`).
+    /// Appended last: older encodings keep their variant indices.
+    Script {
+        source: String,
+        /// Named outputs: a script choosing `name` jumps to `target` (a
+        /// `Label`). Without a choice the story goes on with the next node.
+        #[serde(default)]
+        branches: Vec<ScriptBranch>,
+        /// Where to go when the script fails (a `Label`); `None`: next node.
+        #[serde(default)]
+        on_error: Option<NodeId>,
+    },
+}
+
+/// A named output of a [`NodeKind::Script`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ScriptBranch {
+    pub name: String,
+    pub target: NodeId,
 }
 
 /// A value handed to a screen by [`NodeKind::OpenScreen`]: `name` is what
@@ -292,6 +320,13 @@ impl NodeKind {
                 ..
             } => std::iter::once(*then_target).chain(*else_target).collect(),
             NodeKind::Choice { options } => options.iter().map(|o| o.target).collect(),
+            NodeKind::Script {
+                branches, on_error, ..
+            } => branches
+                .iter()
+                .map(|b| b.target)
+                .chain(*on_error)
+                .collect(),
             _ => Vec::new(),
         }
     }

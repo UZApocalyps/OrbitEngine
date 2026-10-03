@@ -731,8 +731,26 @@ fn rename_in_expr(expr: &Expr, old: &str, new: &str) -> Expr {
         Expr::Call(f, args) => {
             Expr::Call(*f, args.iter().map(|e| rename_in_expr(e, old, new)).collect())
         }
+        Expr::Rhai(code) => Expr::Rhai(rename_in_rhai(code, old, new)),
         Expr::Lit(_) | Expr::Var(_) => expr.clone(),
     }
+}
+
+/// Renames the literal variable names given to the script API
+/// (`get_var("old")`, `set_var("old", …)`, `has_var("old")`) in Rhai code.
+/// Names computed at run time are not seen (the validation of the script
+/// then reports nothing, the run reports the unknown variable).
+pub fn rename_in_rhai(code: &str, old: &str, new: &str) -> String {
+    let mut out = code.to_owned();
+    for f in ["get_var", "set_var", "has_var"] {
+        for space in ["", " "] {
+            out = out.replace(
+                &format!("{f}({space}\"{old}\""),
+                &format!("{f}({space}\"{new}\""),
+            );
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -906,6 +924,15 @@ pub fn rename_variable(project: &mut Project, old: &str, new: &str) -> Result<()
                             o
                         })
                         .collect(),
+                },
+                NodeKind::Script {
+                    source,
+                    branches,
+                    on_error,
+                } => NodeKind::Script {
+                    source: rename_in_rhai(source, old, new),
+                    branches: branches.clone(),
+                    on_error: *on_error,
                 },
                 NodeKind::OpenScreen {
                     screen,

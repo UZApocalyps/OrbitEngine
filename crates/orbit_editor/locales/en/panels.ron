@@ -155,6 +155,7 @@
     "draft.label.effect": "Effect (move, shake, zoom…)",
     "draft.label.timeline": "Timeline",
     "draft.label.open_screen": "Open screen",
+    "draft.label.script": "Script (Rhai)",
     "draft.label.close_screen": "Close screen",
     "draft.label.background_layers": "Parallax background",
     "draft.label.particles": "Particles",

@@ -55,6 +55,7 @@ fn kind_tag(kind: &NodeKind) -> u8 {
         NodeKind::BackgroundLayers { .. } => 26,
         NodeKind::Particles(_) => 27,
         NodeKind::StopParticles { .. } => 28,
+        NodeKind::Script { .. } => 29,
     }
 }
 

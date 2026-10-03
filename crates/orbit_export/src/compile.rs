@@ -323,6 +323,33 @@ fn untracked_files(root: &Path, declared: &HashSet<String>) -> Option<String> {
     ))
 }
 
+/// The modules the story's scripts import, directly or through another
+/// module, that exist (an unknown one is already an error of
+/// `check_scripts`).
+fn imported_modules(
+    story: &Story,
+    modules: &std::collections::BTreeMap<String, String>,
+) -> Vec<String> {
+    use orbit_core::scripting::{rhai_imports, script_sources};
+    let mut out: Vec<String> = Vec::new();
+    let mut queue: Vec<String> = script_sources(story)
+        .iter()
+        .flat_map(|s| rhai_imports(s))
+        .map(|(name, ..)| name)
+        .collect();
+    while let Some(name) = queue.pop() {
+        if out.contains(&name) {
+            continue;
+        }
+        if let Some(source) = modules.get(&name) {
+            queue.extend(rhai_imports(source).into_iter().map(|(n, ..)| n));
+            out.push(name);
+        }
+    }
+    out.sort();
+    out
+}
+
 /// Compiles `project` for `profile`.
 ///
 /// Fails when the profile is unusable, when the story has validation errors
@@ -388,6 +415,26 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
                 missing.push(image);
             } else if seen.insert(image.clone()) {
                 assets.push(AssetFile { path: image, source });
+            }
+        }
+    }
+    // Scripts (ADR 0015): a script error stops the export; the modules the
+    // story imports (and those they import) ship as `scripts/<name>.rhai`.
+    if orbit_core::scripting::story_uses_scripts(&story) {
+        let modules = orbit_project::scripts::read_modules(&project.root);
+        let problems = orbit_project::scripts::check_scripts(&story, &modules);
+        let (errors, notes): (Vec<_>, Vec<_>) = problems.into_iter().partition(|p| p.is_error());
+        if !errors.is_empty() {
+            return Err(ExportError::Invalid(
+                errors.iter().map(ToString::to_string).collect(),
+            ));
+        }
+        warnings.extend(notes.iter().map(ToString::to_string));
+        for name in imported_modules(&story, &modules) {
+            let path = orbit_core::scripting::module_path(&name);
+            let source = project.root.join(&path);
+            if seen.insert(path.clone()) {
+                assets.push(AssetFile { path, source });
             }
         }
     }

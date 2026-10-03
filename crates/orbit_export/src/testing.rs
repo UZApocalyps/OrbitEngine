@@ -84,6 +84,26 @@ pub fn fixture_project(dir: &Path) -> ExportProject {
     ExportProject::open(dir).expect("fixture project opens")
 }
 
+/// A project of the scripted mini-game (`examples/stories/test_script.ron`
+/// and its module `scripts/dice.rhai`, M8-05). No assets.
+pub fn script_project(dir: &Path) -> ExportProject {
+    let stories = repo_root().join("examples/stories");
+    std::fs::copy(stories.join("test_script.ron"), dir.join("story.orbit")).expect("copy story");
+    std::fs::create_dir_all(dir.join("scripts")).expect("scripts dir");
+    std::fs::copy(
+        stories.join("scripts/dice.rhai"),
+        dir.join("scripts/dice.rhai"),
+    )
+    .expect("copy module");
+    let manifest = orbit_project::ProjectManifest::new("Dice Duel");
+    std::fs::write(
+        dir.join(orbit_project::MANIFEST_FILE),
+        manifest.to_ron().expect("manifest"),
+    )
+    .expect("write manifest");
+    ExportProject::open(dir).expect("script project opens")
+}
+
 /// A project of the rigged fixture story (`examples/stories/test_rigged.ron`:
 /// one character playing clips of `examples/fixtures/assets/robo.rig.ron`).
 pub fn rigged_project(dir: &Path) -> ExportProject {

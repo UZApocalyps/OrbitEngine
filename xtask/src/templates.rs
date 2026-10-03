@@ -67,13 +67,31 @@ pub const WEB_2D: WebVariant = WebVariant {
     budget_brotli: WASM_BUDGET_BROTLI_BYTES,
 };
 
-/// The web player with 3D scenes, used only by games that show one.
+/// The web player with 3D scenes, used only by games that show one. It
+/// also runs scripts (M8-01): a 3D game with scripts needs one player, and
+/// the Rhai engine is small next to the 3D renderer.
 pub const WEB_3D: WebVariant = WebVariant {
     name: "3D web player",
     dir: "web3d",
-    features: "3d",
+    features: "3d,script",
     budget: WASM3D_BUDGET_BYTES,
     budget_brotli: WASM3D_BUDGET_BROTLI_BYTES,
+};
+
+/// Budget of the 2D web player with scripts (`webscript/`, M8-01): the 2D
+/// player plus the Rhai engine (`orbit_script`). Documented in
+/// docs/adr/0015 (addendum M8-01).
+pub const WASM_SCRIPT_BUDGET_BYTES: u64 = 6_500_000;
+pub const WASM_SCRIPT_BUDGET_BROTLI_BYTES: u64 = 2_150_000;
+
+/// The 2D web player with scripts, used only by 2D games that have a
+/// `Script` node or a Rhai condition.
+pub const WEB_SCRIPT: WebVariant = WebVariant {
+    name: "web player with scripts",
+    dir: "webscript",
+    features: "script",
+    budget: WASM_SCRIPT_BUDGET_BYTES,
+    budget_brotli: WASM_SCRIPT_BUDGET_BROTLI_BYTES,
 };
 
 struct Options {
@@ -82,6 +100,8 @@ struct Options {
     web: bool,
     /// Also build the 3D web player (`--no-web3d` skips it).
     web3d: bool,
+    /// Also build the 2D web player with scripts (`--no-webscript` skips it).
+    webscript: bool,
     wasm_opt: Option<PathBuf>,
     skip_wasm_opt: bool,
     /// Extra native targets (`--target <triple>`), besides the host.
@@ -100,6 +120,7 @@ fn parse(args: &[String]) -> Result<Options> {
         native: true,
         web: true,
         web3d: true,
+        webscript: true,
         wasm_opt: None,
         skip_wasm_opt: false,
         targets: Vec::new(),
@@ -114,6 +135,7 @@ fn parse(args: &[String]) -> Result<Options> {
             "--no-native" => o.native = false,
             "--no-web" => o.web = false,
             "--no-web3d" => o.web3d = false,
+            "--no-webscript" => o.webscript = false,
             "--wasm-opt" => {
                 o.wasm_opt = Some(PathBuf::from(it.next().ok_or("--wasm-opt needs a path")?))
             }
@@ -168,10 +190,11 @@ fn native_template(out: &Path, triple: Option<&str>, host: &str) -> Result {
         "-p",
         "orbit_player",
         "--no-default-features",
-        // Desktop players show 3D scenes (ADR 0014); the web template stays
-        // 2D only so that 2D games keep the same wasm.
+        // Desktop players show 3D scenes (ADR 0014) and run scripts (ADR
+        // 0015); the web template stays 2D only, without scripts, so that
+        // 2D games keep the same wasm.
         "--features",
-        "3d",
+        "3d,script",
     ]);
     if let Some(triple) = triple {
         build.args(["--target", triple]);
@@ -289,6 +312,9 @@ fn android_template(out: &Path, o: &Options) -> Result {
             "--lib",
             "--release",
             "--no-default-features",
+            // Scripts (ADR 0015): one Android player for every game.
+            "--features",
+            "script",
             "--crate-type",
             "cdylib",
         ]);
@@ -505,6 +531,9 @@ fn web_variants(o: &Options) -> Vec<WebVariant> {
     let mut out = Vec::new();
     if o.web {
         out.push(WEB_2D);
+        if o.webscript {
+            out.push(WEB_SCRIPT);
+        }
         if o.web3d {
             out.push(WEB_3D);
         }
@@ -585,6 +614,7 @@ pub fn budget(args: &[String]) -> Result {
         match arg.as_str() {
             "--file" => file = Some(PathBuf::from(it.next().ok_or("--file needs a path")?)),
             "--3d" => variant = WEB_3D,
+            "--script" => variant = WEB_SCRIPT,
             other => return Err(format!("unknown option `{other}`").into()),
         }
     }
@@ -614,8 +644,8 @@ mod tests {
         assert!(!o.web && o.native && o.skip_wasm_opt);
         assert!(web_variants(&o).is_empty());
         let all = parse(&args(&[])).unwrap();
-        assert_eq!(web_variants(&all), [WEB_2D, WEB_3D]);
-        let no3d = parse(&args(&["--no-web3d"])).unwrap();
+        assert_eq!(web_variants(&all), [WEB_2D, WEB_SCRIPT, WEB_3D]);
+        let no3d = parse(&args(&["--no-web3d", "--no-webscript"])).unwrap();
         assert_eq!(web_variants(&no3d), [WEB_2D]);
         assert_eq!(o.targets, ["x86_64-unknown-linux-gnu"]);
         assert!(parse(&args(&["--bogus"])).is_err());

@@ -219,6 +219,7 @@ pub fn export_many(
                 options
                     .templates
                     .web()
+                    .or_else(|_| options.templates.webscript())
                     .or_else(|_| options.templates.web3d())?;
             }
             ExportTarget::Android => {
@@ -235,6 +236,11 @@ pub fn export_many(
     if uses_3d && targets.contains(&ExportTarget::Web) {
         options.templates.web3d()?;
         rep.info("The game shows 3D scenes: the web export uses the 3D player");
+    }
+    let uses_scripts = orbit_core::scripting::story_uses_scripts(&prepared.compiled.pack.story);
+    if uses_scripts && !uses_3d && targets.contains(&ExportTarget::Web) {
+        options.templates.webscript()?;
+        rep.info("The game uses scripts: the web export uses the player with scripting");
     }
     plugins::check_story(&prepared.compiled.pack.story, &plugin_crates)?;
     let plugin_player = if plugin_crates.is_empty() {
@@ -256,7 +262,7 @@ pub fn export_many(
         rep.info(format!("Exporting for {}", target.label()));
         let (output, files) = match target {
             ExportTarget::Web => {
-                let template = options.templates.web_for(uses_3d)?;
+                let template = options.templates.web_for(uses_3d, uses_scripts)?;
                 let written = web::export(
                     &prepared.pak,
                     prepared.compiled.icon.as_deref(),

@@ -13,6 +13,7 @@ pub mod expr;
 pub mod ids;
 pub mod migrate;
 pub mod particles;
+pub mod scripting;
 pub mod story;
 pub mod validate;
 pub mod value;
@@ -36,9 +37,13 @@ pub use defs::{
     VarScope, scale_is_valid,
 };
 pub use error::{AnimationIssue, CoreError, CurveOwner, ValidationError, ValidationWarning};
-pub use expr::{BinOp, EvalError, Expr, Func, ParseError, TypeError, UnOp, fold_list, fold_map};
+pub use expr::{
+    BinOp, EvalError, Expr, Func, ParseError, RHAI_PREFIX, TypeError, UnOp, fold_list, fold_map,
+};
 pub use ids::{AssetId, CharacterId, Node3dId, NodeId, SceneId, StringId};
-pub use story::{CURRENT_SCHEMA_VERSION, ChoiceOption, Node, NodeKind, Scene, ScreenParam, Story};
+pub use story::{
+    CURRENT_SCHEMA_VERSION, ChoiceOption, Node, NodeKind, Scene, ScreenParam, ScriptBranch, Story,
+};
 pub use validate::{MAX_BG_LAYERS, ValidationReport, check_asset_files, validate};
 pub use value::{MAX_COLLECTION_LEN, MAX_COLLECTION_TEXT, ScalarType, Value, ValueType};
 pub use varops::{

@@ -50,6 +50,7 @@ pub mod overlay;
 pub mod preview;
 pub mod rigs;
 mod runtime;
+mod scripts;
 pub mod scene_view;
 mod shell;
 mod splash;

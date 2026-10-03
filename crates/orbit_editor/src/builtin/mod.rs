@@ -18,6 +18,9 @@ mod importers;
 mod inspector;
 mod inspector_fx;
 mod inspector_screen;
+mod inspector_script;
+mod script_highlight;
+mod scripts_panel;
 mod inspector_stage;
 mod library;
 pub mod manual;
@@ -72,6 +75,7 @@ pub mod ids {
     pub const IMPORTERS: &str = "orbit.importers";
     pub const LIBRARY: &str = "orbit.library";
     pub const PROBLEMS: &str = "orbit.problems";
+    pub const SCRIPTS: &str = "orbit.scripts";
     pub const SEARCH: &str = "orbit.search";
     pub const SCENEVIEW: &str = "orbit.sceneview";
     pub const SCENE3D: &str = "orbit.scene3d";
@@ -159,6 +163,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(sceneview::SceneViewPlugin),
         Box::new(console::ConsolePlugin),
         Box::new(problems::ProblemsPlugin),
+        Box::new(scripts_panel::ScriptsPlugin),
         Box::new(profiler::ProfilerPlugin),
         Box::new(search::SearchPlugin::new(shared.search.clone())),
         Box::new(export::ExportPlugin),

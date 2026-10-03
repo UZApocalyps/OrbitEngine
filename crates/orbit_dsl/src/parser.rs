@@ -151,6 +151,11 @@ enum Raw {
     /// The emitter (its `sprite` still `None`) and the sprite reference.
     Particles(Box<Emitter>, Option<Ref>),
     StopParticles(String),
+    Script {
+        source: String,
+        branches: Vec<(String, Ref)>,
+        on_error: Option<Ref>,
+    },
     Timeline {
         duration: f32,
         looping: AnimLoop,
@@ -1048,6 +1053,25 @@ impl LineParser<'_> {
                         self.expect_word("screen")?;
                         Stmt::Node(Raw::CloseScreen(self.string("a screen id")?))
                     }
+                    "script" => {
+                        let source = self.string("the script source")?;
+                        let mut branches = Vec::new();
+                        while self.eat_word("branch") {
+                            let name = self.name("a branch name")?;
+                            self.expect_sym("->")?;
+                            branches.push((name, self.reference("a label")?));
+                        }
+                        let on_error = if self.eat_word("on_error") {
+                            Some(self.reference("a label")?)
+                        } else {
+                            None
+                        };
+                        Stmt::Node(Raw::Script {
+                            source,
+                            branches,
+                            on_error,
+                        })
+                    }
                     "return" => Stmt::Node(Raw::Return),
                     "end" => Stmt::Node(Raw::End),
                     "custom" => {
@@ -1772,6 +1796,35 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                     }),
                 },
                 Raw::StopParticles(name) => Some(NodeKind::StopParticles { name: name.clone() }),
+                Raw::Script {
+                    source,
+                    branches,
+                    on_error,
+                } => {
+                    let mut out = Vec::new();
+                    let mut ok = true;
+                    for (name, r) in branches {
+                        match label_ref(d, line, ps.id, r) {
+                            Some(target) => out.push(orbit_core::ScriptBranch {
+                                name: name.clone(),
+                                target,
+                            }),
+                            None => ok = false,
+                        }
+                    }
+                    let on_error = match on_error {
+                        None => Some(None),
+                        Some(r) => label_ref(d, line, ps.id, r).map(Some),
+                    };
+                    match on_error {
+                        Some(on_error) if ok => Some(NodeKind::Script {
+                            source: source.clone(),
+                            branches: out,
+                            on_error,
+                        }),
+                        _ => None,
+                    }
+                }
                 Raw::Timeline { duration, looping, wait, tracks } => {
                     let mut out = Vec::new();
                     let mut ok = true;

@@ -186,6 +186,11 @@
     "problem.missing_plugin": "Missing plugin: “{plugin}”; this node is kept read-only",
     "problem.timeline_key_after_end": "A key lies after the end of the timeline: it is never reached",
     "problem.invalid_screen_node": "Screen node: {message}",
+    "problem.invalid_script": "Script: {message}",
+    "problem.script.node": "Script",
+    "problem.script.condition": "Rhai condition",
+    "problem.script.rhai": "{what}: {place}{message}",
+    "problem.script.module": "{module}: {place}{message}",
     "problem.invalid_stage_node": "Background layers or particles: {message}",
     "problem.unknown_emitter": "No “Particles” node is named “{name}”",
 }

@@ -37,3 +37,9 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 
 [advisories]
 unmaintained = "workspace"
+
+# M8-01 (ADR 0015 addendum): `rhai` (scripting, MIT/Apache-2.0) depends on
+# `smartstring` (MPL-2.0, file-level weak copyleft, used unmodified).
+[[licenses.exceptions]]
+allow = ["MPL-2.0"]
+crate = "smartstring"

@@ -14,6 +14,7 @@ mod history;
 mod plugin;
 mod replay;
 mod rollback;
+mod script;
 mod seek;
 mod state;
 mod vm;
@@ -46,6 +47,7 @@ pub use plugin::{
     Handled, PluginContext, PluginEvent, PluginHost, PluginOutcome, SharedPluginHost,
 };
 pub use rollback::scene_events;
+pub use script::{ScriptFailure, ScriptHost, ScriptOutcome, SharedScriptHost};
 pub use seek::{ChoiceStep, SeekLimits, SeekOutcome, SeekPath, seek};
 pub use state::{
     ActiveAnim, CharacterOnStage, Interaction, MusicState, OpenScreenState, Pending, Rng, Scene3dState,

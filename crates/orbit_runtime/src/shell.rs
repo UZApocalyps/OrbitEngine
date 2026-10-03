@@ -278,6 +278,8 @@ pub(crate) struct Shell {
     story: Arc<Story>,
     /// Runtime plugins (M8-04), attached to every VM the shell creates.
     plugins: Option<orbit_vm::SharedPluginHost>,
+    /// Script engine (M8-01), attached to every VM the shell creates.
+    scripts: Option<orbit_vm::SharedScriptHost>,
     /// The theme as the project wrote it.
     base_theme: Theme,
     /// What the shell draws with: `base_theme` with the text scale and the
@@ -484,6 +486,7 @@ impl Shell {
             last_toast: None,
             toast_announcer: Announcer::default(),
             plugins: None,
+            scripts: None,
             story_screens: Vec::new(),
             hud_pointer: None,
             ghosts: Vec::new(),
@@ -623,6 +626,7 @@ impl Shell {
     fn fresh_vm(&self) -> Result<Vm, String> {
         let mut vm = Vm::from_start(self.story.clone()).map_err(|e| e.to_string())?;
         vm.set_plugin_host(self.plugins.clone());
+        vm.set_script_host(self.scripts.clone());
         self.persistent.apply_to(&mut vm);
         Ok(vm)
     }
@@ -917,6 +921,7 @@ impl Shell {
             }
         };
         vm.set_plugin_host(self.plugins.clone());
+        vm.set_script_host(self.scripts.clone());
         // Lines read in a playthrough can be skipped in the replay.
         vm.set_read_nodes(self.persistent.read_nodes.clone());
         self.leave_music();
@@ -1588,6 +1593,15 @@ impl Shell {
             game.director.vm_mut().set_plugin_host(host.clone());
         }
         self.plugins = host;
+    }
+
+    /// Attaches the script engine (M8-01): every VM created from now on
+    /// runs `Script` nodes and Rhai conditions with it.
+    pub fn set_script_host(&mut self, host: Option<orbit_vm::SharedScriptHost>) {
+        if let Some(game) = &mut self.game {
+            game.director.vm_mut().set_script_host(host.clone());
+        }
+        self.scripts = host;
     }
 
     /// A `UiAction::Custom` (UI-18): run by the plugin that owns `name`

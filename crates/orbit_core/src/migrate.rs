@@ -37,6 +37,8 @@
 //!   skin, clip, loop mode) and `AssetKind::Rig` is added. The old unit
 //!   `Rigged`, which never had an effect, is dropped (the expression becomes
 //!   a still image: nothing changes on screen).
+//! * v14 -> v15 (M8-01, ADR 0015): `NodeKind::Script` and `Expr::Rhai`.
+//!   Purely additive: only the version number changes.
 
 use std::borrow::Cow;
 
@@ -103,7 +105,7 @@ fn leading_version(source: &str) -> Option<u32> {
 pub type MigrationStep = fn(&str) -> Result<String, CoreError>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2, etc.
-const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11, v11_to_v12, v12_to_v13, v13_to_v14];
+const STEPS: &[MigrationStep] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11, v11_to_v12, v12_to_v13, v13_to_v14, v14_to_v15];
 
 /// Brings `source` (declared at `from`) up to the current schema version.
 pub fn migrate(from: u32, source: &str) -> Result<Cow<'_, str>, CoreError> {
@@ -409,6 +411,16 @@ fn drop_unit_rigged(source: &str) -> Cow<'_, str> {
     }
     out.push_str(&source[copied..]);
     Cow::Owned(out)
+}
+
+/// v14 -> v15 (M8-01, ADR 0015). Additive only (`NodeKind::Script`,
+/// `Expr::Rhai`): only the version number changes.
+fn v14_to_v15(source: &str) -> Result<String, CoreError> {
+    use crate::story::Story;
+
+    let mut story: Story = ron::from_str(source)?;
+    story.schema_version = 15;
+    story.to_ron()
 }
 
 /// v13 -> v14 (M5B-07, ADR 0013): `Motion::Rigged` gets its payload

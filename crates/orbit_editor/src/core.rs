@@ -885,6 +885,7 @@ impl EditorCore {
                 missing_plugins: registry.missing_plugin_nodes(story),
                 asset_issues: Vec::new(),
                 rig_problems: Vec::new(),
+                script_problems: Vec::new(),
             },
         );
         match published {

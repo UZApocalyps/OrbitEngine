@@ -1,0 +1,91 @@
+// Scripted mini-game (ADR 0015, M8-05): a dice duel in three rounds.
+// Shows a `Script` node calling a shared module (scripts/dice.rhai), a
+// script choosing its branch, an inline script, and Rhai conditions on an
+// `If` and on a choice option. Used by the scripting tests (orbit_script,
+// orbit_cli, orbit_export): keep it valid without warnings.
+(
+    schema_version: 15,
+    title: "Dice Duel",
+    strings: (
+        source_lang: "en",
+        entries: {
+            "01JBX1T0000000000000000001": "Welcome to the dice table. Three rounds: beat the house die, higher or lower.",
+            "01JBX1T0000000000000000002": "The house rolls its die and hides it under a cup.",
+            "01JBX1T0000000000000000003": "Higher.",
+            "01JBX1T0000000000000000004": "Lower.",
+            "01JBX1T0000000000000000005": "You win the round: three gold coins slide your way.",
+            "01JBX1T0000000000000000006": "You lose the round: the house takes two coins.",
+            "01JBX1T0000000000000000007": "A die falls off the table. The round does not count.",
+            "01JBX1T0000000000000000008": "Better luck next time.",
+            "01JBX1T0000000000000000009": "Two rounds or more: you are the champion of the table!",
+        },
+    ),
+    variables: [
+        (name: "gold", initial: Int(10), scope: Game),
+        (name: "round", initial: Int(0), scope: Game),
+        (name: "roll", initial: Int(0), scope: Game),
+        (name: "wins", initial: Int(0), scope: Game),
+        (name: "history", initial: List(Str, []), scope: Game),
+    ],
+    scenes: [
+        (
+            id: "01JBX1S0000000000000000001",
+            name: "duel",
+            nodes: [
+                (id: "01JBX1N0000000000000000001", kind: Label(name: "start")),
+                (id: "01JBX1N0000000000000000002", kind: Say(speaker: None, text_id: "01JBX1T0000000000000000001")),
+                (id: "01JBX1N0000000000000000003", kind: Label(name: "round")),
+                (id: "01JBX1N0000000000000000004", kind: Script(source: "import \"dice\" as dice;\ndice::new_round();")),
+                (id: "01JBX1N0000000000000000005", kind: Say(speaker: None, text_id: "01JBX1T0000000000000000002")),
+                (id: "01JBX1N0000000000000000006", kind: Choice(options: [
+                    (text_id: "01JBX1T0000000000000000003", target: "01JBX1N0000000000000000010", condition: None),
+                    (text_id: "01JBX1T0000000000000000004", target: "01JBX1N0000000000000000020", condition: Some(Rhai("get_var(\"roll\") > 1"))),
+                ])),
+                (id: "01JBX1N0000000000000000010", kind: Label(name: "higher")),
+                (id: "01JBX1N0000000000000000011", kind: Script(
+                    source: "import \"dice\" as dice;\ndice::bet(\"higher\")",
+                    branches: [
+                        (name: "win", target: "01JBX1N0000000000000000030"),
+                        (name: "lose", target: "01JBX1N0000000000000000040"),
+                    ],
+                    on_error: Some("01JBX1N0000000000000000050"),
+                )),
+                (id: "01JBX1N0000000000000000020", kind: Label(name: "lower")),
+                (id: "01JBX1N0000000000000000021", kind: Script(
+                    source: "import \"dice\" as dice;\ndice::bet(\"lower\")",
+                    branches: [
+                        (name: "win", target: "01JBX1N0000000000000000030"),
+                        (name: "lose", target: "01JBX1N0000000000000000040"),
+                    ],
+                    on_error: Some("01JBX1N0000000000000000050"),
+                )),
+                (id: "01JBX1N0000000000000000030", kind: Label(name: "won")),
+                (id: "01JBX1N0000000000000000031", kind: Say(speaker: None, text_id: "01JBX1T0000000000000000005")),
+                (id: "01JBX1N0000000000000000032", kind: Jump(target: "01JBX1N0000000000000000060")),
+                (id: "01JBX1N0000000000000000040", kind: Label(name: "lost")),
+                (id: "01JBX1N0000000000000000041", kind: Say(speaker: None, text_id: "01JBX1T0000000000000000006")),
+                (id: "01JBX1N0000000000000000042", kind: Jump(target: "01JBX1N0000000000000000060")),
+                (id: "01JBX1N0000000000000000050", kind: Label(name: "oops")),
+                (id: "01JBX1N0000000000000000051", kind: Say(speaker: None, text_id: "01JBX1T0000000000000000007")),
+                (id: "01JBX1N0000000000000000060", kind: Label(name: "check")),
+                (id: "01JBX1N0000000000000000061", kind: If(
+                    condition: Rhai("get_var(\"round\") >= 3 || get_var(\"gold\") <= 0"),
+                    then_target: "01JBX1N0000000000000000070",
+                    else_target: Some("01JBX1N0000000000000000003"),
+                )),
+                (id: "01JBX1N0000000000000000070", kind: Label(name: "finale")),
+                (id: "01JBX1N0000000000000000071", kind: Script(
+                    source: "// Two wins or more: the champion ending.\nif get_var(\"wins\") >= 2 { branch(\"champion\"); }\nlog(`history: ${get_var(\"history\")}`);",
+                    branches: [
+                        (name: "champion", target: "01JBX1N0000000000000000080"),
+                    ],
+                )),
+                (id: "01JBX1N0000000000000000072", kind: Say(speaker: None, text_id: "01JBX1T0000000000000000008")),
+                (id: "01JBX1N0000000000000000073", kind: End),
+                (id: "01JBX1N0000000000000000080", kind: Label(name: "champion")),
+                (id: "01JBX1N0000000000000000081", kind: Say(speaker: None, text_id: "01JBX1T0000000000000000009")),
+                (id: "01JBX1N0000000000000000082", kind: End),
+            ],
+        ),
+    ],
+)

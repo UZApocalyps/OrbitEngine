@@ -231,15 +231,35 @@ fn validate_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Re
             rig_warnings += 1;
         }
     }
+    // Scripts (ADR 0015): Rhai syntax and imports, with the modules of the
+    // story's folder (`scripts/*.rhai`).
+    let (mut script_errors, mut script_warnings) = (0, 0);
+    if orbit_core::scripting::story_uses_scripts(&story) {
+        let base = if target.is_dir() {
+            target
+        } else {
+            story_path.parent().unwrap_or(Path::new(""))
+        };
+        let modules = orbit_project::scripts::read_modules(base);
+        for problem in orbit_project::scripts::check_scripts(&story, &modules) {
+            if problem.is_error() {
+                let _ = writeln!(err, "error: {problem}");
+                script_errors += 1;
+            } else {
+                let _ = writeln!(err, "warning: {problem}");
+                script_warnings += 1;
+            }
+        }
+    }
     print_report(&report, err);
     let _ = writeln!(
         out,
         "{}: {} error(s), {} warning(s)",
         story_path.display(),
-        report.errors.len(),
-        report.warnings.len() + rig_warnings
+        report.errors.len() + script_errors,
+        report.warnings.len() + rig_warnings + script_warnings
     );
-    Ok(if report.errors.is_empty() { 0 } else { 1 })
+    Ok(if report.errors.is_empty() && script_errors == 0 { 0 } else { 1 })
 }
 
 // --------------------------------------------------------------- run-text
@@ -282,7 +302,12 @@ fn run_text_cmd(
         Some(dir) => Box::new(FileStorage::new(dir)),
         None => Box::new(MemoryStorage::new()),
     };
-    play(story, step, storage, input, out, err).map_err(|e| format!("I/O error: {e}"))
+    // Scripts run with the modules of the story's folder (ADR 0015).
+    let scripts = orbit_core::scripting::story_uses_scripts(&story).then(|| {
+        let base = story_path.parent().unwrap_or(Path::new(""));
+        orbit_script::ScriptEngine::shared(orbit_project::scripts::read_modules(base))
+    });
+    play(story, scripts, step, storage, input, out, err).map_err(|e| format!("I/O error: {e}"))
 }
 
 /// What the player typed at a prompt.
@@ -327,6 +352,7 @@ fn parse_command(line: &str) -> Command {
 
 fn play(
     story: Story,
+    scripts: Option<orbit_vm::SharedScriptHost>,
     step: bool,
     storage: Box<dyn Storage>,
     input: &mut dyn BufRead,
@@ -341,6 +367,7 @@ fn play(
             return Ok(1);
         }
     };
+    vm.set_script_host(scripts);
     let saves = SaveManager::new(storage, Arc::clone(&story), SaveConfig::default());
     match saves.load_persistent() {
         Ok(data) => data.apply_to(&mut vm),

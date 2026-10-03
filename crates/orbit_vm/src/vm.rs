@@ -75,6 +75,8 @@ pub struct Vm {
     pub(crate) history: History,
     /// Runtime plugins (M8-04); not part of the state.
     plugins: Option<crate::plugin::SharedPluginHost>,
+    /// Script engine (M8-01); not part of the state.
+    scripts: Option<crate::script::SharedScriptHost>,
     /// Scene seen / replay tracking (M7-03, M7-04), see `crate::replay`;
     /// not part of the state.
     pub(crate) tracking: crate::replay::Tracking,
@@ -131,6 +133,7 @@ impl Vm {
             warnings: Vec::new(),
             history: History::default(),
             plugins: None,
+            scripts: None,
             tracking: Default::default(),
         })
     }
@@ -239,7 +242,35 @@ impl Vm {
             .map_err(|source| VmError::Eval { node, source })
     }
 
-    fn eval_bool(&self, node: NodeId, expr: &orbit_core::Expr) -> Result<bool, VmError> {
+    /// Evaluates a condition. A Rhai condition (ADR 0015) goes to the
+    /// script host; when it fails, or no host is attached, it reads as
+    /// `false` with a warning (a hidden option, the `else` branch) rather
+    /// than stopping the game.
+    fn eval_bool(&mut self, node: NodeId, expr: &orbit_core::Expr) -> Result<bool, VmError> {
+        if let orbit_core::Expr::Rhai(code) = expr {
+            let Some(host) = self.scripts.clone() else {
+                self.warnings.push(format!(
+                    "node {node}: this player cannot run scripts, the Rhai condition reads as false"
+                ));
+                return Ok(false);
+            };
+            let result = host.eval(code, &|name| self.variable(name).cloned());
+            return match result {
+                Ok(Value::Bool(b)) => Ok(b),
+                Ok(other) => {
+                    self.warnings.push(format!(
+                        "node {node}: the Rhai condition gave a {} instead of a bool, read as false",
+                        other.value_type()
+                    ));
+                    Ok(false)
+                }
+                Err(e) => {
+                    self.warnings
+                        .push(format!("node {node}: Rhai condition failed, read as false: {e}"));
+                    Ok(false)
+                }
+            };
+        }
         match self.eval(node, expr)? {
             Value::Bool(b) => Ok(b),
             _ => Err(VmError::ConditionNotBool(node)),
@@ -732,9 +763,80 @@ impl Vm {
                         return Ok(Some(StepResult::WaitTime(secs)));
                     }
                 }
+                NodeKind::Script {
+                    source,
+                    branches,
+                    on_error,
+                } => {
+                    self.state.pc = next;
+                    match self.run_script_node(pc, source) {
+                        Ok(Some(branch)) => {
+                            match branches.iter().find(|b| b.name == branch) {
+                                Some(b) => self.jump(b.target)?,
+                                None => self.warnings.push(format!(
+                                    "node {pc}: the script chose the unknown branch `{branch}`, going on"
+                                )),
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(()) => {
+                            if let Some(target) = on_error {
+                                self.jump(*target)?;
+                            }
+                        }
+                    }
+                }
             }
         }
         Err(VmError::StepLimit(MAX_NODES_PER_STEP))
+    }
+
+    // ------------------------------------------------------------ scripts
+
+    /// Attaches the script engine (M8-01). Not part of the state: a host
+    /// sets it again on every VM it creates (new game, load).
+    pub fn set_script_host(&mut self, host: Option<crate::script::SharedScriptHost>) {
+        self.scripts = host;
+    }
+
+    pub fn script_host(&self) -> Option<&crate::script::SharedScriptHost> {
+        self.scripts.as_ref()
+    }
+
+    /// Runs a script node and commits its effects (all or nothing).
+    /// `Ok(branch)` on success, `Err(())` when it failed (nothing applied,
+    /// a warning recorded).
+    fn run_script_node(&mut self, node: NodeId, source: &str) -> Result<Option<String>, ()> {
+        use crate::plugin::PluginContext;
+        let Some(host) = self.scripts.clone() else {
+            self.warnings.push(format!(
+                "node {node}: this player cannot run scripts, script skipped"
+            ));
+            return Err(());
+        };
+        let mut ctx = PluginContext::new(&self.state.vars, &self.persistent, self.state.rng);
+        let result = host.run(source, &mut ctx);
+        let effects = ctx.finish();
+        match result {
+            Ok(outcome) => {
+                self.warnings.extend(
+                    outcome
+                        .logs
+                        .into_iter()
+                        .map(|m| format!("script {node}: {m}")),
+                );
+                if self.commit_plugin(&format!("script {node}"), effects, false) {
+                    Ok(outcome.branch)
+                } else {
+                    Err(())
+                }
+            }
+            Err(e) => {
+                self.warnings
+                    .push(format!("script {node} failed, nothing applied: {e}"));
+                Err(())
+            }
+        }
     }
 
     // ------------------------------------------------------------ plugins

@@ -19,6 +19,7 @@ pub mod lock;
 pub mod ops;
 pub mod rigmesh;
 pub mod rigs;
+pub mod scripts;
 mod project;
 pub mod sandbox;
 mod storage;

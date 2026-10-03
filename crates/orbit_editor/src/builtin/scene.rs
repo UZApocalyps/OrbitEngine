@@ -1238,6 +1238,12 @@ fn describe(texts: &orbit_editor_api::Translator, story: &Story, node: &Node) ->
             texts.t("scene.row.stop_particles"),
             if name.is_empty() { texts.t("inspector.stop_particles.all") } else { name.clone() },
         ),
+        NodeKind::Script {
+            source, branches, ..
+        } => (
+            texts.t("scene.row.script"),
+            super::nodeinfo::script_summary(texts, source, branches.len()),
+        ),
         NodeKind::Return => (texts.t("scene.row.return"), String::new()),
         NodeKind::End => (texts.t("scene.row.end"), String::new()),
         NodeKind::Custom {

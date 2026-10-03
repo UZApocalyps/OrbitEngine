@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 orbit_core.workspace = true
 orbit_anim.workspace = true
+orbit_script.workspace = true
 spade = "2.15"
 thiserror.workspace = true
 serde.workspace = true

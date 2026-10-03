@@ -34,6 +34,7 @@ pub fn kind_key(kind: &NodeKind) -> String {
         NodeKind::ShowScene3d { .. } => "ShowScene3d".into(),
         NodeKind::Camera3d { .. } => "Camera3d".into(),
         NodeKind::HideScene3d { .. } => "HideScene3d".into(),
+        NodeKind::Script { .. } => "Script".into(),
         NodeKind::Custom {
             plugin_id, kind, ..
         } => format!("{plugin_id}.{kind}"),
@@ -71,6 +72,7 @@ pub fn kind_label(texts: &Translator, kind: &NodeKind) -> String {
         NodeKind::ShowScene3d { .. } => "node.kind.show_scene3d",
         NodeKind::Camera3d { .. } => "node.kind.camera3d",
         NodeKind::HideScene3d { .. } => "node.kind.hide_scene3d",
+        NodeKind::Script { .. } => "node.kind.script",
     })
 }
 
@@ -104,6 +106,7 @@ pub fn kind_icon(kind: &NodeKind) -> &'static str {
         NodeKind::ShowScene3d { .. } => icons::CUBE,
         NodeKind::Camera3d { .. } => icons::VIDEO_CAMERA,
         NodeKind::HideScene3d { .. } => icons::EYE_SLASH,
+        NodeKind::Script { .. } => icons::CODE,
     }
 }
 
@@ -124,7 +127,10 @@ pub fn kind_color(kind: &NodeKind) -> egui::Color32 {
         NodeKind::PlayMusic { .. } | NodeKind::StopMusic { .. } | NodeKind::PlaySound { .. } => {
             Color32::from_rgb(176, 124, 236)
         }
-        NodeKind::Choice { .. } | NodeKind::SetVar { .. } | NodeKind::If { .. } => {
+        NodeKind::Choice { .. }
+        | NodeKind::SetVar { .. }
+        | NodeKind::If { .. }
+        | NodeKind::Script { .. } => {
             Color32::from_rgb(236, 168, 70)
         }
         NodeKind::Label { .. }
@@ -213,6 +219,20 @@ pub fn truncate(text: &str, max_chars: usize) -> String {
     } else {
         let cut: String = single_line.chars().take(max_chars).collect();
         format!("{}…", cut.trim_end())
+    }
+}
+
+/// First non-empty line of a script (cut), then its number of branches.
+pub fn script_summary(texts: &Translator, source: &str, branches: usize) -> String {
+    let first = source
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map_or_else(String::new, |l| truncate(l, 60));
+    if branches == 0 {
+        first
+    } else {
+        format!("{first}  ·  {}", texts.plural("node.summary.branches", branches, &[]))
     }
 }
 
@@ -307,6 +327,7 @@ pub fn summary(texts: &Translator, story: &Story, node: &Node) -> String {
             .join(" + "),
         NodeKind::Particles(e) => format!("{} · {}", e.name, e.preset.name()),
         NodeKind::StopParticles { name } => name.clone(),
+        NodeKind::Script { source, branches, .. } => script_summary(texts, source, branches.len()),
         NodeKind::Custom {
             plugin_id, kind, ..
         } => format!("{plugin_id}.{kind}"),

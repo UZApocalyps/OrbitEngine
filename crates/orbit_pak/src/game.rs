@@ -641,6 +641,40 @@ mod tests {
     }
 
     #[test]
+    fn script_nodes_and_rhai_conditions_survive_postcard_without_a_version_change() {
+        // M8-01 (schema v15): `NodeKind::Script` and `Expr::Rhai` are
+        // appended variants, and module sources travel as plain pak entries
+        // (`scripts/<name>.rhai`): the game pack layout does not change, so
+        // a pack written before them still reads and the version stays.
+        use orbit_core::{Expr, Node, NodeId, NodeKind, ScriptBranch};
+        let mut pack = fixture_pack();
+        let before = pack.to_bytes().unwrap();
+        assert_eq!(&before[8..12], &BASE_PACK_VERSION.to_le_bytes());
+        let label = pack.story.scenes[0].nodes[0].id;
+        for kind in [
+            NodeKind::Script {
+                source: "import \"dice\" as d;\nd::roll()".into(),
+                branches: vec![ScriptBranch {
+                    name: "win".into(),
+                    target: label,
+                }],
+                on_error: Some(label),
+            },
+            NodeKind::If {
+                condition: Expr::Rhai("get_var(\"gold\") > 2".into()),
+                then_target: label,
+                else_target: None,
+            },
+        ] {
+            pack.story.scenes[0].nodes.push(Node { id: NodeId::new(), kind });
+        }
+        let bytes = pack.to_bytes().unwrap();
+        assert_eq!(&bytes[8..12], &BASE_PACK_VERSION.to_le_bytes());
+        assert_eq!(GamePack::from_bytes(&bytes).unwrap(), pack);
+        assert!(GamePack::from_bytes(&before).is_ok());
+    }
+
+    #[test]
     fn layer_and_particle_nodes_survive_postcard_without_a_version_change() {
         // M5A-07 / M5A-08 (schema v13): `BackgroundLayers`, `Particles` and
         // `StopParticles` are appended variants, so a pack written before

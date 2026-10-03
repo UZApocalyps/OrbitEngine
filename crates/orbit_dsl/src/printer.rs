@@ -49,7 +49,12 @@
 //!     layer <asset-ref> depth <f> [repeat_x]
 //! particles "<name>" <preset> [<key> <value> ...]   Particles (an emitter)
 //! stop particles ["<name>"]                      StopParticles
+//! script "<rhai source>" [branch <name> -> <label-ref> ...] [on_error <label-ref>]   Script
 //! ```
+//!
+//! A Rhai condition is the expression `rhai "<code>"` (`if rhai "…" -> l`,
+//! menu option `… if rhai "…"`). Script sources are one quoted string:
+//! their newlines are escaped (`\n`), like every DSL string.
 //!
 //! `particles` keys, all optional after the preset (`rain`, `snow`, `petals`,
 //! `dust`, `sparks` or `custom`, whose values they override), and always
@@ -107,6 +112,7 @@ pub const KEYWORDS: &[&str] = &[
     "return",
     "end",
     "custom",
+    "script",
     "scene3d",
     "camera3d",
     "hide_scene3d",
@@ -768,6 +774,20 @@ fn write_node(ctx: &Ctx<'_>, scene: SceneId, node: &Node, out: &mut String) {
             }
             s.push_str(if e.front { " front" } else { " behind" });
             s.push_str(if e.prewarm { " prewarm" } else { " cold" });
+            s
+        }
+        NodeKind::Script {
+            source,
+            branches,
+            on_error,
+        } => {
+            let mut s = format!("script {}", quote(source));
+            for b in branches {
+                s.push_str(&format!(" branch {} -> {}", fmt_name(&b.name), label(b.target)));
+            }
+            if let Some(e) = on_error {
+                s.push_str(&format!(" on_error {}", label(*e)));
+            }
             s
         }
         NodeKind::StopParticles { name } if name.is_empty() => "stop particles".into(),

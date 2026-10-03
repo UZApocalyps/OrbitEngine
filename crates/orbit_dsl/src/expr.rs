@@ -122,6 +122,10 @@ fn write_expr(out: &mut String, e: &Expr) {
             out.push(')');
         }
         Expr::Var(name) => out.push_str(name),
+        Expr::Rhai(code) => {
+            out.push_str("rhai ");
+            out.push_str(&quote(code));
+        }
         Expr::Unary(op, inner) => {
             out.push(if *op == UnOp::Not { '!' } else { '-' });
             // `-3` would parse back as the literal -3: protect a
@@ -332,6 +336,18 @@ impl P<'_> {
         match &tok.tok {
             Tok::Num { text, float } => number(text, *float, false, col).map(Expr::Lit),
             Tok::Str(s) => Ok(Expr::Lit(Value::Str(s.clone()))),
+            // `rhai "<code>"`: a Rhai condition (an identifier is never
+            // followed by a string otherwise).
+            Tok::Ident(name)
+                if name == "rhai"
+                    && matches!(self.tokens.get(self.at).map(|t| &t.tok), Some(Tok::Str(_))) =>
+            {
+                let Some(Tok::Str(code)) = self.tokens.get(self.at).map(|t| t.tok.clone()) else {
+                    unreachable!("checked by the guard");
+                };
+                self.at += 1;
+                Ok(Expr::Rhai(code))
+            }
             Tok::Ident(name) if self.peek_sym(&["("]).is_some() => {
                 let Some(func) = Func::from_name(name) else {
                     return Err((col, format!("unknown function `{name}`")));

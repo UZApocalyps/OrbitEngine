@@ -408,7 +408,7 @@ pub enum CommandSpec {
     },
     /// Conditional jump.
     If {
-        /// Condition, e.g. `trust > 2 && route == "forest"`, `contains(bag, "key")`, `len(bag) > 0`, `has_key(gold, "alice")`.
+        /// Condition, e.g. `trust > 2 && route == "forest"`, `contains(bag, "key")`, `len(bag) > 0`, `has_key(gold, "alice")`, or a Rhai condition `rhai: get_var("gold") % 2 == 0`.
         condition: String,
         /// Label id or name to jump to when true.
         then_target: String,
@@ -569,6 +569,20 @@ pub enum CommandSpec {
         /// Emitter name; default: every emitter.
         name: Option<String>,
     },
+    /// Run a Rhai script (sandboxed, synchronous). API: `get_var(name)`,
+    /// `has_var(name)`, `set_var(name, value)` (applied after the script,
+    /// all or nothing), `rand_int(a, b)`, `rand_float()`, `chance(p)` (the
+    /// game's seeded RNG), `branch("name")` or return the branch name,
+    /// `log(text)`. Shared modules: `import "shop" as shop; shop::buy("x")`
+    /// (see `list_scripts`). Check it with `check_scripts` / `test_script`.
+    Script {
+        /// The Rhai source.
+        source: String,
+        /// Named outputs: `[{"name": "win", "target": "<label>"}]`.
+        branches: Option<Vec<ScriptBranchArg>>,
+        /// Label id or name to go to when the script fails (default: the next node).
+        on_error: Option<String>,
+    },
     /// Parallel keyframe tracks (target x property x keys). Animated values
     /// are relative to the staging, like `effect`. A timeline that does not
     /// `wait` keeps playing while the story goes on until the scene changes.
@@ -704,7 +718,33 @@ pub fn spec_variant(spec: &CommandSpec) -> &'static str {
         CommandSpec::BackgroundLayers { .. } => "BackgroundLayers",
         CommandSpec::Particles { .. } => "Particles",
         CommandSpec::StopParticles { .. } => "StopParticles",
+        CommandSpec::Script { .. } => "Script",
     }
+}
+
+/// A named output of a script node.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScriptBranchArg {
+    /// Branch name, as chosen by the script (`branch("name")` or returned).
+    pub name: String,
+    /// Label id or name.
+    pub target: String,
+}
+
+/// Script branches from their arguments (labels resolved).
+pub(crate) fn script_branches(
+    story: &orbit_core::Story,
+    args: &[ScriptBranchArg],
+) -> Result<Vec<orbit_core::ScriptBranch>, ToolError> {
+    args.iter()
+        .map(|b| {
+            Ok(orbit_core::ScriptBranch {
+                name: b.name.trim().to_owned(),
+                target: find_label(story, b.target.trim())?,
+            })
+        })
+        .collect()
 }
 
 /// Which tool (and `type`) creates each IR node kind. The coherence test
@@ -739,6 +779,7 @@ pub const NODE_KIND_TOOLS: &[(&str, &str)] = &[
     ("BackgroundLayers", "add_command type=background_layers"),
     ("Particles", "add_command type=particles"),
     ("StopParticles", "add_command type=stop_particles"),
+    ("Script", "add_command type=script"),
 ];
 
 #[derive(Deserialize, JsonSchema)]
@@ -1518,6 +1559,18 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
         CommandSpec::Particles { .. } => NodeKind::Particles(build_emitter(story, spec)?),
         CommandSpec::StopParticles { name } => NodeKind::StopParticles {
             name: name.clone().unwrap_or_default(),
+        },
+        CommandSpec::Script {
+            source,
+            branches,
+            on_error,
+        } => NodeKind::Script {
+            source: source.clone(),
+            branches: script_branches(story, branches.as_deref().unwrap_or_default())?,
+            on_error: on_error
+                .as_deref()
+                .map(|l| find_label(story, l.trim()))
+                .transpose()?,
         },
         CommandSpec::Effect { .. } => NodeKind::Effect(build_effect(story, spec)?),
         CommandSpec::Timeline {
@@ -2445,7 +2498,8 @@ fn simulate(cx: &mut ToolCx<'_>, a: SimulateArgs) -> Result<String, ToolError> {
     let limits = SimulationLimits {
         max_steps: a.max_steps.unwrap_or(2000).clamp(1, 20_000),
     };
-    views::simulate(cx.project.story(), &picks, start, &limits)
+    let modules = orbit_project::scripts::read_modules(cx.sandbox.root());
+    views::simulate(cx.project.story(), &modules, &picks, start, &limits)
 }
 
 fn undo(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
@@ -2822,7 +2876,21 @@ pub fn builtin_tools() -> Vec<ToolDef> {
     tools.extend(ui_tool_defs());
     tools.extend(scene3d_tool_defs());
     tools.extend(rig_tool_defs());
+    tools.extend(script_tool_defs());
     tools
+}
+
+fn script_tool_defs() -> Vec<ToolDef> {
+    use crate::script_tools as s;
+    vec![
+        def::<s::NoArgs>("list_scripts", "List the scripts", "List every Rhai source of the project: script nodes (scene, first line, branches, error label, imported modules), Rhai conditions (If nodes and choice options) and shared modules (scripts/<name>.rhai, with the script nodes that import them), each with its problem count. Script API: get_var, has_var, set_var (applied after the script, all or nothing), rand_int, rand_float, chance (seeded RNG), branch(\"name\") or return the name, log.", Kind::Read, s::list_scripts),
+        def::<s::ReadScriptArgs>("read_script", "Read a script", "Read the source of a script node (with its branches and error label) or of a shared module, with the sandbox diagnostics (severity, line, column, message).", Kind::Read, s::read_script),
+        def::<s::SetScriptArgs>("set_script", "Edit a script node", "Change the source, branches and/or error label of a script node (create one with add_command type=script). Refused, nothing changed, when the new source has errors (syntax, unknown module). Undoable.", Kind::Edit, s::set_script),
+        def::<s::WriteModuleArgs>("write_script_module", "Create or edit a script module", "Create or replace a shared Rhai module (scripts/<name>.rhai) that script nodes import with `import \"name\" as m; m::f()`. Refused, nothing written, when it has errors. The file is rewritten (not covered by undo).", Kind::Edit, s::write_script_module),
+        def::<s::ModuleArg>("delete_script_module", "Delete a script module", "Delete a shared module (scripts/<name>.rhai). Refused while a script node imports it.", Kind::Destructive, s::delete_script_module),
+        def::<s::CheckArgs>("check_scripts", "Check the scripts", "Sandbox diagnostics, with line and column: syntax and nesting limits, unknown modules, literal variable names the story does not declare. Without `source`, every script node, Rhai condition and module of the project; with `source`, that text (a condition with expression=true).", Kind::Read, s::check),
+        def::<s::TestArgs>("test_script", "Test a script in the sandbox", "Run a script node (or a given source) in the sandbox against the story's initial variables, with a seed. Nothing is applied: returns the branch it would take or its error (line, column; operation, depth and size limits included), the variable changes (before/after), its logs and the number of random draws.", Kind::Read, s::test),
+    ]
 }
 
 fn rig_tool_defs() -> Vec<ToolDef> {

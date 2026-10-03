@@ -302,7 +302,10 @@ jobs:
       # and the GPU-free 3D data path (scenes, quality check, KTX2 + zstd)
       # runs in wasm32 under Node with wasm-bindgen-test.
       - name: Check the 3D web player (wasm32, template features)
-        run: cargo check -p orbit_player --target wasm32-unknown-unknown --no-default-features --features 3d
+        run: cargo check -p orbit_player --target wasm32-unknown-unknown --no-default-features --features 3d,script
+      # M8-01: the 2D web player with scripts (webscript/ template).
+      - name: Check the web player with scripts (wasm32, template features)
+        run: cargo check -p orbit_player --target wasm32-unknown-unknown --no-default-features --features script
       - name: wasm smoke test (orbit_scene under Node)
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner

@@ -38,6 +38,11 @@ pub enum ValidationError {
     UnknownTarget { from: NodeId, target: NodeId },
     #[error("node {from} targets node {target} which is not a Label")]
     TargetNotLabel { from: NodeId, target: NodeId },
+    /// A `Script` node or a Rhai expression that cannot work (empty source,
+    /// unnamed or duplicate branch, Rhai outside a condition), schema v15.
+    /// Rhai syntax errors are found by `orbit_script` (it needs the engine).
+    #[error("node {node}: {message}")]
+    InvalidScript { node: NodeId, message: String },
     #[error("node {node} jumps to unknown scene {scene}")]
     UnknownScene { node: NodeId, scene: SceneId },
     #[error("node {node} jumps to label {label} which is not in scene {scene}")]

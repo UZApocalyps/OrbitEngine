@@ -8,7 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-default = ["showcase", "3d"]
+default = ["showcase", "3d", "script"]
 # The renderer demo (`--demo`) and the UI gallery (`--ui-gallery`): development
 # tools, left out of the player templates used to export games.
 showcase = []
@@ -16,6 +16,11 @@ showcase = []
 # templates are built without default features; the native one adds `3d`,
 # the web one keeps 2D games free of it (M6-13: 3D web template).
 3d = ["orbit_runtime/3d"]
+# Scripts (ADR 0015, M8-01): the sandboxed Rhai engine. On in the desktop
+# player and the editor; the export templates add it to the native and
+# Android players and build separate web players with it (`webscript/`,
+# and `web3d/`), so that 2D web games without scripts do not carry it.
+script = ["orbit_runtime/script"]
 # The profiler (F3 overlay, GPU pass timings) in a release build. Debug
 # builds always have it; templates (release) never do.
 profiling = ["orbit_profile/enabled"]

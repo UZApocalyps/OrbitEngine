@@ -120,6 +120,29 @@ mod tests {
     use crate::compile::compile;
     use crate::testing::{TempDir, demo_project};
 
+    #[test]
+    fn a_scripted_game_ships_the_modules_it_imports_and_script_errors_stop_it() {
+        let dir = TempDir::new("pak_script");
+        let project = crate::testing::script_project(dir.path());
+        // A module nothing imports is left out.
+        std::fs::write(dir.path().join("scripts/unused.rhai"), "fn x() { 1 }").unwrap();
+        let profile = project.profile(None).unwrap();
+        let compiled = compile(&project, &profile).unwrap();
+        let mut rep = Reporter::silent();
+        let built = build_pak(&compiled, &profile, &mut rep).unwrap();
+        let (_, index) = orbit_pak::container::parse_prefix(&built.bytes).unwrap();
+        let names: Vec<&str> = index.entries().iter().map(|e| e.path.as_str()).collect();
+        assert!(names.contains(&"scripts/dice.rhai"), "{names:?}");
+        assert!(!names.contains(&"scripts/unused.rhai"), "{names:?}");
+        // The game pack keeps the base version (no layout change).
+        let pack = orbit_pak::GamePack::from_bytes(&compiled.pack.to_bytes().unwrap()).unwrap();
+        assert!(orbit_core::scripting::story_uses_scripts(&pack.story));
+        // A syntax error in a module stops the export with its position.
+        std::fs::write(dir.path().join("scripts/dice.rhai"), "fn bet(side) {\n  let = 1;\n}").unwrap();
+        let err = compile(&project, &profile).unwrap_err().to_string();
+        assert!(err.contains("scripts/dice.rhai") && err.contains("line 2"), "{err}");
+    }
+
     // Fixture: exact entry names and count come from test_minimal.ron.
     #[test]
     fn the_fixture_pak_holds_exactly_what_the_game_needs() {

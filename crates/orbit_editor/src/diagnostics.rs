@@ -20,6 +20,27 @@ use crate::assets::AssetIssue;
 
 /// Stories with more nodes than this are validated on the worker thread.
 pub const SYNC_NODE_LIMIT: usize = 1500;
+/// How often the module files are looked at for changes.
+const SCRIPTS_RECHECK: Duration = Duration::from_secs(1);
+
+/// `(name, modified, size)` of every module file: changes when one is
+/// added, removed or saved.
+fn scripts_stamp(root: &std::path::Path) -> Vec<(String, u64, u64)> {
+    orbit_project::scripts::list_modules(root)
+        .into_iter()
+        .map(|name| {
+            let path = root.join(orbit_project::scripts::module_path(&name));
+            let meta = std::fs::metadata(path).ok();
+            let modified = meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos() as u64);
+            (name, modified, meta.map_or(0, |m| m.len()))
+        })
+        .collect()
+}
+
 /// Quiet time before a big story is validated again.
 pub const DEBOUNCE: Duration = Duration::from_millis(80);
 
@@ -178,6 +199,10 @@ pub fn describe_error(
             texts.format("problem.invalid_position_coords", &[("name", name)]),
         ),
         E::DuplicateSceneId(_) => (None, t("problem.duplicate_scene")),
+        E::InvalidScript { node, message } => (
+            Some(*node),
+            texts.format("problem.invalid_script", &[("message", message)]),
+        ),
         E::InvalidScreenNode { node, message } => (
             Some(*node),
             texts.format("problem.invalid_screen_node", &[("message", message)]),
@@ -285,6 +310,42 @@ pub struct Extras {
     pub asset_issues: Vec<AssetIssue>,
     /// Problems of rigged expressions (rig unreadable, unknown clip / skin...).
     pub rig_problems: Vec<orbit_project::rigs::RigProblem>,
+    /// Problems of Rhai sources (script nodes, conditions, shared modules).
+    pub script_problems: Vec<orbit_project::scripts::ScriptProblem>,
+}
+
+/// Message of a problem of a Rhai source: where in the text, then what.
+pub fn describe_script_problem(
+    texts: &Translator,
+    p: &orbit_project::scripts::ScriptProblem,
+) -> String {
+    use orbit_project::scripts::ScriptSite;
+    let d = &p.diagnostic;
+    let place = if d.line > 0 {
+        format!("{}:{}  ", d.line, d.column)
+    } else {
+        String::new()
+    };
+    match &p.site {
+        ScriptSite::Module(name) => texts.format(
+            "problem.script.module",
+            &[
+                ("module", &orbit_project::scripts::module_path(name)),
+                ("place", &place),
+                ("message", &d.message),
+            ],
+        ),
+        site => {
+            let what = texts.get(match site {
+                ScriptSite::Condition { .. } => "problem.script.condition",
+                _ => "problem.script.node",
+            });
+            texts.format(
+                "problem.script.rhai",
+                &[("what", &what), ("place", &place), ("message", &d.message)],
+            )
+        }
+    }
 }
 
 /// Runs the story validation and groups the findings by node. `extras` adds
@@ -348,6 +409,20 @@ pub fn compute(texts: &Translator, story: &Story, revision: u64, extras: &Extras
             None,
             Some(Location::Character(p.character)),
             describe_rig_problem(texts, story, p),
+        );
+    }
+    for p in &extras.script_problems {
+        let level = if p.is_error() {
+            Level::Error
+        } else {
+            Level::Warn
+        };
+        push(
+            &mut out,
+            level,
+            p.site.node(),
+            None,
+            describe_script_problem(texts, p),
         );
     }
     for w in &report.warnings {
@@ -447,6 +522,10 @@ pub struct Live {
     /// Asset-file findings, refreshed when files or the manifest change.
     asset_issues: Vec<AssetIssue>,
     rig_problems: Vec<orbit_project::rigs::RigProblem>,
+    script_problems: Vec<orbit_project::scripts::ScriptProblem>,
+    /// Stamp of the module files and when it was last looked at.
+    scripts_stamp: Vec<(String, u64, u64)>,
+    scripts_checked: Option<Instant>,
     assets_dirty: bool,
     asset_key: Option<Vec<(String, String)>>,
 }
@@ -491,6 +570,9 @@ impl Live {
             first_edit: None,
             asset_issues: Vec::new(),
             rig_problems: Vec::new(),
+            script_problems: Vec::new(),
+            scripts_stamp: Vec::new(),
+            scripts_checked: None,
             assets_dirty: true,
             asset_key: None,
         }
@@ -506,6 +588,9 @@ impl Live {
         self.first_edit = None;
         self.asset_issues.clear();
         self.rig_problems.clear();
+        self.script_problems.clear();
+        self.scripts_stamp.clear();
+        self.scripts_checked = None;
         self.assets_dirty = true;
         self.asset_key = None;
     }
@@ -561,11 +646,26 @@ impl Live {
             self.wanted = None;
         }
         if self.published == Some(key) {
-            return None;
+            // Module files are edited outside the story: look at them from
+            // time to time.
+            let due = self
+                .scripts_checked
+                .is_none_or(|t| now.duration_since(t) >= SCRIPTS_RECHECK);
+            if !due {
+                return None;
+            }
+            self.scripts_checked = Some(now);
+            if scripts_stamp(root) == self.scripts_stamp {
+                return None;
+            }
+            self.refresh_scripts(root, story);
+            self.published = None;
+            self.wanted = None;
         }
         if self.wanted != Some(key) {
             self.wanted = Some(key);
             self.first_edit.get_or_insert(now);
+            self.refresh_scripts(root, story);
             // Only a new revision can have changed the manifest.
             if self.asset_key_changed(story) {
                 self.refresh_asset_issues(root, story);
@@ -581,6 +681,7 @@ impl Live {
             let mut extras = registry_extras(story);
             extras.asset_issues.clone_from(&self.asset_issues);
             extras.rig_problems.clone_from(&self.rig_problems);
+            extras.script_problems.clone_from(&self.script_problems);
             let out = compute(texts, story, key.1, &extras);
             self.published = Some(key);
             self.due = None;
@@ -608,6 +709,7 @@ impl Live {
                 let mut extras = registry_extras(story);
                 extras.asset_issues.clone_from(&self.asset_issues);
                 extras.rig_problems.clone_from(&self.rig_problems);
+                extras.script_problems.clone_from(&self.script_problems);
                 let job = Job {
                     key,
                     story: story.clone(),
@@ -623,6 +725,19 @@ impl Live {
                 None
             }
         }
+    }
+
+    fn refresh_scripts(&mut self, root: &std::path::Path, story: &Story) {
+        self.scripts_stamp = scripts_stamp(root);
+        self.scripts_checked = None;
+        self.script_problems = if self.scripts_stamp.is_empty()
+            && !orbit_core::scripting::story_uses_scripts(story)
+        {
+            Vec::new()
+        } else {
+            let modules = orbit_project::scripts::read_modules(root);
+            orbit_project::scripts::check_scripts(story, &modules)
+        };
     }
 
     fn asset_key_changed(&mut self, story: &Story) -> bool {

@@ -185,7 +185,7 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
             // character's default scale applies.
             let look = scale.map_or_else(String::new, |s| {
                 describe_look([s, scale_y.unwrap_or(s)], false, false)
-            }) + &describe_look([1.0, 1.0], *flip_x, *flip_y);
+            }) + describe_look([1.0, 1.0], *flip_x, *flip_y).as_str();
             format!(
                 "show {} ({expression}) at {}{look}{}",
                 character_name(story, *character),
@@ -294,6 +294,25 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
             e.sprite
                 .map_or_else(String::new, |a| format!(", sprite {}", asset_label(story, a)))
         ),
+        NodeKind::Script {
+            source,
+            branches,
+            on_error,
+        } => {
+            let first = source.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+            let mut s = format!(
+                "script ({} line(s)): {}",
+                source.lines().count(),
+                quote(first)
+            );
+            for b in branches {
+                s.push_str(&format!(", branch {} -> {}", quote(&b.name), label_ref(story, b.target)));
+            }
+            if let Some(e) = on_error {
+                s.push_str(&format!(", on error -> {}", label_ref(story, *e)));
+            }
+            s
+        }
         NodeKind::StopParticles { name } if name.is_empty() => "stop all particles".to_owned(),
         NodeKind::StopParticles { name } => format!("stop particles {}", quote(name)),
         NodeKind::Effect(e) => describe_effect(story, e),
@@ -563,6 +582,7 @@ pub struct SimulationLimits {
 /// Plays the story headlessly. Returns the transcript.
 pub fn simulate(
     story: &Story,
+    modules: &std::collections::BTreeMap<String, String>,
     picks: &[ChoicePick],
     start_at: Option<orbit_core::NodeId>,
     limits: &SimulationLimits,
@@ -587,6 +607,9 @@ pub fn simulate(
         None => Vm::from_start(Arc::clone(&story)),
     };
     let mut vm = vm.map_err(|e| ToolError::refused(format!("cannot start the story: {e}")))?;
+    if orbit_core::scripting::story_uses_scripts(&story) {
+        vm.set_script_host(Some(orbit_script::ScriptEngine::shared(modules.clone())));
+    }
 
     let mut out = String::new();
     let mut picks = picks.iter();

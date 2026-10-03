@@ -639,6 +639,27 @@ impl Cx<'_> {
                             .map(|message| ValidationError::InvalidScreenNode { node: id, message }),
                     );
                 }
+                NodeKind::Script {
+                    source, branches, ..
+                } => {
+                    let mut problems = Vec::new();
+                    if source.trim().is_empty() {
+                        problems.push("the script is empty".to_owned());
+                    }
+                    let mut names = HashSet::new();
+                    for b in branches {
+                        if b.name.trim().is_empty() {
+                            problems.push("a script branch has no name".to_owned());
+                        } else if !names.insert(b.name.as_str()) {
+                            problems.push(format!("script branch `{}` is defined twice", b.name));
+                        }
+                    }
+                    self.errors.extend(
+                        problems
+                            .into_iter()
+                            .map(|message| ValidationError::InvalidScript { node: id, message }),
+                    );
+                }
                 NodeKind::CloseScreen { screen } if screen.trim().is_empty() => {
                     self.errors.push(ValidationError::InvalidScreenNode {
                         node: id,
@@ -722,17 +743,49 @@ impl Cx<'_> {
             }
         };
 
+        // Rhai is only allowed as a whole condition (ADR 0015 §1).
+        let rhai_misplaced = |errors: &mut Vec<ValidationError>, id: NodeId, e: &Expr, top: bool| {
+            let nested = !matches!(e, Expr::Rhai(_)) && contains_rhai(e);
+            if nested || (!top && matches!(e, Expr::Rhai(_))) {
+                errors.push(ValidationError::InvalidScript {
+                    node: id,
+                    message: "a Rhai expression can only be a whole condition (If, choice option)"
+                        .to_owned(),
+                });
+            }
+        };
         for node in flat {
             match &node.kind {
                 NodeKind::If { condition, .. } => {
-                    check_expr(&mut errors, &mut warnings, node.id, condition, true)
+                    rhai_misplaced(&mut errors, node.id, condition, true);
+                    if let Expr::Rhai(code) = condition {
+                        if code.trim().is_empty() {
+                            errors.push(ValidationError::InvalidScript {
+                                node: node.id,
+                                message: "the Rhai condition is empty".to_owned(),
+                            });
+                        }
+                    } else {
+                        check_expr(&mut errors, &mut warnings, node.id, condition, true)
+                    }
                 }
                 NodeKind::Choice { options } => {
                     for c in options.iter().filter_map(|o| o.condition.as_ref()) {
-                        check_expr(&mut errors, &mut warnings, node.id, c, true);
+                        rhai_misplaced(&mut errors, node.id, c, true);
+                        if let Expr::Rhai(code) = c {
+                            if code.trim().is_empty() {
+                                errors.push(ValidationError::InvalidScript {
+                                    node: node.id,
+                                    message: "the Rhai condition is empty".to_owned(),
+                                });
+                            }
+                        } else {
+                            check_expr(&mut errors, &mut warnings, node.id, c, true);
+                        }
                     }
                 }
                 NodeKind::SetVar { var, value } => {
+                    rhai_misplaced(&mut errors, node.id, value, false);
                     check_expr(&mut errors, &mut warnings, node.id, value, false);
                     if divides_by_zero(value, &story_vars, &assigned) {
                         warnings.push(ValidationWarning::DivisionByZero { node: node.id });
@@ -840,6 +893,14 @@ impl Cx<'_> {
                     v
                 }
                 NodeKind::Return | NodeKind::End => Vec::new(),
+                // A script goes to one of its branches, its error label or
+                // the next node.
+                NodeKind::Script { .. } => {
+                    let mut v: Vec<usize> =
+                        node.kind.targets().into_iter().filter_map(target).collect();
+                    v.extend(next);
+                    v
+                }
                 _ => next.into_iter().collect(),
             }
         };
@@ -942,6 +1003,18 @@ impl Cx<'_> {
     }
 }
 
+/// Whether a Rhai expression appears anywhere in `expr`.
+fn contains_rhai(expr: &Expr) -> bool {
+    match expr {
+        Expr::Rhai(_) => true,
+        Expr::Lit(_) | Expr::Var(_) => false,
+        Expr::Unary(_, e) => contains_rhai(e),
+        Expr::Binary(_, l, r) | Expr::Index(l, r) => contains_rhai(l) || contains_rhai(r),
+        Expr::List(items) | Expr::Call(_, items) => items.iter().any(contains_rhai),
+        Expr::Map(entries) => entries.iter().any(|(_, e)| contains_rhai(e)),
+    }
+}
+
 /// Whether `expr` divides by something statically zero: a literal `0` /
 /// `0.0`, or a variable declared at 0 that no node ever assigns.
 fn divides_by_zero(expr: &Expr, vars: &HashMap<&str, &Value>, assigned: &HashSet<&str>) -> bool {
@@ -969,7 +1042,7 @@ fn divides_by_zero(expr: &Expr, vars: &HashMap<&str, &Value>, assigned: &HashSet
             items.iter().any(|e| divides_by_zero(e, vars, assigned))
         }
         Expr::Map(entries) => entries.iter().any(|(_, e)| divides_by_zero(e, vars, assigned)),
-        Expr::Lit(_) | Expr::Var(_) => false,
+        Expr::Lit(_) | Expr::Var(_) | Expr::Rhai(_) => false,
     }
 }
 

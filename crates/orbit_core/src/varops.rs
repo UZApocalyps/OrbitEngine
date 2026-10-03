@@ -238,7 +238,7 @@ impl From<EvalError> for OpError {
     fn from(e: EvalError) -> Self {
         match e {
             EvalError::UnknownVariable(n) => OpError::UnknownVariable(n),
-            EvalError::Type(m) => OpError::Type(m),
+            EvalError::Type(m) | EvalError::Script(m) => OpError::Type(m),
             EvalError::Overflow => OpError::Overflow,
             EvalError::DivisionByZero => OpError::DivisionByZero,
             e @ (EvalError::IndexOutOfBounds { .. }

@@ -48,6 +48,24 @@ fn validate_accepts_the_demo() {
 }
 
 #[test]
+fn validate_checks_scripts_with_the_story_folder_modules() {
+    // The scripted mini-game (M8-05) validates with 0 errors, 0 warnings,
+    // its module coming from examples/stories/scripts/.
+    let game = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/stories/test_script.ron");
+    let r = orbit(&["validate", "--check-files", game.to_str().unwrap()], "");
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert!(r.out.contains("0 error(s), 0 warning(s)"), "{}", r.out);
+    // Without its module, the import is an error with its position.
+    let dir = temp_dir("scripts");
+    let copy = dir.join("story.orbit");
+    std::fs::copy(&game, &copy).unwrap();
+    let r = orbit(&["validate", copy.to_str().unwrap()], "");
+    assert_eq!(r.code, 1, "{}", r.out);
+    assert!(r.err.contains("unknown module `dice`") && r.err.contains("line 1"), "{}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 // Fixture: the exact asset count (5) comes from test_minimal.ron.
 fn validate_checks_files_only_on_request() {
     let demo = fixture_path();

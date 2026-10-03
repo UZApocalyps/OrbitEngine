@@ -55,7 +55,9 @@ pub struct PluginContext<'a> {
 }
 
 impl<'a> PluginContext<'a> {
-    pub(crate) fn new(
+    /// A context over these stores (the VM builds one per handler call;
+    /// tools such as the editor's script tester build their own).
+    pub fn new(
         vars: &'a BTreeMap<String, Value>,
         persistent: &'a BTreeMap<String, Value>,
         rng: Rng,
@@ -79,6 +81,23 @@ impl<'a> PluginContext<'a> {
             .or_else(|| self.vars.get(name))
             .or_else(|| self.persistent.get(name))
             .cloned()
+    }
+
+    /// Every variable of either scope with its current value (pending
+    /// writes included), in name order. Used by the script host, whose
+    /// engine cannot borrow the context.
+    pub fn variables(&self) -> BTreeMap<String, Value> {
+        let mut all = self.persistent.clone();
+        all.extend(self.vars.iter().map(|(k, v)| (k.clone(), v.clone())));
+        all.extend(self.pending.iter().map(|(k, v)| (k.clone(), v.clone())));
+        all
+    }
+
+    /// A copy of the RNG as it is now. Drawing from the copy does not
+    /// advance the context: a host that drew `n` numbers from it calls
+    /// [`PluginContext::random_u64`] `n` times to commit them.
+    pub fn rng(&self) -> Rng {
+        self.rng
     }
 
     /// Evaluates a no-code condition against [`PluginContext::var`].

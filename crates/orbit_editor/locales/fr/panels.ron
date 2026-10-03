@@ -155,6 +155,7 @@
     "draft.label.effect": "Effet (déplacer, secouer, zoomer…)",
     "draft.label.timeline": "Chronologie",
     "draft.label.open_screen": "Ouvrir un écran",
+    "draft.label.script": "Script (Rhai)",
     "draft.label.close_screen": "Fermer un écran",
     "draft.label.background_layers": "Fond en parallaxe",
     "draft.label.particles": "Particules",

@@ -157,6 +157,13 @@ pub enum Expr {
     Index(Box<Expr>, Box<Expr>),
     /// A built-in function call (schema v11).
     Call(Func, Vec<Expr>),
+    /// A Rhai expression (schema v15, ADR 0015 §1): only as the whole
+    /// condition of an `If` or of a choice option. It reads variables and
+    /// computes a boolean; it cannot write variables nor draw random
+    /// numbers. Evaluated by the VM's script host (`orbit_script`); written
+    /// `rhai: <code>` in the text form. Appended last: older encodings keep
+    /// their variant indices.
+    Rhai(String),
 }
 
 /// Runtime evaluation failure.
@@ -183,6 +190,10 @@ pub enum EvalError {
         crate::value::MAX_COLLECTION_TEXT
     )]
     TooLarge,
+    /// A Rhai expression ([`Expr::Rhai`]) failed, or was evaluated without
+    /// a script host. Appended last.
+    #[error("script: {0}")]
+    Script(String),
 }
 
 impl EvalError {
@@ -214,6 +225,9 @@ pub struct ParseError {
     pub message: String,
 }
 
+/// Prefix of the text form of a Rhai expression (`rhai: hp > 3 && …`).
+pub const RHAI_PREFIX: &str = "rhai:";
+
 impl Expr {
     pub fn lit(v: impl Into<Value>) -> Expr {
         Expr::Lit(v.into())
@@ -241,6 +255,9 @@ impl Expr {
 
     /// Parses the text form. See the module docs for the grammar.
     pub fn parse(source: &str) -> Result<Expr, ParseError> {
+        if let Some(code) = source.trim_start().strip_prefix(RHAI_PREFIX) {
+            return Ok(Expr::Rhai(code.trim().to_owned()));
+        }
         Parser::new(source)?.parse_all()
     }
 
@@ -264,6 +281,8 @@ impl Expr {
                 items.iter().for_each(|e| e.collect_vars(out));
             }
             Expr::Map(entries) => entries.iter().for_each(|(_, e)| e.collect_vars(out)),
+            // The names a Rhai expression reads are only known at run time.
+            Expr::Rhai(_) => {}
         }
     }
 
@@ -340,6 +359,10 @@ impl Expr {
                     .collect::<Result<Vec<_>, _>>()?;
                 call(*f, args)
             }
+            // Only the VM's script host evaluates Rhai (orbit_vm).
+            Expr::Rhai(_) => Err(EvalError::Script(
+                "this build cannot run scripts (Rhai expression)".into(),
+            )),
         }
     }
 
@@ -460,6 +483,9 @@ impl Expr {
                     .collect::<Result<Vec<_>, _>>()?;
                 call_type(*f, &types)
             }
+            // A Rhai expression is a condition: the script host checks it
+            // gives a boolean when it runs.
+            Expr::Rhai(_) => Ok(Some(ValueType::Bool)),
         }
     }
 }
@@ -856,6 +882,7 @@ impl fmt::Display for Expr {
                 }
                 f.write_str(")")
             }
+            Expr::Rhai(code) => write!(f, "{RHAI_PREFIX} {code}"),
         }
     }
 }

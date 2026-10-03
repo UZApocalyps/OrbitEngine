@@ -123,6 +123,12 @@ pub struct RuntimeConfig {
     /// Runtime plugins (M8-04): custom nodes and custom UI actions. Set by a
     /// player built "with plugins" (`orbit_player::run_with_plugins`).
     pub plugins: Option<orbit_vm::SharedPluginHost>,
+    /// Script engine given by the host (M8-01). `None`: a runtime built with
+    /// the `script` feature makes one from the game's modules
+    /// (`scripts/*.rhai` of the pak or of the story folder) when the story
+    /// uses scripts; without the feature such a story is refused with a
+    /// message.
+    pub scripts: Option<orbit_vm::SharedScriptHost>,
 }
 
 /// Where the fonts of the engine are inside a pak (`engine/<path>`).
@@ -160,6 +166,7 @@ impl RuntimeConfig {
             ui_dir: None,
             ui_bundle: None,
             plugins: None,
+            scripts: None,
         }
     }
 }
@@ -260,6 +267,8 @@ struct LoadingState {
     assets_total: usize,
     /// Start playing as soon as loaded (hot reload after a first start).
     autostart: bool,
+    /// Shared script modules being fetched (a story with scripts).
+    scripts: Option<crate::scripts::ScriptLoad>,
 }
 
 impl LoadingState {
@@ -278,6 +287,7 @@ impl LoadingState {
             pending: Vec::new(),
             assets_total: 0,
             autostart,
+            scripts: None,
         }
     }
 }
@@ -487,6 +497,8 @@ pub struct Runtime {
     store: AssetStore,
     audio: AudioEngine,
     story_loader: AssetLoader,
+    /// Script modules fetched with the story, until the shell takes them.
+    script_modules: Option<std::collections::BTreeMap<String, String>>,
     assets_loader: AssetLoader,
     story_path: String,
     watcher: Option<FileWatcher>,
@@ -632,6 +644,7 @@ impl Runtime {
                 .clone()
                 .map(|path| FileWatcher::new(path, WATCH_INTERVAL)),
             story_loader,
+            script_modules: None,
             assets_loader,
             font_handles,
             fonts_ready: embedded.is_some(),
@@ -740,6 +753,15 @@ impl Runtime {
                     return;
                 }
                 AssetPoll::Ready(loaded) => {
+                    if orbit_core::scripting::story_uses_scripts(&loaded.story) {
+                        if self.config.scripts.is_none() && !cfg!(feature = "script") {
+                            log::error!("{}", crate::scripts::NO_SCRIPTING);
+                            self.phase = Phase::Failed(crate::scripts::NO_SCRIPTING.to_owned());
+                            return;
+                        }
+                        loading.scripts =
+                            Some(crate::scripts::ScriptLoad::start(&self.story_loader, &loaded.story));
+                    }
                     loading.pending = if self.config.lazy_assets {
                         let boot = boot_paths(&loaded.story);
                         log::info!("lazy loading: {} asset(s) before the start", boot.len());
@@ -768,12 +790,18 @@ impl Runtime {
             Some(translations) => translations.poll(&self.story_loader, &translations_dir, &stem),
             None => true,
         };
+        let scripts_done = match loading.scripts.as_mut() {
+            Some(scripts) => scripts.poll(&self.story_loader),
+            None => true,
+        };
         if !self.fonts_ready
             || !translations_done
+            || !scripts_done
             || !loading.pending.iter().all(PendingAsset::is_done)
         {
             return;
         }
+        self.script_modules = loading.scripts.take().map(|s| s.modules);
         let Some(story) = loading.loaded.take() else {
             return;
         };
@@ -930,6 +958,12 @@ impl Runtime {
             cfg,
         ));
         shell.set_plugin_host(self.config.plugins.clone());
+        let scripts = self.config.scripts.clone().or_else(|| {
+            self.script_modules
+                .take()
+                .and_then(crate::scripts::engine)
+        });
+        shell.set_script_host(scripts);
         if let Some(bundle) = &ui {
             shell.set_ui_bundle(bundle);
         }

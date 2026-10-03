@@ -340,7 +340,7 @@ fn current_kind(ctx: &EditorContext<'_>, id: NodeId) -> Option<NodeKind> {
 
 /// A new `Label` at the end of the scene holding `node`, plus the kind that
 /// uses it, as one undo step.
-fn with_new_label(
+pub(super) fn with_new_label(
     ctx: &mut EditorContext<'_>,
     node: NodeId,
     build: impl FnOnce(NodeId) -> NodeKind,
@@ -378,7 +378,7 @@ fn with_new_label(
     }
 }
 
-fn new_label_button(ui: &mut Ui) -> bool {
+pub(super) fn new_label_button(ui: &mut Ui) -> bool {
     ui.small_button(format!("{}  {}", icons::FLAG, ui.t("inspector.new_label")))
         .on_hover_text(ui.t("inspector.new_label.tip"))
         .clicked()
@@ -467,6 +467,11 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
         NodeKind::End => {
             info(ui, "inspector.end_info");
         }
+        NodeKind::Script {
+            source,
+            branches,
+            on_error,
+        } => super::inspector_script::script_node(ui, ctx, id, &source, &branches, on_error),
         NodeKind::Custom { .. } => generic_inspector(ui, ctx, id),
         kind @ (NodeKind::ShowScene3d { .. }
         | NodeKind::Camera3d { .. }
@@ -813,7 +818,14 @@ fn choice(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, options: &[Choic
                 action = Some(Do::Condition(i, on.then(|| Expr::lit(true))));
             }
             if let Some(cond) = &option.condition
-                && let Some(c) = condition_editor(ui, ("choice_cond", id, i), story, cond)
+                && let Some(c) = super::inspector_script::condition_field(
+                    ui,
+                    ctx,
+                    id,
+                    Some(i),
+                    ("choice_cond", id, i),
+                    cond,
+                )
             {
                 action = Some(Do::Condition(i, Some(c)));
             }
@@ -963,7 +975,7 @@ fn add_option(ctx: &mut EditorContext<'_>, id: NodeId, options: &[ChoiceOption])
 /// Condition editor: the no-code builder (variable, comparison, value,
 /// "all / any" groups) when the expression allows it, otherwise (or on
 /// request, "Expression mode") the text form with the parser.
-fn condition_editor(
+pub(super) fn condition_editor(
     ui: &mut Ui,
     salt: impl fields::Salt,
     story: &orbit_core::Story,
@@ -1112,7 +1124,14 @@ fn condition_node(
     let Some(story) = ctx.story() else { return };
     let mut new_cond = None;
     tfield(ui, "inspector.condition", |ui| {
-        new_cond = condition_editor(ui, ("if_cond", id), story, condition);
+        new_cond = super::inspector_script::condition_field(
+            ui,
+            ctx,
+            id,
+            None,
+            ("if_cond", id),
+            condition,
+        );
     });
     let mut new_then = None;
     tfield(ui, "inspector.if.then", |ui| {

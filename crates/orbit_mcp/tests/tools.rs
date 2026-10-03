@@ -83,6 +83,34 @@ fn id_of(value: &Value, pointer: &str) -> String {
 }
 
 #[test]
+fn scripts_can_be_written_checked_tested_and_edited() {
+    let mut f = Fixture::new("scripts");
+    f.ok("create_scene", json!({"name": "s"}));
+    f.ok("declare_variable", json!({"name": "gold", "initial": 3}));
+    f.ok("add_command", json!({"scene": "s", "command": {"type": "label", "name": "win"}}));
+    // A module with an error is refused, nothing written.
+    f.err("write_script_module", json!({"name": "shop", "source": "fn buy( {"}));
+    assert!(!f.dir.join("scripts/shop.rhai").exists());
+    f.ok("write_script_module", json!({"name": "shop", "source": "fn buy() { set_var(\"gold\", get_var(\"gold\") - 1); \"win\" }"}));
+    let added = f.ok("add_command", json!({"scene": "s", "index": 0, "command": {"type": "script",
+        "source": "import \"shop\" as shop;\nshop::buy()", "branches": [{"name": "win", "target": "win"}]}}));
+    let node = id_of(&added, "/node/id");
+    f.err("delete_script_module", json!({"name": "shop"}));
+    let list = f.ok("list_scripts", json!({}));
+    assert_eq!(list["modules"][0]["used_by"][0], json!(node));
+    let run = f.ok("test_script", json!({"node": node}));
+    assert_eq!(run["result"]["branch"], json!("win"));
+    assert_eq!(run["changes"][0]["after"], json!("2"));
+    // A syntax error is located, and refused by set_script.
+    let check = f.ok("check_scripts", json!({"source": "let a = 1;\nlet = 2;"}));
+    assert_eq!(check["diagnostics"][0]["line"], json!(2));
+    f.err("set_script", json!({"node": node, "source": "let = ;"}));
+    f.ok("set_script", json!({"node": node, "source": "\"win\""}));
+    assert_eq!(f.ok("check_scripts", json!({}))["error_count"], json!(0));
+    f.ok("delete_script_module", json!({"name": "shop"}));
+}
+
+#[test]
 fn an_empty_folder_becomes_a_project() {
     let f = Fixture::new("new");
     assert!(f.dir.join("orbit.project.ron").is_file());
@@ -149,7 +177,8 @@ fn tools_advertise_schemas_and_hints() {
             "delete_node",
             "delete_ui_screen",
             "delete_ui_style",
-            "delete_ui_splash"
+            "delete_ui_splash",
+            "delete_script_module"
         ]
     );
     let read_only: Vec<&str> = tools

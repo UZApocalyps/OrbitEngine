@@ -27,10 +27,14 @@ thiserror.workspace = true
 orbit_profile.workspace = true
 orbit_render3d = { workspace = true, optional = true }
 orbit_scene = { path = "../orbit_scene", default-features = false, optional = true }
+orbit_script = { workspace = true, optional = true }
 
 [features]
 # 3D scenes (ADR 0014). Off by default: 2D-only builds and wasm stay unchanged.
 3d = ["dep:orbit_render3d", "dep:orbit_scene", "orbit_scene/ktx2"]
+# Scripts (ADR 0015, M8-01): the Rhai engine. Off by default so that 2D web
+# players of games without scripts do not carry it (see xtask templates).
+script = ["dep:orbit_script"]
 
 [dev-dependencies]
 pollster.workspace = true

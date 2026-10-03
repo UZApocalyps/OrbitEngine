@@ -186,6 +186,11 @@
     "problem.missing_plugin": "Plugin absent : « {plugin} » ; ce nœud est conservé en lecture seule",
     "problem.timeline_key_after_end": "Une clé se trouve après la fin de la chronologie : elle n'est jamais atteinte",
     "problem.invalid_screen_node": "Nœud d'écran : {message}",
+    "problem.invalid_script": "Script : {message}",
+    "problem.script.node": "Script",
+    "problem.script.condition": "Condition Rhai",
+    "problem.script.rhai": "{what} : {place}{message}",
+    "problem.script.module": "{module} : {place}{message}",
     "problem.invalid_stage_node": "Fond en parallaxe ou particules : {message}",
     "problem.unknown_emitter": "Aucun nœud « Particules » ne s'appelle « {name} »",
 }

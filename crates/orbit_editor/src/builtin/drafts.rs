@@ -139,6 +139,12 @@ pub fn builtin_insertables() -> Vec<Insertable> {
             "draft.group.scene",
         ),
         item(
+            "Script",
+            "draft.label.script",
+            icons::CODE,
+            "draft.group.logic",
+        ),
+        item(
             "OpenScreen",
             "draft.label.open_screen",
             icons::BROWSER,
@@ -394,6 +400,21 @@ pub fn drafts_for(
         "Particles" => vec![NodeDraft::plain(NodeKind::Particles(orbit_core::Emitter::preset(
             orbit_core::ParticlePreset::Rain,
         )))],
+        "Script" => {
+            let ok = fresh_label("script");
+            vec![
+                NodeDraft::plain(NodeKind::Script {
+                    source: "branch(\"ok\");
+".to_owned(),
+                    branches: vec![orbit_core::ScriptBranch {
+                        name: "ok".to_owned(),
+                        target: ok.node.id,
+                    }],
+                    on_error: None,
+                }),
+                ok,
+            ]
+        }
         "StopParticles" => vec![NodeDraft::plain(NodeKind::StopParticles { name: String::new() })],
         "OpenScreen" => vec![NodeDraft::plain(NodeKind::OpenScreen {
             screen: String::new(),

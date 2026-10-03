@@ -19,14 +19,14 @@ Commands:
   web           Build orbit_player for wasm32 (release), bundle it + assets/fonts + example stories into target/web/
   serve         Serve target/web/ (or --dir <folder>) on http://127.0.0.1:8080, or --port <n> (blocks until Ctrl+C)
   templates     Build the player templates games are exported with (host OS player, wasm player with wasm-opt)
-                into target/templates/ (web/ 2D player, web3d/ player with 3D scenes).
-                Options: --out <dir> --no-native --no-web --no-web3d --target <triple>
+                into target/templates/ (web/ 2D player, webscript/ 2D player with scripts, web3d/ 3D + scripts).
+                Options: --out <dir> --no-native --no-web --no-web3d --no-webscript --target <triple>
                 --wasm-opt <path> --skip-wasm-opt --check-budget
                 --no-android --android-dex-input <aar|jar> (repeatable)
                 Android (arm64-v8a, + armeabi-v7a / x86_64 when their rust target is installed) is built
                 when cargo-ndk, the NDK and the rust targets are present, and skipped with a message otherwise.
   wasm-budget   Fail if target/templates/web/orbit_player_bg.wasm is over the size budget (--file <wasm>);
-                --3d checks target/templates/web3d/ against the 3D player budget
+                --3d checks target/templates/web3d/ against the 3D player budget, --script webscript/
   check-arch    Verify core crates have no GPU/window deps and compile to wasm32
   bench         Headless reference benchmarks (orbit-editor --bench): writes target/bench/results.json and
                 compares the medians with xtask/bench-baseline.json (informational).
