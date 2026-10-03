@@ -192,7 +192,10 @@ pub fn cargo_version() -> Result<String> {
 }
 
 fn toml_path(p: &Path) -> String {
-    p.display().to_string().replace('\\', "/")
+    // `canonicalize` gives `\\?\C:\…` on Windows, which cargo refuses.
+    let s = p.display().to_string();
+    let s = s.strip_prefix(r"\\?\").unwrap_or(&s);
+    s.replace('\\', "/")
 }
 
 /// Text of the generated `src/plugins.rs`: installs every plugin of every
