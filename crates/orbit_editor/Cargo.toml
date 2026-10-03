@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 orbit_core.workspace = true
+orbit_anim.workspace = true
 orbit_project.workspace = true
 orbit_dsl.workspace = true
 orbit_plugin_api.workspace = true

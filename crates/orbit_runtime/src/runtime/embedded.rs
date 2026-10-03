@@ -540,6 +540,30 @@ impl Runtime {
         self.install(&story, planned, false);
     }
 
+    /// Timeline editor scrubbing: shows the stage with the animation of
+    /// `node` (an `Effect` / `Timeline` node) `seconds` into its playback.
+    /// The game is paused on that node (a playthrough "from here" is started
+    /// when the current one is not already running that animation), so the
+    /// preview shows what the player would see at that moment. Returns
+    /// `false` when the animation could not be shown.
+    pub fn scrub_animation(&mut self, node: NodeId, seconds: f32) -> bool {
+        let running = |rt: &mut Self| match &mut rt.phase {
+            Phase::Running(shell) => shell
+                .game_mut()
+                .is_some_and(|g| g.director.vm_mut().set_anim_elapsed(node, seconds)),
+            _ => false,
+        };
+        if !(self.emb().status != PlayStatus::Stopped && running(self)) {
+            self.play(PlayFrom::Node(node));
+            if !running(self) {
+                return false;
+            }
+        }
+        self.pause();
+        self.emb_mut().dirty = true;
+        true
+    }
+
     /// Starts again from the beginning.
     pub fn restart(&mut self) {
         self.play(PlayFrom::Beginning);

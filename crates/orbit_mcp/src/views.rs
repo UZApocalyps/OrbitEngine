@@ -286,7 +286,7 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
     }
 }
 
-fn describe_target(story: &Story, t: &orbit_core::AnimTarget) -> String {
+pub(crate) fn describe_target(story: &Story, t: &orbit_core::AnimTarget) -> String {
     match t {
         orbit_core::AnimTarget::Camera => "camera".to_owned(),
         orbit_core::AnimTarget::Screen => "screen".to_owned(),

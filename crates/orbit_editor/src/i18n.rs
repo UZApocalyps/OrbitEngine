@@ -43,6 +43,12 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
         include_str!("../locales/fr/inspector.ron"),
     ),
     (
+        "timeline",
+        &["timeline"],
+        include_str!("../locales/en/timeline.ron"),
+        include_str!("../locales/fr/timeline.ron"),
+    ),
+    (
         "graph",
         &["graph"],
         include_str!("../locales/en/graph.ron"),

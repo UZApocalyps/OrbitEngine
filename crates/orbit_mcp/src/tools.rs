@@ -630,6 +630,15 @@ struct AddCommandArgs {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct TimelineSampleArgs {
+    /// Id of an `effect` or `timeline` node.
+    node: String,
+    /// Seconds since the animation started (>= 0).
+    time: f32,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct DeleteNodeArgs {
     /// Node id. Refused while another node still jumps to it.
     node: String,
@@ -2161,6 +2170,58 @@ fn list_variables(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
     Ok(pretty(&variables_json(cx.project.story())))
 }
 
+/// A float as JSON without the f32 noise (`0.2`, not `0.20000000298`).
+fn num(x: f32) -> Json {
+    json!((f64::from(x) * 1e6).round() / 1e6)
+}
+
+fn anim_value_json(v: &orbit_core::AnimValue) -> Json {
+    use orbit_core::AnimValue as V;
+    match v {
+        V::Scalar(x) => num(*x),
+        V::Vec2(p) => json!([num(p.x), num(p.y)]),
+        V::Color(c) => json!([num(c.r), num(c.g), num(c.b), num(c.a)]),
+        V::Angle(a) => num(a.0),
+        V::Name(n) => json!(n),
+    }
+}
+
+fn timeline_sample(cx: &mut ToolCx<'_>, a: TimelineSampleArgs) -> Result<String, ToolError> {
+    let id: NodeId = parse_id(&a.node, "node")?;
+    let story = cx.project.story();
+    let node = story
+        .node(id)
+        .ok_or_else(|| ToolError::not_found(format!("no node {id}")))?;
+    let spec = node
+        .kind
+        .animation()
+        .ok_or_else(|| ToolError::invalid("that node is not an effect or a timeline"))?;
+    if !a.time.is_finite() || a.time < 0.0 {
+        return Err(ToolError::invalid("`time` must be a number of seconds >= 0"));
+    }
+    let values = spec.sample(&story.curves, a.time);
+    let tracks: Vec<Json> = spec
+        .tracks
+        .iter()
+        .zip(&values)
+        .map(|(t, v)| {
+            json!({
+                "target": crate::views::describe_target(story, &t.target),
+                "property": t.prop.name(),
+                "value": v.as_ref().map(anim_value_json),
+            })
+        })
+        .collect();
+    Ok(pretty(&json!({
+        "node": id.to_string(),
+        "time": a.time,
+        "local_time": spec.local_time(a.time),
+        "duration": spec.duration,
+        "finished": spec.is_finished(a.time),
+        "tracks": tracks,
+    })))
+}
+
 fn list_curves(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
     Ok(pretty(&crate::views::curves_json(cx.project.story())))
 }
@@ -2324,6 +2385,13 @@ pub fn builtin_tools() -> Vec<ToolDef> {
             "List the named easing curves of the story (usable as `ease` in transitions), with their definition and how many transitions use them.",
             Kind::Read,
             list_curves,
+        ),
+        def::<TimelineSampleArgs>(
+            "timeline_sample",
+            "Sample an animation",
+            "Value of every track of an Effect or Timeline node at a time (seconds since the node started; loops and ping-pong are folded, a finished animation shows its final values). Values: number (opacity, shake, zoom, rotation in degrees), [x, y] (offset, scale, pan), [r, g, b, a] (tint).",
+            Kind::Read,
+            timeline_sample,
         ),
         def::<SetCurveArgs>(
             "set_curve",
