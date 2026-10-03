@@ -13,7 +13,7 @@ use orbit_assets::{
     decode_image,
 };
 use orbit_audio::{AudioEngine, Bus, MusicOptions, Sound};
-use orbit_core::{Story, TransitionKind};
+use orbit_core::{StageFx, Story, TransitionKind};
 use orbit_i18n::{Localizer, Translation};
 use orbit_pak::{GAME_PACK_ENTRY, GameInfo};
 use orbit_platform::{App, HostRequest, InputEvent, PhysicalSize, Visibility};
@@ -40,7 +40,8 @@ use crate::shell::{AutosaveConfig, Effect, Shell, ShellConfig};
 use crate::splash::{AfterLoad, SplashPhase, SplashState};
 use crate::splash_draw::SplashAssets;
 use crate::stage::{
-    AnimClock, CANVAS, StageCharacter, StageState, character_placement, cover_size, frame_scale,
+    AnimClock, CANVAS, StageCharacter, StageState, animate_background, animate_placement,
+    character_placement, cover_size, frame_scale, screen_overlay,
 };
 use orbit_core::anim::{FrameRef, sheet_cell_size, sheet_uv};
 use orbit_core::AnimFrames;
@@ -1090,6 +1091,7 @@ impl Runtime {
                 shell.story(),
                 &request.stage,
                 None,
+                None,
                 &mut scene,
             );
             let started = renderer
@@ -1228,6 +1230,7 @@ impl Runtime {
                 match shell.game() {
                     Some(game) => {
                         let mut scene = Scene::new();
+                        let fx = game.director.vm().stage_fx();
                         match game.director.transition() {
                             Some(tr) => self.anim_clock.sync([&tr.from, game.director.stage()]),
                             None => self.anim_clock.sync([game.director.stage()]),
@@ -1241,6 +1244,7 @@ impl Runtime {
                                 &game.story,
                                 &tr.from,
                                 Some(&self.anim_clock),
+                                Some((&fx, *white)),
                                 &mut from,
                             );
                             stage_scene(
@@ -1249,6 +1253,7 @@ impl Runtime {
                                 &game.story,
                                 game.director.stage(),
                                 Some(&self.anim_clock),
+                                Some((&fx, *white)),
                                 &mut scene,
                             );
                             renderer.render_to_target(self.targets[0], &from)?;
@@ -1267,6 +1272,7 @@ impl Runtime {
                                 &game.story,
                                 game.director.stage(),
                                 Some(&self.anim_clock),
+                                Some((&fx, *white)),
                                 &mut scene,
                             );
                             out.scene(renderer, &scene)?;
@@ -1665,24 +1671,32 @@ fn character_frame(
 /// Fills `scene` with the stage: opaque black, background (covering the
 /// canvas), then the characters bottom-center anchored at their position.
 /// `anims` gives the animation times (`None`: every animation on frame 0).
+/// `fx` is what the running effects and timelines add on top of the staging,
+/// with the white texture the screen overlay (flash, tint) is drawn with
+/// (`None`: the staging as is).
 fn stage_scene(
     renderer: &Renderer2d,
     store: &AssetStore,
     story: &Story,
     stage: &StageState,
     anims: Option<&AnimClock>,
+    fx: Option<(&StageFx, TextureId)>,
     scene: &mut Scene,
 ) {
     let texture = |id| {
         let path = &story.assets.get(id)?.path;
         store.texture(path)
     };
+    let identity = StageFx::default();
+    let stage_fx = fx.map_or(&identity, |(f, _)| f);
     scene.clear = Some([0.0, 0.0, 0.0, 1.0]);
     if let Some(tex) = stage.background.and_then(texture) {
         let size = renderer.texture_size(tex).map_or(CANVAS, cover_size);
+        let (position, size, tint) = animate_background(size, stage_fx);
         scene.push(
-            Sprite2d::new(tex, [CANVAS[0] * 0.5, CANVAS[1] * 0.5], size)
+            Sprite2d::new(tex, position, size)
                 .anchor([0.5, 0.5])
+                .tint(tint)
                 .layer(Layer::BACKGROUND),
         );
     }
@@ -1691,11 +1705,14 @@ fn stage_scene(
             continue;
         };
         let placement = character_placement(c, frame.reference);
+        let animated = animate_placement(&placement, c.character, stage_fx);
         let fs = frame_scale(frame.size, frame.reference);
         let size = [placement.size[0] * fs[0], placement.size[1] * fs[1]];
-        let mut sprite = Sprite2d::new(frame.texture, placement.anchor, size)
+        let mut sprite = Sprite2d::new(frame.texture, animated.anchor, size)
             .anchor([0.5, 1.0])
-            .scale(placement.scale);
+            .scale(animated.scale)
+            .tint(animated.tint);
+        sprite.rotation = animated.rotation;
         if let Some(uv) = frame.uv {
             sprite = sprite.uv(uv);
         }
@@ -1704,6 +1721,17 @@ fn stage_scene(
                 .flipped(placement.flip_x, placement.flip_y)
                 .layer(Layer::CHARACTERS)
                 .z(i as f32),
+        );
+    }
+    if let Some((f, white)) = fx
+        && let Some(color) = screen_overlay(f)
+    {
+        // Over the characters, under the UI.
+        scene.push(
+            Sprite2d::new(white, [CANVAS[0] * 0.5, CANVAS[1] * 0.5], CANVAS)
+                .anchor([0.5, 0.5])
+                .tint(color)
+                .layer(Layer(15)),
         );
     }
 }

@@ -127,4 +127,6 @@
     "textview.applied.one": "Text applied ({count} change).",
     "textview.applied.other": "Text applied ({count} changes).",
     "textview.nothing_changed": "The text changes nothing.",
+    "draft.label.effect": "Effect (move, shake, zoom…)",
+    "draft.label.timeline": "Timeline",
 }

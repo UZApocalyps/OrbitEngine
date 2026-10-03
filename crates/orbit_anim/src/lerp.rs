@@ -27,6 +27,7 @@ impl Lerp for f32 {
 
 /// A 2D vector (offset, scale, pan...).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Vec2 {
     pub x: f32,
     pub y: f32,
@@ -46,6 +47,7 @@ impl Lerp for Vec2 {
 
 /// Linear RGBA color, components nominally in 0..=1.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Rgba {
     pub r: f32,
     pub g: f32,
@@ -74,6 +76,7 @@ impl Lerp for Rgba {
 
 /// An angle in degrees, interpolated along the shortest arc.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Angle(pub f32);
 
 impl Lerp for Angle {
@@ -96,6 +99,7 @@ impl Lerp for Angle {
 
 /// Discrete value: holds `a` until the end of the segment (staircase).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Step<T>(pub T);
 
 impl<T: Clone> Lerp for Step<T> {
@@ -106,6 +110,7 @@ impl<T: Clone> Lerp for Step<T> {
 
 /// A standalone interpolation between two values over a duration.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Tween<T> {
     pub from: T,
     pub to: T,

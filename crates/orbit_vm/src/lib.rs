@@ -19,6 +19,9 @@ mod vm;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod anim_tests;
+
 pub use error::VmError;
 pub use event::{ChoiceView, PresentationEvent, StepResult};
 pub use history::{
@@ -27,5 +30,5 @@ pub use history::{
 };
 pub use rollback::scene_events;
 pub use seek::{ChoiceStep, SeekLimits, SeekOutcome, SeekPath, seek};
-pub use state::{CharacterOnStage, Interaction, MusicState, Pending, Rng, SceneState, VmState};
-pub use vm::{MAX_CALL_DEPTH, MAX_NODES_PER_STEP, Vm};
+pub use state::{ActiveAnim, CharacterOnStage, Interaction, MusicState, Pending, Rng, SceneState, VmState};
+pub use vm::{MAX_ACTIVE_ANIMS, MAX_CALL_DEPTH, MAX_NODES_PER_STEP, Vm};

@@ -33,11 +33,25 @@
 //! call <label-ref>                               Call
 //! return | end                                   Return / End
 //! custom "<plugin>" <kind> [version <n>] [data <value>]   Custom
+//! move <target> by (<dx>, <dy>) over <s> [ease <curve>] [wait]      Effect::Move
+//! shake <target> <amplitude> over <s> [ease <curve>] [wait]         Effect::Shake
+//! zoom <factor> over <s> [ease <curve>] [wait]                      Effect::Zoom
+//! flash "#rrggbb" over <s> [ease <curve>] [wait]                    Effect::Flash
+//! tint <target> "#rrggbb" <strength> over <s> [ease <curve>] [wait] Effect::Tint
+//! timeline over <s> [loop <n> | forever | pingpong] [wait]          Timeline; tracks follow:
+//!     track <target> <prop> <t> <value> [ease <curve>], <t> <value> ...
 //! ```
 //!
+//! `<target>` is `camera`, `screen`, `background` or a character reference.
+//! `<prop>` is `offset`, `scale`, `pan` (values `(x, y)`), `rotation` (degrees),
+//! `opacity`, `shake`, `zoom` (numbers) or `tint` (`rgba(r, g, b, a)`). A key's
+//! `ease` shapes the segment towards the next key.
+//! `<curve>` is a preset name (`OutQuad`), `bezier(x1, y1, x2, y2)` or a
+//! quoted named curve.
+//!
 //! `<position>` is `left`, `center`, `right`, a quoted custom position name
-//! or `(x, y)`. `<transition>` is `dissolve(<seconds>)` or
-//! `fade(<seconds>, "#rrggbb")`. Characters are named by their display
+//! or `(x, y)`. `<transition>` is `dissolve(<seconds>[, ease <curve>])` or
+//! `fade(<seconds>, "#rrggbb"[, ease <curve>])`. Characters are named by their display
 //! name, assets by their manifest path, scenes by their name and labels by
 //! their name within the scene. Custom data is JSON-like (`null`, `true`,
 //! numbers, strings, `[…]`, `{"key": …}`; floats always carry a `.` or an
@@ -46,8 +60,9 @@
 use std::collections::HashMap;
 
 use orbit_core::{
-    AssetId, CharacterId, CustomData, Expr, Node, NodeId, NodeKind, OpKind, Position, Scene,
-    SceneId, Story, Transition, TransitionKind, VarOp,
+    Angle, AnimLoop, AnimTarget, AnimValue as Value, AssetId, CharacterId, Color, CustomData,
+    Curve, Effect, Expr, Node, NodeId, NodeKind, OpKind, Position, Rgba, Scene, SceneId, Story,
+    StoryTrack, TrackData, Transition, TransitionKind, Vec2, VarOp,
 };
 
 use crate::expr::{fmt_f32, fmt_f64, print_expr};
@@ -92,6 +107,23 @@ pub const KEYWORDS: &[&str] = &[
     "true",
     "false",
     "null",
+    "move",
+    "shake",
+    "zoom",
+    "flash",
+    "tint",
+    "timeline",
+    "track",
+    "by",
+    "over",
+    "ease",
+    "forever",
+    "pingpong",
+    "camera",
+    "screen",
+    "background",
+    "bezier",
+    "rgba",
 ];
 
 /// A name as written in the DSL: bare when possible, quoted otherwise.
@@ -262,20 +294,116 @@ fn transition(t: &Option<Transition>) -> String {
         Some(Transition {
             kind: TransitionKind::Dissolve,
             duration,
-            ..
-        }) => format!(" with dissolve({})", fmt_f32(*duration)),
+            ease,
+        }) => format!(" with dissolve({}{})", fmt_f32(*duration), ease_arg(ease)),
         Some(Transition {
             kind: TransitionKind::Fade(c),
             duration,
-            ..
+            ease,
         }) => format!(
-            " with fade({}, \"#{:02x}{:02x}{:02x}\")",
+            " with fade({}, \"#{:02x}{:02x}{:02x}\"{})",
             fmt_f32(*duration),
             c.r,
             c.g,
-            c.b
+            c.b,
+            ease_arg(ease)
         ),
     }
+}
+
+/// `, ease <curve>` inside a transition, nothing for a linear one.
+fn ease_arg(ease: &Option<Curve>) -> String {
+    match ease {
+        None => String::new(),
+        Some(c) => format!(", ease {}", curve(c)),
+    }
+}
+
+/// A curve: a preset name (`OutQuad`), `bezier(x1, y1, x2, y2)` or a quoted
+/// named curve.
+pub(crate) fn curve(c: &Curve) -> String {
+    match c {
+        Curve::Preset(e) => e.name().to_owned(),
+        Curve::Bezier { p1, p2 } => format!(
+            "bezier({}, {}, {}, {})",
+            fmt_f32(p1[0]),
+            fmt_f32(p1[1]),
+            fmt_f32(p2[0]),
+            fmt_f32(p2[1])
+        ),
+        Curve::Named(name) => quote(name),
+    }
+}
+
+fn hex(c: Color) -> String {
+    format!("\"#{:02x}{:02x}{:02x}\"", c.r, c.g, c.b)
+}
+
+/// ` over <seconds> [ease <curve>] [wait]`, the tail of an effect line.
+fn over(duration: f32, ease: &Option<Curve>, wait: bool) -> String {
+    let mut s = format!(" over {}", fmt_f32(duration));
+    if let Some(c) = ease {
+        s.push_str(&format!(" ease {}", curve(c)));
+    }
+    if wait {
+        s.push_str(" wait");
+    }
+    s
+}
+
+fn anim_target(ctx: &Ctx<'_>, t: &AnimTarget) -> String {
+    match t {
+        AnimTarget::Camera => "camera".into(),
+        AnimTarget::Screen => "screen".into(),
+        AnimTarget::Background => "background".into(),
+        AnimTarget::Character(c) => ctx.character_ref(*c),
+    }
+}
+
+fn value_text(v: &Value) -> Option<String> {
+    Some(match v {
+        Value::Scalar(x) => fmt_f32(*x),
+        Value::Vec2(v) => format!("({}, {})", fmt_f32(v.x), fmt_f32(v.y)),
+        Value::Angle(a) => fmt_f32(a.0),
+        Value::Color(c) => format!(
+            "rgba({}, {}, {}, {})",
+            fmt_f32(c.r),
+            fmt_f32(c.g),
+            fmt_f32(c.b),
+            fmt_f32(c.a)
+        ),
+        Value::Name(_) => return None,
+    })
+}
+
+/// `track <target> <prop> <t> <value> [ease <curve>], ...`; `None` for a track
+/// that has no text form (a discrete track no property accepts).
+fn track_line(ctx: &Ctx<'_>, t: &StoryTrack) -> Option<String> {
+    let mut keys = Vec::new();
+    macro_rules! keys_of {
+        ($track:expr, $wrap:expr) => {
+            for k in &$track.keys {
+                let mut s = format!("{} {}", fmt_f32(k.t), value_text(&$wrap(&k.value))?);
+                if k.ease != Curve::default() {
+                    s.push_str(&format!(" ease {}", curve(&k.ease)));
+                }
+                keys.push(s);
+            }
+        };
+    }
+    match &t.data {
+        TrackData::Scalar(x) => keys_of!(x, |v: &f32| Value::Scalar(*v)),
+        TrackData::Vec2(x) => keys_of!(x, |v: &Vec2| Value::Vec2(*v)),
+        TrackData::Color(x) => keys_of!(x, |v: &Rgba| Value::Color(*v)),
+        TrackData::Angle(x) => keys_of!(x, |v: &Angle| Value::Angle(*v)),
+        TrackData::Name(_) => return None,
+    }
+    Some(format!(
+        "track {} {} {}",
+        anim_target(ctx, &t.target),
+        t.prop.name(),
+        keys.join(", ")
+    ))
 }
 
 fn position(p: &Position) -> String {
@@ -472,6 +600,88 @@ fn write_node(ctx: &Ctx<'_>, scene: SceneId, node: &Node, out: &mut String) {
                 s.push_str(&format!(" data {}", custom_data(data)));
             }
             s
+        }
+        NodeKind::Effect(effect) => match effect {
+            Effect::Move {
+                target,
+                dx,
+                dy,
+                duration,
+                ease,
+                wait,
+            } => format!(
+                "move {} by ({}, {}){}",
+                anim_target(ctx, target),
+                fmt_f32(*dx),
+                fmt_f32(*dy),
+                over(*duration, ease, *wait)
+            ),
+            Effect::Shake {
+                target,
+                amplitude,
+                duration,
+                ease,
+                wait,
+            } => format!(
+                "shake {} {}{}",
+                anim_target(ctx, target),
+                fmt_f32(*amplitude),
+                over(*duration, ease, *wait)
+            ),
+            Effect::Zoom {
+                factor,
+                duration,
+                ease,
+                wait,
+            } => format!(
+                "zoom {}{}",
+                fmt_f32(*factor),
+                over(*duration, ease, *wait)
+            ),
+            Effect::Flash {
+                color,
+                duration,
+                ease,
+                wait,
+            } => format!("flash {}{}", hex(*color), over(*duration, ease, *wait)),
+            Effect::Tint {
+                target,
+                color,
+                strength,
+                duration,
+                ease,
+                wait,
+            } => format!(
+                "tint {} {} {}{}",
+                anim_target(ctx, target),
+                hex(*color),
+                fmt_f32(*strength),
+                over(*duration, ease, *wait)
+            ),
+        },
+        NodeKind::Timeline {
+            duration,
+            looping,
+            wait,
+            tracks,
+        } => {
+            let mut s = format!("timeline over {}", fmt_f32(*duration));
+            match looping {
+                AnimLoop::Once => {}
+                AnimLoop::Loop(n) => s.push_str(&format!(" loop {n}")),
+                AnimLoop::Forever => s.push_str(" forever"),
+                AnimLoop::PingPong => s.push_str(" pingpong"),
+            }
+            if *wait {
+                s.push_str(" wait");
+            }
+            out.push_str(&format!("    {s} #@{}\n", node.id));
+            for t in tracks {
+                if let Some(line) = track_line(ctx, t) {
+                    out.push_str(&format!("        {line}\n"));
+                }
+            }
+            return;
         }
     };
     out.push_str(&format!("    {body} #@{}\n", node.id));

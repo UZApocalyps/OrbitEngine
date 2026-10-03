@@ -3,7 +3,8 @@
 //! the parsed story.
 
 use orbit_core::{
-    AssetEntry, AssetId, AssetKind, BinOp, Character, CharacterId, ChoiceOption, Color, CustomData,
+    AnimLoop, AnimProp, AnimTarget, Angle, AssetEntry, AssetId, AssetKind, BinOp, Character, CharacterId,
+    ChoiceOption, Color, Curve, CustomData, Ease, Effect, Key, Rgba, StoryTrack, Track, TrackData, Vec2,
     Expr, Node, NodeId, NodeKind, Position, Scene, SceneId, Story, Transition, UnOp, Value,
 };
 use orbit_dsl::{Scope, apply, diff, parse, print_scene, print_story};
@@ -83,12 +84,90 @@ fn custom_data() -> impl Strategy<Value = CustomData> {
     })
 }
 
+fn curve() -> impl Strategy<Value = Curve> {
+    prop_oneof![
+        (0..Ease::ALL.len()).prop_map(|i| Curve::Preset(Ease::ALL[i])),
+        (finite_f32(), finite_f32(), finite_f32(), finite_f32())
+            .prop_map(|(a, b, c, d)| Curve::bezier(a, b, c, d)),
+        text().prop_map(Curve::Named),
+    ]
+}
+
 fn transition() -> impl Strategy<Value = Option<Transition>> {
+    let ease = || prop::option::of(curve());
     prop_oneof![
         Just(None),
-        finite_f32().prop_map(|d| Some(Transition::dissolve(d))),
-        (finite_f32(), any::<(u8, u8, u8)>())
-            .prop_map(|(d, (r, g, b))| Some(Transition::fade(Color::rgb(r, g, b), d))),
+        (finite_f32(), ease()).prop_map(|(d, e)| Some(Transition {
+            ease: e,
+            ..Transition::dissolve(d)
+        })),
+        (finite_f32(), any::<(u8, u8, u8)>(), ease()).prop_map(|(d, (r, g, b), e)| Some(Transition {
+            ease: e,
+            ..Transition::fade(Color::rgb(r, g, b), d)
+        })),
+    ]
+}
+
+/// Effects and timelines. `usize`s pick a character (modulo the list).
+#[derive(Clone, Debug)]
+enum FxSpec {
+    Move(AnimSel, f32, f32, f32, Option<Curve>, bool),
+    Shake(AnimSel, f32, f32, Option<Curve>, bool),
+    Zoom(f32, f32, Option<Curve>, bool),
+    Flash((u8, u8, u8), f32, Option<Curve>, bool),
+    Tint(AnimSel, (u8, u8, u8), f32, f32, Option<Curve>, bool),
+    Timeline(f32, u8, u32, bool, Vec<(AnimSel, u8, Vec<(f32, [f32; 4], Option<Curve>)>)>),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AnimSel {
+    Camera,
+    Screen,
+    Background,
+    Character(usize),
+}
+
+fn anim_sel() -> impl Strategy<Value = AnimSel> {
+    prop_oneof![
+        Just(AnimSel::Camera),
+        Just(AnimSel::Screen),
+        Just(AnimSel::Background),
+        any::<usize>().prop_map(AnimSel::Character),
+    ]
+}
+
+fn fx_spec() -> impl Strategy<Value = FxSpec> {
+    let ease = || prop::option::of(curve());
+    let rgb = || any::<(u8, u8, u8)>();
+    prop_oneof![
+        (anim_sel(), finite_f32(), finite_f32(), finite_f32(), ease(), any::<bool>())
+            .prop_map(|(t, x, y, d, e, w)| FxSpec::Move(t, x, y, d, e, w)),
+        (anim_sel(), finite_f32(), finite_f32(), ease(), any::<bool>())
+            .prop_map(|(t, a, d, e, w)| FxSpec::Shake(t, a, d, e, w)),
+        (finite_f32(), finite_f32(), ease(), any::<bool>())
+            .prop_map(|(z, d, e, w)| FxSpec::Zoom(z, d, e, w)),
+        (rgb(), finite_f32(), ease(), any::<bool>())
+            .prop_map(|(c, d, e, w)| FxSpec::Flash(c, d, e, w)),
+        (anim_sel(), rgb(), finite_f32(), finite_f32(), ease(), any::<bool>())
+            .prop_map(|(t, c, s, d, e, w)| FxSpec::Tint(t, c, s, d, e, w)),
+        (
+            finite_f32(),
+            0u8..4,
+            any::<u32>(),
+            any::<bool>(),
+            prop::collection::vec(
+                (
+                    anim_sel(),
+                    any::<u8>(),
+                    prop::collection::vec(
+                        (finite_f32(), [finite_f32(), finite_f32(), finite_f32(), finite_f32()], ease()),
+                        0..4,
+                    ),
+                ),
+                0..4,
+            ),
+        )
+            .prop_map(|(d, l, n, w, t)| FxSpec::Timeline(d, l, n, w, t)),
     ]
 }
 
@@ -135,6 +214,7 @@ enum Spec {
     Return,
     End,
     Custom(String, String, u32, CustomData),
+    Fx(FxSpec),
 }
 
 fn spec() -> impl Strategy<Value = Spec> {
@@ -161,6 +241,7 @@ fn spec() -> impl Strategy<Value = Spec> {
         1 => Just(Spec::Return),
         1 => Just(Spec::End),
         1 => (text(), text(), any::<u32>(), custom_data()).prop_map(|(p, k, v, d)| Spec::Custom(p, k, v, d)),
+        2 => fx_spec().prop_map(Spec::Fx),
     ]
 }
 
@@ -294,6 +375,7 @@ fn build(scenes: Vec<(usize, Vec<Spec>)>) -> Story {
                     version,
                     data,
                 },
+                Spec::Fx(fx) => fx_node(fx, &character),
             };
             nodes.push(Node {
                 id: ids[si][ni],
@@ -307,6 +389,95 @@ fn build(scenes: Vec<(usize, Vec<Spec>)>) -> Story {
         });
     }
     story
+}
+
+fn fx_node(fx: FxSpec, character: &dyn Fn(usize) -> CharacterId) -> NodeKind {
+    let target = |s: AnimSel| match s {
+        AnimSel::Camera => AnimTarget::Camera,
+        AnimSel::Screen => AnimTarget::Screen,
+        AnimSel::Background => AnimTarget::Background,
+        AnimSel::Character(i) => AnimTarget::Character(character(i)),
+    };
+    let color = |(r, g, b): (u8, u8, u8)| Color::rgb(r, g, b);
+    match fx {
+        FxSpec::Move(t, dx, dy, duration, ease, wait) => NodeKind::Effect(Effect::Move {
+            target: target(t),
+            dx,
+            dy,
+            duration,
+            ease,
+            wait,
+        }),
+        FxSpec::Shake(t, amplitude, duration, ease, wait) => NodeKind::Effect(Effect::Shake {
+            target: target(t),
+            amplitude,
+            duration,
+            ease,
+            wait,
+        }),
+        FxSpec::Zoom(factor, duration, ease, wait) => {
+            NodeKind::Effect(Effect::Zoom { factor, duration, ease, wait })
+        }
+        FxSpec::Flash(c, duration, ease, wait) => NodeKind::Effect(Effect::Flash {
+            color: color(c),
+            duration,
+            ease,
+            wait,
+        }),
+        FxSpec::Tint(t, c, strength, duration, ease, wait) => NodeKind::Effect(Effect::Tint {
+            target: target(t),
+            color: color(c),
+            strength,
+            duration,
+            ease,
+            wait,
+        }),
+        FxSpec::Timeline(duration, l, n, wait, tracks) => NodeKind::Timeline {
+            duration,
+            looping: match l {
+                0 => AnimLoop::Once,
+                1 => AnimLoop::Loop(n),
+                2 => AnimLoop::Forever,
+                _ => AnimLoop::PingPong,
+            },
+            wait,
+            tracks: tracks
+                .into_iter()
+                .map(|(t, p, keys)| {
+                    let prop = AnimProp::ALL[p as usize % AnimProp::ALL.len()];
+                    let data = match prop {
+                        AnimProp::Offset | AnimProp::Scale | AnimProp::Pan => {
+                            TrackData::Vec2(Track::new(
+                                keys.into_iter()
+                                    .map(|(t, v, e)| Key::with_ease(t, Vec2::new(v[0], v[1]), e.unwrap_or_default()))
+                                    .collect(),
+                            ))
+                        }
+                        AnimProp::Rotation => TrackData::Angle(Track::new(
+                            keys.into_iter()
+                                .map(|(t, v, e)| Key::with_ease(t, Angle(v[0]), e.unwrap_or_default()))
+                                .collect(),
+                        )),
+                        AnimProp::Opacity | AnimProp::Shake | AnimProp::Zoom => {
+                            TrackData::Scalar(Track::new(
+                                keys.into_iter()
+                                    .map(|(t, v, e)| Key::with_ease(t, v[0], e.unwrap_or_default()))
+                                    .collect(),
+                            ))
+                        }
+                        AnimProp::Tint => TrackData::Color(Track::new(
+                            keys.into_iter()
+                                .map(|(t, v, e)| {
+                                    Key::with_ease(t, Rgba::new(v[0], v[1], v[2], v[3]), e.unwrap_or_default())
+                                })
+                                .collect(),
+                        )),
+                    };
+                    StoryTrack { target: target(t), prop, data }
+                })
+                .collect(),
+        },
+    }
 }
 
 fn story_character(i: usize) -> CharacterId {

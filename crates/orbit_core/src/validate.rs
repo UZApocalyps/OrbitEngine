@@ -74,6 +74,30 @@ struct Cx<'a> {
     warnings: Vec<ValidationWarning>,
 }
 
+fn track_values_finite(data: &orbit_anim::TrackData) -> bool {
+    use orbit_anim::TrackData as T;
+    match data {
+        T::Scalar(t) => t.keys.iter().all(|k| k.value.is_finite()),
+        T::Vec2(t) => t.keys.iter().all(|k| k.value.x.is_finite() && k.value.y.is_finite()),
+        T::Color(t) => t.keys.iter().all(|k| {
+            [k.value.r, k.value.g, k.value.b, k.value.a].iter().all(|v| v.is_finite())
+        }),
+        T::Angle(t) => t.keys.iter().all(|k| k.value.0.is_finite()),
+        T::Name(_) => true,
+    }
+}
+
+fn for_each_ease(data: &orbit_anim::TrackData, f: &mut dyn FnMut(&Curve)) {
+    use orbit_anim::TrackData as T;
+    match data {
+        T::Scalar(t) => t.keys.iter().for_each(|k| f(&k.ease)),
+        T::Vec2(t) => t.keys.iter().for_each(|k| f(&k.ease)),
+        T::Color(t) => t.keys.iter().for_each(|k| f(&k.ease)),
+        T::Angle(t) => t.keys.iter().for_each(|k| f(&k.ease)),
+        T::Name(t) => t.keys.iter().for_each(|k| f(&k.ease)),
+    }
+}
+
 fn valid_duration(seconds: f32) -> bool {
     seconds.is_finite() && seconds >= 0.0
 }
@@ -270,6 +294,73 @@ impl Cx<'_> {
         }
     }
 
+    /// Effects and timelines: finite numbers, known targets, properties that
+    /// fit their target and value type, sorted keys, no blocking infinite
+    /// loop.
+    fn check_animation(&mut self, id: NodeId, kind: &NodeKind) {
+        let Some(spec) = kind.animation() else { return };
+        let bad = |this: &mut Self, message: String| {
+            this.errors
+                .push(ValidationError::InvalidTimeline { node: id, message });
+        };
+        self.check_duration(id, spec.duration);
+        if spec.wait && spec.total_duration().is_none() {
+            self.errors
+                .push(ValidationError::BlockingInfiniteTimeline(id));
+        }
+        if let NodeKind::Effect(e) = kind {
+            if let Some(c) = e.ease() {
+                self.check_curve(CurveOwner::Node(id), c);
+            }
+            let finite = match e {
+                crate::effects::Effect::Move { dx, dy, .. } => dx.is_finite() && dy.is_finite(),
+                crate::effects::Effect::Shake { amplitude, .. } => amplitude.is_finite(),
+                crate::effects::Effect::Zoom { factor, .. } => factor.is_finite() && *factor > 0.0,
+                crate::effects::Effect::Flash { .. } => true,
+                crate::effects::Effect::Tint { strength, .. } => {
+                    strength.is_finite() && (0.0..=1.0).contains(strength)
+                }
+            };
+            if !finite {
+                bad(self, "effect parameter out of range".into());
+            }
+        }
+        for (i, track) in spec.tracks.iter().enumerate() {
+            if let crate::effects::AnimTarget::Character(c) = track.target
+                && self.story.character(c).is_none()
+            {
+                self.errors.push(ValidationError::UnknownCharacter {
+                    node: id,
+                    character: c,
+                });
+            }
+            if !track.prop.applies_to(&track.target) {
+                bad(
+                    self,
+                    format!("track {i}: `{}` does not apply to this target", track.prop.name()),
+                );
+            }
+            if !track.prop.accepts(&track.data) {
+                bad(
+                    self,
+                    format!("track {i}: wrong value type for `{}`", track.prop.name()),
+                );
+            }
+            if let Err(e) = track.data.validate() {
+                bad(self, format!("track {i}: {e}"));
+            }
+            if !track_values_finite(&track.data) {
+                bad(self, format!("track {i}: a key value is not finite"));
+            }
+            if track.data.end_time() > spec.duration + 1e-4 {
+                self.warnings.push(ValidationWarning::TimelineKeyAfterEnd(id));
+            }
+            for_each_ease(&track.data, &mut |c| {
+                self.check_curve(CurveOwner::Node(id), c);
+            });
+        }
+    }
+
     fn check_duration(&mut self, node: NodeId, seconds: f32) {
         if !valid_duration(seconds) {
             self.errors
@@ -426,6 +517,7 @@ impl Cx<'_> {
                     self.check_asset(Some(id), *asset, AssetKind::Sound);
                 }
                 NodeKind::Wait { seconds } => self.check_duration(id, *seconds),
+                NodeKind::Effect(_) | NodeKind::Timeline { .. } => self.check_animation(id, &node.kind),
                 _ => {}
             }
         }

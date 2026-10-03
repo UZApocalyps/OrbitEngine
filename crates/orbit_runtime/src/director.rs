@@ -94,6 +94,8 @@ pub struct Director {
     /// The line or choice on screen (to re-translate it without the VM).
     shown: Option<Interaction>,
     pending: Option<PendingTransition>,
+    /// The blocking `Effect` / `Timeline` the flow is waiting for.
+    anim_wait: Option<orbit_core::NodeId>,
     audio: Vec<AudioCommand>,
     /// The music the host was last asked to play.
     music: Option<MusicState>,
@@ -134,6 +136,7 @@ impl Director {
             flow: Flow::Ended,
             shown: None,
             pending: None,
+            anim_wait: None,
             audio: Vec::new(),
             music: None,
             generation: 0,
@@ -221,6 +224,7 @@ impl Director {
     /// Advances timers (pauses and transitions); resumes the VM when they end.
     pub fn update(&mut self, dt: f32) {
         let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
+        self.vm.advance_clock(f64::from(dt));
         match &mut self.flow {
             Flow::Waiting { remaining } => {
                 *remaining -= dt;
@@ -232,6 +236,7 @@ impl Director {
                 *elapsed += dt;
                 if *elapsed >= *duration {
                     self.pending = None;
+                    self.finish_anim_wait();
                     self.run();
                 }
             }
@@ -247,9 +252,18 @@ impl Director {
             Flow::Say(_) => self.run(),
             Flow::Transition { .. } => {
                 self.pending = None;
+                self.finish_anim_wait();
                 self.run();
             }
             _ => {}
+        }
+    }
+
+    /// Puts the blocking animation the flow was waiting for (if any) at its
+    /// final state: a skip, or the end of the wait (immune to float rounding).
+    fn finish_anim_wait(&mut self) {
+        if let Some(node) = self.anim_wait.take() {
+            self.vm.complete_anim(node);
         }
     }
 
@@ -258,6 +272,7 @@ impl Director {
     pub fn skip_timer(&mut self) {
         if matches!(self.flow, Flow::Waiting { .. } | Flow::Transition { .. }) {
             self.pending = None;
+            self.finish_anim_wait();
             self.run();
         }
     }
@@ -294,6 +309,7 @@ impl Director {
             return false;
         }
         self.pending = None;
+        self.anim_wait = None;
         self.run();
         true
     }
@@ -344,6 +360,7 @@ impl Director {
     /// repeated.
     fn show(&mut self, presentation: Presentation) {
         self.pending = None;
+        self.anim_wait = None;
         self.stage = StageState::default();
         for event in &presentation.events {
             self.stage.apply(event);
@@ -421,6 +438,7 @@ impl Director {
     /// again (rollback, load).
     fn present(&mut self, interaction: Interaction, already_read: bool) {
         self.pending = None; // a transition not waited for is a cut
+        self.anim_wait = None;
         self.flow = self.flow_for(&interaction, already_read);
         self.shown = Some(interaction);
         self.generation += 1;
@@ -505,6 +523,18 @@ impl Director {
                         return;
                     }
                     // Zero-length wait: keep going.
+                }
+                StepResult::WaitAnimation { node, duration } => {
+                    self.pending = None;
+                    if duration.is_finite() && duration > 0.0 {
+                        self.anim_wait = Some(node);
+                        self.flow = Flow::Transition {
+                            elapsed: 0.0,
+                            duration,
+                        };
+                        return;
+                    }
+                    self.vm.complete_anim(node);
                 }
                 StepResult::WaitTransition { duration } => {
                     if self.pending.is_some() && duration > 0.0 && duration.is_finite() {
@@ -931,5 +961,117 @@ mod tests {
             matches!(d.flow(), Flow::Say(_)),
             "a line is left to the player"
         );
+    }
+
+    // -------------------------------------------------- effects and timelines
+
+    /// "a", a blocking 2 s move of the background by 0.4, "b", a non-blocking
+    /// 4 s move by 1.0, "c", "d".
+    fn animated() -> Director {
+        use orbit_core::{AnimTarget, Effect, Node, NodeId, NodeKind, Scene, SceneId};
+        let mut story = Story::new("fx");
+        let mut nodes = Vec::new();
+        fn say(story: &mut Story, nodes: &mut Vec<Node>, t: &str) {
+            let text_id = story.strings.add(t);
+            nodes.push(Node {
+                id: NodeId::new(),
+                kind: NodeKind::Say { speaker: None, text_id },
+            });
+        }
+        say(&mut story, &mut nodes, "a");
+        nodes.push(Node {
+            id: NodeId::new(),
+            kind: NodeKind::Effect(Effect::Move {
+                target: AnimTarget::Background,
+                dx: 0.4,
+                dy: 0.0,
+                duration: 2.0,
+                ease: None,
+                wait: true,
+            }),
+        });
+        say(&mut story, &mut nodes, "b");
+        nodes.push(Node {
+            id: NodeId::new(),
+            kind: NodeKind::Effect(Effect::Move {
+                target: AnimTarget::Camera,
+                dx: 1.0,
+                dy: 0.0,
+                duration: 4.0,
+                ease: None,
+                wait: false,
+            }),
+        });
+        say(&mut story, &mut nodes, "c");
+        say(&mut story, &mut nodes, "d");
+        // The camera "move" is invalid (validation says so) but harmless: use a
+        // background move for the non-blocking one instead.
+        if let NodeKind::Effect(Effect::Move { target, .. }) = &mut nodes[3].kind {
+            *target = AnimTarget::Background;
+        }
+        story.scenes.push(Scene { id: SceneId::new(), name: "s".into(), nodes });
+        Director::new(Vm::from_start(story).unwrap())
+    }
+
+    fn bg_x(d: &Director) -> f32 {
+        d.vm().stage_fx().background.offset[0]
+    }
+
+    #[test]
+    fn a_blocking_effect_waits_then_continues_and_a_click_skips_it() {
+        let mut d = animated();
+        assert!(matches!(d.flow(), Flow::Say(_)));
+        d.advance();
+        // The story waits for the move; it is not a stage transition.
+        assert!(matches!(d.flow(), Flow::Transition { duration, .. } if *duration == 2.0));
+        assert!(d.transition().is_none());
+        d.update(1.0);
+        assert!((bg_x(&d) - 0.2).abs() < 1e-6);
+        d.update(1.5);
+        assert!(matches!(d.flow(), Flow::Say(_)), "{:?}", d.flow());
+        assert_eq!(bg_x(&d), 0.4, "the end of the wait lands exactly on the final value");
+
+        // A click during the wait skips to the same exact state.
+        let mut d = animated();
+        d.advance();
+        d.update(0.3);
+        d.advance();
+        assert!(matches!(d.flow(), Flow::Say(_)));
+        assert_eq!(bg_x(&d), 0.4);
+    }
+
+    #[test]
+    fn rollback_mid_animation_restores_the_phase_and_keeps_running() {
+        let mut d = animated();
+        d.advance();
+        d.skip_timer(); // blocking move done, "b" shown
+        d.advance(); // non-blocking 4 s move starts, "c" shown
+        d.update(1.0);
+        assert!((bg_x(&d) - 0.4 - 0.25).abs() < 1e-6);
+        d.advance(); // "d"
+        d.update(2.0);
+        assert!((bg_x(&d) - 0.4 - 0.75).abs() < 1e-6);
+        // Back to "c": the move is one second old again... no: as it was when
+        // "c" appeared (0 s).
+        assert!(d.rollback(1));
+        assert!((bg_x(&d) - 0.4).abs() < 1e-6);
+        d.update(2.0);
+        assert!((bg_x(&d) - 0.4 - 0.5).abs() < 1e-6);
+        // Back before the move started: nothing of it is left.
+        assert!(d.rollback(1));
+        assert!((bg_x(&d) - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_paused_game_does_not_advance_the_clock() {
+        let mut d = animated();
+        d.advance();
+        d.update(0.5);
+        let before = d.vm().scene_clock();
+        // The host stops calling `update` while paused: nothing moves.
+        assert_eq!(d.vm().scene_clock(), before);
+        d.update(f32::NAN);
+        d.update(-1.0);
+        assert_eq!(d.vm().scene_clock(), before);
     }
 }

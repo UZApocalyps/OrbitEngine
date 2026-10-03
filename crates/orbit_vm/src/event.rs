@@ -32,6 +32,10 @@ pub enum StepResult {
     /// A transition of this duration was started (see the matching
     /// presentation event); call `step()` again when it has finished.
     WaitTransition { duration: f32 },
+    /// A blocking `Effect` / `Timeline` was started: wait `duration` seconds
+    /// of scene clock (`Vm::advance_clock`), then call `step()` again. A
+    /// skip calls `Vm::complete_anim(node)` first.
+    WaitAnimation { node: NodeId, duration: f32 },
     /// The story is over. Further `step()` calls return `End` again.
     End,
     /// Fatal error. The VM stays in this state until `restore()`.

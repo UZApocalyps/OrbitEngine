@@ -240,6 +240,7 @@ pub fn describe_warning(
             texts.format("problem.unknown_curve", &[("name", name)]),
         ),
         W::AllOptionsConditional(n) => (Some(*n), texts.get("problem.all_options_conditional")),
+        W::TimelineKeyAfterEnd(n) => (Some(*n), texts.get("problem.timeline_key_after_end")),
     }
 }
 

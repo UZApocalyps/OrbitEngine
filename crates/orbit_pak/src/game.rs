@@ -298,6 +298,51 @@ mod tests {
     }
 
     #[test]
+    fn effect_and_timeline_nodes_survive_postcard() {
+        use orbit_core::{
+            AnimProp, AnimTarget, Color, Curve, Effect, Ease, Key, Loop, Node, NodeId, NodeKind,
+            StoryTrack, Track, TrackData, Vec2,
+        };
+        let mut pack = fixture_pack();
+        let effects = [
+            Effect::Move { target: AnimTarget::Background, dx: 0.1, dy: -0.2, duration: 1.0, ease: Some(Curve::Preset(Ease::OutBack)), wait: true },
+            Effect::Shake { target: AnimTarget::Camera, amplitude: 0.02, duration: 0.5, ease: None, wait: false },
+            Effect::Zoom { factor: 1.5, duration: 1.0, ease: Some(Curve::Named("snappy".into())), wait: false },
+            Effect::Flash { color: Color::WHITE, duration: 0.3, ease: None, wait: false },
+            Effect::Tint { target: AnimTarget::Screen, color: Color::rgb(255, 0, 0), strength: 0.4, duration: 2.0, ease: None, wait: true },
+        ];
+        let scene = &mut pack.story.scenes[0].nodes;
+        for e in effects {
+            scene.insert(0, Node { id: NodeId::new(), kind: NodeKind::Effect(e) });
+        }
+        scene.insert(
+            0,
+            Node {
+                id: NodeId::new(),
+                kind: NodeKind::Timeline {
+                    duration: 3.0,
+                    looping: Loop::Loop(2),
+                    wait: false,
+                    tracks: vec![StoryTrack {
+                        target: AnimTarget::Background,
+                        prop: AnimProp::Offset,
+                        data: TrackData::Vec2(Track::new(vec![
+                            Key::new(0.0, Vec2::new(0.0, 0.0)),
+                            Key::with_ease(1.5, Vec2::new(0.3, 0.0), Curve::Preset(Ease::InOutQuad)),
+                            Key::new(3.0, Vec2::new(0.0, 0.0)),
+                        ])),
+                    }],
+                },
+            },
+        );
+        pack.story
+            .curves
+            .insert("snappy".into(), Curve::bezier(0.2, 0.0, 0.1, 1.4));
+        let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
+        assert_eq!(back, pack);
+    }
+
+    #[test]
     fn bad_packs_are_refused() {
         assert_eq!(
             GamePack::from_bytes(b"(schema_version: 5)").unwrap_err(),

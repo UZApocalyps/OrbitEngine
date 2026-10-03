@@ -179,4 +179,5 @@
     "problem.scene_ends_game": "The game ends here (the scene has no jump, end or return)",
     "problem.all_options_conditional": "Every option has a condition: the player may get stuck",
     "problem.missing_plugin": "Missing plugin: “{plugin}”; this node is kept read-only",
+    "problem.timeline_key_after_end": "A key lies after the end of the timeline: it is never reached",
 }

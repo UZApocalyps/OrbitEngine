@@ -127,4 +127,5 @@
     "reveal.character_deleted": "personnage supprimé",
     "reveal.variable": "variable {name}",
     "reveal.asset_deleted": "ressource supprimée",
+    "scene.row.timeline": "Chronologie",
 }

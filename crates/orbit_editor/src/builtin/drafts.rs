@@ -109,6 +109,18 @@ pub fn builtin_insertables() -> Vec<Insertable> {
             "draft.group.scene",
         ),
         item(
+            "Effect",
+            "draft.label.effect",
+            icons::SPARKLE,
+            "draft.group.scene",
+        ),
+        item(
+            "Timeline",
+            "draft.label.timeline",
+            icons::FILM_STRIP,
+            "draft.group.scene",
+        ),
+        item(
             "SetVar",
             "draft.label.set_var",
             icons::FUNCTION,
@@ -314,6 +326,26 @@ pub fn drafts_for(
             asset: first_asset(story, AssetKind::Sound)?,
         })],
         "Wait" => vec![NodeDraft::plain(NodeKind::Wait { seconds: 1.0 })],
+        "Effect" => vec![NodeDraft::plain(NodeKind::Effect(orbit_core::Effect::Shake {
+            target: orbit_core::AnimTarget::Camera,
+            amplitude: 0.02,
+            duration: 0.5,
+            ease: None,
+            wait: false,
+        }))],
+        "Timeline" => vec![NodeDraft::plain(NodeKind::Timeline {
+            duration: 2.0,
+            looping: orbit_core::AnimLoop::Once,
+            wait: false,
+            tracks: vec![orbit_core::StoryTrack {
+                target: orbit_core::AnimTarget::Background,
+                prop: orbit_core::AnimProp::Offset,
+                data: orbit_core::TrackData::Vec2(orbit_core::Track::new(vec![
+                    orbit_core::Key::new(0.0, orbit_core::Vec2::new(0.0, 0.0)),
+                    orbit_core::Key::new(2.0, orbit_core::Vec2::new(0.1, 0.0)),
+                ])),
+            }],
+        })],
         "SetVar" => {
             let (var, value) = match story.variables.first() {
                 Some(v) => (v.name.clone(), v.initial.clone()),

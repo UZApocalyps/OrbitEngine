@@ -1,6 +1,6 @@
 //! The stage: what is on screen, as plain data (no GPU).
 
-use orbit_core::{AssetId, CharacterId, Transition};
+use orbit_core::{AssetId, CameraFx, CharacterId, EntityFx, StageFx, Transition};
 use orbit_vm::PresentationEvent;
 
 /// Virtual canvas the stage is laid out in.
@@ -240,10 +240,175 @@ pub fn cover_size(texture: [u32; 2]) -> [f32; 2] {
     [w * scale, h * scale]
 }
 
+// ------------------------------------------------------------ effects
+
+/// A point of the stage seen through the camera: scaled around the canvas
+/// center by the zoom, then shifted by the camera offset (stage units).
+pub fn camera_point(p: [f32; 2], camera: &CameraFx) -> [f32; 2] {
+    let c = [CANVAS[0] * 0.5, CANVAS[1] * 0.5];
+    [
+        c[0] + (p[0] - c[0]) * camera.zoom + camera.offset[0] * CANVAS[0],
+        c[1] + (p[1] - c[1]) * camera.zoom + camera.offset[1] * CANVAS[1],
+    ]
+}
+
+fn srgb_to_linear(c: f32) -> f32 {
+    let c = c.clamp(0.0, 1.0);
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Linear sprite tint for an entity: the opacity in alpha, the overlay as a
+/// multiply that moves white towards the tint color by its strength.
+pub fn entity_tint(fx: &EntityFx) -> [f32; 4] {
+    let [r, g, b, a] = fx.tint;
+    let mix = |c: f32| srgb_to_linear(1.0 + (c - 1.0) * a.clamp(0.0, 1.0));
+    [mix(r), mix(g), mix(b), fx.opacity.clamp(0.0, 1.0)]
+}
+
+/// Linear RGBA of the full-screen overlay (flash, tint), `None` when it is
+/// invisible.
+pub fn screen_overlay(fx: &StageFx) -> Option<[f32; 4]> {
+    let [r, g, b, a] = fx.screen;
+    (a > 0.0).then(|| {
+        [
+            srgb_to_linear(r),
+            srgb_to_linear(g),
+            srgb_to_linear(b),
+            a.clamp(0.0, 1.0),
+        ]
+    })
+}
+
+/// A character placement after the animations: camera, offset, scale,
+/// rotation (radians) and tint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AnimatedPlacement {
+    pub anchor: [f32; 2],
+    pub scale: [f32; 2],
+    pub rotation: f32,
+    pub tint: [f32; 4],
+}
+
+pub fn animate_placement(
+    placement: &CharacterPlacement,
+    character: CharacterId,
+    fx: &StageFx,
+) -> AnimatedPlacement {
+    let e = fx.characters.get(&character).copied().unwrap_or_default();
+    let anchor = camera_point(
+        [
+            placement.anchor[0] + e.offset[0] * CANVAS[0],
+            placement.anchor[1] + e.offset[1] * CANVAS[1],
+        ],
+        &fx.camera,
+    );
+    AnimatedPlacement {
+        anchor,
+        scale: [
+            placement.scale[0] * e.scale[0] * fx.camera.zoom,
+            placement.scale[1] * e.scale[1] * fx.camera.zoom,
+        ],
+        rotation: e.rotation.to_radians(),
+        tint: entity_tint(&e),
+    }
+}
+
+/// The background after the animations: center position, size, tint.
+pub fn animate_background(size: [f32; 2], fx: &StageFx) -> ([f32; 2], [f32; 2], [f32; 4]) {
+    let e = fx.background;
+    let center = camera_point(
+        [
+            CANVAS[0] * 0.5 + e.offset[0] * CANVAS[0],
+            CANVAS[1] * 0.5 + e.offset[1] * CANVAS[1],
+        ],
+        &fx.camera,
+    );
+    let z = fx.camera.zoom;
+    (
+        center,
+        [size[0] * e.scale[0] * z, size[1] * e.scale[1] * z],
+        entity_tint(&e),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use orbit_core::Position;
+
+    #[test]
+    fn no_animation_leaves_the_placement_untouched() {
+        let c = StageCharacter {
+            character: CharacterId::from_u128(1),
+            expression: "a".into(),
+            image: AssetId::from_u128(1),
+            x: 0.25,
+            y: 1.0,
+            scale: [1.0, 1.0],
+            flip_x: false,
+            flip_y: false,
+        };
+        let p = character_placement(&c, [100, 200]);
+        let a = animate_placement(&p, c.character, &StageFx::default());
+        assert_eq!(a.anchor, p.anchor);
+        assert_eq!(a.scale, p.scale);
+        assert_eq!(a.rotation, 0.0);
+        assert_eq!(a.tint, [1.0, 1.0, 1.0, 1.0]);
+        let (pos, size, tint) = animate_background([2000.0, 1100.0], &StageFx::default());
+        assert_eq!((pos, size, tint), ([960.0, 540.0], [2000.0, 1100.0], [1.0; 4]));
+        assert_eq!(screen_overlay(&StageFx::default()), None);
+    }
+
+    #[test]
+    fn the_camera_zooms_around_the_center_and_pans() {
+        let cam = CameraFx { offset: [0.1, 0.0], zoom: 2.0 };
+        assert_eq!(camera_point([960.0, 540.0], &cam), [960.0 + 192.0, 540.0]);
+        assert_eq!(camera_point([0.0, 0.0], &cam), [-960.0 + 192.0, -540.0]);
+    }
+
+    #[test]
+    fn effects_offset_scale_rotate_and_tint_a_character() {
+        let id = CharacterId::from_u128(7);
+        let mut fx = StageFx::default();
+        fx.characters.insert(
+            id,
+            EntityFx {
+                offset: [0.1, -0.1],
+                scale: [2.0, 1.0],
+                rotation: 90.0,
+                opacity: 0.5,
+                tint: [1.0, 0.0, 0.0, 1.0],
+            },
+        );
+        let p = CharacterPlacement {
+            anchor: [100.0, 1000.0],
+            size: [10.0, 20.0],
+            scale: [1.5, 1.5],
+            flip_x: false,
+            flip_y: false,
+        };
+        let a = animate_placement(&p, id, &fx);
+        assert_eq!(a.anchor, [292.0, 892.0]);
+        assert_eq!(a.scale, [3.0, 1.5]);
+        assert!((a.rotation - core::f32::consts::FRAC_PI_2).abs() < 1e-6);
+        assert_eq!(a.tint, [1.0, 0.0, 0.0, 0.5]);
+        // Another character is untouched.
+        let other = animate_placement(&p, CharacterId::from_u128(8), &fx);
+        assert_eq!(other.anchor, p.anchor);
+    }
+
+    #[test]
+    fn the_overlay_is_linear_and_hidden_at_zero_alpha() {
+        let mut fx = StageFx::default();
+        fx.screen = [1.0, 1.0, 1.0, 0.0];
+        assert_eq!(screen_overlay(&fx), None);
+        fx.screen = [1.0, 0.0, 0.0, 0.25];
+        assert_eq!(screen_overlay(&fx), Some([1.0, 0.0, 0.0, 0.25]));
+    }
 
     fn asset(n: u128) -> AssetId {
         AssetId::from_u128(n)

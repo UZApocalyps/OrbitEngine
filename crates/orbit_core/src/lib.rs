@@ -7,6 +7,7 @@
 pub mod anim;
 pub mod custom;
 pub mod defs;
+pub mod effects;
 pub mod error;
 pub mod expr;
 pub mod ids;
@@ -17,6 +18,11 @@ pub mod value;
 pub mod varops;
 
 pub use custom::CustomData;
+pub use effects::{
+    AnimProp, AnimSpec, AnimTarget, CameraFx, Effect, EntityFx, StageFx, StoryTrack, shake_wave,
+};
+pub use orbit_anim::{Angle, Key, Loop, Rgba, Track, TrackData, Value as AnimValue, Vec2};
+pub use orbit_anim::Loop as AnimLoop;
 pub use orbit_anim::{Curve, Ease};
 pub use defs::{
     AnimFrames, Animation, AssetEntry, AssetKind, AssetManifest, Character, Color, Expression,

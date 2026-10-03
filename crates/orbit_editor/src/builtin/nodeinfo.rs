@@ -21,6 +21,8 @@ pub fn kind_key(kind: &NodeKind) -> String {
         NodeKind::StopMusic { .. } => "StopMusic".into(),
         NodeKind::PlaySound { .. } => "PlaySound".into(),
         NodeKind::Wait { .. } => "Wait".into(),
+        NodeKind::Effect(_) => "Effect".into(),
+        NodeKind::Timeline { .. } => "Timeline".into(),
         NodeKind::Call { .. } => "Call".into(),
         NodeKind::Return => "Return".into(),
         NodeKind::End => "End".into(),
@@ -47,6 +49,8 @@ pub fn kind_label(texts: &Translator, kind: &NodeKind) -> String {
         NodeKind::StopMusic { .. } => "node.kind.stop_music",
         NodeKind::PlaySound { .. } => "node.kind.play_sound",
         NodeKind::Wait { .. } => "node.kind.wait",
+        NodeKind::Effect(_) => "node.kind.effect",
+        NodeKind::Timeline { .. } => "node.kind.timeline",
         NodeKind::Call { .. } => "node.kind.call",
         NodeKind::Return => "node.kind.return",
         NodeKind::End => "node.kind.end",
@@ -70,6 +74,8 @@ pub fn kind_icon(kind: &NodeKind) -> &'static str {
         NodeKind::StopMusic { .. } => icons::STOP,
         NodeKind::PlaySound { .. } => icons::SPEAKER_HIGH,
         NodeKind::Wait { .. } => icons::TIMER,
+        NodeKind::Effect(_) => icons::SPARKLE,
+        NodeKind::Timeline { .. } => icons::FILM_STRIP,
         NodeKind::Call { .. } => icons::PHONE_CALL,
         NodeKind::Return => icons::ARROW_U_UP_LEFT,
         NodeKind::End => icons::STOP,
@@ -98,6 +104,7 @@ pub fn kind_color(kind: &NodeKind) -> egui::Color32 {
         | NodeKind::Return
         | NodeKind::End => Color32::from_rgb(98, 190, 168),
         NodeKind::Wait { .. } => Color32::from_rgb(150, 156, 170),
+        NodeKind::Effect(_) | NodeKind::Timeline { .. } => Color32::from_rgb(236, 120, 96),
         NodeKind::Custom { .. } => Color32::from_rgb(232, 110, 160),
     }
 }
@@ -235,6 +242,16 @@ pub fn summary(texts: &Translator, story: &Story, node: &Node) -> String {
         NodeKind::StopMusic { .. } | NodeKind::Return | NodeKind::End => String::new(),
         NodeKind::Wait { seconds } => texts.format("node.summary.wait", &[("seconds", seconds)]),
         NodeKind::Call { label } => format!("→ {}", label_name(story, *label)),
+        NodeKind::Effect(e) => {
+            let (kind, detail) = super::fx_text::effect_row(texts, story, e);
+            format!("{kind}  ·  {detail}")
+        }
+        NodeKind::Timeline {
+            duration,
+            looping,
+            wait,
+            tracks,
+        } => super::fx_text::timeline_detail(texts, *duration, *looping, *wait, tracks),
         NodeKind::Custom {
             plugin_id, kind, ..
         } => format!("{plugin_id}.{kind}"),

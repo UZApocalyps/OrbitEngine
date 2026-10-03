@@ -31,7 +31,7 @@ use super::ui_util::{accent, card, danger, faint, section_title, strong, warning
 pub struct InspectorPlugin;
 
 /// `field` with a translated caption (`key` is a text key).
-fn tfield<R>(ui: &mut Ui, key: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+pub(super) fn tfield<R>(ui: &mut Ui, key: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     let label = ui.t(key);
     field(ui, &label, add)
 }
@@ -323,7 +323,7 @@ fn node_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
 
 /// Replaces the kind of `id` with `kind`; consecutive edits of the same
 /// `field` are one undo step.
-fn commit(ctx: &mut EditorContext<'_>, id: NodeId, kind: NodeKind, field: &str) {
+pub(super) fn commit(ctx: &mut EditorContext<'_>, id: NodeId, kind: NodeKind, field: &str) {
     let command = Command::SetNodeKind {
         id,
         kind,
@@ -438,6 +438,13 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
                 }
             });
         }
+        NodeKind::Effect(effect) => super::inspector_fx::effect(ui, ctx, id, effect),
+        NodeKind::Timeline {
+            duration,
+            looping,
+            wait,
+            tracks,
+        } => super::inspector_fx::timeline(ui, ctx, id, duration, looping, wait, tracks),
         NodeKind::Return => {
             info(ui, "inspector.return_info");
         }
@@ -450,7 +457,7 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
 
 /// A muted paragraph; `key` is a text key (a literal that is not a key is
 /// shown as is).
-fn info(ui: &mut Ui, key: &str) {
+pub(super) fn info(ui: &mut Ui, key: &str) {
     let text = ui.t(key);
     ui.add_space(4.0);
     ui.label(RichText::new(text).color(weak(ui)));
@@ -1450,6 +1457,6 @@ fn generic_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
 }
 
 /// The story's named curves (a snapshot, so the widgets can borrow freely).
-fn curves_of(ctx: &EditorContext<'_>) -> std::collections::BTreeMap<String, orbit_core::Curve> {
+pub(super) fn curves_of(ctx: &EditorContext<'_>) -> std::collections::BTreeMap<String, orbit_core::Curve> {
     ctx.story().map(|s| s.curves.clone()).unwrap_or_default()
 }

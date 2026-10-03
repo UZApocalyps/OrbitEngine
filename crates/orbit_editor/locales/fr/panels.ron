@@ -127,4 +127,6 @@
     "textview.applied.one": "Texte appliqué ({count} changement).",
     "textview.applied.other": "Texte appliqué ({count} changements).",
     "textview.nothing_changed": "Le texte ne change rien.",
+    "draft.label.effect": "Effet (déplacer, secouer, zoomer…)",
+    "draft.label.timeline": "Chronologie",
 }

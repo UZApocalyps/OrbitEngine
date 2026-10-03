@@ -125,7 +125,11 @@ fn run_segment(vm: &mut Vm, target: NodeId, steps: &mut usize, budget: usize) ->
             return Segment::Exhausted;
         }
         *steps += 1;
-        match vm.step_to(target) {
+        let result = vm.step_to(target);
+        // No clock runs here: finite animations count as played to the end
+        // (what a player who waited would see), endless ones sit at phase 0.
+        vm.complete_anims();
+        match result {
             None => return Segment::Reached,
             Some(StepResult::Choice { node, options }) => {
                 return Segment::Choice {
@@ -136,7 +140,8 @@ fn run_segment(vm: &mut Vm, target: NodeId, steps: &mut usize, budget: usize) ->
             Some(StepResult::End | StepResult::Error(_)) => return Segment::Dead,
             Some(StepResult::Say { .. })
             | Some(StepResult::WaitTime(_))
-            | Some(StepResult::WaitTransition { .. }) => {}
+            | Some(StepResult::WaitTransition { .. })
+            | Some(StepResult::WaitAnimation { .. }) => {}
         }
         // Events are of no use here; do not let them pile up.
         vm.take_events();
@@ -266,7 +271,9 @@ mod tests {
         let mut vm = Vm::from_start(story.clone()).unwrap();
         let mut picks = picks.iter();
         for _ in 0..500 {
-            match vm.step_to(target) {
+            let result = vm.step_to(target);
+            vm.complete_anims();
+            match result {
                 None => return vm,
                 Some(StepResult::Choice { .. }) => {
                     let pick = *picks.next().expect("a pick for every choice");

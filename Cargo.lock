@@ -3025,6 +3025,7 @@ name = "orbit_core"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
+ "libm",
  "orbit_anim",
  "ron",
  "schemars",

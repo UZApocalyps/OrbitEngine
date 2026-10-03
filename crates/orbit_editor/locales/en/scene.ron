@@ -127,4 +127,5 @@
     "reveal.character_deleted": "deleted character",
     "reveal.variable": "variable {name}",
     "reveal.asset_deleted": "deleted asset",
+    "scene.row.timeline": "Timeline",
 }

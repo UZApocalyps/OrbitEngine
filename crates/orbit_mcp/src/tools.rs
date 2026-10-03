@@ -424,6 +424,122 @@ pub enum CommandSpec {
         /// Free-form JSON data for the plugin.
         data: Option<Json>,
     },
+    /// A quick animated effect on the stage. Effects are **relative to the
+    /// staging** and add up: `move` shifts by `(dx, dy)` (move by the opposite
+    /// amount to bring it back), `zoom` multiplies the camera zoom, a `shake`
+    /// decays to zero, a `flash` fades out, a `tint` stays until tinted again
+    /// with strength 0. Distances are fractions of the screen size.
+    Effect {
+        /// `move` (a character or the background), `shake` (camera, a
+        /// character or the background), `zoom` (camera), `flash` (screen),
+        /// `tint` (a character, the background or the screen).
+        effect: EffectKindArg,
+        /// `camera`, `screen`, `background`, or a character id or name.
+        /// Default: `camera` for shake, `screen` for tint; required for move.
+        target: Option<String>,
+        /// move: horizontal shift (default 0; +x is right).
+        dx: Option<f32>,
+        /// move: vertical shift (default 0; +y is down).
+        dy: Option<f32>,
+        /// shake: amplitude (default 0.02 = 2% of the screen).
+        amplitude: Option<f32>,
+        /// zoom: factor (default 1.2; 1 = unchanged, must be > 0).
+        factor: Option<f32>,
+        /// flash / tint color: `#rrggbb` or a name (default white for flash, black for tint).
+        color: Option<String>,
+        /// tint: opacity of the color, 0 to 1 (default 0.5; 0 removes an earlier tint).
+        strength: Option<f32>,
+        /// Duration in seconds (default 0.5).
+        duration: Option<f32>,
+        /// Easing: a preset name (`OutQuad`...) or a story curve name (see list_curves). Default: linear.
+        ease: Option<String>,
+        /// Easing as a CSS cubic-bezier `[x1, y1, x2, y2]`. Alternative to `ease`.
+        bezier: Option<[f32; 4]>,
+        /// Wait for the effect to finish before the story goes on (default
+        /// false: it plays while the next lines are read; a click skips a wait).
+        wait: Option<bool>,
+    },
+    /// Parallel keyframe tracks (target x property x keys). Animated values
+    /// are relative to the staging, like `effect`. A timeline that does not
+    /// `wait` keeps playing while the story goes on until the scene changes.
+    Timeline {
+        /// Length of one pass in seconds.
+        duration: f32,
+        /// `once` (default), `loop` (see `repeat`), `forever` or `ping_pong`.
+        /// `forever` and `ping_pong` cannot `wait`.
+        looping: Option<TimelineLoopArg>,
+        /// With `loop`: number of passes (default 2).
+        repeat: Option<u32>,
+        /// Block the story until the end (default false).
+        wait: Option<bool>,
+        tracks: Vec<TrackArg>,
+    },
+}
+
+#[derive(Deserialize, JsonSchema, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectKindArg {
+    Move,
+    Shake,
+    Zoom,
+    Flash,
+    Tint,
+}
+
+#[derive(Deserialize, JsonSchema, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum TimelineLoopArg {
+    Once,
+    Loop,
+    Forever,
+    PingPong,
+}
+
+#[derive(Deserialize, JsonSchema, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackPropArg {
+    /// `[x, y]`, screen fractions; adds up.
+    Offset,
+    /// `[sx, sy]` multiplier; multiplies.
+    Scale,
+    /// Degrees; adds up.
+    Rotation,
+    /// Multiplier 0..1; multiplies.
+    Opacity,
+    /// A color with strength: `{"color": "#rrggbb", "alpha": 0.5}` or `[r, g, b, a]` (0 to 1).
+    Tint,
+    /// Shake amplitude (screen fraction).
+    Shake,
+    /// Camera zoom factor.
+    Zoom,
+    /// Camera pan `[x, y]`.
+    Pan,
+}
+
+/// One track of a timeline.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TrackArg {
+    /// `camera` (pan, zoom, shake), `screen` (tint), `background`, or a
+    /// character id or name (offset, scale, rotation, opacity, tint, shake).
+    /// Background has no rotation.
+    target: String,
+    property: TrackPropArg,
+    /// Keys in increasing time order.
+    keys: Vec<KeyArg>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct KeyArg {
+    /// Seconds from the start of the timeline.
+    t: f32,
+    /// A number, `[x, y]` or a color, depending on the property.
+    value: Json,
+    /// Easing towards the next key: a preset name or a story curve name. Default: linear.
+    ease: Option<String>,
+    /// Easing as a CSS cubic-bezier `[x1, y1, x2, y2]`. Alternative to `ease`.
+    bezier: Option<[f32; 4]>,
 }
 
 /// Name of the IR `NodeKind` variant a command spec produces.
@@ -445,6 +561,8 @@ pub fn spec_variant(spec: &CommandSpec) -> &'static str {
         CommandSpec::Return => "Return",
         CommandSpec::End => "End",
         CommandSpec::Custom { .. } => "Custom",
+        CommandSpec::Effect { .. } => "Effect",
+        CommandSpec::Timeline { .. } => "Timeline",
     }
 }
 
@@ -470,6 +588,8 @@ pub const NODE_KIND_TOOLS: &[(&str, &str)] = &[
     ("Return", "add_command type=return"),
     ("End", "add_command type=end"),
     ("Custom", "add_command type=custom"),
+    ("Effect", "add_command type=effect"),
+    ("Timeline", "add_command type=timeline"),
 ];
 
 #[derive(Deserialize, JsonSchema)]
@@ -1128,7 +1248,285 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
                 data,
             }
         }
+        CommandSpec::Effect { .. } => NodeKind::Effect(build_effect(story, spec)?),
+        CommandSpec::Timeline {
+            duration,
+            looping,
+            repeat,
+            wait,
+            tracks,
+        } => {
+            let duration = seconds("duration", *duration)?;
+            let looping = match looping.unwrap_or(TimelineLoopArg::Once) {
+                TimelineLoopArg::Once => orbit_core::AnimLoop::Once,
+                TimelineLoopArg::Loop => orbit_core::AnimLoop::Loop(repeat.unwrap_or(2)),
+                TimelineLoopArg::Forever => orbit_core::AnimLoop::Forever,
+                TimelineLoopArg::PingPong => orbit_core::AnimLoop::PingPong,
+            };
+            let wait = wait.unwrap_or(false);
+            if wait && matches!(looping, orbit_core::AnimLoop::Forever | orbit_core::AnimLoop::PingPong)
+            {
+                return Err(ToolError::invalid(
+                    "a forever or ping_pong timeline cannot wait: it would block the story",
+                ));
+            }
+            let tracks = tracks
+                .iter()
+                .enumerate()
+                .map(|(i, t)| build_track(story, i, t))
+                .collect::<Result<Vec<_>, _>>()?;
+            NodeKind::Timeline {
+                duration,
+                looping,
+                wait,
+                tracks,
+            }
+        }
     })
+}
+
+fn anim_target(story: &orbit_core::Story, key: &str) -> Result<orbit_core::AnimTarget, ToolError> {
+    use orbit_core::AnimTarget;
+    Ok(match key.trim().to_ascii_lowercase().as_str() {
+        "camera" => AnimTarget::Camera,
+        "screen" => AnimTarget::Screen,
+        "background" => AnimTarget::Background,
+        _ => AnimTarget::Character(find_character(story, key.trim())?),
+    })
+}
+
+fn build_effect(
+    story: &orbit_core::Story,
+    spec: &CommandSpec,
+) -> Result<orbit_core::Effect, ToolError> {
+    use orbit_core::{AnimProp, AnimTarget, Effect};
+    let CommandSpec::Effect {
+        effect,
+        target,
+        dx,
+        dy,
+        amplitude,
+        factor,
+        color,
+        strength,
+        duration,
+        ease,
+        bezier,
+        wait,
+    } = spec
+    else {
+        unreachable!("build_effect is only called for effects");
+    };
+    let duration = duration.unwrap_or(0.5);
+    if !(duration.is_finite() && duration >= 0.0) {
+        return Err(ToolError::invalid(format!(
+            "duration {duration} must be a finite number >= 0"
+        )));
+    }
+    let finite = |label: &str, v: f32| {
+        if v.is_finite() {
+            Ok(v)
+        } else {
+            Err(ToolError::invalid(format!("{label} must be a finite number")))
+        }
+    };
+    let ease = parse_curve(ease.as_deref(), *bezier, story)?;
+    let wait = wait.unwrap_or(false);
+    let target_or = |default: Option<AnimTarget>| -> Result<AnimTarget, ToolError> {
+        match (target, default) {
+            (Some(t), _) => anim_target(story, t),
+            (None, Some(d)) => Ok(d),
+            (None, None) => Err(ToolError::invalid(
+                "`target` is required (background or a character name)",
+            )),
+        }
+    };
+    let built = match effect {
+        EffectKindArg::Move => Effect::Move {
+            target: target_or(None)?,
+            dx: finite("dx", dx.unwrap_or(0.0))?,
+            dy: finite("dy", dy.unwrap_or(0.0))?,
+            duration,
+            ease,
+            wait,
+        },
+        EffectKindArg::Shake => Effect::Shake {
+            target: target_or(Some(AnimTarget::Camera))?,
+            amplitude: finite("amplitude", amplitude.unwrap_or(0.02))?,
+            duration,
+            ease,
+            wait,
+        },
+        EffectKindArg::Zoom => {
+            let factor = finite("factor", factor.unwrap_or(1.2))?;
+            if factor <= 0.0 {
+                return Err(ToolError::invalid("zoom factor must be > 0"));
+            }
+            Effect::Zoom { factor, duration, ease, wait }
+        }
+        EffectKindArg::Flash => Effect::Flash {
+            color: color
+                .as_deref()
+                .map(parse_color)
+                .transpose()?
+                .unwrap_or(orbit_core::Color::WHITE),
+            duration,
+            ease,
+            wait,
+        },
+        EffectKindArg::Tint => {
+            let strength = finite("strength", strength.unwrap_or(0.5))?;
+            if !(0.0..=1.0).contains(&strength) {
+                return Err(ToolError::invalid("tint strength must be within 0..=1"));
+            }
+            Effect::Tint {
+                target: target_or(Some(AnimTarget::Screen))?,
+                color: color
+                    .as_deref()
+                    .map(parse_color)
+                    .transpose()?
+                    .unwrap_or(orbit_core::Color::BLACK),
+                strength,
+                duration,
+                ease,
+                wait,
+            }
+        }
+    };
+    // Same rules as validation, reported now with a helpful message.
+    for t in built.tracks() {
+        if !t.prop.applies_to(&t.target) {
+            let applicable: Vec<&str> = AnimProp::ALL
+                .iter()
+                .filter(|p| p.applies_to(&t.target))
+                .map(|p| p.name())
+                .collect();
+            return Err(ToolError::invalid(format!(
+                "this effect cannot target that ({} supports: {})",
+                match t.target {
+                    AnimTarget::Camera => "the camera",
+                    AnimTarget::Screen => "the screen",
+                    AnimTarget::Background => "the background",
+                    AnimTarget::Character(_) => "a character",
+                },
+                applicable.join(", ")
+            )));
+        }
+    }
+    Ok(built)
+}
+
+fn build_track(
+    story: &orbit_core::Story,
+    index: usize,
+    t: &TrackArg,
+) -> Result<orbit_core::StoryTrack, ToolError> {
+    use orbit_core::{Angle, AnimProp, Key, Rgba, StoryTrack, Track, TrackData, Vec2};
+    let target = anim_target(story, &t.target)?;
+    let prop = match t.property {
+        TrackPropArg::Offset => AnimProp::Offset,
+        TrackPropArg::Scale => AnimProp::Scale,
+        TrackPropArg::Rotation => AnimProp::Rotation,
+        TrackPropArg::Opacity => AnimProp::Opacity,
+        TrackPropArg::Tint => AnimProp::Tint,
+        TrackPropArg::Shake => AnimProp::Shake,
+        TrackPropArg::Zoom => AnimProp::Zoom,
+        TrackPropArg::Pan => AnimProp::Pan,
+    };
+    if !prop.applies_to(&target) {
+        return Err(ToolError::invalid(format!(
+            "track {index}: `{}` does not apply to `{}`",
+            prop.name(),
+            t.target
+        )));
+    }
+    let bad = |what: &str, v: &Json| {
+        ToolError::invalid(format!(
+            "track {index}, `{}` key value {v} is not {what}",
+            prop.name()
+        ))
+    };
+    let num = |v: &Json| {
+        v.as_f64()
+            .filter(|x| x.is_finite())
+            .map(|x| x as f32)
+            .ok_or_else(|| bad("a number", v))
+    };
+    let pair = |v: &Json| -> Result<Vec2, ToolError> {
+        match v.as_array().map(Vec::as_slice) {
+            Some([x, y]) => Ok(Vec2::new(num(x)?, num(y)?)),
+            _ => Err(bad("an [x, y] pair", v)),
+        }
+    };
+    let color = |v: &Json| -> Result<Rgba, ToolError> {
+        if let Some(s) = v.as_str() {
+            let c = parse_color(s)?;
+            return Ok(Rgba::new(
+                f32::from(c.r) / 255.0,
+                f32::from(c.g) / 255.0,
+                f32::from(c.b) / 255.0,
+                1.0,
+            ));
+        }
+        if let Some([r, g, b, a]) = v.as_array().map(Vec::as_slice) {
+            return Ok(Rgba::new(num(r)?, num(g)?, num(b)?, num(a)?));
+        }
+        if let Some(obj) = v.as_object()
+            && let Some(c) = obj.get("color").and_then(Json::as_str)
+        {
+            let c = parse_color(c)?;
+            let alpha = match obj.get("alpha") {
+                Some(a) => num(a)?,
+                None => 1.0,
+            };
+            return Ok(Rgba::new(
+                f32::from(c.r) / 255.0,
+                f32::from(c.g) / 255.0,
+                f32::from(c.b) / 255.0,
+                alpha,
+            ));
+        }
+        Err(bad("a color (`#rrggbb`, `[r, g, b, a]` or `{color, alpha}`)", v))
+    };
+    let mut times = Vec::new();
+    let mut eases = Vec::new();
+    for k in &t.keys {
+        if !(k.t.is_finite() && k.t >= 0.0) {
+            return Err(ToolError::invalid(format!(
+                "track {index}: key time {} must be a finite number >= 0",
+                k.t
+            )));
+        }
+        if times.last().is_some_and(|prev| k.t <= *prev) {
+            return Err(ToolError::invalid(format!(
+                "track {index}: key times must be strictly increasing (got {} after {})",
+                k.t,
+                times.last().copied().unwrap_or(0.0)
+            )));
+        }
+        times.push(k.t);
+        eases.push(parse_curve(k.ease.as_deref(), k.bezier, story)?.unwrap_or_default());
+    }
+    macro_rules! keys {
+        ($read:expr) => {
+            Track::new(
+                t.keys
+                    .iter()
+                    .zip(times.iter().zip(eases.iter()))
+                    .map(|(k, (time, ease))| {
+                        Ok(Key::with_ease(*time, $read(&k.value)?, ease.clone()))
+                    })
+                    .collect::<Result<Vec<_>, ToolError>>()?,
+            )
+        };
+    }
+    let data = match prop {
+        AnimProp::Offset | AnimProp::Scale | AnimProp::Pan => TrackData::Vec2(keys!(pair)),
+        AnimProp::Rotation => TrackData::Angle(keys!(|v: &Json| num(v).map(Angle))),
+        AnimProp::Opacity | AnimProp::Shake | AnimProp::Zoom => TrackData::Scalar(keys!(num)),
+        AnimProp::Tint => TrackData::Color(keys!(color)),
+    };
+    Ok(StoryTrack { target, prop, data })
 }
 
 fn add_command(cx: &mut ToolCx<'_>, a: AddCommandArgs) -> Result<String, ToolError> {

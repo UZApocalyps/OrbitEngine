@@ -8,6 +8,7 @@ use crate::track::Track;
 
 /// What happens when the clip time passes `duration`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Loop {
     #[default]
     Once,
@@ -20,6 +21,7 @@ pub enum Loop {
 
 /// A sampled value.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Value {
     Scalar(f32),
     Vec2(Vec2),
@@ -31,6 +33,7 @@ pub enum Value {
 
 /// A typed track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum TrackData {
     Scalar(Track<f32>),
     Vec2(Track<Vec2>),
@@ -60,7 +63,18 @@ impl TrackData {
         }
     }
 
-    fn sample<'a>(&self, t: f32, r: impl Fn(&str) -> Option<&'a Curve>) -> Option<Value> {
+    pub fn validate(&self) -> Result<(), crate::track::TrackError> {
+        match self {
+            TrackData::Scalar(t) => t.validate(),
+            TrackData::Vec2(t) => t.validate(),
+            TrackData::Color(t) => t.validate(),
+            TrackData::Angle(t) => t.validate(),
+            TrackData::Name(t) => t.validate(),
+        }
+    }
+
+    /// Samples at a time inside one pass (see [`Clip::local_time`]).
+    pub fn sample<'a>(&self, t: f32, r: impl Fn(&str) -> Option<&'a Curve>) -> Option<Value> {
         Some(match self {
             TrackData::Scalar(x) => Value::Scalar(x.sample_with(t, r)?),
             TrackData::Vec2(x) => Value::Vec2(x.sample_with(t, r)?),
@@ -73,6 +87,7 @@ impl TrackData {
 
 /// A channel (key chosen by the caller, e.g. `"offset"`) and its track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ClipTrack {
     pub channel: String,
     pub data: TrackData,
@@ -82,6 +97,7 @@ pub struct ClipTrack {
 pub type Pose = BTreeMap<String, Value>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Clip {
     /// Seconds.
     pub duration: f32,

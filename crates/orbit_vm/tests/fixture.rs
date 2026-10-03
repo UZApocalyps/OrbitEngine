@@ -38,7 +38,9 @@ fn play_from(mut vm: Vm, script: &[&str]) -> (Run, Vm) {
                     .unwrap_or_else(|| panic!("no option {prefix:?} in {texts:?}"));
                 vm.choose(i).unwrap();
             }
-            StepResult::WaitTime(_) | StepResult::WaitTransition { .. } => {}
+            StepResult::WaitTime(_)
+            | StepResult::WaitTransition { .. }
+            | StepResult::WaitAnimation { .. } => {}
             StepResult::End => return (run, vm),
             StepResult::Error(e) => panic!("VM error: {e}"),
         }

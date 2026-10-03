@@ -835,6 +835,7 @@ impl Runtime {
             story,
             stage,
             clock.as_ref(),
+            None,
             &mut scene,
         );
         self.ctx.renderer.render_to_target(target, &scene)

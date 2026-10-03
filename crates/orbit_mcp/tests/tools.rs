@@ -1042,6 +1042,73 @@ fn easing_curves_can_be_listed_created_used_and_deleted() {
 }
 
 #[test]
+fn effects_and_timelines_are_added_checked_and_described() {
+    use orbit_core::{AnimTarget, Effect, NodeKind};
+    let mut f = Fixture::new("effects");
+    f.write_asset_source("incoming/alice.png");
+    let img = f.ok("import_asset", json!({"source": "incoming/alice.png"}));
+    f.ok(
+        "create_character",
+        json!({"name": "Alice", "expressions": [{"name": "happy", "asset": id_of(&img, "/id")}]}),
+    );
+    f.ok("create_scene", json!({"name": "s"}));
+    f.ok("set_curve", json!({"name": "snappy", "bezier": [0.2, 0.0, 0.0, 1.0]}));
+
+    let add = |f: &mut Fixture, command: Value| {
+        f.call("add_command", json!({"scene": "s", "command": command}))
+    };
+    add(&mut f, json!({"type": "effect", "effect": "move", "target": "Alice", "dx": 0.2, "duration": 1.0, "ease": "snappy", "wait": true})).unwrap();
+    add(&mut f, json!({"type": "effect", "effect": "shake"})).unwrap();
+    add(&mut f, json!({"type": "effect", "effect": "zoom", "factor": 1.5, "bezier": [0.1, 0.1, 0.9, 0.9]})).unwrap();
+    add(&mut f, json!({"type": "effect", "effect": "flash", "color": "#ffeecc", "duration": 0.2})).unwrap();
+    add(&mut f, json!({"type": "effect", "effect": "tint", "color": "red", "strength": 0.3})).unwrap();
+    add(&mut f, json!({"type": "timeline", "duration": 3.0, "looping": "loop", "repeat": 2,
+        "tracks": [
+            {"target": "background", "property": "offset", "keys": [
+                {"t": 0.0, "value": [0.0, 0.0]},
+                {"t": 1.5, "value": [0.2, 0.0], "ease": "InOutQuad"},
+                {"t": 3.0, "value": [0.0, 0.0]}]},
+            {"target": "Alice", "property": "opacity", "keys": [{"t": 0, "value": 1.0}, {"t": 3, "value": 0.5}]},
+            {"target": "screen", "property": "tint", "keys": [
+                {"t": 0, "value": {"color": "#000000", "alpha": 0.0}},
+                {"t": 3, "value": [1.0, 0.0, 0.0, 0.5]}]}]})).unwrap();
+
+    let nodes = &f.story().scenes[0].nodes;
+    assert!(matches!(&nodes[0].kind, NodeKind::Effect(Effect::Move { target: AnimTarget::Character(_), wait: true, .. })));
+    assert!(matches!(&nodes[1].kind, NodeKind::Effect(Effect::Shake { target: AnimTarget::Camera, .. })));
+    assert!(matches!(&nodes[5].kind, NodeKind::Timeline { tracks, .. } if tracks.len() == 3));
+    // The story stays valid and the scene reads back in words.
+    assert!(orbit_core::validate(f.story()).errors.is_empty());
+    let text = f.call("read_scene", json!({"scene": "s"})).unwrap();
+    assert!(text.contains("effect move Alice"), "{text}");
+    assert!(text.contains("timeline 3s, loop x2"), "{text}");
+
+    // Refused: a move without target, a rotation on the background, the
+    // camera as a move target, unsorted keys, a waiting endless timeline,
+    // a bad tint strength, bad key values.
+    for bad in [
+        json!({"type": "effect", "effect": "move", "dx": 0.1}),
+        json!({"type": "effect", "effect": "move", "target": "camera", "dx": 0.1}),
+        json!({"type": "effect", "effect": "tint", "strength": 2.0}),
+        json!({"type": "effect", "effect": "zoom", "factor": 0.0}),
+        json!({"type": "effect", "effect": "shake", "duration": -1.0}),
+        json!({"type": "timeline", "duration": 1.0, "looping": "forever", "wait": true, "tracks": []}),
+        json!({"type": "timeline", "duration": 1.0, "tracks": [
+            {"target": "background", "property": "rotation", "keys": []}]}),
+        json!({"type": "timeline", "duration": 1.0, "tracks": [
+            {"target": "background", "property": "opacity",
+             "keys": [{"t": 1.0, "value": 1.0}, {"t": 0.5, "value": 0.0}]}]}),
+        json!({"type": "timeline", "duration": 1.0, "tracks": [
+            {"target": "background", "property": "offset", "keys": [{"t": 0.0, "value": 3}]}]}),
+    ] {
+        assert!(add(&mut f, bad.clone()).is_err(), "{bad}");
+    }
+    assert_eq!(f.story().scenes[0].nodes.len(), 6, "refused calls change nothing");
+    f.ok("save", json!({}));
+    assert_eq!(&f.on_disk(), f.story());
+}
+
+#[test]
 fn story_survives_a_restart() {
     let mut f = Fixture::new("restart");
     build_story(&mut f);

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use orbit_anim::Curve;
+use orbit_anim::{Curve, Loop};
 use serde::{Deserialize, Serialize};
 
 use crate::custom::CustomData;
@@ -10,6 +10,7 @@ use crate::defs::{
     AssetManifest, Character, Position, PositionDef, StringTable, Transition, VarDecl,
     builtin_position,
 };
+use crate::effects::{Effect, StoryTrack};
 use crate::error::CoreError;
 use crate::expr::Expr;
 use crate::ids::{AssetId, CharacterId, NodeId, SceneId, StringId};
@@ -185,6 +186,21 @@ pub enum NodeKind {
         version: u32,
         #[serde(default)]
         data: CustomData,
+    },
+    /// A simple animated effect (move, shake, zoom, flash, tint), schema v9.
+    /// Compiled to a small timeline by [`Effect::tracks`].
+    Effect(Effect),
+    /// Parallel keyframe tracks (schema v9). `wait` blocks the story until
+    /// the end; otherwise the animation runs while the story goes on.
+    /// `Loop::Forever` / `PingPong` require `wait: false`.
+    Timeline {
+        /// Seconds of one pass.
+        duration: f32,
+        #[serde(default)]
+        looping: Loop,
+        #[serde(default)]
+        wait: bool,
+        tracks: Vec<StoryTrack>,
     },
 }
 
@@ -362,6 +378,7 @@ const DEFAULT_LINES: [&str; 5] = [
     "flip_x: false,",
     "flip_y: false,",
     "default_scale: 1.0,",
+
 ];
 
 fn strip_default_fields(ron: &str) -> String {

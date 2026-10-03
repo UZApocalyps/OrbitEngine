@@ -225,6 +225,102 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
             "custom {plugin_id}/{kind} v{version} {}",
             custom_to_json(data)
         ),
+        NodeKind::Effect(e) => describe_effect(story, e),
+        NodeKind::Timeline {
+            duration,
+            looping,
+            wait,
+            tracks,
+        } => {
+            let looping = match looping {
+                orbit_core::AnimLoop::Once => String::new(),
+                orbit_core::AnimLoop::Loop(n) => format!(", loop x{n}"),
+                orbit_core::AnimLoop::Forever => ", forever".to_owned(),
+                orbit_core::AnimLoop::PingPong => ", ping-pong".to_owned(),
+            };
+            let tracks: Vec<String> = tracks
+                .iter()
+                .map(|t| {
+                    format!(
+                        "{} {} ({} key(s))",
+                        describe_target(story, &t.target),
+                        t.prop.name(),
+                        match &t.data {
+                            orbit_core::TrackData::Scalar(x) => x.keys.len(),
+                            orbit_core::TrackData::Vec2(x) => x.keys.len(),
+                            orbit_core::TrackData::Color(x) => x.keys.len(),
+                            orbit_core::TrackData::Angle(x) => x.keys.len(),
+                            orbit_core::TrackData::Name(x) => x.keys.len(),
+                        }
+                    )
+                })
+                .collect();
+            format!(
+                "timeline {duration}s{looping}{}: {}",
+                if *wait { ", waits" } else { "" },
+                if tracks.is_empty() {
+                    "no track".to_owned()
+                } else {
+                    tracks.join("; ")
+                }
+            )
+        }
+    }
+}
+
+fn describe_target(story: &Story, t: &orbit_core::AnimTarget) -> String {
+    match t {
+        orbit_core::AnimTarget::Camera => "camera".to_owned(),
+        orbit_core::AnimTarget::Screen => "screen".to_owned(),
+        orbit_core::AnimTarget::Background => "background".to_owned(),
+        orbit_core::AnimTarget::Character(c) => character_name(story, *c),
+    }
+}
+
+fn describe_curve(c: &orbit_core::Curve) -> String {
+    match c {
+        orbit_core::Curve::Preset(e) => e.name().to_owned(),
+        orbit_core::Curve::Bezier { p1, p2 } => {
+            format!("cubic-bezier({}, {}, {}, {})", p1[0], p1[1], p2[0], p2[1])
+        }
+        orbit_core::Curve::Named(n) => format!("`{n}`"),
+    }
+}
+
+fn describe_effect(story: &Story, e: &orbit_core::Effect) -> String {
+    use orbit_core::Effect;
+    let tail = |duration: f32, ease: &Option<orbit_core::Curve>, wait: bool| {
+        format!(
+            " over {duration}s{}{}",
+            ease.as_ref()
+                .map_or_else(String::new, |c| format!(" eased {}", describe_curve(c))),
+            if wait { ", waits" } else { "" }
+        )
+    };
+    let hex = |c: orbit_core::Color| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
+    match e {
+        Effect::Move { target, dx, dy, duration, ease, wait } => format!(
+            "effect move {} by ({dx}, {dy}){}",
+            describe_target(story, target),
+            tail(*duration, ease, *wait)
+        ),
+        Effect::Shake { target, amplitude, duration, ease, wait } => format!(
+            "effect shake {} amplitude {amplitude}{}",
+            describe_target(story, target),
+            tail(*duration, ease, *wait)
+        ),
+        Effect::Zoom { factor, duration, ease, wait } => {
+            format!("effect zoom x{factor}{}", tail(*duration, ease, *wait))
+        }
+        Effect::Flash { color, duration, ease, wait } => {
+            format!("effect flash {}{}", hex(*color), tail(*duration, ease, *wait))
+        }
+        Effect::Tint { target, color, strength, duration, ease, wait } => format!(
+            "effect tint {} {} strength {strength}{}",
+            describe_target(story, target),
+            hex(*color),
+            tail(*duration, ease, *wait)
+        ),
     }
 }
 
@@ -489,6 +585,7 @@ pub fn simulate(
                 let _ = writeln!(out, "> chose [{index}] {}", texts[index]);
             }
             StepResult::WaitTime(_) | StepResult::WaitTransition { .. } => {}
+            StepResult::WaitAnimation { node, .. } => vm.complete_anim(node),
             StepResult::End => {
                 ended = "story ended";
                 break;

@@ -4,17 +4,34 @@ use crate::curve::Curve;
 use crate::lerp::Lerp;
 
 /// A keyframe. `ease` shapes the segment going from this key to the next.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Key<T> {
     /// Seconds, relative to the clip start.
     pub t: f32,
     pub value: T,
-    #[serde(default, skip_serializing_if = "is_linear")]
+    #[serde(default)]
     pub ease: Curve,
 }
 
-fn is_linear(c: &Curve) -> bool {
-    *c == Curve::default()
+/// Written by hand (instead of `skip_serializing_if`): the linear `ease` is
+/// only left out of *human readable* formats. A binary, non self-describing
+/// format such as the postcard game pack must always write it, or the reader
+/// would misalign.
+impl<T: Serialize> Serialize for Key<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let write_ease = !serializer.is_human_readable() || self.ease != Curve::default();
+        let mut st = serializer.serialize_struct("Key", 2 + usize::from(write_ease))?;
+        st.serialize_field("t", &self.t)?;
+        st.serialize_field("value", &self.value)?;
+        if write_ease {
+            st.serialize_field("ease", &self.ease)?;
+        } else {
+            st.skip_field("ease")?;
+        }
+        st.end()
+    }
 }
 
 impl<T> Key<T> {
@@ -48,6 +65,7 @@ impl core::error::Error for TrackError {}
 
 /// Keys sorted by strictly increasing time.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct Track<T> {
     pub keys: Vec<Key<T>>,

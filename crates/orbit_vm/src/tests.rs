@@ -138,6 +138,7 @@ fn tick(vm: &mut Vm, pick: &mut dyn FnMut(usize) -> usize, out: &mut Vec<String>
         }
         StepResult::WaitTime(s) => out.push(format!("wait {s}")),
         StepResult::WaitTransition { duration } => out.push(format!("transition {duration}")),
+        StepResult::WaitAnimation { duration, .. } => out.push(format!("animation {duration}")),
         StepResult::End => out.push("end".into()),
         StepResult::Error(e) => out.push(format!("error {e}")),
     }

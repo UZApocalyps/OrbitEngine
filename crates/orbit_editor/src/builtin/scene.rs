@@ -1182,6 +1182,16 @@ fn describe(texts: &orbit_editor_api::Translator, story: &Story, node: &Node) ->
         NodeKind::PlaySound { asset: a } => (texts.t("scene.row.sound"), asset(*a)),
         NodeKind::Wait { seconds } => (texts.t("scene.row.wait"), format!("{seconds} s")),
         NodeKind::Call { label: l } => (texts.t("scene.row.call"), label(*l)),
+        NodeKind::Effect(e) => super::fx_text::effect_row(texts, story, e),
+        NodeKind::Timeline {
+            duration,
+            looping,
+            wait,
+            tracks,
+        } => (
+            texts.t("scene.row.timeline"),
+            super::fx_text::timeline_detail(texts, *duration, *looping, *wait, tracks),
+        ),
         NodeKind::Return => (texts.t("scene.row.return"), String::new()),
         NodeKind::End => (texts.t("scene.row.end"), String::new()),
         NodeKind::Custom {

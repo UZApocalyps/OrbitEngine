@@ -16,6 +16,12 @@ pub const MAX_NODES_PER_STEP: usize = 10_000;
 /// Maximum depth of nested `Call`s.
 pub const MAX_CALL_DEPTH: usize = 256;
 
+/// Animations kept at once (finished ones stay until the scene changes).
+pub const MAX_ACTIVE_ANIMS: usize = 256;
+/// Seconds past the end `complete_anim` puts an animation, so that rounding
+/// to `f32` can never leave it just short of its final state.
+const COMPLETE_MARGIN: f64 = 1e-3;
+
 const DEFAULT_SEED: u64 = 0x0B17_0B17_0B17_0B17;
 
 /// A deterministic, non-blocking story interpreter.
@@ -104,6 +110,8 @@ impl Vm {
                 scene: Default::default(),
                 rng: Rng::new(seed),
                 shown: None,
+                active_anims: Vec::new(),
+                scene_clock: 0.0,
             },
             read: BTreeSet::new(),
             events: Vec::new(),
@@ -318,6 +326,7 @@ impl Vm {
                     if story.scene(*scene).is_none() {
                         return Err(VmError::UnknownScene(*scene));
                     }
+                    self.clear_anims();
                     match label {
                         Some(l) => self.jump(*l)?,
                         // An empty scene has nothing to run: the story ends.
@@ -443,6 +452,9 @@ impl Vm {
                     transition,
                 } => {
                     self.state.pc = next;
+                    // Animations of a character that leaves must not follow
+                    // it back on stage.
+                    self.drop_anims_of(&story, *character);
                     let before = self.state.scene.characters.len();
                     self.state
                         .scene
@@ -507,6 +519,24 @@ impl Vm {
                     self.state.pc = back;
                 }
                 NodeKind::End => self.state.pc = None,
+                NodeKind::Effect(_) | NodeKind::Timeline { .. } => {
+                    self.state.pc = next;
+                    if let Some(spec) = node.kind.animation() {
+                        self.start_anim(pc);
+                        // A blocking animation waits its whole length; an
+                        // endless one cannot block (validation refuses it).
+                        if spec.wait
+                            && let Some(duration) = spec.total_duration()
+                            && duration > 0.0
+                            && duration.is_finite()
+                        {
+                            return Ok(Some(StepResult::WaitAnimation {
+                                node: pc,
+                                duration,
+                            }));
+                        }
+                    }
+                }
                 NodeKind::Custom {
                     plugin_id,
                     kind,
@@ -629,10 +659,115 @@ impl Vm {
         self.state.pc = target.nodes.first().map(|n| n.id);
         self.state.pending = Pending::None;
         self.state.call_stack.clear();
+        self.clear_anims();
         self.fault = None;
         self.events.clear();
         self.history.on_goto();
         Ok(())
+    }
+
+    // ------------------------------------------------------------ animations
+
+    /// Seconds of game time since the scene was entered.
+    pub fn scene_clock(&self) -> f64 {
+        self.state.scene_clock
+    }
+
+    /// Advances the scene clock by `dt` seconds (the host calls this each
+    /// frame the game is not paused). Negative and non-finite values are
+    /// ignored.
+    pub fn advance_clock(&mut self, dt: f64) {
+        if dt.is_finite() && dt > 0.0 {
+            self.state.scene_clock += dt;
+        }
+    }
+
+    /// Running and finished animations of the current scene, in start order.
+    pub fn active_anims(&self) -> &[crate::state::ActiveAnim] {
+        &self.state.active_anims
+    }
+
+    /// The animating nodes and their elapsed seconds, in start order. Nodes
+    /// that vanished from the story are skipped.
+    pub fn anim_items(&self) -> Vec<(&NodeKind, f32)> {
+        let clock = self.state.scene_clock;
+        self.state
+            .active_anims
+            .iter()
+            .filter_map(|a| {
+                let node = self.node(a.node).ok()?;
+                node.kind
+                    .animation()
+                    .map(|_| (&node.kind, (clock - a.started_at).max(0.0) as f32))
+            })
+            .collect()
+    }
+
+    /// What the running animations add on top of the staging right now.
+    pub fn stage_fx(&self) -> orbit_core::StageFx {
+        orbit_core::StageFx::compose(&self.story.curves, self.anim_items())
+    }
+
+    /// Whether the animation started by `node` has reached its end (`true`
+    /// for a node that is not running).
+    pub fn anim_finished(&self, node: NodeId) -> bool {
+        let Some(a) = self.state.active_anims.iter().find(|a| a.node == node) else {
+            return true;
+        };
+        let Ok(n) = self.node(node) else { return true };
+        let elapsed = (self.state.scene_clock - a.started_at).max(0.0) as f32;
+        n.kind.animation().is_none_or(|s| s.is_finished(elapsed))
+    }
+
+    /// Skip: puts the animation started by `node` at its final state. Endless
+    /// animations are left alone (they are decoration).
+    pub fn complete_anim(&mut self, node: NodeId) {
+        let Ok(n) = self.node(node) else { return };
+        let Some(total) = n.kind.animation().and_then(|s| s.total_duration()) else {
+            return;
+        };
+        let latest = self.state.scene_clock - f64::from(total) - COMPLETE_MARGIN;
+        if let Some(a) = self.state.active_anims.iter_mut().find(|a| a.node == node)
+            && a.started_at > latest
+        {
+            a.started_at = latest;
+        }
+    }
+
+    /// Skip: every finite animation jumps to its final state.
+    pub fn complete_anims(&mut self) {
+        let nodes: Vec<NodeId> = self.state.active_anims.iter().map(|a| a.node).collect();
+        for node in nodes {
+            self.complete_anim(node);
+        }
+    }
+
+    fn start_anim(&mut self, node: NodeId) {
+        let anims = &mut self.state.active_anims;
+        anims.retain(|a| a.node != node);
+        anims.push(crate::state::ActiveAnim {
+            node,
+            started_at: self.state.scene_clock,
+        });
+        if anims.len() > MAX_ACTIVE_ANIMS {
+            anims.remove(0);
+        }
+    }
+
+    /// A scene change: animations stop and the clock restarts.
+    fn clear_anims(&mut self) {
+        self.state.active_anims.clear();
+        self.state.scene_clock = 0.0;
+    }
+
+    fn drop_anims_of(&mut self, story: &Story, character: orbit_core::CharacterId) {
+        let index = &self.index;
+        self.state.active_anims.retain(|a| {
+            index
+                .get(&a.node)
+                .map(|&(s, n)| &story.scenes[s].nodes[n].kind)
+                .is_none_or(|k| !k.animates_character(character))
+        });
     }
 
     /// Evaluates a no-code condition against the current variables. An
@@ -779,6 +914,18 @@ impl Vm {
                 .is_some_and(|def| def.expression(&c.expression).is_some())
                 && story.resolve_position(&c.position).is_some()
         });
+        // An animation whose node is gone (or no longer animates) is dropped
+        // silently: the story was edited since the save.
+        let index = &self.index;
+        state.active_anims.retain(|a| {
+            index
+                .get(&a.node)
+                .is_some_and(|&(s, n)| story.scenes[s].nodes[n].kind.animation().is_some())
+        });
+        if !state.scene_clock.is_finite() || state.scene_clock < 0.0 {
+            state.scene_clock = 0.0;
+        }
+        state.active_anims.truncate(MAX_ACTIVE_ANIMS);
     }
 
     /// Replaces the state with `state` (taken from a VM running the same

@@ -113,7 +113,40 @@ fn command_fields_match_the_ir_fields() {
     let schema = ir_schema();
     for (ty, fields) in add_command_variants() {
         let variant = snake_to_pascal(&ty);
+        if variant == "Effect" {
+            // `NodeKind::Effect(Effect)` wraps an enum: the command is one
+            // flat form of its variants, plus the `effect` selector and the
+            // `bezier` alternative to `ease`.
+            let union: BTreeSet<String> = schema
+                .pointer("/$defs/Effect/oneOf")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .flat_map(|v| {
+                    v.pointer("/properties")
+                        .and_then(Value::as_object)
+                        .into_iter()
+                        .flat_map(|o| o.values())
+                        .flat_map(|inner| {
+                            inner
+                                .pointer("/properties")
+                                .and_then(Value::as_object)
+                                .into_iter()
+                                .flat_map(|p| p.keys().cloned())
+                        })
+                })
+                .collect();
+            let mut expected = union;
+            expected.extend(["effect", "bezier"].map(String::from));
+            assert_eq!(fields, expected, "`add_command type=effect` vs IR Effect");
+            continue;
+        }
         let ir_fields = ir_variant_fields(&schema, &variant);
+        // `repeat` is the pass count of the IR's `looping: Loop(n)`.
+        let mut fields = fields;
+        if variant == "Timeline" {
+            fields.remove("repeat");
+        }
         assert_eq!(
             fields, ir_fields,
             "`add_command type={ty}` takes different fields than IR NodeKind::{variant}"

@@ -95,6 +95,8 @@ impl From<VmStateV1> for VmState {
             scene: old.scene.into(),
             rng: old.rng,
             shown: old.shown,
+            active_anims: Vec::new(),
+            scene_clock: 0.0,
         }
     }
 }

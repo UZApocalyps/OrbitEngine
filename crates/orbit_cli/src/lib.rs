@@ -374,6 +374,12 @@ fn play(
                         writeln!(out, "  [transition {duration}s]")?;
                         continue;
                     }
+                    StepResult::WaitAnimation { node, duration } => {
+                        writeln!(out, "  [animation {duration}s]")?;
+                        // No clock runs in the terminal: play it to its end.
+                        vm.complete_anim(node);
+                        continue;
+                    }
                     StepResult::End => {
                         writeln!(out, "[end]")?;
                         let data = PersistentData::from_vm(&vm);

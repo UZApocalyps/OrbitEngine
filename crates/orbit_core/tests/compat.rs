@@ -10,7 +10,7 @@ macro_rules! frozen {
     };
 }
 
-const FROZEN: [(u32, &str); 8] = frozen!(1, 2, 3, 4, 5, 6, 7, 8);
+const FROZEN: [(u32, &str); 9] = frozen!(1, 2, 3, 4, 5, 6, 7, 8, 9);
 
 #[test]
 fn every_frozen_story_migrates_validates_and_roundtrips() {

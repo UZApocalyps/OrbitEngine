@@ -134,6 +134,24 @@ pub struct VmState {
     /// The last line / choice presented to the player (what is on screen).
     #[serde(default)]
     pub shown: Option<Interaction>,
+    /// Running (or finished, until the scene changes) `Effect` / `Timeline`
+    /// nodes, in start order (save format 3). The VM only knows *when* they
+    /// started; the values come from sampling the node at
+    /// `scene_clock - started_at`.
+    #[serde(default)]
+    pub active_anims: Vec<ActiveAnim>,
+    /// Seconds of game time since the current scene was entered, advanced by
+    /// the host (`Vm::advance_clock`), frozen in pauses.
+    #[serde(default)]
+    pub scene_clock: f64,
+}
+
+/// An animation started by an `Effect` / `Timeline` node.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ActiveAnim {
+    pub node: NodeId,
+    /// `scene_clock` when the node ran.
+    pub started_at: f64,
 }
 
 impl VmState {

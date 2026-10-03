@@ -10,8 +10,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use orbit_core::{
-    AssetId, CharacterId, ChoiceOption, Color, CustomData, Expr, Node, NodeId, NodeKind, Position,
-    Scene, SceneId, Story, StringId, Transition,
+    AnimLoop, AnimProp, AnimTarget, AssetId, CharacterId, ChoiceOption, Color, CustomData, Curve,
+    Ease, Effect, Expr, Key, Node, NodeId, NodeKind, Position, Rgba, Scene, SceneId, Story,
+    StoryTrack, StringId, Track, TrackData, Transition, Vec2, Angle,
 };
 
 use crate::expr::{number, parse_expr};
@@ -125,12 +126,75 @@ enum Raw {
         version: u32,
         data: CustomData,
     },
+    Effect(RawEffect),
+    Timeline {
+        duration: f32,
+        looping: AnimLoop,
+        wait: bool,
+        tracks: Vec<RawTrack>,
+    },
+}
+
+/// What an effect or a track animates, before character names are resolved.
+#[derive(Clone, Debug)]
+enum RawTarget {
+    Camera,
+    Screen,
+    Background,
+    Character(Ref),
+}
+
+#[derive(Clone, Debug)]
+enum RawEffect {
+    Move {
+        target: RawTarget,
+        dx: f32,
+        dy: f32,
+        duration: f32,
+        ease: Option<Curve>,
+        wait: bool,
+    },
+    Shake {
+        target: RawTarget,
+        amplitude: f32,
+        duration: f32,
+        ease: Option<Curve>,
+        wait: bool,
+    },
+    Zoom {
+        factor: f32,
+        duration: f32,
+        ease: Option<Curve>,
+        wait: bool,
+    },
+    Flash {
+        color: Color,
+        duration: f32,
+        ease: Option<Curve>,
+        wait: bool,
+    },
+    Tint {
+        target: RawTarget,
+        color: Color,
+        strength: f32,
+        duration: f32,
+        ease: Option<Curve>,
+        wait: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct RawTrack {
+    target: RawTarget,
+    prop: AnimProp,
+    data: TrackData,
 }
 
 enum Stmt {
     Scene(String),
     Node(Raw),
     Option(RawOption),
+    Track(RawTrack),
 }
 
 type LineError = (usize, String);
@@ -272,8 +336,11 @@ impl LineParser<'_> {
         if self.eat_word("dissolve") {
             self.expect_sym("(")?;
             let duration = self.f32()?;
+            let ease = self.transition_ease()?;
             self.expect_sym(")")?;
-            return Ok(Some(Transition::dissolve(duration)));
+            let mut t = Transition::dissolve(duration);
+            t.ease = ease;
+            return Ok(Some(t));
         }
         if self.eat_word("fade") {
             self.expect_sym("(")?;
@@ -283,10 +350,155 @@ impl LineParser<'_> {
             let hex = self.string("a color `\"#rrggbb\"`")?;
             let color = parse_color(&hex)
                 .ok_or((col, format!("invalid color `{hex}`, expected `#rrggbb`")))?;
+            let ease = self.transition_ease()?;
             self.expect_sym(")")?;
-            return Ok(Some(Transition::fade(color, duration)));
+            let mut t = Transition::fade(color, duration);
+            t.ease = ease;
+            return Ok(Some(t));
         }
         self.err("expected `dissolve(…)` or `fade(…)`")
+    }
+
+    /// The optional `, ease <curve>` of a transition.
+    fn transition_ease(&mut self) -> Result<Option<Curve>, LineError> {
+        if !self.eat_sym(",") {
+            return Ok(None);
+        }
+        self.expect_word("ease")?;
+        self.curve().map(Some)
+    }
+
+    /// A curve: a preset name, `bezier(x1, y1, x2, y2)` or a quoted name.
+    fn curve(&mut self) -> Result<Curve, LineError> {
+        let col = self.col();
+        match self.peek().cloned() {
+            Some(Tok::Str(name)) => {
+                self.at += 1;
+                Ok(Curve::Named(name))
+            }
+            Some(Tok::Ident(w)) if w == "bezier" => {
+                self.at += 1;
+                self.expect_sym("(")?;
+                let x1 = self.f32()?;
+                self.expect_sym(",")?;
+                let y1 = self.f32()?;
+                self.expect_sym(",")?;
+                let x2 = self.f32()?;
+                self.expect_sym(",")?;
+                let y2 = self.f32()?;
+                self.expect_sym(")")?;
+                Ok(Curve::bezier(x1, y1, x2, y2))
+            }
+            Some(Tok::Ident(w)) => {
+                self.at += 1;
+                Ease::ALL
+                    .into_iter()
+                    .find(|e| e.name() == w)
+                    .map(Curve::Preset)
+                    .ok_or((col, format!("unknown easing `{w}`")))
+            }
+            _ => self.err("expected an easing: a preset name, `bezier(…)` or a quoted name"),
+        }
+    }
+
+    /// `camera`, `screen`, `background` or a character reference.
+    fn anim_target(&mut self) -> Result<RawTarget, LineError> {
+        if self.eat_word("camera") {
+            Ok(RawTarget::Camera)
+        } else if self.eat_word("screen") {
+            Ok(RawTarget::Screen)
+        } else if self.eat_word("background") {
+            Ok(RawTarget::Background)
+        } else {
+            self.reference("a target (`camera`, `screen`, `background` or a character)")
+                .map(RawTarget::Character)
+        }
+    }
+
+    /// A `"#rrggbb"` color.
+    fn hex_color(&mut self) -> Result<Color, LineError> {
+        let col = self.col();
+        let hex = self.string("a color `\"#rrggbb\"`")?;
+        parse_color(&hex).ok_or((col, format!("invalid color `{hex}`, expected `#rrggbb`")))
+    }
+
+    /// `(x, y)`.
+    fn vec2(&mut self) -> Result<Vec2, LineError> {
+        self.expect_sym("(")?;
+        let x = self.f32()?;
+        self.expect_sym(",")?;
+        let y = self.f32()?;
+        self.expect_sym(")")?;
+        Ok(Vec2::new(x, y))
+    }
+
+    /// The tail of an effect line: `over <s> [ease <curve>] [wait]`.
+    fn effect_tail(&mut self) -> Result<(f32, Option<Curve>, bool), LineError> {
+        self.expect_word("over")?;
+        let duration = self.f32()?;
+        let mut ease = None;
+        let mut wait = false;
+        loop {
+            if self.eat_word("ease") {
+                if ease.is_some() {
+                    return self.err("`ease` given twice");
+                }
+                ease = Some(self.curve()?);
+            } else if self.eat_word("wait") {
+                wait = true;
+            } else {
+                return Ok((duration, ease, wait));
+            }
+        }
+    }
+
+    /// `<keys>` of a track line, typed by `prop`.
+    fn track_data(&mut self, prop: AnimProp) -> Result<TrackData, LineError> {
+        macro_rules! keys {
+            ($read:expr) => {{
+                let mut keys = Vec::new();
+                if self.at < self.tokens.len() {
+                    loop {
+                        let t = self.f32()?;
+                        let value = $read(self)?;
+                        let ease = if self.eat_word("ease") {
+                            self.curve()?
+                        } else {
+                            Curve::default()
+                        };
+                        keys.push(Key::with_ease(t, value, ease));
+                        if !self.eat_sym(",") {
+                            break;
+                        }
+                    }
+                }
+                Track::new(keys)
+            }};
+        }
+        Ok(match prop {
+            AnimProp::Offset | AnimProp::Scale | AnimProp::Pan => {
+                TrackData::Vec2(keys!(|p: &mut Self| p.vec2()))
+            }
+            AnimProp::Rotation => {
+                TrackData::Angle(keys!(|p: &mut Self| p.f32().map(Angle)))
+            }
+            AnimProp::Opacity | AnimProp::Shake | AnimProp::Zoom => {
+                TrackData::Scalar(keys!(|p: &mut Self| p.f32()))
+            }
+            AnimProp::Tint => TrackData::Color(keys!(|p: &mut Self| -> Result<Rgba, LineError> {
+                p.expect_word("rgba")?;
+                p.expect_sym("(")?;
+                let r = p.f32()?;
+                p.expect_sym(",")?;
+                let g = p.f32()?;
+                p.expect_sym(",")?;
+                let b = p.f32()?;
+                p.expect_sym(",")?;
+                let a = p.f32()?;
+                p.expect_sym(")")?;
+                Ok(Rgba::new(r, g, b, a))
+            })),
+        })
     }
 
     fn position(&mut self) -> Result<Position, LineError> {
@@ -564,6 +776,102 @@ impl LineParser<'_> {
                     }
                     "sound" => Stmt::Node(Raw::Sound(self.reference("a sound asset")?)),
                     "wait" => Stmt::Node(Raw::Wait(self.f32()?)),
+                    "move" => {
+                        let target = self.anim_target()?;
+                        self.expect_word("by")?;
+                        let d = self.vec2()?;
+                        let (duration, ease, wait) = self.effect_tail()?;
+                        Stmt::Node(Raw::Effect(RawEffect::Move {
+                            target,
+                            dx: d.x,
+                            dy: d.y,
+                            duration,
+                            ease,
+                            wait,
+                        }))
+                    }
+                    "shake" => {
+                        let target = self.anim_target()?;
+                        let amplitude = self.f32()?;
+                        let (duration, ease, wait) = self.effect_tail()?;
+                        Stmt::Node(Raw::Effect(RawEffect::Shake {
+                            target,
+                            amplitude,
+                            duration,
+                            ease,
+                            wait,
+                        }))
+                    }
+                    "zoom" => {
+                        let factor = self.f32()?;
+                        let (duration, ease, wait) = self.effect_tail()?;
+                        Stmt::Node(Raw::Effect(RawEffect::Zoom {
+                            factor,
+                            duration,
+                            ease,
+                            wait,
+                        }))
+                    }
+                    "flash" => {
+                        let color = self.hex_color()?;
+                        let (duration, ease, wait) = self.effect_tail()?;
+                        Stmt::Node(Raw::Effect(RawEffect::Flash {
+                            color,
+                            duration,
+                            ease,
+                            wait,
+                        }))
+                    }
+                    "tint" => {
+                        let target = self.anim_target()?;
+                        let color = self.hex_color()?;
+                        let strength = self.f32()?;
+                        let (duration, ease, wait) = self.effect_tail()?;
+                        Stmt::Node(Raw::Effect(RawEffect::Tint {
+                            target,
+                            color,
+                            strength,
+                            duration,
+                            ease,
+                            wait,
+                        }))
+                    }
+                    "timeline" => {
+                        self.expect_word("over")?;
+                        let duration = self.f32()?;
+                        let mut looping = AnimLoop::Once;
+                        let mut wait = false;
+                        loop {
+                            if self.eat_word("loop") {
+                                looping = AnimLoop::Loop(self.u32()?);
+                            } else if self.eat_word("forever") {
+                                looping = AnimLoop::Forever;
+                            } else if self.eat_word("pingpong") {
+                                looping = AnimLoop::PingPong;
+                            } else if self.eat_word("wait") {
+                                wait = true;
+                            } else {
+                                break;
+                            }
+                        }
+                        Stmt::Node(Raw::Timeline {
+                            duration,
+                            looping,
+                            wait,
+                            tracks: Vec::new(),
+                        })
+                    }
+                    "track" => {
+                        let target = self.anim_target()?;
+                        let col = self.col();
+                        let name = self.name("a property")?;
+                        let prop = AnimProp::ALL
+                            .into_iter()
+                            .find(|p| p.name() == name)
+                            .ok_or((col, format!("unknown track property `{name}`")))?;
+                        let data = self.track_data(prop)?;
+                        Stmt::Track(RawTrack { target, prop, data })
+                    }
                     "call" => Stmt::Node(Raw::Call(self.reference("a label")?)),
                     "return" => Stmt::Node(Raw::Return),
                     "end" => Stmt::Node(Raw::End),
@@ -625,6 +933,43 @@ fn parse_color(hex: &str) -> Option<Color> {
 }
 
 // -------------------------------------------------------------- resolution
+
+fn resolve_target(
+    diags: &mut Diags,
+    line: usize,
+    target: &RawTarget,
+    characters: &HashMap<String, Vec<CharacterId>>,
+) -> Option<AnimTarget> {
+    match target {
+        RawTarget::Camera => Some(AnimTarget::Camera),
+        RawTarget::Screen => Some(AnimTarget::Screen),
+        RawTarget::Background => Some(AnimTarget::Background),
+        RawTarget::Character(r) => {
+            let id = match &r.kind {
+                RefKind::Id(s) => s
+                    .parse()
+                    .map_err(|_| diags.push(line, r.col, format!("invalid id `{s}`")))
+                    .ok(),
+                RefKind::Name(name) => match unique(characters, name) {
+                    Some(id) => Some(id),
+                    None if characters.get(name).is_some_and(|v| v.len() > 1) => {
+                        diags.push(
+                            line,
+                            r.col,
+                            format!("ambiguous character `{name}`: refer to it by `@id`"),
+                        );
+                        None
+                    }
+                    None => {
+                        diags.push(line, r.col, format!("unknown character `{name}`"));
+                        None
+                    }
+                },
+            };
+            id.map(AnimTarget::Character)
+        }
+    }
+}
 
 struct PNode {
     id: NodeId,
@@ -747,8 +1092,24 @@ pub fn parse(text: &str, base: &Story, scope: Scope) -> Result<Story, Vec<Diagno
                     ),
                 }
             }
+            Stmt::Track(track) => {
+                if let Some((_, col)) = annotation {
+                    diags.push(line_no, col, "timeline tracks carry no id");
+                }
+                match scenes.last_mut().and_then(|s| s.nodes.last_mut()) {
+                    Some(PNode {
+                        raw: Raw::Timeline { tracks, .. },
+                        ..
+                    }) if menu_open => tracks.push(track),
+                    _ => diags.push(
+                        line_no,
+                        1,
+                        "a `track` must follow `timeline` or another track",
+                    ),
+                }
+            }
             Stmt::Node(raw) => {
-                menu_open = matches!(raw, Raw::Menu(_));
+                menu_open =matches!(raw, Raw::Menu(_) | Raw::Timeline { .. });
                 let id = match &annotation {
                     None => NodeId::new(),
                     Some((s, col)) => match s.parse::<NodeId>() {
@@ -1086,6 +1447,75 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                     version: *version,
                     data: data.clone(),
                 }),
+                Raw::Effect(effect) => {
+                    let mut target = |t: &RawTarget| {
+                        resolve_target(d, line, t, &names.characters)
+                    };
+                    match effect {
+                        RawEffect::Move { target: t, dx, dy, duration, ease, wait } => {
+                            target(t).map(|target| Effect::Move {
+                                target,
+                                dx: *dx,
+                                dy: *dy,
+                                duration: *duration,
+                                ease: ease.clone(),
+                                wait: *wait,
+                            })
+                        }
+                        RawEffect::Shake { target: t, amplitude, duration, ease, wait } => {
+                            target(t).map(|target| Effect::Shake {
+                                target,
+                                amplitude: *amplitude,
+                                duration: *duration,
+                                ease: ease.clone(),
+                                wait: *wait,
+                            })
+                        }
+                        RawEffect::Zoom { factor, duration, ease, wait } => Some(Effect::Zoom {
+                            factor: *factor,
+                            duration: *duration,
+                            ease: ease.clone(),
+                            wait: *wait,
+                        }),
+                        RawEffect::Flash { color, duration, ease, wait } => Some(Effect::Flash {
+                            color: *color,
+                            duration: *duration,
+                            ease: ease.clone(),
+                            wait: *wait,
+                        }),
+                        RawEffect::Tint { target: t, color, strength, duration, ease, wait } => {
+                            target(t).map(|target| Effect::Tint {
+                                target,
+                                color: *color,
+                                strength: *strength,
+                                duration: *duration,
+                                ease: ease.clone(),
+                                wait: *wait,
+                            })
+                        }
+                    }
+                    .map(NodeKind::Effect)
+                }
+                Raw::Timeline { duration, looping, wait, tracks } => {
+                    let mut out = Vec::new();
+                    let mut ok = true;
+                    for t in tracks {
+                        match resolve_target(d, line, &t.target, &names.characters) {
+                            Some(target) => out.push(StoryTrack {
+                                target,
+                                prop: t.prop,
+                                data: t.data.clone(),
+                            }),
+                            None => ok = false,
+                        }
+                    }
+                    ok.then_some(NodeKind::Timeline {
+                        duration: *duration,
+                        looping: *looping,
+                        wait: *wait,
+                        tracks: out,
+                    })
+                }
             };
             if let Some(kind) = kind {
                 nodes.push(Node { id: pn.id, kind });

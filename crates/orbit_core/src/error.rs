@@ -96,6 +96,13 @@ pub enum ValidationError {
     /// A named curve is defined as a reference to another named curve.
     #[error("named curve `{0}` refers to another named curve (not allowed)")]
     NamedCurveChain(String),
+    /// An `Effect` / `Timeline` node is malformed (bad target, property,
+    /// value type, key order or amount); `message` says what.
+    #[error("node {node} has an invalid animation: {message}")]
+    InvalidTimeline { node: NodeId, message: String },
+    /// A forever-looping timeline would block the story.
+    #[error("node {0} waits for a timeline that never ends (forever / ping-pong loops cannot wait)")]
+    BlockingInfiniteTimeline(NodeId),
 }
 
 /// Where a curve lives.
@@ -152,6 +159,9 @@ pub enum ValidationWarning {
     /// `Story::curves`: it is played as linear.
     #[error("{} refers to the unknown curve `{name}`: it is played as linear", curve_owner(.owner))]
     UnknownCurve { owner: CurveOwner, name: String },
+    /// A key of a timeline lies after its duration: it is never reached.
+    #[error("node {0} has a timeline key after the end of the timeline: it is never reached")]
+    TimelineKeyAfterEnd(NodeId),
 }
 
 /// Errors from loading / saving / migrating a story.
