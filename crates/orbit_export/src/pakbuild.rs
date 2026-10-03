@@ -66,11 +66,27 @@ pub fn build_pak(
     // 3D quality of the desktop players (M6-12). A container metadata
     // entry, not a pak format change: older players ignore it, and 2D games
     // do not get it (their pak stays byte-identical).
+    let mut content3d = crate::pack3d::Content3d::default();
     if crate::scene3d::uses_3d(&compiled.pack.story) {
         writer.meta(QUALITY_META, profile.desktop_quality.tier_id());
+        rep.step(0.0, "Packing the 3D models");
+        content3d = crate::pack3d::build(&compiled.root, &compiled.pack.story);
+        for warning in &content3d.warnings {
+            rep.warn(warning.clone());
+        }
     }
 
-    writer.add(GAME_PACK_ENTRY, &compiled.pack.to_bytes()?)?;
+    // The lowest game pack version that holds the game (ADR 0014 addendum):
+    // 4 only when 3D content ships, so 2D paks stay readable by older players.
+    let pack = if content3d.needs_3d_pack {
+        compiled.pack.to_bytes_with_3d()?
+    } else {
+        compiled.pack.to_bytes()?
+    };
+    writer.add(GAME_PACK_ENTRY, &pack)?;
+    for (path, bytes) in &content3d.entries {
+        writer.add(path, bytes)?;
+    }
     for (path, bytes) in FONTS {
         writer.add(&format!("{ENGINE_PREFIX}/{path}"), bytes)?;
     }

@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! "ORBITGAM"  magic (8 bytes)
-//! version     u32 LE  (currently 3)
+//! version     u32 LE  (3, or 4 for a game with 3D content, see below)
 //! postcard    GamePack
 //! ```
 //!
@@ -27,8 +27,18 @@ pub const ENGINE_PREFIX: &str = "engine";
 pub const ICON_ENTRY: &str = "meta/icon.png";
 
 const MAGIC: &[u8; 8] = b"ORBITGAM";
-/// Current game pack version.
-pub const PACK_VERSION: u32 = 3;
+/// Newest game pack version this build reads and writes.
+///
+/// Version 4 has the layout of version 3; it only tells players that the
+/// pak holds the 3D content of ADR 0014 (addendum "Blobs 3D dans le pak":
+/// `3d/` entries, procedural shapes), so that a player predating it
+/// refuses the game cleanly instead of showing empty 3D scenes. The writer
+/// picks the lowest version that can hold the game ([`GamePack::to_bytes`]
+/// writes 3, [`GamePack::to_bytes_with_3d`] writes 4): a 2D game stays
+/// readable by older players.
+pub const PACK_VERSION: u32 = 4;
+/// Version written for a game without pak-level 3D content.
+pub const BASE_PACK_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum PackError {
@@ -88,10 +98,31 @@ struct GamePackV2 {
 }
 
 impl GamePack {
+    /// Encodes a game without pak-level 3D content (version 3, readable by
+    /// every player since version 3).
     pub fn to_bytes(&self) -> Result<Vec<u8>, PackError> {
+        self.encode(BASE_PACK_VERSION)
+    }
+
+    /// Encodes a game whose pak holds 3D content (`3d/` entries): version 4.
+    pub fn to_bytes_with_3d(&self) -> Result<Vec<u8>, PackError> {
+        self.encode(PACK_VERSION)
+    }
+
+    /// The version number of an encoded pack (`None`: not a pack).
+    pub fn version_of(bytes: &[u8]) -> Option<u32> {
+        if !Self::is_pack(bytes) {
+            return None;
+        }
+        bytes
+            .get(8..12)
+            .map(|b| u32::from_le_bytes(b.try_into().expect("4 bytes")))
+    }
+
+    fn encode(&self, version: u32) -> Result<Vec<u8>, PackError> {
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
-        out.extend_from_slice(&PACK_VERSION.to_le_bytes());
+        out.extend_from_slice(&version.to_le_bytes());
         let body = postcard::to_stdvec(self).map_err(|e| PackError::Corrupt(e.to_string()))?;
         out.extend_from_slice(&body);
         Ok(out)
@@ -134,6 +165,8 @@ impl GamePack {
                 ui: old.ui,
             });
         }
+        // Versions 3 and 4 share the current layout. When a later version
+        // changes it, they get their own frozen struct like versions 1 and 2.
         postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))
     }
 }
@@ -446,7 +479,7 @@ mod tests {
         use orbit_core::{Node, NodeId, NodeKind, Operand, ScreenParam, Value};
         let mut pack = fixture_pack();
         let before = pack.to_bytes().unwrap();
-        assert_eq!(&before[8..12], &PACK_VERSION.to_le_bytes());
+        assert_eq!(&before[8..12], &BASE_PACK_VERSION.to_le_bytes());
         for kind in [
             NodeKind::OpenScreen {
                 screen: "phone".into(),
@@ -477,6 +510,22 @@ mod tests {
         }
         let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
         assert_eq!(back, pack);
+    }
+
+    /// A 2D game keeps writing version 3 (older players read it); a game
+    /// with 3D content writes version 4 with the same body, which this
+    /// build reads and a version-3 player refuses by number.
+    #[test]
+    fn the_lowest_version_is_written_and_both_are_read() {
+        let pack = fixture_pack();
+        let v3 = pack.to_bytes().unwrap();
+        let v4 = pack.to_bytes_with_3d().unwrap();
+        assert_eq!(GamePack::version_of(&v3), Some(3));
+        assert_eq!(GamePack::version_of(&v4), Some(4));
+        assert_eq!(v3[12..], v4[12..]);
+        assert_eq!(GamePack::from_bytes(&v3).unwrap(), pack);
+        assert_eq!(GamePack::from_bytes(&v4).unwrap(), pack);
+        assert_eq!(GamePack::version_of(b"(story)"), None);
     }
 
     #[test]

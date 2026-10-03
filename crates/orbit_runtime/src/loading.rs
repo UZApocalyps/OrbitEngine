@@ -168,6 +168,12 @@ pub struct AssetStore {
     /// Parsed `.scene3d.ron` documents (feature `3d`).
     #[cfg(feature = "3d")]
     scenes3d: HashMap<String, Arc<orbit_scene::Scene3d>>,
+    /// The packed 3D models (`3d/` pak entries), once loaded.
+    #[cfg(feature = "3d")]
+    library3d: Option<Arc<crate::library3d::Library3d>>,
+    /// Set when the 3D models started loading (once per store).
+    #[cfg(feature = "3d")]
+    library3d_requested: std::sync::atomic::AtomicBool,
     fonts: HashSet<String>,
     new_fonts: Vec<Vec<u8>>,
 }
@@ -190,6 +196,13 @@ impl AssetStore {
     #[cfg(feature = "3d")]
     pub fn scene3d(&self, path: &str) -> Option<&Arc<orbit_scene::Scene3d>> {
         self.scenes3d.get(path)
+    }
+
+    /// The packed 3D models, once loaded (an empty library when the game
+    /// has none). A new `Arc` each time it is (re)loaded.
+    #[cfg(feature = "3d")]
+    pub fn library3d(&self) -> Option<&Arc<crate::library3d::Library3d>> {
+        self.library3d.as_ref()
     }
 
     /// Adds (or replaces) a 3D scene under `path` (hosts that build scenes
@@ -236,7 +249,11 @@ impl AssetStore {
         }
         self.sounds.clear();
         #[cfg(feature = "3d")]
-        self.scenes3d.clear();
+        {
+            self.scenes3d.clear();
+            self.library3d = None;
+            self.library3d_requested = Default::default();
+        }
         self.fonts.clear();
     }
 }
@@ -246,6 +263,8 @@ enum Handle {
     Audio(AssetHandle<PcmAudio>),
     #[cfg(feature = "3d")]
     Scene3d(AssetHandle<orbit_scene::Scene3d>),
+    #[cfg(feature = "3d")]
+    Library3d(Box<crate::library3d::LibraryLoad>),
     Font(AssetHandle<Vec<u8>>),
 }
 
@@ -267,6 +286,8 @@ impl PendingAsset {
             Handle::Audio(h) => !matches!(h.poll(), AssetPoll::Loading),
             #[cfg(feature = "3d")]
             Handle::Scene3d(h) => !matches!(h.poll(), AssetPoll::Loading),
+            #[cfg(feature = "3d")]
+            Handle::Library3d(l) => l.is_done(),
             Handle::Font(h) => !matches!(h.poll(), AssetPoll::Loading),
         }
     }
@@ -303,10 +324,24 @@ pub fn start_loading_only(
             AssetKind::Image => Handle::Image(loader.load_image(&entry.path)),
             AssetKind::Music | AssetKind::Sound => Handle::Audio(loader.load_audio(&entry.path)),
             #[cfg(feature = "3d")]
-            AssetKind::Scene3d => Handle::Scene3d(loader.load_with(&entry.path, |_, bytes| {
-                let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
-                orbit_scene::from_ron(&text)
-            })),
+            AssetKind::Scene3d => {
+                // The packed models come with the first 3D scene.
+                if !store
+                    .library3d_requested
+                    .swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    pending.push(PendingAsset {
+                        path: orbit_scene::pack3d::INDEX_ENTRY.to_owned(),
+                        handle: Handle::Library3d(Box::new(
+                            crate::library3d::LibraryLoad::start(loader),
+                        )),
+                    });
+                }
+                Handle::Scene3d(loader.load_with(&entry.path, |_, bytes| {
+                    let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
+                    orbit_scene::from_ron(&text)
+                }))
+            }
             // Without the `3d` feature a 3D scene is never drawn: not loaded.
             #[cfg(not(feature = "3d"))]
             AssetKind::Scene3d => {
@@ -380,6 +415,12 @@ pub fn finish_loading(
                 }
                 other => failures.push(describe_failure(&asset.path, &other)),
             },
+            #[cfg(feature = "3d")]
+            Handle::Library3d(load) => {
+                let (lib, errors) = load.finish();
+                failures.extend(errors);
+                store.library3d = Some(Arc::new(lib));
+            }
             Handle::Font(h) => match h.poll() {
                 AssetPoll::Ready(bytes) => {
                     store.fonts.insert(asset.path);

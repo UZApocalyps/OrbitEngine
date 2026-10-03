@@ -77,6 +77,9 @@ impl Layer3d {
                 .get_or_insert_with(|| {
                     Compositor3d::with_quality(renderer, self.quality.as_deref())
                 });
+            if let Some(lib) = store.library3d() {
+                compositor.sync_library(renderer, lib);
+            }
             compositor.draw(renderer, path, scene, shown.camera.as_deref())
         }
         #[cfg(not(feature = "3d"))]
@@ -142,6 +145,8 @@ mod gpu {
         views: Vec<View>,
         size: (u32, u32),
         warned: HashSet<String>,
+        /// Identity of the registered packed library (its `Arc`).
+        library: Option<usize>,
     }
 
     /// The quality profile of the platform (ADR 0014 section 3): web on the
@@ -197,6 +202,33 @@ mod gpu {
                 views: Vec::new(),
                 size,
                 warned: HashSet::new(),
+                library: None,
+            }
+        }
+
+        /// Registers the packed models of the game on the renderer (once
+        /// per loaded library): meshes uploaded, prefabs and textures
+        /// registered. Cached views are dropped.
+        pub fn sync_library(
+            &mut self,
+            r2d: &Renderer2d,
+            lib: &Arc<crate::library3d::Library3d>,
+        ) {
+            let key = Arc::as_ptr(lib) as usize;
+            if self.library == Some(key) {
+                return;
+            }
+            self.library = Some(key);
+            let device = r2d.gfx().device();
+            let renderer = self.renderer_mut();
+            for p in &lib.prefabs {
+                renderer.add_prefab(p.clone());
+            }
+            for t in &lib.textures {
+                renderer.add_texture(t.clone());
+            }
+            for m in &lib.meshes {
+                renderer.upload_mesh(device, m);
             }
         }
 
@@ -622,5 +654,71 @@ mod tests {
         let a2 = layer.draw(&mut r, &f.store, &f.story, &stage_3d(&f, Some("front")));
         let b2 = layer.draw(&mut r, &f.store, &f.story, &stage_3d(&f, Some("back")));
         assert_eq!((a2, b2), (a, b));
+    }
+
+    /// End to end (ADR 0014 addendum "Blobs 3D dans le pak"): the frozen
+    /// 3D pak written by `orbit_export` (game pack version 4, a glTF model
+    /// shipped as `.omesh` + KTX2, a procedural cube) is loaded through the
+    /// regular asset loader and drawn: red textured panel in the centre,
+    /// green cube on the right, blue background.
+    #[cfg(feature = "3d")]
+    #[test]
+    fn a_mesh_from_a_pak_is_drawn() {
+        let bytes = include_bytes!("../../../examples/fixtures/compat/pak3d_v4/game.pak").to_vec();
+        let pak = orbit_assets::PakSource::from_memory(bytes).unwrap();
+        let pack = orbit_pak::GamePack::from_bytes(&pak.read_blocking("game.pack").unwrap()).unwrap();
+        let loader = orbit_assets::AssetLoader::from_pak(pak.clone(), "");
+        let story = pack.story;
+        let scene3d = story
+            .assets
+            .assets
+            .iter()
+            .find(|a| a.kind == AssetKind::Scene3d)
+            .unwrap()
+            .id;
+
+        let mut r = gpu_or_skip!();
+        let mut store = AssetStore::default();
+        // Only the 3D scene (the 2D assets of the story are not in the
+        // stripped fixture).
+        let only = vec![story.assets.get(scene3d).unwrap().path.clone()];
+        let pending = crate::loading::start_loading_only(&loader, &story, &store, Some(&only));
+        assert_eq!(pending.len(), 2, "the scene and the packed models");
+        for _ in 0..10_000 {
+            if pending.iter().all(|p| p.is_done()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let failures = crate::loading::finish_loading(&mut r, &mut store, pending);
+        assert!(failures.is_empty(), "{failures:?}");
+        let lib = store.library3d().unwrap();
+        assert_eq!((lib.meshes.len(), lib.prefabs.len(), lib.textures.len()), (1, 1, 1));
+
+        let f = Fixture {
+            story,
+            store,
+            hero: CharacterId::new(),
+            bg: AssetId::new(),
+            image: AssetId::new(),
+            scene3d,
+        };
+        let stage = StageState {
+            background: None,
+            characters: Vec::new(),
+            scene3d: Some(crate::stage::Stage3d {
+                scene: scene3d,
+                camera: Some("main".into()),
+            }),
+        };
+        let mut layer = Layer3d::default();
+        layer.begin_frame();
+        let px = render(&mut r, &mut layer, &f, &stage);
+        // Pure channel `c` (tone mapping may lower it a little).
+        let pure = |p: [u8; 4], c: usize| (0..3).all(|k| if k == c { p[k] > 180 } else { p[k] < 40 });
+        // Orthographic, 4 units high on a 1920x1080 canvas: 270 px a unit.
+        assert!(pure(pixel(&px, 960, 540), 0), "panel {:?}", pixel(&px, 960, 540));
+        assert!(pure(pixel(&px, 960 + 675, 540), 1), "cube {:?}", pixel(&px, 1635, 540));
+        assert!(pure(pixel(&px, 40, 40), 2), "background {:?}", pixel(&px, 40, 40));
     }
 }

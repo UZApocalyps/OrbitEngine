@@ -23,6 +23,8 @@ tar = "0.4.46"
 flate2 = "1.1.10"
 brotli = "9.0.0"
 serde_json = "1.0.151"
+# PNG / JPEG textures of 3D models, re-encoded as KTX2 in the pak.
+image = { workspace = true, features = ["jpeg"] }
 
 [lints]
 workspace = true

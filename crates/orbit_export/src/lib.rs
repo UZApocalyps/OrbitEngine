@@ -45,6 +45,7 @@ mod pakbuild;
 pub mod plugins;
 mod project;
 mod report;
+pub mod pack3d;
 pub mod scene3d;
 pub mod serve;
 mod templates;

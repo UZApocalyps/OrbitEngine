@@ -33,6 +33,8 @@ pub struct Compiled {
     pub unreferenced: Vec<String>,
     /// PNG bytes of the game icon.
     pub icon: Option<Vec<u8>>,
+    /// Root folder of the project (3D scenes find their models there).
+    pub root: PathBuf,
     /// Everything worth telling the author (not blocking).
     pub warnings: Vec<String>,
 }
@@ -388,6 +390,7 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
             .filter(|l| !l.trim().is_empty()),
     };
     Ok(Compiled {
+        root: project.root.clone(),
         pack: GamePack {
             info,
             story,

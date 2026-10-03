@@ -29,7 +29,7 @@ orbit_scene = { path = "../orbit_scene", default-features = false, optional = tr
 
 [features]
 # 3D scenes (ADR 0014). Off by default: 2D-only builds and wasm stay unchanged.
-3d = ["dep:orbit_render3d", "dep:orbit_scene"]
+3d = ["dep:orbit_render3d", "dep:orbit_scene", "orbit_scene/ktx2"]
 
 [dev-dependencies]
 pollster.workspace = true

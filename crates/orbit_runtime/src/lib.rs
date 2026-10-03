@@ -43,6 +43,8 @@ pub mod format;
 mod game;
 pub mod gamepad_bindings;
 pub mod input;
+#[cfg(feature = "3d")]
+pub mod library3d;
 pub mod loading;
 pub mod overlay;
 pub mod preview;

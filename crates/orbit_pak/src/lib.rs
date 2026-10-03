@@ -25,4 +25,7 @@ pub use container::{
     Codec, Compression, Entry, HEADER_LEN, Header, PakError, PakIndex, PakWriter, WriteStats,
 };
 pub use crc::crc32;
-pub use game::{ENGINE_PREFIX, GAME_PACK_ENTRY, GameInfo, GamePack, ICON_ENTRY, PackError};
+pub use game::{
+    BASE_PACK_VERSION, ENGINE_PREFIX, GAME_PACK_ENTRY, GameInfo, GamePack, ICON_ENTRY, PACK_VERSION,
+    PackError,
+};

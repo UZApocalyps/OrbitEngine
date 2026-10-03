@@ -3158,6 +3158,7 @@ version = "0.1.0"
 dependencies = [
  "brotli",
  "flate2",
+ "image",
  "log",
  "orbit_core",
  "orbit_i18n",
