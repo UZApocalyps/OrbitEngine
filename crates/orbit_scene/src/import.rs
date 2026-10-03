@@ -123,12 +123,15 @@ fn external_uris(doc: &gltf::Document) -> Vec<String> {
     out
 }
 
+/// A relocated `.gltf` and its moved files (`(original, rewritten)`).
+pub type Relocated = (Vec<u8>, Vec<(String, String)>);
+
 /// Rewrites the relative `uri`s of a `.gltf` (JSON) under `prefix`
 /// (`scene.bin` -> `<prefix>/scene.bin`), used to copy a multi-file model
 /// into `models/` without name clashes. Returns the new JSON and the
-/// `(original, rewritten)` relative paths. A `.glb` is returned unchanged
-/// (its external references, if any, are rewritten too).
-pub fn relocate_gltf(bytes: &[u8], prefix: &str) -> Result<(Vec<u8>, Vec<(String, String)>), String> {
+/// `(original, rewritten)` relative paths. A self-contained `.glb` is
+/// returned unchanged; one with external references is refused.
+pub fn relocate_gltf(bytes: &[u8], prefix: &str) -> Result<Relocated, String> {
     if bytes.starts_with(b"glTF") {
         let files = external_files(bytes)?;
         if files.is_empty() {

@@ -98,7 +98,7 @@ Le profil web est **conçu et testé en premier** (risque §10). Les limites son
 
 ## Addendum M6-12 / M6-13 : profils de qualité à l'export, template web 3D, KTX2
 
-Statut : accepté (implémenté, sauf la section « Blobs 3D dans le pak », conçue ici et implémentée plus tard).
+Statut : accepté et implémenté (la section « Blobs 3D dans le pak » l'est depuis l'addendum « Formes procédurales, import glTF multi-fichiers et blobs 3D » ci-dessous).
 
 ### Profils de qualité (M6-12)
 
@@ -129,7 +129,7 @@ Statut : accepté (implémenté, sauf la section « Blobs 3D dans le pak », con
 * Décision : **KTX2 lu en pur Rust**, compatible wasm : crate `ktx2` (Apache-2.0, conteneur), `ruzstd` (MIT, supercompression Zstandard), `flate2` / miniz_oxide (zlib). Licences acceptées par `deny.toml` sans exception. Module `orbit_scene::ktx2` (feature `ktx2`, par défaut) : `info` (taille, famille, mips) pour tout KTX2, `decode_rgba8` pour le niveau 0 des textures 8 bits RGBA / RGB (UNORM ou sRGB), utilisé par la bibliothèque de modèles de l'éditeur et la validation d'export.
 * **Non supporté, refusé avec un message** : charges utiles compressées GPU (BCn, ETC2, ASTC) — le renderer garde des textures CPU RGBA8 dont le format (sRGB ou linéaire) est choisi à l'usage ; les téléverser telles quelles demande une variante de pipeline et la détection des features (`TEXTURE_COMPRESSION_BC/ETC2/ASTC`) ; et **Basis Universal** (ETC1S / UASTC) — le transcodeur de référence est C++ (crate `basis-universal` : FFI, build `cc`, inutilisable proprement en `wasm32-unknown-unknown`), et aucun transcodeur pur Rust n'est mûr. La promesse « textures KTX2 Basis pour le web » de la section 3 est donc **reportée** ; à reprendre quand un transcodeur pur Rust existe, ou via une étape d'export native qui transcode en BC7/ETC2/ASTC + repli RGBA8 (le player choisissant selon les features de l'adaptateur).
 
-### Blobs 3D dans le pak (conçu, non implémenté)
+### Blobs 3D dans le pak (implémenté, voir l'addendum suivant)
 
 Aujourd'hui seul le `.scene3d.ron` est livré ; ses modèles (`models/*.glb`, textures) ne le sont pas. Conception retenue pour la tâche qui les ajoutera (et qui sera seule à toucher `orbit_pak` / `GamePack`) :
 
@@ -138,3 +138,29 @@ Aujourd'hui seul le `.scene3d.ron` est livré ; ses modèles (`models/*.glb`, te
 * **Textures** : KTX2 RGBA8 + Zstandard produit à l'export depuis PNG/JPEG (`encode_simple` existe déjà côté lecture/test) — même chemin de décodage sur toutes les plateformes ; les variantes compressées GPU / Basis s'ajouteront comme d'autres `format` du même conteneur, sans changer l'index.
 * **Versionnage du pak** : l'exporteur écrit la **plus petite** version de `GamePack` capable d'exprimer le contenu. Un jeu 2D reste à la version actuelle (lisible par les anciens runtimes) ; un jeu avec des blobs 3D passe à N+1, ce qui fait **refuser proprement** le pak par un runtime plus ancien (comportement existant d'`orbit_pak`) au lieu d'afficher une scène vide. Le décodage des versions précédentes reste (struct dédiée par version, comme v1→v2 dans ADR 0011) ; un pak N sans entrées `3d/` se lit comme aujourd'hui.
 * Tests prévus : aller-retour `.omesh` v1, fixture figée `examples/fixtures/compat/` d'un pak 3D v1, pak 2D identique à l'octet près avant/après.
+
+## Addendum : formes procédurales, import glTF multi-fichiers et blobs 3D
+
+Statut : accepté et implémenté.
+
+### Formes procédurales (`scene3d_version` 2)
+
+* Nouvelle variante **additive** `Node3dKind::Shape { shape: Shape, material: Option<MaterialRef> }` ; `orbit_scene::shapes::Shape` = `Cube { size }`, `Sphere { radius, segments, rings }` (UV), `Plane { size, subdivisions }` (XZ, face +Y), `Cylinder` / `Cone { radius, height, segments }`, `Capsule { radius, height, segments, rings }` (hauteur totale), `Torus { radius, tube, segments, sides }`. La scène stocke la référence et ses paramètres, jamais de fichier.
+* Génération déterministe sans GPU (`Shape::primitive`) : normales, UV (convention glTF), tangentes (accumulées par triangle puis orthogonalisées), faces CCW vues de l'extérieur, centrée sur l'origine ; paramètres bornés (3..=256 segments, tailles non finies ou nulles remplacées) pour qu'un fichier hostile ne puisse pas demander des milliards de sommets. Le validateur refuse les tailles non positives et les matériaux inconnus.
+* Le renderer génère et met en cache le maillage à la volée (`Renderer3d::ensure_shapes`, clé `@shape/<paramètres>` : mêmes paramètres = un seul maillage), sans changement de shader. Les formes ne sont **pas** livrées dans le pak : le player les régénère.
+* `scene3d_version` 1 → 2 : changement de numéro seul (migration textuelle), fixture figée `examples/fixtures/compat/scene3d_v1/`. Un éditeur antérieur refuse proprement une scène v2 (« version non supportée »).
+* Éditeur : menu **Ajouter > Forme** (hiérarchie et menu contextuel), inspecteur des paramètres, matériau `Default` (blanc, rugueux) créé à la première forme et partagé. MCP : `add_node` de type `shape` et opération `set_shape` d'`edit_scene3d`.
+
+### Import glTF multi-fichiers
+
+* `import_gltf_file` / `import_gltf_in` résolvent les `uri` relatives (`.bin` externes, images) depuis le dossier du `.gltf`, après décodage `%XX` ; refus (avec message) des chemins absolus, des schémas autres que `data:`, des antislashs et de tout ce qui sort du dossier (`..`). `import_gltf` (octets seuls) refuse un fichier à références externes avec un message explicite au lieu d'une erreur opaque.
+* À l'import dans l'éditeur, le `.gltf` est copié dans `models/<nom>.gltf` avec ses `uri` réécrites vers `models/<nom>.files/…` (deux exports Sketchfab qui utilisent tous deux `scene.bin` ne se marchent pas dessus) ; rien n'est écrit si l'import échoue, et l'erreur est affichée.
+* `KHR_materials_pbrSpecularGlossiness` (archivée, courante chez Sketchfab) est convertie en metallic-roughness : diffuse → couleur de base (facteur et texture), `roughness = 1 - glossiness` (au moins 0,5 quand une texture spéculaire-brillance existe, car elle est ignorée), `metallic = 0`. Avertissement par matériau. Les skins restent ignorés (pose de repos), les maillages skinnés sont importés.
+
+### Blobs 3D dans le pak (implémentation)
+
+* Conforme à la conception ci-dessus : entrées `3d/index.ron` (`assets3d_version: 1`, champs ajoutés seulement avec défaut), `3d/meshes/<n>.omesh`, `3d/prefabs/<n>.prefab.ron`, `3d/textures/<n>.ktx2` (RGBA8 UNORM + Zstandard). Les fichiers sont **numérotés** (les noms d'assets sont du texte libre) ; l'index fait la correspondance.
+* L'export (`orbit_export::pack3d`) ne livre que ce que les scènes livrées utilisent (nœuds `Mesh`, préfabs et leurs maillages, textures des matériaux et du ciel), lu dans `<dossier de la scène>/models/` ; une référence introuvable devient un avertissement du journal, jamais une erreur.
+* **Version du pack** : `GamePack` v4 a exactement la disposition de v3 ; le numéro signale seulement le contenu 3D. L'exporteur écrit v4 si et seulement si la partie `3d/` existe (maillages, préfabs, textures ou formes procédurales), sinon v3 : un jeu 2D, ou une scène 3D réduite à des lumières et caméras, reste lisible par les players antérieurs. Le décodage v1, v2, v3 est conservé ; v3 et v4 partagent la struct courante (une version future qui change la disposition leur donnera une struct figée).
+* Runtime (feature `3d`) : la bibliothèque est chargée avec la première scène 3D, en deux étapes asynchrones (index, puis blobs ; requêtes de plage sur le web) et enregistrée sur le renderer du compositeur. Index absent (jeu lancé depuis son dossier) : bibliothèque vide, pas d'erreur. Blob illisible (version `.omesh` inconnue…) : signalé, la scène est dessinée sans lui. La feature `3d` du runtime active `orbit_scene/ktx2` (décodage pur Rust, wasm) ; le surcoût sur le budget du template web 3D n'a pas été remesuré par cette tâche.
+* Tests : aller-retour et refus `.omesh`, fixture figée `examples/fixtures/compat/omesh_v1/plane.omesh`, pak 2D en v3 sans entrée `3d/`, pak 3D en v4 avec seulement les assets utilisés, fixture figée `examples/fixtures/compat/pak3d_v4/game.pak` (produite par l'export) lue et rendue par le runtime (read-back GPU, ignoré sans adaptateur).

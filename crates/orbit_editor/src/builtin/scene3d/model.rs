@@ -769,10 +769,10 @@ impl SceneDoc {
             for n in &mut s.nodes {
                 match &mut n.kind {
                     Node3dKind::Mesh { materials, .. } => materials.retain(|r| r.0 != name),
-                    Node3dKind::Shape { material, .. } => {
-                        if material.as_ref().is_some_and(|r| r.0 == name) {
-                            *material = None;
-                        }
+                    Node3dKind::Shape { material, .. }
+                        if material.as_ref().is_some_and(|r| r.0 == name) =>
+                    {
+                        *material = None;
                     }
                     _ => {}
                 }

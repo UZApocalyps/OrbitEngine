@@ -12,6 +12,14 @@ Ouvrez l'**éditeur de scène 3D**. Il comporte trois panneaux :
 
 Créez une nouvelle scène, importez des modèles 3D, placez des lumières et ajoutez une ou plusieurs caméras nommées. Une nouvelle scène démarre avec un soleil et une caméra nommée `main`.
 
+### Ce que vous pouvez ajouter
+
+Depuis le menu **Ajouter** de la hiérarchie 3D (ou **Ajouter un enfant** au clic droit) :
+
+- **Forme** : cube, sphère, plan, cylindre, cône, capsule ou tore, fabriqués par le moteur. Les formes n'ont besoin d'aucun fichier. Elles servent pour un sol, des murs, des meubles provisoires ou des accessoires simples. Une nouvelle forme est posée sur le sol et reçoit le matériau **Default** de la scène (blanc), que vous pouvez modifier ou remplacer dans l'inspecteur. L'inspecteur règle aussi sa taille, son rayon, sa hauteur et son nombre de segments (plus de segments, plus c'est rond).
+- **Lumières** (directionnelle, ponctuelle, projecteur), **caméras** et **nœuds vides** (pour grouper des objets).
+- **Modèles** avec **Importer un glTF** : fichiers `.glb`, ou fichiers `.gltf` accompagnés de leurs fichiers `.bin` et de leurs textures, comme les exports de Sketchfab. Le modèle et ses fichiers sont copiés dans le dossier `models` à côté de la scène. Les matériaux de l'ancien modèle « specular-glossiness » sont convertis, leurs couleurs restent proches de l'original. Les animations et les squelettes ne sont pas importés : le modèle s'affiche dans sa pose de repos. Si un import échoue, un message en donne la raison (par exemple un fichier `.bin` manquant).
+
 ### Ciel et textures
 
 Quand rien n'est sélectionné, l'inspecteur 3D montre l'**environnement** : choisissez une couleur unie ou une **skybox** (n'importe quelle image de la scène, voir plus bas), la lumière ambiante et le brouillard.
@@ -36,9 +44,15 @@ Passer de la 2D à la 3D et inversement utilise les mêmes transitions que n'imp
 
 Si une étape nomme une caméra que la scène n'a pas (par exemple après l'avoir renommée), ou si un fichier de scène est invalide, le panneau **Problèmes** le signale.
 
+## Dans le jeu exporté
+
+À l'export, le jeu emporte les modèles, textures et formes que ses scènes 3D utilisent. Les modèles et images du dossier `models` qu'aucune scène n'utilise sont laissés de côté. Si une scène désigne un modèle introuvable, le journal d'export le signale et la scène s'affiche sans lui.
+
+Un jeu avec des modèles ou des formes 3D demande un player de cette version d'OrbitEngine ou d'une version plus récente. Un player plus ancien refuse le jeu avec un message au lieu d'afficher des scènes vides. Les jeux 2D ne sont pas concernés.
+
 ## Travailler avec un assistant IA
 
-L'assistant (MCP) peut lire et modifier vos scènes 3D : les lister, lire leurs nœuds, lumières, caméras et matériaux, ajouter ou déplacer des objets, changer le ciel, créer une nouvelle scène. Chaque modification est vérifiée, et refusée en bloc si elle casserait la scène. Avec l'éditeur ouvert et une carte graphique, l'assistant peut aussi prendre une image d'une scène depuis n'importe laquelle de ses caméras pour vérifier son travail. Ces modifications réécrivent le fichier de la scène ; elles ne sont pas dans l'historique d'annulation : fermez et rouvrez la scène dans l'éditeur 3D pour les voir.
+L'assistant (MCP) peut lire et modifier vos scènes 3D : les lister, lire leurs nœuds, lumières, caméras et matériaux, ajouter ou déplacer des objets (formes comprises), changer le ciel, créer une nouvelle scène. Chaque modification est vérifiée, et refusée en bloc si elle casserait la scène. Avec l'éditeur ouvert et une carte graphique, l'assistant peut aussi prendre une image d'une scène depuis n'importe laquelle de ses caméras pour vérifier son travail. Ces modifications réécrivent le fichier de la scène ; elles ne sont pas dans l'historique d'annulation : fermez et rouvrez la scène dans l'éditeur 3D pour les voir.
 
 ## Conseils
 

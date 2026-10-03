@@ -706,6 +706,7 @@ mod tests {
         };
         let stage = StageState {
             background: None,
+            bg_layers: Vec::new(),
             characters: Vec::new(),
             scene3d: Some(crate::stage::Stage3d {
                 scene: scene3d,

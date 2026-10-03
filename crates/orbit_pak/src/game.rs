@@ -536,7 +536,7 @@ mod tests {
         use orbit_core::{AssetId, BgLayer, Emitter, Node, NodeId, NodeKind, ParticlePreset};
         let mut pack = fixture_pack();
         let before = pack.to_bytes().unwrap();
-        assert_eq!(&before[8..12], &PACK_VERSION.to_le_bytes());
+        assert_eq!(&before[8..12], &BASE_PACK_VERSION.to_le_bytes());
         let image = AssetId::new();
         let mut custom = Emitter::preset(ParticlePreset::Custom);
         custom.sprite = Some(image);

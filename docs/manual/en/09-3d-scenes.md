@@ -12,6 +12,14 @@ Open the **3D scene editor**. It has three panels:
 
 Create a new scene, import 3D models, place lights, and add one or more named cameras. A new scene starts with a sun and a camera named `main`.
 
+### What you can add
+
+From the **Add** menu of the 3D hierarchy (or **Add a child** on a right click):
+
+- **Shape**: a cube, sphere, plane, cylinder, cone, capsule or torus, made by the engine. Shapes need no file. You can use them for floors, walls, furniture placeholders or simple props. A new shape stands on the ground and gets the scene's **Default** material (white), which you can edit or swap in the inspector. The inspector also sets its size, radius, height and number of segments (more segments make it rounder).
+- **Lights** (directional, point, spot), **cameras** and **empty nodes** (to group objects).
+- **Models** with **Import glTF**: `.glb` files, or `.gltf` files with their `.bin` and texture files next to them, which is how Sketchfab exports models. The model and its files are copied into the `models` folder next to the scene. Materials that use the older "specular-glossiness" workflow are converted, so their colors stay close to the original. Animations and skeletons are not imported: the model shows in its rest pose. If an import fails, a message tells you why (for example a missing `.bin` file).
+
 ### Sky and textures
 
 With nothing selected, the 3D inspector shows the **environment**: pick a plain color or a **skybox** (any image of the scene, see below), the ambient light and the fog.
@@ -36,9 +44,15 @@ Going from 2D to 3D and back uses the same transitions as any background.
 
 If a step names a camera the scene does not have (for example after you renamed it), or if a scene file is invalid, the **Problems** panel says so.
 
+## In the exported game
+
+When you export, the game ships the models, textures and shapes that its 3D scenes use. Models and images in `models` that no scene uses are left out. If a scene refers to a model that is missing, the export log says so and the scene is shown without it.
+
+A game with 3D models or shapes needs a player from this version of OrbitEngine or a later one. An older player refuses the game with a message instead of showing empty scenes. 2D games are not affected.
+
 ## Working with an AI assistant
 
-The assistant (MCP) can read and edit your 3D scenes: list them, read their nodes, lights, cameras and materials, add or move objects, change the sky, create a new scene. Every change is checked, and refused as a whole if it would break the scene. With the editor open and a graphics card, the assistant can also take a picture of a scene from any of its cameras to check its own work. These edits rewrite the scene file; they are not part of the undo history, so close and reopen the scene in the 3D editor to see them.
+The assistant (MCP) can read and edit your 3D scenes: list them, read their nodes, lights, cameras and materials, add or move objects (including shapes), change the sky, create a new scene. Every change is checked, and refused as a whole if it would break the scene. With the editor open and a graphics card, the assistant can also take a picture of a scene from any of its cameras to check its own work. These edits rewrite the scene file; they are not part of the undo history, so close and reopen the scene in the 3D editor to see them.
 
 ## Tips
 
