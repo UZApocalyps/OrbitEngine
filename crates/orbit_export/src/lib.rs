@@ -45,6 +45,7 @@ mod pakbuild;
 pub mod plugins;
 mod project;
 mod report;
+pub mod scene3d;
 pub mod serve;
 mod templates;
 #[doc(hidden)]
@@ -59,14 +60,14 @@ use std::sync::atomic::AtomicBool;
 pub use compile::{AssetFile, Compiled, compile};
 pub use error::{ExportError, Result};
 pub use orbit_project::{
-    AndroidFormat, AndroidOrientation, ExportProfile, ExportTarget, PakCompression,
+    AndroidFormat, AndroidOrientation, DesktopQuality, ExportProfile, ExportTarget, PakCompression,
 };
 pub use pakbuild::{BuiltPak, build_pak};
 pub use project::ExportProject;
 pub use report::{BuildReport, Event, ExportReport, LogLevel, ProgressFn, Reporter};
 pub use serve::{Server, open_in_browser, open_path};
 pub use templates::{
-    AndroidAbi, AndroidTemplate, ENV_VAR as TEMPLATES_ENV_VAR, Templates, WebTemplate,
+    AndroidAbi, AndroidTemplate, ENV_VAR as TEMPLATES_ENV_VAR, Templates, WEB3D_DIR, WebTemplate,
 };
 pub use tool::{ToolFailure, run_request};
 
@@ -104,6 +105,7 @@ fn prepare(
     project: &ExportProject,
     profile: &ExportProfile,
     until: f32,
+    targets: &[ExportTarget],
     rep: &mut Reporter<'_>,
 ) -> Result<Prepared> {
     rep.slice(0.0, until * 0.25);
@@ -118,6 +120,13 @@ fn prepare(
         compiled.assets.len(),
         compiled.pack.translations.len()
     ));
+    if scene3d::uses_3d(&compiled.pack.story) {
+        rep.step(0.9, "Checking the 3D scenes against the quality profiles");
+        let reports = scene3d::analyze(&project.root, &compiled.pack.story);
+        for warning in scene3d::warnings(&reports, targets, profile) {
+            rep.warn(warning);
+        }
+    }
     rep.check_cancelled()?;
     rep.slice(until * 0.25, until);
     let pak = build_pak(&compiled, profile, rep)?;
@@ -139,7 +148,8 @@ pub fn build(
     progress: ProgressFn<'_>,
 ) -> Result<BuildReport> {
     let mut rep = Reporter::new(progress, options.cancel.clone());
-    let prepared = prepare(project, profile, 0.9, &mut rep)?;
+    // A pak alone is played by the desktop player: desktop tier.
+    let prepared = prepare(project, profile, 0.9, &[ExportTarget::Windows], &mut rep)?;
     std::fs::create_dir_all(out_dir).map_err(ExportError::io(out_dir))?;
     let pak_path = out_dir.join(format!("{}.pak", profile.game_id));
     rep.slice(0.9, 1.0);
@@ -204,7 +214,11 @@ pub fn export_many(
         }
         match target {
             ExportTarget::Web => {
-                options.templates.web()?;
+                // Which one is needed is known after compiling (M6-13).
+                options
+                    .templates
+                    .web()
+                    .or_else(|_| options.templates.web3d())?;
             }
             ExportTarget::Android => {
                 android::preflight(&options.templates, &options.android, profile)?;
@@ -215,7 +229,12 @@ pub fn export_many(
         }
     }
     let mut rep = Reporter::new(progress, options.cancel.clone());
-    let prepared = prepare(project, profile, 0.4, &mut rep)?;
+    let prepared = prepare(project, profile, 0.4, targets, &mut rep)?;
+    let uses_3d = scene3d::uses_3d(&prepared.compiled.pack.story);
+    if uses_3d && targets.contains(&ExportTarget::Web) {
+        options.templates.web3d()?;
+        rep.info("The game shows 3D scenes: the web export uses the 3D player");
+    }
     plugins::check_story(&prepared.compiled.pack.story, &plugin_crates)?;
     let plugin_player = if plugin_crates.is_empty() {
         None
@@ -236,7 +255,7 @@ pub fn export_many(
         rep.info(format!("Exporting for {}", target.label()));
         let (output, files) = match target {
             ExportTarget::Web => {
-                let template = options.templates.web()?;
+                let template = options.templates.web_for(uses_3d)?;
                 let written = web::export(
                     &prepared.pak,
                     prepared.compiled.icon.as_deref(),

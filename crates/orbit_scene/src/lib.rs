@@ -7,7 +7,11 @@
 
 pub mod assets;
 pub mod migrate;
+pub mod quality;
 mod validate;
+
+#[cfg(feature = "ktx2")]
+pub mod ktx2;
 
 #[cfg(feature = "gltf-import")]
 pub mod import;

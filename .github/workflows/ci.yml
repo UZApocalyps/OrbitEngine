@@ -82,6 +82,8 @@ jobs:
         run: |
           cargo install twiggy --locked
           twiggy top -n 25 target/templates/web/orbit_player_bg.wasm | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "3D web player (web3d/):" | tee -a "$GITHUB_STEP_SUMMARY"
+          twiggy top -n 25 target/templates/web3d/orbit_player_bg.wasm | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: templates-${{ runner.os }}
@@ -296,6 +298,15 @@ jobs:
           cargo install wasm-bindgen-cli --version "$VERSION" --locked
       - name: Web bundle (development: RON story and loose files)
         run: cargo xtask web
+      # M6-13: the 3D web template compiles (2D-only player features + `3d`),
+      # and the GPU-free 3D data path (scenes, quality check, KTX2 + zstd)
+      # runs in wasm32 under Node with wasm-bindgen-test.
+      - name: Check the 3D web player (wasm32, template features)
+        run: cargo check -p orbit_player --target wasm32-unknown-unknown --no-default-features --features 3d
+      - name: wasm smoke test (orbit_scene under Node)
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+        run: cargo test -p orbit_scene --target wasm32-unknown-unknown --no-default-features --features ktx2 --test wasm
       - name: "Architecture check (core crates and plugin API without GPU, window or egui; wasm32 build; the player never links the editor)"
         run: cargo xtask check-arch
       - uses: actions/upload-artifact@v4

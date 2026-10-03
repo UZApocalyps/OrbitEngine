@@ -8,6 +8,8 @@
 //! target/templates/linux/orbit-player           (built on Linux, i.e. by the CI)
 //! target/templates/web/orbit_player.js          (wasm-bindgen glue)
 //! target/templates/web/orbit_player_bg.wasm     (release-wasm profile, wasm-opt -Oz)
+//! target/templates/web3d/orbit_player.js        (the same with the `3d` feature:
+//! target/templates/web3d/orbit_player_bg.wasm    games that show a 3D scene, M6-13)
 //! target/templates/android/<abi>/liborbit_player.so + android/classes.dex
 //!                                               (when cargo-ndk, the NDK and the rust targets exist)
 //! ```
@@ -38,10 +40,48 @@ pub const WASM_BUDGET_BROTLI_BYTES: u64 = 1_630_000;
 /// for the record: 10 167 000 bytes.
 pub const WASM_BASELINE_BYTES: u64 = 10_167_000;
 
+/// Budget of the 3D web player (`web3d/`, M6-13): the 2D player plus
+/// `orbit_render3d` and `orbit_scene` (PBR shaders, shadows, post-process).
+/// Same rule as [`WASM_BUDGET_BYTES`]; documented in docs/adr/0014.
+pub const WASM3D_BUDGET_BYTES: u64 = 5_400_000;
+pub const WASM3D_BUDGET_BROTLI_BYTES: u64 = 1_850_000;
+
+/// One web player variant: where it goes and what it is built with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WebVariant {
+    pub name: &'static str,
+    /// Folder under the templates folder.
+    pub dir: &'static str,
+    /// Cargo features of `orbit_player` (on top of `--no-default-features`).
+    pub features: &'static str,
+    pub budget: u64,
+    pub budget_brotli: u64,
+}
+
+/// The 2D web player: what every 2D game ships.
+pub const WEB_2D: WebVariant = WebVariant {
+    name: "web player",
+    dir: "web",
+    features: "",
+    budget: WASM_BUDGET_BYTES,
+    budget_brotli: WASM_BUDGET_BROTLI_BYTES,
+};
+
+/// The web player with 3D scenes, used only by games that show one.
+pub const WEB_3D: WebVariant = WebVariant {
+    name: "3D web player",
+    dir: "web3d",
+    features: "3d",
+    budget: WASM3D_BUDGET_BYTES,
+    budget_brotli: WASM3D_BUDGET_BROTLI_BYTES,
+};
+
 struct Options {
     out: PathBuf,
     native: bool,
     web: bool,
+    /// Also build the 3D web player (`--no-web3d` skips it).
+    web3d: bool,
     wasm_opt: Option<PathBuf>,
     skip_wasm_opt: bool,
     /// Extra native targets (`--target <triple>`), besides the host.
@@ -59,6 +99,7 @@ fn parse(args: &[String]) -> Result<Options> {
         out: workspace_root().join("target/templates"),
         native: true,
         web: true,
+        web3d: true,
         wasm_opt: None,
         skip_wasm_opt: false,
         targets: Vec::new(),
@@ -72,6 +113,7 @@ fn parse(args: &[String]) -> Result<Options> {
             "--out" => o.out = PathBuf::from(it.next().ok_or("--out needs a folder")?),
             "--no-native" => o.native = false,
             "--no-web" => o.web = false,
+            "--no-web3d" => o.web3d = false,
             "--wasm-opt" => {
                 o.wasm_opt = Some(PathBuf::from(it.next().ok_or("--wasm-opt needs a path")?))
             }
@@ -369,10 +411,11 @@ fn report_size(label: &str, path: &Path) -> Result<u64> {
     Ok(bytes)
 }
 
-fn web_template(out: &Path, o: &Options) -> Result {
+fn web_template(out: &Path, o: &Options, variant: WebVariant) -> Result {
     let version = locked_wasm_bindgen_version()?;
     ensure_wasm_bindgen_cli(&version)?;
-    run(cargo().args([
+    let mut build = cargo();
+    build.args([
         "build",
         "-p",
         "orbit_player",
@@ -381,10 +424,14 @@ fn web_template(out: &Path, o: &Options) -> Result {
         "--profile",
         "release-wasm",
         "--no-default-features",
-    ]))?;
+    ]);
+    if !variant.features.is_empty() {
+        build.args(["--features", variant.features]);
+    }
+    run(&mut build)?;
     let root = workspace_root();
     let wasm = root.join("target/wasm32-unknown-unknown/release-wasm/orbit_player.wasm");
-    let work = root.join("target/templates-work");
+    let work = root.join("target/templates-work").join(variant.dir);
     if work.exists() {
         fs::remove_dir_all(&work)?;
     }
@@ -403,7 +450,7 @@ fn web_template(out: &Path, o: &Options) -> Result {
         .arg(&work)
         .arg(&wasm))?;
     let bg = work.join("orbit_player_bg.wasm");
-    println!("web player size:");
+    println!("{} size:", variant.name);
     report_size("release-wasm + wasm-bindgen", &bg)?;
 
     if o.skip_wasm_opt {
@@ -438,18 +485,31 @@ fn web_template(out: &Path, o: &Options) -> Result {
         );
     }
 
-    let dest = out.join("web");
+    let dest = out.join(variant.dir);
     fs::create_dir_all(&dest)?;
     fs::copy(work.join("orbit_player.js"), dest.join("orbit_player.js"))?;
     fs::copy(&bg, dest.join("orbit_player_bg.wasm"))?;
     let bytes = fs::metadata(dest.join("orbit_player_bg.wasm"))?.len();
     println!(
-        "web template: {} (baseline {} bytes: {:+.1} %)",
+        "{} template: {} (baseline {} bytes: {:+.1} %)",
+        variant.name,
         dest.display(),
         WASM_BASELINE_BYTES,
         (bytes as f64 / WASM_BASELINE_BYTES as f64 - 1.0) * 100.0
     );
     Ok(())
+}
+
+/// The web variants `o` builds.
+fn web_variants(o: &Options) -> Vec<WebVariant> {
+    let mut out = Vec::new();
+    if o.web {
+        out.push(WEB_2D);
+        if o.web3d {
+            out.push(WEB_3D);
+        }
+    }
+    out
 }
 
 pub fn templates(args: &[String]) -> Result {
@@ -462,44 +522,48 @@ pub fn templates(args: &[String]) -> Result {
             native_template(&o.out, Some(triple), &host)?;
         }
     }
-    if o.web {
-        web_template(&o.out, &o)?;
+    for variant in web_variants(&o) {
+        web_template(&o.out, &o, variant)?;
     }
     if o.android {
         android_template(&o.out, &o)?;
     }
     println!("templates ready in {}", o.out.display());
-    if o.check_budget && o.web {
-        check_budget(&o.out.join("web/orbit_player_bg.wasm"))?;
+    if o.check_budget {
+        for variant in web_variants(&o) {
+            check_budget(&o.out.join(variant.dir).join("orbit_player_bg.wasm"), variant)?;
+        }
     }
     Ok(())
 }
 
 /// What is over budget, given the plain and the brotli size.
-fn budget_errors(size: u64, packed: u64) -> Vec<String> {
+fn budget_errors(size: u64, packed: u64, variant: WebVariant) -> Vec<String> {
+    let (name, budget, budget_brotli) = (variant.name, variant.budget, variant.budget_brotli);
     let mut errors = Vec::new();
-    if size > WASM_BUDGET_BYTES {
+    if size > budget {
         errors.push(format!(
-            "the web player is {size} bytes, over the budget of {WASM_BUDGET_BYTES}"
+            "the {name} is {size} bytes, over the budget of {budget}"
         ));
     }
-    if packed > WASM_BUDGET_BROTLI_BYTES {
+    if packed > budget_brotli {
         errors.push(format!(
-            "the web player is {packed} bytes with brotli, over the budget of {WASM_BUDGET_BROTLI_BYTES}"
+            "the {name} is {packed} bytes with brotli, over the budget of {budget_brotli}"
         ));
     }
     errors
 }
 
-/// Fails when the web player is over the documented budget.
-pub fn check_budget(wasm: &Path) -> Result {
+/// Fails when a web player is over its documented budget.
+pub fn check_budget(wasm: &Path, variant: WebVariant) -> Result {
     let data = fs::read(wasm).map_err(|e| format!("cannot read {}: {e}", wasm.display()))?;
     let size = data.len() as u64;
     let packed = brotli_size(&data)?;
     println!(
-        "wasm budget: {size} / {WASM_BUDGET_BYTES} bytes, brotli {packed} / {WASM_BUDGET_BROTLI_BYTES} bytes"
+        "wasm budget ({}): {size} / {} bytes, brotli {packed} / {} bytes",
+        variant.name, variant.budget, variant.budget_brotli
     );
-    let errors = budget_errors(size, packed);
+    let errors = budget_errors(size, packed, variant);
     if errors.is_empty() {
         Ok(())
     } else {
@@ -511,17 +575,26 @@ pub fn check_budget(wasm: &Path) -> Result {
     }
 }
 
-/// `cargo xtask wasm-budget [--file <wasm>]`: the check alone.
+/// `cargo xtask wasm-budget [--3d] [--file <wasm>]`: the check alone (the
+/// 2D player, or the 3D one with `--3d`).
 pub fn budget(args: &[String]) -> Result {
-    let mut file = workspace_root().join("target/templates/web/orbit_player_bg.wasm");
+    let mut file = None;
+    let mut variant = WEB_2D;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "--file" => file = PathBuf::from(it.next().ok_or("--file needs a path")?),
+            "--file" => file = Some(PathBuf::from(it.next().ok_or("--file needs a path")?)),
+            "--3d" => variant = WEB_3D,
             other => return Err(format!("unknown option `{other}`").into()),
         }
     }
-    check_budget(&file)
+    let file = file.unwrap_or_else(|| {
+        workspace_root()
+            .join("target/templates")
+            .join(variant.dir)
+            .join("orbit_player_bg.wasm")
+    });
+    check_budget(&file, variant)
 }
 
 #[cfg(test)]
@@ -539,6 +612,11 @@ mod tests {
         ]))
         .unwrap();
         assert!(!o.web && o.native && o.skip_wasm_opt);
+        assert!(web_variants(&o).is_empty());
+        let all = parse(&args(&[])).unwrap();
+        assert_eq!(web_variants(&all), [WEB_2D, WEB_3D]);
+        let no3d = parse(&args(&["--no-web3d"])).unwrap();
+        assert_eq!(web_variants(&no3d), [WEB_2D]);
         assert_eq!(o.targets, ["x86_64-unknown-linux-gnu"]);
         assert!(parse(&args(&["--bogus"])).is_err());
         assert!(parse(&args(&["--out"])).is_err());
@@ -573,10 +651,16 @@ mod tests {
 
     #[test]
     fn the_budget_fails_when_either_size_is_over() {
-        assert!(budget_errors(WASM_BUDGET_BYTES, WASM_BUDGET_BROTLI_BYTES).is_empty());
-        assert_eq!(budget_errors(WASM_BUDGET_BYTES + 1, 0).len(), 1);
-        assert_eq!(budget_errors(0, WASM_BUDGET_BROTLI_BYTES + 1).len(), 1);
-        assert_eq!(budget_errors(u64::MAX, u64::MAX).len(), 2);
+        let v = WEB_2D;
+        assert!(budget_errors(WASM_BUDGET_BYTES, WASM_BUDGET_BROTLI_BYTES, v).is_empty());
+        assert_eq!(budget_errors(WASM_BUDGET_BYTES + 1, 0, v).len(), 1);
+        assert_eq!(budget_errors(0, WASM_BUDGET_BROTLI_BYTES + 1, v).len(), 1);
+        assert_eq!(budget_errors(u64::MAX, u64::MAX, v).len(), 2);
+        // The 3D player has its own, larger budget.
+        const { assert!(WASM3D_BUDGET_BYTES > WASM_BUDGET_BYTES) };
+        assert!(budget_errors(WASM_BUDGET_BYTES + 1, 0, WEB_3D).is_empty());
+        let e = budget_errors(WASM3D_BUDGET_BYTES + 1, 0, WEB_3D);
+        assert!(e[0].contains("3D web player"), "{e:?}");
     }
 
     #[test]
@@ -585,8 +669,9 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let small = dir.join("small.wasm");
         fs::write(&small, b"\0asm\x01\0\0\0").unwrap();
-        assert!(check_budget(&small).is_ok());
-        assert!(check_budget(&dir.join("missing.wasm")).is_err());
+        assert!(check_budget(&small, WEB_2D).is_ok());
+        assert!(check_budget(&small, WEB_3D).is_ok());
+        assert!(check_budget(&dir.join("missing.wasm"), WEB_2D).is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 }

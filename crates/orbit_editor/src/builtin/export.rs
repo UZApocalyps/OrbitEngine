@@ -19,7 +19,7 @@ use orbit_editor_api::{
 };
 use orbit_export::android::{AndroidOptions, Secret, Signing, toolchain as android_tools};
 use orbit_export::{
-    AndroidFormat, AndroidOrientation,
+    AndroidFormat, AndroidOrientation, DesktopQuality,
     Event, ExportOptions, ExportProfile, ExportProject, ExportReport, ExportTarget, LogLevel,
     PakCompression, Server, Templates, export_many,
 };
@@ -233,6 +233,9 @@ struct ExportUi {
     after_save: bool,
     /// Rust plugin crates of the project and the toolchain (M8-04).
     plugins: PluginStatus,
+    /// 3D scenes measured against the quality profiles (M6-12); `None`
+    /// until checked (on first display, then on demand).
+    scenes3d: Option<Vec<orbit_export::scene3d::SceneReport>>,
 }
 
 /// What the panel tells about an export "with plugins".
@@ -297,6 +300,125 @@ fn plugins_section(ui: &mut Ui, state: &ExportUi) {
     });
 }
 
+/// The "3D quality" card (M6-12): each 3D scene of the story measured
+/// against the web profile and the desktop profile of the export profile.
+/// Going over only warns: the export still works (ADR 0014 section 3).
+fn scenes3d_section(ui: &mut Ui, state: &mut ExportUi, root: &Path, story: &orbit_core::Story) {
+    use orbit_export::scene3d::{analyze, tier_of};
+    let texts = ui.texts();
+    let mut recheck = false;
+    card(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            section_title(ui, &texts.t("export.s3d.title"));
+            recheck = ui
+                .small_button(format!("{}  {}", icons::ARROWS_CLOCKWISE, texts.t("export.s3d.check")))
+                .on_hover_text(texts.t("export.s3d.check_hint"))
+                .clicked();
+        });
+        let Some(reports) = &state.scenes3d else {
+            return;
+        };
+        let profile = &state.profiles[state.selected.min(state.profiles.len() - 1)];
+        let mut tiers = vec![tier_of(ExportTarget::Web, profile)];
+        tiers.push(tier_of(ExportTarget::Windows, profile));
+        for report in reports {
+            let s = &report.stats;
+            let largest = s
+                .textures
+                .values()
+                .max_by_key(|(w, h)| w.max(h))
+                .map(|(w, h)| format!("{w}x{h}"))
+                .unwrap_or_else(|| "-".into());
+            ui.label(RichText::new(&report.path).strong());
+            ui.label(
+                RichText::new(texts.tf(
+                    "export.s3d.stats",
+                    &[
+                        ("lights", &s.lights.to_string()),
+                        ("shadows", &s.shadow_lights.to_string()),
+                        ("triangles", &s.triangles.to_string()),
+                        ("textures", &s.textures.len().to_string()),
+                        ("largest", &largest),
+                    ],
+                ))
+                .color(weak(ui)),
+            );
+            for error in &report.errors {
+                ui.label(RichText::new(format!("{}  {error}", icons::WARNING)).color(warning(ui)));
+            }
+            for &tier in &tiers {
+                let name = texts.t(&format!("export.s3d.tier.{}", tier.id()));
+                let issues = report.issues(tier);
+                if issues.is_empty() {
+                    ui.label(
+                        RichText::new(format!(
+                            "{}  {}",
+                            icons::CHECK,
+                            texts.tf("export.s3d.fits", &[("profile", &name)])
+                        ))
+                        .color(success()),
+                    );
+                }
+                for issue in issues {
+                    let issue = issue_text(&texts, &issue);
+                    ui.label(
+                        RichText::new(format!("{}  {name}: {issue}", icons::WARNING))
+                            .color(warning(ui)),
+                    );
+                }
+            }
+            if !s.unknown.is_empty() {
+                ui.label(
+                    RichText::new(texts.tf(
+                        "export.s3d.unknown",
+                        &[("refs", &s.unknown.join(", "))],
+                    ))
+                    .small()
+                    .color(faint(ui)),
+                );
+            }
+            ui.add_space(4.0);
+        }
+        ui.label(RichText::new(texts.t("export.s3d.note")).small().color(weak(ui)));
+    });
+    if recheck || state.scenes3d.is_none() {
+        state.scenes3d = Some(analyze(root, story));
+    }
+}
+
+/// A quality issue in the language of the editor.
+fn issue_text(texts: &Translator, issue: &orbit_scene::quality::QualityIssue) -> String {
+    use orbit_scene::quality::QualityIssue as Q;
+    match issue {
+        Q::TooManyLights { count, max } => texts.tf(
+            "export.s3d.issue.lights",
+            &[("count", &count.to_string()), ("max", &max.to_string())],
+        ),
+        Q::TooManyShadows { count, max } => texts.tf(
+            "export.s3d.issue.shadows",
+            &[("count", &count.to_string()), ("max", &max.to_string())],
+        ),
+        Q::TooManyTriangles { count, max } => texts.tf(
+            "export.s3d.issue.triangles",
+            &[("count", &count.to_string()), ("max", &max.to_string())],
+        ),
+        Q::TextureTooLarge {
+            name,
+            width,
+            height,
+            max,
+        } => texts.tf(
+            "export.s3d.issue.texture",
+            &[
+                ("name", name),
+                ("size", &format!("{width}x{height}")),
+                ("max", &max.to_string()),
+            ],
+        ),
+    }
+}
+
 type SharedUi = Arc<Mutex<ExportUi>>;
 
 fn shared_state(ctx: &egui::Context) -> SharedUi {
@@ -338,6 +460,7 @@ impl ExportUi {
         };
         self.has_manifest = has_manifest;
         self.plugins = PluginStatus::detect(root);
+        self.scenes3d = None;
         self.out_dir = default_out_dir(root);
         self.loaded_root = Some(root.to_owned());
     }
@@ -475,6 +598,12 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             if state.wants_android() {
                 ui.add_space(6.0);
                 android_section(ui, &mut state);
+            }
+            if let Some(story) = ctx.story()
+                && orbit_export::scene3d::uses_3d(story)
+            {
+                ui.add_space(6.0);
+                scenes3d_section(ui, &mut state, &info.root, story);
             }
             ui.add_space(8.0);
             run_controls(ui, &mut state, ctx, &info, &mut messages);
@@ -629,6 +758,21 @@ fn profile_form(
                     texts.t("export.field.web_precompress"),
                 )
                 .changed();
+            ui.end_row();
+            ui.label(texts.t("export.field.quality3d"));
+            ui.horizontal(|ui| {
+                for (value, key) in [
+                    (DesktopQuality::Low, "export.quality.low"),
+                    (DesktopQuality::High, "export.quality.high"),
+                ] {
+                    changed |= ui
+                        .selectable_value(&mut profile.desktop_quality, value, texts.t(key))
+                        .on_hover_text(texts.t(&format!("{key}_hint")))
+                        .changed();
+                }
+            })
+            .response
+            .on_hover_text(texts.t("export.field.quality3d_hint"));
             ui.end_row();
         });
     if changed {

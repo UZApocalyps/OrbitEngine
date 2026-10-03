@@ -239,6 +239,101 @@ fn every_target_produces_the_expected_files() {
     assert_eq!(std::fs::read(&built.pak_path).unwrap(), windows_pak);
 }
 
+/// M6-12 / M6-13: a game showing a 3D scene gets the 3D web template, the
+/// desktop quality in its pak metadata and warnings for the web profile.
+#[test]
+fn a_3d_game_uses_the_3d_web_template_and_is_checked_against_the_web_profile() {
+    use orbit_core::{AssetEntry, AssetId, AssetKind, NodeKind, Story};
+    let project_dir = TempDir::new("e2e_3d_project");
+    let templates_dir = TempDir::new("e2e_3d_templates");
+    let out = TempDir::new("e2e_3d_out");
+    let project = orbit_export::testing::fixture_project(project_dir.path());
+    let story_path = project.story_path();
+    let mut story = Story::from_ron_unchecked(&std::fs::read_to_string(&story_path).unwrap())
+        .unwrap();
+    let scene_id = AssetId::new();
+    story.assets.assets.push(AssetEntry {
+        id: scene_id,
+        kind: AssetKind::Scene3d,
+        path: "assets/3d/room.scene3d.ron".into(),
+    });
+    let node = story
+        .scenes
+        .iter_mut()
+        .flat_map(|s| s.nodes.iter_mut())
+        .find(|n| matches!(n.kind, NodeKind::Background { .. }))
+        .expect("the fixture shows a background");
+    node.kind = NodeKind::ShowScene3d {
+        scene: scene_id,
+        camera: None,
+        transition: None,
+    };
+    std::fs::write(&story_path, story.to_ron().unwrap()).unwrap();
+    let mut scene = orbit_scene::Scene3d::new("room");
+    for _ in 0..5 {
+        scene.nodes.push(orbit_scene::Node3d::new(
+            "lamp",
+            None,
+            orbit_scene::Node3dKind::Light(orbit_scene::Light::Point {
+                color: [1.0; 3],
+                intensity: 1.0,
+                range: None,
+            }),
+        ));
+    }
+    std::fs::create_dir_all(project_dir.path().join("assets/3d")).unwrap();
+    std::fs::write(
+        project_dir.path().join("assets/3d/room.scene3d.ron"),
+        orbit_scene::to_ron(&scene).unwrap(),
+    )
+    .unwrap();
+
+    let templates = fake_templates(templates_dir.path());
+    let mut profile = project.profile(None).unwrap();
+    profile.desktop_quality = orbit_export::DesktopQuality::High;
+    let options = ExportOptions {
+        templates: templates.clone(),
+        cancel: None,
+        android: Default::default(),
+    };
+    // Without the 3D web template the export stops before writing anything.
+    let err = export(&project, &profile, ExportTarget::Web, out.path(), &options, &mut |_| {})
+        .unwrap_err();
+    assert!(err.to_string().contains("web (3D)"), "{err}");
+
+    let web3d = templates_dir.path().join(orbit_export::WEB3D_DIR);
+    std::fs::create_dir_all(&web3d).unwrap();
+    std::fs::write(web3d.join("orbit_player.js"), b"// 3d glue").unwrap();
+    std::fs::write(web3d.join("orbit_player_bg.wasm"), b"\0asm\x01\0\0\0 fake 3d").unwrap();
+    let reports = export_many(
+        &project,
+        &profile,
+        &[ExportTarget::Web, ExportTarget::Linux],
+        out.path(),
+        &options,
+        &mut |_| {},
+    )
+    .expect("3D export");
+    let web = &reports[0];
+    let wasm = web
+        .files
+        .iter()
+        .find(|f| f.file_name().is_some_and(|n| n == "orbit_player_bg.wasm"))
+        .expect("wasm written");
+    assert!(std::fs::read(wasm).unwrap().ends_with(b"fake 3d"));
+    let quality: Vec<&String> = web
+        .warnings
+        .iter()
+        .filter(|w| w.contains("quality profile"))
+        .collect();
+    assert_eq!(quality.len(), 1, "{:?}", web.warnings);
+    assert!(quality[0].contains("web quality profile") && quality[0].contains("5 lights"));
+    let pak = std::fs::read(web.output.join("game.pak")).unwrap();
+    let (_, index) = orbit_pak::container::parse_prefix(&pak).unwrap();
+    assert_eq!(index.meta("quality"), Some("desktop-high"));
+    assert!(index.contains("assets/3d/room.scene3d.ron"));
+}
+
 #[test]
 fn a_broken_project_fails_before_writing_anything() {
     let project_dir = TempDir::new("e2e_broken");

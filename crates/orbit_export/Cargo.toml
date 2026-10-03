@@ -13,6 +13,9 @@ orbit_project.workspace = true
 orbit_i18n.workspace = true
 orbit_pak.workspace = true
 orbit_ui_data.workspace = true
+# 3D scene checks at export (M6-12): GPU free; glTF import and KTX2 to read
+# triangle counts and texture sizes.
+orbit_scene = { path = "../orbit_scene" }
 thiserror.workspace = true
 log.workspace = true
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

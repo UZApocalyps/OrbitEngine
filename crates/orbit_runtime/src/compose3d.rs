@@ -23,9 +23,28 @@ use crate::stage::StageState;
 pub struct Layer3d {
     #[cfg(feature = "3d")]
     compositor: Option<Compositor3d>,
+    /// Quality tier id chosen at export for desktop players (pak metadata
+    /// `quality`, M6-12). The web and Android players always use the web
+    /// tier.
+    quality: Option<String>,
 }
 
+/// Pak metadata key holding the desktop quality tier (`desktop-low`,
+/// `desktop-high`, see `orbit_scene::quality::QualityTier::id`).
+pub const QUALITY_META: &str = "quality";
+
 impl Layer3d {
+    /// Sets the export quality tier (before the first 3D scene is shown;
+    /// later calls apply to the next compositor only). Unknown ids fall back
+    /// to the platform default.
+    pub fn set_quality(&mut self, tier_id: Option<&str>) {
+        self.quality = tier_id.map(str::to_owned);
+    }
+
+    pub fn quality(&self) -> Option<&str> {
+        self.quality.as_deref()
+    }
+
     /// Starts a frame: every view may be (re)used again.
     pub fn begin_frame(&mut self) {
         #[cfg(feature = "3d")]
@@ -55,7 +74,9 @@ impl Layer3d {
             };
             let compositor = self
                 .compositor
-                .get_or_insert_with(|| Compositor3d::new(renderer));
+                .get_or_insert_with(|| {
+                    Compositor3d::with_quality(renderer, self.quality.as_deref())
+                });
             compositor.draw(renderer, path, scene, shown.camera.as_deref())
         }
         #[cfg(not(feature = "3d"))]
@@ -123,23 +144,46 @@ mod gpu {
         warned: HashSet<String>,
     }
 
-    /// The default quality profile of the platform (ADR 0014 section 3).
-    fn platform_profile() -> QualityProfile {
-        #[cfg(target_arch = "wasm32")]
-        {
-            QualityProfile::web()
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        QualityProfile::desktop_low()
+    /// The quality profile of the platform (ADR 0014 section 3): web on the
+    /// web and Android (ADR 0017), else the tier chosen at export
+    /// (`desktop` id), desktop low by default.
+    pub(crate) fn platform_profile(desktop: Option<&str>) -> QualityProfile {
+        use orbit_scene::quality::QualityTier;
+        let tier = if cfg!(any(target_arch = "wasm32", target_os = "android")) {
+            QualityTier::Web
+        } else {
+            desktop
+                .and_then(QualityTier::from_id)
+                .unwrap_or(QualityTier::DesktopLow)
+        };
+        QualityProfile::for_tier(tier)
+    }
+
+    #[cfg(all(test, not(target_arch = "wasm32"), not(target_os = "android")))]
+    #[test]
+    fn the_export_tier_picks_the_desktop_profile() {
+        assert_eq!(platform_profile(None), QualityProfile::desktop_low());
+        assert_eq!(platform_profile(Some("nonsense")), QualityProfile::desktop_low());
+        assert_eq!(
+            platform_profile(Some("desktop-high")),
+            QualityProfile::for_tier(orbit_scene::quality::QualityTier::DesktopHigh)
+        );
     }
 
     impl Compositor3d {
         /// Creates the 3D renderer on the 2D renderer's device. Views are
         /// sized like the stage's canvas targets.
         pub fn new(r2d: &Renderer2d) -> Self {
+            Self::with_quality(r2d, None)
+        }
+
+        /// Like [`Compositor3d::new`] with the export quality tier id.
+        pub fn with_quality(r2d: &Renderer2d, desktop_tier: Option<&str>) -> Self {
             let gfx = r2d.gfx();
             let mut renderer = Renderer3d::new(gfx.device(), gfx.queue());
-            renderer.set_quality(platform_profile().adapt_to(gfx.adapter()));
+            let profile = platform_profile(desktop_tier);
+            log::info!("3D quality: {} lights, bloom {}", profile.max_lights, profile.post.bloom.is_some());
+            renderer.set_quality(profile.adapt_to(gfx.adapter()));
             let [vw, vh] = r2d.camera().virtual_size;
             let max = gfx.max_texture_dimension() as f32;
             let k = (max / vw.max(vh)).min(1.0);
