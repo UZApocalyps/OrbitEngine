@@ -30,6 +30,8 @@ pub enum OpError {
     KeepSkin,
     /// A mesh with out-of-range indices or mismatched lengths.
     BadMesh,
+    /// A clip with that name already exists.
+    Exists,
 }
 
 impl OpError {
@@ -41,6 +43,7 @@ impl OpError {
             OpError::BadIk => "rig.err.bad_ik",
             OpError::KeepSkin => "rig.err.keep_skin",
             OpError::BadMesh => "rig.err.bad_mesh",
+            OpError::Exists => "rig.err.exists",
         }
     }
 }
@@ -396,6 +399,12 @@ impl RigDoc {
                 Ok(r)
             }
         }
+    }
+
+    /// A public [`RigDoc::mutate`] for the clip editor (its operations live in
+    /// [`super::clips`]): one undo step, or part of the open gesture.
+    pub fn edit<R>(&mut self, f: impl FnOnce(&mut Rig) -> Result<R, OpError>) -> Result<R, OpError> {
+        self.mutate(f)
     }
 
     // ---- bones

@@ -8,6 +8,7 @@ use super::model::{
     Attachment, AttachmentId, ClipBlend, MeshAttachment, RegionAttachment, Rig, RigClip, RigTrack,
 };
 use super::validate::{RigIssue, Severity};
+use crate::curve::Curve;
 use crate::lerp::{Angle, Lerp, Rgba};
 
 /// A mesh's influences resolved to bone indices, normalized, in CSR form.
@@ -280,62 +281,94 @@ impl PreparedRig {
     /// Samples the clip named `name` at elapsed time `t` (setup pose when the
     /// clip is unknown).
     pub fn sample(&self, name: &str, t: f32) -> RigPose {
+        self.sample_with(name, t, |_| None)
+    }
+
+    /// Like [`PreparedRig::sample`], resolving named easing curves through
+    /// `resolve` (the story's curve table).
+    pub fn sample_with<'a>(&self, name: &str, t: f32, resolve: impl Fn(&str) -> Option<&'a Curve> + Copy) -> RigPose {
         match self.rig.clips.get(name) {
-            Some(clip) => self.sample_clip(clip, t),
+            Some(clip) => self.sample_clip_with(clip, t, resolve),
             None => self.setup_pose(),
         }
     }
 
     /// Samples `clip` at elapsed time `t` (looping applied).
     pub fn sample_clip(&self, clip: &RigClip, t: f32) -> RigPose {
+        self.sample_clip_with(clip, t, |_| None)
+    }
+
+    /// Like [`PreparedRig::sample_clip`] with a named-curve table.
+    pub fn sample_clip_with<'a>(
+        &self,
+        clip: &RigClip,
+        t: f32,
+        resolve: impl Fn(&str) -> Option<&'a Curve> + Copy,
+    ) -> RigPose {
+        self.sample_clip_local_with(clip, clip.local_time(t), resolve)
+    }
+
+    /// Samples `clip` at a time already inside one pass (no looping applied):
+    /// what an editor scrubbing a timeline wants.
+    pub fn sample_clip_local_with<'a>(
+        &self,
+        clip: &RigClip,
+        local: f32,
+        resolve: impl Fn(&str) -> Option<&'a Curve> + Copy,
+    ) -> RigPose {
         let mut pose = self.setup_pose();
-        let lt = clip.local_time(t);
         for track in &clip.tracks {
-            self.apply_track(&mut pose, track, lt);
+            self.apply_track(&mut pose, track, local, resolve);
         }
         pose
     }
 
-    fn apply_track(&self, pose: &mut RigPose, track: &RigTrack, t: f32) {
+    fn apply_track<'a>(
+        &self,
+        pose: &mut RigPose,
+        track: &RigTrack,
+        t: f32,
+        resolve: impl Fn(&str) -> Option<&'a Curve> + Copy,
+    ) {
         let bone = |id: &str| self.bone_index.get(id).copied();
         let slot = |id: &str| self.slot_index.get(id).copied();
         match track {
             RigTrack::BoneRotate { bone: b, track } => {
-                if let (Some(i), Some(v)) = (bone(&b.0), track.sample(t)) {
+                if let (Some(i), Some(v)) = (bone(&b.0), track.sample_with(t, resolve)) {
                     pose.bones[i].rotation = self.rig.bones[i].rest.rotation + v.0;
                 }
             }
             RigTrack::BoneTranslate { bone: b, track } => {
-                if let (Some(i), Some(v)) = (bone(&b.0), track.sample(t)) {
+                if let (Some(i), Some(v)) = (bone(&b.0), track.sample_with(t, resolve)) {
                     let r = self.rig.bones[i].rest;
                     pose.bones[i].x = r.x + v.x;
                     pose.bones[i].y = r.y + v.y;
                 }
             }
             RigTrack::BoneScale { bone: b, track } => {
-                if let (Some(i), Some(v)) = (bone(&b.0), track.sample(t)) {
+                if let (Some(i), Some(v)) = (bone(&b.0), track.sample_with(t, resolve)) {
                     let r = self.rig.bones[i].rest;
                     pose.bones[i].sx = r.sx * v.x;
                     pose.bones[i].sy = r.sy * v.y;
                 }
             }
             RigTrack::SlotAttachment { slot: s, track } => {
-                if let (Some(i), Some(v)) = (slot(&s.0), track.sample(t)) {
+                if let (Some(i), Some(v)) = (slot(&s.0), track.sample_with(t, resolve)) {
                     pose.slots[i].attachment = v.0;
                 }
             }
             RigTrack::SlotColor { slot: s, track } => {
-                if let (Some(i), Some(v)) = (slot(&s.0), track.sample(t)) {
+                if let (Some(i), Some(v)) = (slot(&s.0), track.sample_with(t, resolve)) {
                     pose.slots[i].color = v;
                 }
             }
             RigTrack::Deform { slot: s, attachment, track } => {
-                if let (Some(i), Some(v)) = (slot(&s.0), track.sample(t)) {
+                if let (Some(i), Some(v)) = (slot(&s.0), track.sample_with(t, resolve)) {
                     pose.deforms.insert((i, attachment.clone()), v.0);
                 }
             }
             RigTrack::DrawOrder { track } => {
-                if let Some(v) = track.sample(t) {
+                if let Some(v) = track.sample_with(t, resolve) {
                     let mut order: Vec<usize> = Vec::with_capacity(pose.slots.len());
                     for id in &v.0 {
                         if let Some(i) = slot(&id.0)
@@ -357,11 +390,21 @@ impl PreparedRig {
 
     /// Samples a cross-fade at clock time `now`.
     pub fn sample_blend(&self, state: &ClipBlend, now: f32) -> RigPose {
-        let cur = self.sample(&state.current.clip, now - state.current.started_at);
+        self.sample_blend_with(state, now, |_| None)
+    }
+
+    /// Like [`PreparedRig::sample_blend`] with a named-curve table.
+    pub fn sample_blend_with<'a>(
+        &self,
+        state: &ClipBlend,
+        now: f32,
+        resolve: impl Fn(&str) -> Option<&'a Curve> + Copy,
+    ) -> RigPose {
+        let cur = self.sample_with(&state.current.clip, now - state.current.started_at, resolve);
         let w = state.weight(now);
         match &state.previous {
             Some(prev) if w < 1.0 => {
-                let old = self.sample(&prev.clip, now - prev.started_at);
+                let old = self.sample_with(&prev.clip, now - prev.started_at, resolve);
                 RigPose::blend(&old, &cur, w)
             }
             _ => cur,

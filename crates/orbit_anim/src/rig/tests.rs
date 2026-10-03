@@ -390,3 +390,25 @@ fn ron_round_trip_and_versions() {
     assert!(matches!(load_rig("(rig_version: 999)"), Err(RigLoadError::TooNew { found: 999, .. })));
     assert!(matches!(load_rig("not ron at all ("), Err(RigLoadError::Parse(_))));
 }
+
+#[test]
+fn named_curves_resolve_in_rig_tracks() {
+    let mut r = arm_rig();
+    let mut clip = rotate_clip("arm", 0.0, 40.0, 2.0, Loop::Once);
+    if let RigTrack::BoneRotate { track, .. } = &mut clip.tracks[0] {
+        track.keys[0].ease = Curve::Named("snap".into());
+    }
+    r.clips.insert("wave".into(), clip);
+    let rig = PreparedRig::new(r).unwrap();
+    let mut table = BTreeMap::new();
+    table.insert("snap".to_owned(), Curve::Preset(crate::Ease::InQuad));
+    let resolve = |n: &str| table.get(n);
+    // Unresolved: linear (halfway = 20); resolved InQuad: 0.25 * 40 = 10.
+    assert!((rig.sample("wave", 1.0).bones[1].rotation - 20.0).abs() < 1e-4);
+    assert!((rig.sample_with("wave", 1.0, resolve).bones[1].rotation - 10.0).abs() < 1e-4);
+    // The local (no loop) sampler and the blend go through the same table.
+    let clip = rig.rig().clips["wave"].clone();
+    assert!((rig.sample_clip_local_with(&clip, 1.0, resolve).bones[1].rotation - 10.0).abs() < 1e-4);
+    let blend = ClipBlend::new("wave", 0.0);
+    assert!((rig.sample_blend_with(&blend, 1.0, resolve).bones[1].rotation - 10.0).abs() < 1e-4);
+}

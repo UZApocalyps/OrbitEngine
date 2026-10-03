@@ -18,6 +18,8 @@
 
 mod geom;
 mod meshedit;
+mod clippanel;
+mod clips;
 mod meshgen;
 mod model;
 mod panels;
@@ -88,9 +90,23 @@ impl EditorPlugin for RigPlugin {
         reg.panel(PanelDef::new("inspector", "rig.title.inspector", icons::SLIDERS, DockSlot::Hidden, move |ui, ctx| {
             panels::inspector(ui, ctx, &state)
         }));
+        let state = self.state.clone();
+        reg.panel(PanelDef::new("clips", "rig.title.clips", icons::FILM_STRIP, DockSlot::Hidden, move |ui, ctx| {
+            clippanel::clips_panel(ui, ctx, &state)
+        }));
+        let state = self.state.clone();
+        reg.panel(PanelDef::new("timeline", "rig.title.timeline", icons::FILM_STRIP, DockSlot::Hidden, move |ui, ctx| {
+            clippanel::timeline_panel(ui, ctx, &state)
+        }));
         reg.action(
             ActionDef::new("open", "rig.open", |ctx| {
-                for p in [panel_ids::RIG_VIEWPORT, panel_ids::RIG_HIERARCHY, panel_ids::RIG_INSPECTOR] {
+                for p in [
+                    panel_ids::RIG_VIEWPORT,
+                    panel_ids::RIG_HIERARCHY,
+                    panel_ids::RIG_INSPECTOR,
+                    panel_ids::RIG_CLIPS,
+                    panel_ids::RIG_TIMELINE,
+                ] {
                     ctx.request(EditorRequest::ShowPanel(p.to_owned()));
                 }
             })
@@ -161,6 +177,8 @@ pub(super) struct State {
     pub ik_two: bool,
     /// Mesh and weight tools.
     pub(super) mesh: meshedit::MeshEdit,
+    /// Clip editing and preview (M5B-06).
+    anim: clippanel::AnimState,
 }
 
 impl State {
@@ -190,6 +208,7 @@ impl State {
             ik_target: None,
             ik_two: true,
             mesh: meshedit::MeshEdit::default(),
+            anim: clippanel::AnimState::default(),
         }
     }
 
@@ -206,6 +225,7 @@ impl State {
         self.selected_slot = None;
         self.pose.clear();
         self.pose_mode = false;
+        self.anim.reset();
         self.drag = None;
         self.create = None;
         self.renaming = None;
@@ -331,20 +351,33 @@ impl State {
         }
     }
 
-    /// Local transforms shown: the rest pose, or the pose mode overrides.
+    /// Local transforms shown: the rest pose, or in pose mode the pose
+    /// overrides over the clip preview (or the rest pose).
     pub fn locals(&self) -> Vec<Xform> {
         let Some(doc) = &self.doc else { return Vec::new() };
+        let base = self.anim_pose();
         doc.rig()
             .bones
             .iter()
-            .map(|b| if self.pose_mode { self.pose.get(&b.id).copied().unwrap_or(b.rest) } else { b.rest })
+            .enumerate()
+            .map(|(i, b)| {
+                if !self.pose_mode {
+                    return b.rest;
+                }
+                self.pose
+                    .get(&b.id)
+                    .copied()
+                    .or_else(|| base.as_ref().and_then(|p| p.bones.get(i).copied()))
+                    .unwrap_or(b.rest)
+            })
             .collect()
     }
 
-    /// The pose to draw: setup pose with the displayed bone transforms.
+    /// The pose to draw: the clip preview (slots, deforms, draw order) or
+    /// the setup pose, with the displayed bone transforms.
     pub fn rig_pose(&self) -> Option<RigPose> {
         let prepared = self.prepared.as_ref()?;
-        let mut pose = prepared.setup_pose();
+        let mut pose = self.anim_pose().unwrap_or_else(|| prepared.setup_pose());
         pose.bones = self.locals();
         Some(pose)
     }
@@ -363,13 +396,34 @@ impl State {
 
     /// Local transform of a bone as displayed.
     pub fn local_of(&self, id: &BoneId) -> Option<Xform> {
-        let b = model::bone(self.doc.as_ref()?.rig(), id)?;
-        Some(if self.pose_mode { self.pose.get(id).copied().unwrap_or(b.rest) } else { b.rest })
+        let rig = self.doc.as_ref()?.rig();
+        let i = model::bone_index(rig, id)?;
+        let b = &rig.bones[i];
+        if !self.pose_mode {
+            return Some(b.rest);
+        }
+        Some(
+            self.pose
+                .get(id)
+                .copied()
+                .or_else(|| self.anim_pose().and_then(|p| p.bones.get(i).copied()))
+                .unwrap_or(b.rest),
+        )
     }
 
-    /// Writes a bone transform where the current mode edits it.
+    /// Writes a bone transform where the current mode edits it: the rest
+    /// pose, a key at the playhead (clip selected, auto-key on), or the
+    /// throw-away pose.
     pub fn set_local(&mut self, id: &BoneId, x: Xform) {
         if self.pose_mode {
+            if self.anim.fade.is_some() {
+                return;
+            }
+            if self.recording() {
+                self.pose.remove(id);
+                self.record_bone_edit(id, x);
+                return;
+            }
             if self.pose.get(id) != Some(&x) {
                 self.pose.insert(id.clone(), x);
                 self.pose_rev += 1;
@@ -412,6 +466,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
     let mut guard = state.borrow_mut();
     let st = &mut *guard;
     st.begin_frame(ui);
+    clippanel::tick(ui, st);
     if st.doc.is_none() {
         panels::empty_state(ui, ctx, st);
         confirm_dialog(ui, ctx, st);
@@ -494,7 +549,11 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
     meshedit::paint(ui, st, &painter, rect);
     paint_bones(ui, st, &painter, rect);
     paint_handles(ui, st, &painter, rect);
-    let mode = if st.pose_mode { ctx.t("rig.mode.pose") } else { ctx.t("rig.mode.rest") };
+    let mut mode = if st.pose_mode { ctx.t("rig.mode.pose") } else { ctx.t("rig.mode.rest") };
+    if st.pose_mode && let Some(clip) = &st.anim.clip {
+        let rec = if st.recording() { "  \u{25CF}" } else { "" };
+        mode = format!("{mode}  -  {clip}  {:.2}s{rec}", st.anim.playhead);
+    }
     painter.text(
         rect.right_top() + vec2(-8.0, 8.0),
         Align2::RIGHT_TOP,
@@ -586,6 +645,9 @@ fn keys(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, rect: Rect) {
     if tab {
         set_pose_mode(st, !st.pose_mode);
     }
+    if ui.input(|i| !i.modifiers.command && !i.modifiers.alt && i.key_pressed(egui::Key::K)) && st.pose_mode {
+        st.key_pose();
+    }
     if del && st.tool == Tool::Mesh {
         meshedit::delete_selected_vertex(ctx, st);
     } else if del && st.tool != Tool::Weights && let Some(id) = st.selected.clone() {
@@ -597,6 +659,11 @@ pub(super) fn set_pose_mode(st: &mut State, pose: bool) {
     if st.pose_mode != pose {
         st.pose_mode = pose;
         st.pose_rev += 1;
+        if !pose {
+            // The clip preview only exists in pose mode.
+            st.anim.playing = false;
+            st.anim.fade = None;
+        }
         st.drag = None;
         st.create = None;
         if pose && matches!(st.tool, Tool::Create | Tool::Mesh) {

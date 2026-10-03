@@ -12,8 +12,8 @@
 use std::collections::BTreeSet;
 
 use egui::{
-    Align2, Color32, CornerRadius, DragValue, FontId, Id, Key, Modifiers, PointerButton, Pos2,
-    Rect, RichText, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2,
+    Align2, DragValue, FontId, Id, Key, Modifiers, PointerButton, Pos2,
+    Rect, RichText, Sense, Ui, pos2, vec2,
 };
 use orbit_anim::Value;
 use orbit_core::{
@@ -28,12 +28,9 @@ use orbit_editor_api::{
 use super::fx_text::{prop_key, target_name};
 use super::inspector::commit;
 use super::timeline_model::{self as model, ClipKey, KeyRef, SNAP_PX, TimeView};
-use super::ui_util::{accent, danger, faint, weak};
+use super::timeline_ui::{self as ui_w, LABEL_W, ROW_H, RULER_H, fmt_time, row_rect};
+use super::ui_util::{danger, faint, weak};
 
-const LABEL_W: f32 = 190.0;
-const RULER_H: f32 = 24.0;
-const ROW_H: f32 = 28.0;
-const KEY_R: f32 = 6.0;
 const INSPECTOR_H: f32 = 200.0;
 
 pub struct TimelinePlugin;
@@ -300,13 +297,9 @@ fn body(
         pos2(ruler_all.left() + LABEL_W, ruler_all.top()),
         vec2(canvas_w, RULER_H),
     );
-    draw_ruler(ui, ruler, tl, st);
-    let ruler_resp = ui.interact(ruler, Id::new("tl_ruler"), Sense::click_and_drag());
-    if let Some(p) = ruler_resp.interact_pointer_pos()
-        && (ruler_resp.dragged() || ruler_resp.clicked() || ruler_resp.drag_started())
-    {
+    ui_w::draw_ruler(ui, ruler, &st.view, tl.duration);
+    if let Some(t) = ui_w::scrub_ruler(ui, ruler, Id::new("tl_ruler"), &st.view, tl.duration) {
         st.playing = false;
-        let t = st.view.time_at(p.x - ruler.left()).clamp(0.0, tl.duration.max(0.0));
         st.playhead = snap_playhead(st, tl, t);
     }
 
@@ -329,25 +322,7 @@ fn body(
         });
 
     // ---- wheel: ctrl zoom, shift / horizontal scroll, over the canvas
-    let over = ui.rect_contains_pointer(Rect::from_min_max(
-        pos2(ruler.left(), ruler.top()),
-        pos2(ruler.right(), canvas.bottom().max(ruler.bottom())),
-    ));
-    if over {
-        let (scroll, zoom, mods) = ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.modifiers));
-        let x = ui
-            .input(|i| i.pointer.hover_pos())
-            .map_or(0.0, |p| p.x - ruler.left());
-        if zoom != 1.0 {
-            st.view.zoom(zoom, x);
-        } else if mods.ctrl || mods.command {
-            if scroll.y != 0.0 {
-                st.view.zoom((scroll.y * 0.005).exp(), x);
-            }
-        } else if mods.shift || scroll.x != 0.0 {
-            st.view.scroll(-(scroll.x + if mods.shift { scroll.y } else { 0.0 }));
-        }
-    }
+    ui_w::wheel_nav(ui, &mut st.view, ruler, canvas.bottom());
 
     if reserve > 0.0 {
         ui.separator();
@@ -646,76 +621,6 @@ fn handle_keys(ui: &mut Ui, tl: &Tl, st: &mut PanelState, acts: &mut Vec<Act>) {
 
 // ----------------------------------------------------------------- drawing
 
-fn fmt_time(t: f32) -> String {
-    let s = format!("{t:.3}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    format!("{s}s")
-}
-
-fn draw_ruler(ui: &Ui, ruler: Rect, tl: &Tl, st: &PanelState) {
-    let p = ui.painter();
-    p.rect_filled(ruler, 0.0, ui.visuals().extreme_bg_color);
-    let step = model::grid_step(st.view.pps, 70.0);
-    let minor = step / 5.0;
-    let t0 = st.view.time_at(0.0).max(0.0);
-    let t1 = st.view.time_at(ruler.width());
-    let first = (t0 / minor).floor() as i64;
-    let last = (t1 / minor).ceil() as i64;
-    for n in first..=last.min(first + 4000) {
-        let t = n as f32 * minor;
-        let x = ruler.left() + st.view.x_of(t);
-        if x < ruler.left() || x > ruler.right() {
-            continue;
-        }
-        let major = n % 5 == 0;
-        let h = if major { 10.0 } else { 5.0 };
-        p.line_segment(
-            [pos2(x, ruler.bottom() - h), pos2(x, ruler.bottom())],
-            Stroke::new(1.0, weak(ui)),
-        );
-        if major {
-            p.text(
-                pos2(x + 3.0, ruler.top() + 2.0),
-                Align2::LEFT_TOP,
-                fmt_time(t),
-                FontId::proportional(10.0),
-                weak(ui),
-            );
-        }
-    }
-    // End of the timeline.
-    let end_x = ruler.left() + st.view.x_of(tl.duration);
-    if end_x < ruler.right() {
-        let from = end_x.max(ruler.left());
-        p.rect_filled(
-            Rect::from_min_max(pos2(from, ruler.top()), ruler.right_bottom()),
-            0.0,
-            Color32::from_black_alpha(70),
-        );
-    }
-}
-
-fn row_rect(area: Rect, row: usize) -> Rect {
-    Rect::from_min_size(
-        pos2(area.left(), area.top() + ROW_H * row as f32),
-        vec2(area.width(), ROW_H),
-    )
-}
-
-fn key_pos(canvas: Rect, view: &TimeView, row: usize, area: Rect, t: f32) -> Pos2 {
-    let r = row_rect(area, row);
-    pos2(canvas.left() + view.x_of(t), r.center().y)
-}
-
-fn diamond(center: Pos2, r: f32) -> Vec<Pos2> {
-    vec![
-        pos2(center.x, center.y - r),
-        pos2(center.x + r, center.y),
-        pos2(center.x, center.y + r),
-        pos2(center.x - r, center.y),
-    ]
-}
-
 #[allow(clippy::too_many_arguments)]
 fn draw_rows(
     ui: &mut Ui,
@@ -727,7 +632,6 @@ fn draw_rows(
     st: &mut PanelState,
     acts: &mut Vec<Act>,
 ) {
-    let accent = accent(ui);
     let visible = ui.clip_rect();
     if tl.tracks.is_empty() {
         ui.painter().text(
@@ -738,29 +642,12 @@ fn draw_rows(
             weak(ui),
         );
     }
-    let end_x = canvas.left() + st.view.x_of(tl.duration);
     for (row, tr) in tl.tracks.iter().enumerate() {
         let r = row_rect(area, row);
         if !r.intersects(visible) {
             continue;
         }
-        let lane = Rect::from_min_max(pos2(canvas.left(), r.top()), pos2(canvas.right(), r.bottom()));
-        let selected_row = st.track == Some(row);
-        let bg = if selected_row {
-            ui.visuals().selection.bg_fill.gamma_multiply(0.35)
-        } else if row % 2 == 0 {
-            ui.visuals().faint_bg_color
-        } else {
-            Color32::TRANSPARENT
-        };
-        ui.painter().rect_filled(r, 0.0, bg);
-        if end_x < canvas.right() {
-            ui.painter().rect_filled(
-                Rect::from_min_max(pos2(end_x.max(canvas.left()), lane.top()), lane.right_bottom()),
-                0.0,
-                Color32::from_black_alpha(40),
-            );
-        }
+        ui_w::draw_row_bg(ui, r, canvas, &st.view, tl.duration, row, st.track == Some(row));
 
         // Label column: "target · property" and the remove button.
         let label = format!(
@@ -809,67 +696,26 @@ fn draw_rows(
 
         // Animated segments (the value changes between two keys).
         let times = model::key_times(&tr.data);
-        for w in 0..times.len().saturating_sub(1) {
-            let (a, b) = (model::key_value(&tr.data, w), model::key_value(&tr.data, w + 1));
-            if a != b {
-                let x0 = canvas.left() + st.view.x_of(times[w]);
-                let x1 = canvas.left() + st.view.x_of(times[w + 1]);
-                let bar = Rect::from_min_max(pos2(x0, r.center().y - 2.0), pos2(x1, r.center().y + 2.0))
-                    .intersect(lane);
-                if bar.width() > 0.0 {
-                    ui.painter().rect_filled(bar, CornerRadius::same(2), accent.gamma_multiply(0.45));
-                }
-            }
-        }
-        // Keys.
-        for (ki, &t) in times.iter().enumerate() {
-            let c = key_pos(canvas, &st.view, row, area, t);
-            if c.x < lane.left() - KEY_R || c.x > lane.right() + KEY_R {
-                continue;
-            }
-            let on = st.sel.contains(&(row, ki));
-            let fill = if on { accent } else { ui.visuals().widgets.inactive.fg_stroke.color };
-            ui.painter().add(Shape::convex_polygon(
-                diamond(c, KEY_R),
-                fill,
-                Stroke::new(1.0, Color32::from_black_alpha(160)),
-            ));
-        }
+        let animated: Vec<bool> = (0..times.len().saturating_sub(1))
+            .map(|w| model::key_value(&tr.data, w) != model::key_value(&tr.data, w + 1))
+            .collect();
+        ui_w::draw_lane(ui, r, canvas, &st.view, &times, &animated, |ki| st.sel.contains(&(row, ki)));
     }
-    // Playhead.
-    let x = canvas.left() + st.view.x_of(st.playhead);
-    if x >= canvas.left() && x <= canvas.right() {
-        let top = area.top().max(visible.top());
-        let bottom = area.bottom().min(visible.bottom());
-        ui.painter().line_segment([pos2(x, top), pos2(x, bottom)], Stroke::new(1.5, danger(ui)));
-    }
-    ui.painter().rect_stroke(
-        Rect::from_min_max(pos2(canvas.left(), area.top()), area.right_bottom()),
-        0.0,
-        Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-        StrokeKind::Inside,
-    );
+    ui_w::draw_playhead(ui, area, canvas, &st.view, st.playhead);
 }
 
 // ------------------------------------------------------------ canvas input
 
+fn rows_of(tl: &Tl) -> Vec<Vec<f32>> {
+    tl.tracks.iter().map(|tr| model::key_times(&tr.data)).collect()
+}
+
 fn hit_key(canvas: Rect, area: Rect, tl: &Tl, st: &PanelState, p: Pos2) -> Option<KeyRef> {
-    let mut best: Option<(f32, KeyRef)> = None;
-    for (row, tr) in tl.tracks.iter().enumerate() {
-        for (ki, t) in model::key_times(&tr.data).into_iter().enumerate() {
-            let c = key_pos(canvas, &st.view, row, area, t);
-            let d = (c - p).length();
-            if d <= KEY_R + 3.0 && best.is_none_or(|(bd, _)| d < bd) {
-                best = Some((d, (row, ki)));
-            }
-        }
-    }
-    best.map(|(_, k)| k)
+    ui_w::hit_key(canvas, area, &st.view, &rows_of(tl), p)
 }
 
 fn row_at(area: Rect, tl: &Tl, p: Pos2) -> Option<usize> {
-    let row = ((p.y - area.top()) / ROW_H).floor();
-    (row >= 0.0 && (row as usize) < tl.tracks.len()).then_some(row as usize)
+    ui_w::row_at(area, tl.tracks.len(), p)
 }
 
 fn canvas_input(
@@ -958,21 +804,9 @@ fn canvas_input(
             Drag::Marquee { start, add, base } => {
                 let rect = Rect::from_two_pos(start, p);
                 let mut picked = if add { base } else { BTreeSet::new() };
-                for (row, tr) in tl.tracks.iter().enumerate() {
-                    for (ki, t) in model::key_times(&tr.data).into_iter().enumerate() {
-                        if rect.contains(key_pos(canvas, &st.view, row, area, t)) {
-                            picked.insert((row, ki));
-                        }
-                    }
-                }
+                picked.extend(ui_w::keys_in_rect(canvas, area, &st.view, &rows_of(tl), rect));
                 st.sel = picked;
-                ui.painter().rect(
-                    rect,
-                    0.0,
-                    accent(ui).gamma_multiply(0.15),
-                    Stroke::new(1.0, accent(ui)),
-                    StrokeKind::Inside,
-                );
+                ui_w::draw_marquee(ui, rect);
             }
             Drag::Pan => {
                 let dx = ui.input(|i| i.pointer.delta().x);

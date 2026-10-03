@@ -29,7 +29,7 @@ pub(super) fn empty_state(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut Sta
 }
 
 /// Toasts the reason when an operation is refused.
-fn report<T>(ctx: &mut EditorContext<'_>, r: Result<T, OpError>) -> Option<T> {
+pub(super) fn report<T>(ctx: &mut EditorContext<'_>, r: Result<T, OpError>) -> Option<T> {
     match r {
         Ok(v) => Some(v),
         Err(e) => {
@@ -48,7 +48,7 @@ pub(super) fn delete_bone(ctx: &mut EditorContext<'_>, st: &mut State, id: &Bone
 
 /// A text field that edits a copy and returns the new text when committed
 /// (Enter or focus lost).
-fn name_field(ui: &mut Ui, salt: impl std::hash::Hash + std::fmt::Debug, current: &str) -> Option<String> {
+pub(super) fn name_field(ui: &mut Ui, salt: impl std::hash::Hash + std::fmt::Debug, current: &str) -> Option<String> {
     let id = ui.make_persistent_id(salt);
     let mut buf: String = ui.data(|d| d.get_temp(id)).unwrap_or_else(|| current.to_owned());
     let r = ui.add(TextEdit::singleline(&mut buf).desired_width(ui.available_width()));

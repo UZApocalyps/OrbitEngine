@@ -200,16 +200,16 @@ pub fn key_at(data: &TrackData, t: f32) -> Option<usize> {
 pub fn put_key(data: &mut TrackData, t: f32, value: Value, ease: Option<Curve>) -> Option<usize> {
     let t = round_time(t);
     match (data, value) {
-        (TrackData::Scalar(tr), Value::Scalar(v)) => Some(put(tr, t, v, ease)),
-        (TrackData::Vec2(tr), Value::Vec2(v)) => Some(put(tr, t, v, ease)),
-        (TrackData::Color(tr), Value::Color(v)) => Some(put(tr, t, v, ease)),
-        (TrackData::Angle(tr), Value::Angle(v)) => Some(put(tr, t, v, ease)),
-        (TrackData::Name(tr), Value::Name(v)) => Some(put(tr, t, Step(v), ease)),
+        (TrackData::Scalar(tr), Value::Scalar(v)) => Some(put_in_track(tr, t, v, ease)),
+        (TrackData::Vec2(tr), Value::Vec2(v)) => Some(put_in_track(tr, t, v, ease)),
+        (TrackData::Color(tr), Value::Color(v)) => Some(put_in_track(tr, t, v, ease)),
+        (TrackData::Angle(tr), Value::Angle(v)) => Some(put_in_track(tr, t, v, ease)),
+        (TrackData::Name(tr), Value::Name(v)) => Some(put_in_track(tr, t, Step(v), ease)),
         _ => None,
     }
 }
 
-fn put<T>(tr: &mut Track<T>, t: f32, v: T, ease: Option<Curve>) -> usize {
+pub fn put_in_track<T>(tr: &mut Track<T>, t: f32, v: T, ease: Option<Curve>) -> usize {
     if let Some(i) = tr.keys.iter().position(|k| (k.t - t).abs() < MIN_GAP) {
         tr.keys[i].value = v;
         if let Some(e) = ease {
@@ -276,14 +276,14 @@ pub fn move_keys(tracks: &mut [StoryTrack], sel: &BTreeSet<KeyRef>, dt: f32) -> 
         if picked.is_empty() {
             continue;
         }
-        for k in each_track!(&mut tr.data, t => move_in(t, &picked, dt)) {
+        for k in each_track!(&mut tr.data, t => move_in_track(t, &picked, dt)) {
             out.insert((ti, k));
         }
     }
     out
 }
 
-fn move_in<T>(tr: &mut Track<T>, picked: &BTreeSet<usize>, dt: f32) -> Vec<usize> {
+pub fn move_in_track<T>(tr: &mut Track<T>, picked: &BTreeSet<usize>, dt: f32) -> Vec<usize> {
     let mut keys: Vec<(bool, Key<T>)> = tr
         .keys
         .drain(..)

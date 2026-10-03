@@ -30,6 +30,7 @@ mod scene3d;
 mod sceneview;
 mod timeline;
 mod timeline_model;
+mod timeline_ui;
 mod translations;
 mod search;
 pub mod thumbs;
@@ -108,6 +109,8 @@ pub mod panels {
     pub const RIG_VIEWPORT: &str = "orbit.rig.viewport";
     pub const RIG_HIERARCHY: &str = "orbit.rig.hierarchy";
     pub const RIG_INSPECTOR: &str = "orbit.rig.inspector";
+    pub const RIG_CLIPS: &str = "orbit.rig.clips";
+    pub const RIG_TIMELINE: &str = "orbit.rig.timeline";
 }
 
 /// State the built-in plugins share with the editor core.
