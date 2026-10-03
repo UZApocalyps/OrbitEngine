@@ -276,6 +276,9 @@ pub struct EditorState {
     pub inline_edit: Option<NodeId>,
     /// Validation findings per node, kept up to date by the host.
     pub diagnostics: Diagnostics,
+    /// Syntax findings of the text view (DSL), listed by the Problems panel
+    /// after the validation findings. Published by the text view panel.
+    pub text_problems: Vec<Problem>,
     /// Debug (`--autoscroll`): pixels the scene editor scrolls by each frame.
     pub debug_autoscroll: Option<f32>,
     pub toasts: Vec<Toast>,

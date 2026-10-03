@@ -55,7 +55,7 @@ use crate::lexer::{is_ident, quote};
 
 /// Words with a meaning at the start of a line or inside a statement. A name
 /// equal to one of them is always quoted.
-pub(crate) const KEYWORDS: &[&str] = &[
+pub const KEYWORDS: &[&str] = &[
     "scene",
     "label",
     "say",

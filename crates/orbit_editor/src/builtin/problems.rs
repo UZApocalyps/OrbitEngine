@@ -73,7 +73,11 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let mut filter: (bool, bool) = ui.data(|d| d.get_temp(id)).unwrap_or((true, true));
     let (errors, warnings) = {
         let d = &ctx.state().diagnostics;
-        (d.error_count(), d.warning_count())
+        let t = &ctx.state().text_problems;
+        (
+            d.error_count() + t.iter().filter(|p| p.level == Level::Error).count(),
+            d.warning_count() + t.iter().filter(|p| p.level == Level::Warn).count(),
+        )
     };
     ui.horizontal(|ui| {
         ui.toggle_value(
@@ -101,6 +105,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         .diagnostics
         .problems
         .iter()
+        .chain(ctx.state().text_problems.iter())
         .filter(|p| match p.level {
             Level::Error => filter.0,
             Level::Warn => filter.1,
