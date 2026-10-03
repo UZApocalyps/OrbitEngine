@@ -172,7 +172,11 @@ pub fn stage_pose(
         .character(c.character)
         .and_then(|ch| ch.expression(&fade.previous))
         .and_then(|e| e.rigged())
-        .filter(|p| p.rig == motion.rig && p.skin == motion.skin);
+        .filter(|p| {
+            // No skin = the default one: `None` and `Some("default")` match.
+            let skin = |m: &RiggedMotion| m.skin.clone().unwrap_or_else(|| "default".into());
+            p.rig == motion.rig && skin(p) == skin(motion)
+        });
     match previous {
         Some(prev) => {
             let before = clip_pose(rig, story, prev, fade.previous_elapsed);
@@ -267,5 +271,7 @@ pub fn rig_ready(store: &AssetStore, story: &Story, expression: &orbit_core::Exp
 }
 
 
+#[cfg(test)]
+mod fixture_tests;
 #[cfg(test)]
 mod tests;

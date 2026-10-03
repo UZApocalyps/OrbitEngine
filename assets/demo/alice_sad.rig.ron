@@ -1,0 +1,93 @@
+(
+    rig_version: 1,
+    bones: [
+        (
+            id: "body",
+            name: "body",
+            parent: None,
+            rest: (),
+            length: 513.0,
+        ),
+    ],
+    slots: [
+        (
+            id: "body",
+            name: "body",
+            bone: "body",
+            attachment: Some("body"),
+        ),
+    ],
+    skins: [
+        (
+            name: "default",
+            attachments: {
+                "body": Region((
+                    image: "assets/demo/alice_sad.png",
+                    size: (461.0, 513.0),
+                    xform: (
+                        y: -256.5,
+                    ),
+                )),
+            },
+        ),
+    ],
+    clips: {
+        "breathe": (
+            duration: 3.0,
+            looping: Forever,
+            tracks: [
+                BoneScale(
+                    bone: "body",
+                    track: [
+                        (
+                            t: 0.0,
+                            value: (
+                                x: 1.0,
+                                y: 1.0,
+                            ),
+                        ),
+                        (
+                            t: 1.5,
+                            value: (
+                                x: 1.006,
+                                y: 1.018,
+                            ),
+                        ),
+                        (
+                            t: 3.0,
+                            value: (
+                                x: 1.0,
+                                y: 1.0,
+                            ),
+                        ),
+                    ],
+                ),
+                BoneRotate(
+                    bone: "body",
+                    track: [
+                        (
+                            t: 0.0,
+                            value: (0.0),
+                        ),
+                        (
+                            t: 0.75,
+                            value: (0.6),
+                        ),
+                        (
+                            t: 1.5,
+                            value: (0.0),
+                        ),
+                        (
+                            t: 2.25,
+                            value: (-0.6),
+                        ),
+                        (
+                            t: 3.0,
+                            value: (0.0),
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    },
+)

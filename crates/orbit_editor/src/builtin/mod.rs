@@ -27,6 +27,7 @@ mod problems;
 pub mod profiler;
 pub mod reveal;
 pub mod sample;
+mod rig_expr;
 mod rigedit;
 mod scene;
 pub(crate) mod scene3d;
@@ -129,6 +130,8 @@ pub struct Shared {
     pub scene3d: crate::scene3d_host::SharedLink,
     /// Link with the GPU host of the rig editor (viewport texture).
     pub rig: crate::rig_host::SharedLink,
+    /// Link with the GPU host of the animated thumbnails of rigged expressions.
+    pub rig_thumbs: crate::rig_host::SharedThumbs,
 }
 
 /// The built-in plugins, in registration order (menus first, then panels in
@@ -147,7 +150,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(graph::GraphPlugin),
         Box::new(explorer::ExplorerPlugin),
         Box::new(inspector::InspectorPlugin),
-        Box::new(definitions::CharactersPlugin),
+        Box::new(definitions::CharactersPlugin::new(shared.rig_thumbs.clone())),
         Box::new(definitions::VariablesPlugin),
         Box::new(curves::CurvesPlugin),
         Box::new(timeline::TimelinePlugin),

@@ -115,6 +115,7 @@ pub fn import_paths(ctx: &mut EditorContext<'_>, paths: &[PathBuf]) -> ImportRep
             AssetKind::Sound,
             AssetKind::Font,
             AssetKind::Scene3d,
+            AssetKind::Rig,
         ]
             .into_iter()
             .filter_map(|k| {
@@ -188,6 +189,7 @@ fn kind_count_key(kind: AssetKind) -> &'static str {
         AssetKind::Music => "asset.count.music",
         AssetKind::Sound => "asset.count.sound",
         AssetKind::Scene3d => "asset.count.scene3d",
+        AssetKind::Rig => "asset.count.rig",
         AssetKind::Font => "asset.count.font",
     }
 }
@@ -198,6 +200,7 @@ fn kind_name(texts: &Translator, kind: AssetKind) -> String {
         AssetKind::Music => "asset.kind.music",
         AssetKind::Sound => "asset.kind.sound",
         AssetKind::Scene3d => "asset.kind.scene3d",
+        AssetKind::Rig => "asset.kind.rig",
         AssetKind::Font => "asset.kind.font",
     })
 }
@@ -208,6 +211,7 @@ fn kind_icon(kind: AssetKind) -> &'static str {
         AssetKind::Music => icons::MUSIC_NOTES,
         AssetKind::Sound => icons::SPEAKER_HIGH,
         AssetKind::Scene3d => icons::CUBE,
+        AssetKind::Rig => icons::BONE,
         AssetKind::Font => icons::TEXT_T,
     }
 }

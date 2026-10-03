@@ -247,6 +247,34 @@ pub fn describe_warning(
     }
 }
 
+/// The message of a problem with a rigged expression, in the editor language
+/// (the key says what is wrong, the message always ends with the fallback:
+/// the still image is used).
+pub fn describe_rig_problem(
+    texts: &Translator,
+    story: &Story,
+    p: &orbit_project::rigs::RigProblem,
+) -> String {
+    use orbit_project::rigs::RigProblemKind as K;
+    let character = character_of(texts, story, p.character);
+    let (key, extra_name, extra): (&str, &str, &str) = match &p.kind {
+        K::Unreadable(e) => ("problem.rig.unreadable", "detail", e),
+        K::UnknownClip(c) => ("problem.rig.unknown_clip", "clip", c),
+        K::UnknownSkin(s) => ("problem.rig.unknown_skin", "skin", s),
+        K::MissingImage(i) => ("problem.rig.missing_image", "image", i),
+        K::Budget(m) => ("problem.rig.budget", "detail", m),
+    };
+    texts.format(
+        key,
+        &[
+            ("character", &character),
+            ("expression", &p.expression),
+            ("rig", &p.rig),
+            (extra_name, &extra),
+        ],
+    )
+}
+
 /// What the story alone cannot tell: findings of plugin validators, nodes of
 /// plugins that are not installed, files of the manifest that are missing or
 /// have the wrong case. Computed by the caller (the registry is not `Send`).
@@ -255,6 +283,8 @@ pub struct Extras {
     pub custom: Vec<(NodeId, String)>,
     pub missing_plugins: Vec<(NodeId, String)>,
     pub asset_issues: Vec<AssetIssue>,
+    /// Problems of rigged expressions (rig unreadable, unknown clip / skin...).
+    pub rig_problems: Vec<orbit_project::rigs::RigProblem>,
 }
 
 /// Runs the story validation and groups the findings by node. `extras` adds
@@ -309,6 +339,15 @@ pub fn compute(texts: &Translator, story: &Story, revision: u64, extras: &Extras
             None,
             Some(Location::Asset(issue.asset())),
             issue.message(texts),
+        );
+    }
+    for p in &extras.rig_problems {
+        push(
+            &mut out,
+            Level::Warn,
+            None,
+            Some(Location::Character(p.character)),
+            describe_rig_problem(texts, story, p),
         );
     }
     for w in &report.warnings {
@@ -407,6 +446,7 @@ pub struct Live {
     first_edit: Option<Instant>,
     /// Asset-file findings, refreshed when files or the manifest change.
     asset_issues: Vec<AssetIssue>,
+    rig_problems: Vec<orbit_project::rigs::RigProblem>,
     assets_dirty: bool,
     asset_key: Option<Vec<(String, String)>>,
 }
@@ -450,6 +490,7 @@ impl Live {
             last_latency: None,
             first_edit: None,
             asset_issues: Vec::new(),
+            rig_problems: Vec::new(),
             assets_dirty: true,
             asset_key: None,
         }
@@ -464,6 +505,7 @@ impl Live {
         self.last_started = None;
         self.first_edit = None;
         self.asset_issues.clear();
+        self.rig_problems.clear();
         self.assets_dirty = true;
         self.asset_key = None;
     }
@@ -527,6 +569,10 @@ impl Live {
             // Only a new revision can have changed the manifest.
             if self.asset_key_changed(story) {
                 self.refresh_asset_issues(root, story);
+            } else {
+                // Rigged expressions (rig, clip, skin) change with the story
+                // without touching the manifest.
+                self.rig_problems = orbit_project::rigs::rig_problems(root, story);
             }
         }
         let big = node_count(story) > SYNC_NODE_LIMIT;
@@ -534,6 +580,7 @@ impl Live {
             let started = Instant::now();
             let mut extras = registry_extras(story);
             extras.asset_issues.clone_from(&self.asset_issues);
+            extras.rig_problems.clone_from(&self.rig_problems);
             let out = compute(texts, story, key.1, &extras);
             self.published = Some(key);
             self.due = None;
@@ -560,6 +607,7 @@ impl Live {
                 self.last_started = Some(now);
                 let mut extras = registry_extras(story);
                 extras.asset_issues.clone_from(&self.asset_issues);
+                extras.rig_problems.clone_from(&self.rig_problems);
                 let job = Job {
                     key,
                     story: story.clone(),
@@ -593,6 +641,7 @@ impl Live {
 
     fn refresh_asset_issues(&mut self, root: &std::path::Path, story: &Story) {
         self.asset_issues = crate::assets::lint_asset_files(root, story);
+        self.rig_problems = orbit_project::rigs::rig_problems(root, story);
         self.asset_key = None;
         self.asset_key_changed(story);
     }
@@ -626,6 +675,55 @@ mod tests {
             }],
         });
         story
+    }
+
+    #[test]
+    fn rig_problems_are_warnings_located_on_the_character() {
+        use orbit_project::rigs::{RigProblem, RigProblemKind};
+        let mut story = Story::new("t");
+        let name_id = story.strings.add("Hero");
+        let id = orbit_core::CharacterId::new();
+        story.characters.push(orbit_core::Character {
+            id,
+            name_id,
+            color: orbit_core::Color::rgb(1, 2, 3),
+            expressions: Vec::new(),
+            default_position: None,
+            default_scale: 1.0,
+        });
+        let kinds = [
+            RigProblemKind::Unreadable("boom".into()),
+            RigProblemKind::UnknownClip("run".into()),
+            RigProblemKind::UnknownSkin("winter".into()),
+            RigProblemKind::MissingImage("a.png".into()),
+            RigProblemKind::Budget("too many bones".into()),
+        ];
+        let extras = Extras {
+            rig_problems: kinds
+                .iter()
+                .map(|kind| RigProblem {
+                    character: id,
+                    expression: "idle".into(),
+                    rig: "assets/rigs/h.rig.ron".into(),
+                    kind: kind.clone(),
+                })
+                .collect(),
+            ..Extras::default()
+        };
+        for lang in [orbit_editor_api::Lang::En, orbit_editor_api::Lang::Fr] {
+            let texts = crate::i18n::translator(lang);
+            let diag = compute(&texts, &story, 1, &extras);
+            let rig: Vec<_> = diag
+                .problems
+                .iter()
+                .filter(|p| p.location == Some(Location::Character(id)))
+                .collect();
+            assert_eq!(rig.len(), 5);
+            assert!(rig.iter().all(|p| p.level == Level::Warn));
+            // Every message names the expression and has no unfilled placeholder.
+            assert!(rig.iter().all(|p| p.message.contains("idle") && !p.message.contains('{')), "{rig:?}");
+            assert!(rig[1].message.contains("run") && rig[2].message.contains("winter"));
+        }
     }
 
     #[test]

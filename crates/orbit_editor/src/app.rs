@@ -48,6 +48,7 @@ pub struct EditorApp {
     preview: PreviewHost,
     scene3d: crate::scene3d_host::Scene3dHost,
     rig: crate::rig_host::RigHost,
+    rig_thumbs: crate::rig_host::ThumbHost,
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
     renderer: egui_wgpu::Renderer,
@@ -182,6 +183,7 @@ impl EditorApp {
             preview,
             scene3d: Default::default(),
             rig: Default::default(),
+            rig_thumbs: Default::default(),
             egui_ctx,
             egui_state,
             renderer,
@@ -438,6 +440,9 @@ impl App for EditorApp {
             self.host.push(HostRequest::RequestRedraw);
         }
         if self.rig.update(&self.core.shared.rig, self.preview.runtime_mut().renderer_mut(), &mut self.renderer) {
+            self.host.push(HostRequest::RequestRedraw);
+        }
+        if self.rig_thumbs.update(&self.core.shared.rig_thumbs, self.preview.runtime_mut().renderer_mut(), &mut self.renderer) {
             self.host.push(HostRequest::RequestRedraw);
         }
         self.preview_wake = wake.at;

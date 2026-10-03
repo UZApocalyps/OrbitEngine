@@ -186,6 +186,40 @@ pub fn import_scene3d(bytes: &[u8]) -> Result<ImportedAsset, String> {
     })
 }
 
+/// Validates a `.rig.ron` (parsed, migrated, resolved with the runtime's
+/// rules: a rig the game would refuse to load is refused here too).
+pub fn import_rig(bytes: &[u8]) -> Result<ImportedAsset, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "not a UTF-8 text file".to_owned())?;
+    let loaded = orbit_anim::rig::load_rig(text).map_err(|e| e.to_string())?;
+    orbit_anim::rig::PreparedRig::new(loaded.rig).map_err(|issues| {
+        issues
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
+    Ok(ImportedAsset {
+        kind: AssetKind::Rig,
+        bytes: bytes.to_vec(),
+    })
+}
+
+/// Both 3D scenes and rigs are `.ron` files: tries the scene first, then the
+/// rig. A file that is neither is refused with the reason of the one it
+/// looks like (rigs name `bones`).
+pub fn import_ron(bytes: &[u8]) -> Result<ImportedAsset, String> {
+    let scene = import_scene3d(bytes);
+    if scene.is_ok() {
+        return scene;
+    }
+    let rig = import_rig(bytes);
+    if rig.is_ok() {
+        return rig;
+    }
+    let looks_like_rig = std::str::from_utf8(bytes).is_ok_and(|t| t.contains("bones"));
+    if looks_like_rig { rig } else { scene }
+}
+
 impl Plugin for ImportersPlugin {
     fn manifest(&self) -> PluginManifest {
         PluginManifest::new(ids::IMPORTERS, "Importeurs de ressources", "0.1.0")
@@ -208,9 +242,9 @@ impl Plugin for ImportersPlugin {
             import: import_font,
         });
         registry.register_importer(AssetImporter {
-            label: "Scène 3D (.scene3d.ron)".to_owned(),
+            label: "Scène 3D / Rig 2D (.ron)".to_owned(),
             extensions: vec!["ron".to_owned()],
-            import: import_scene3d,
+            import: import_ron,
         });
     }
 }
@@ -334,5 +368,24 @@ mod tests {
             crate::assets::refusal::localize(&fr, "whatever"),
             "whatever"
         );
+    }
+
+    const RIG: &str = r#"(
+        rig_version: 1,
+        bones: [(id: "root", name: "root")],
+        slots: [(id: "s", name: "body", bone: "root", attachment: Some("body"))],
+        skins: [(name: "default", attachments: {"body": Region((image: "assets/body.png", size: (10.0, 20.0)))})],
+        clips: {"idle": (duration: 1.0, looping: Forever, tracks: [])},
+    )"#;
+
+    #[test]
+    fn a_rig_file_imports_as_a_rig_and_garbage_is_refused() {
+        assert_eq!(import_rig(RIG.as_bytes()).unwrap().kind, AssetKind::Rig);
+        // The shared `.ron` importer tells a rig from a 3D scene.
+        assert_eq!(import_ron(RIG.as_bytes()).unwrap().kind, AssetKind::Rig);
+        assert!(import_ron(b"(this: is, not: a scene)").is_err());
+        // Something that names bones but is not valid gets the rig's reason.
+        assert!(import_ron(b"(bones: 3)").is_err());
+        assert!(import_ron(&[0xff, 0xfe]).is_err());
     }
 }

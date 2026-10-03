@@ -266,8 +266,74 @@ impl State {
         };
         let Some(path) = target else { return };
         match doc.save_as(&path) {
-            Ok(()) => ctx.info(ctx.tf("rig.saved", &[("path", &path.display())])),
+            Ok(()) => {
+                ctx.info(ctx.tf("rig.saved", &[("path", &path.display())]));
+                self.declare_if_in_rig_dir(ctx);
+            }
             Err(e) => ctx.error(ctx.tf("rig.save_failed", &[("error", &e)])),
+        }
+    }
+
+    /// The manifest path of the open rig when it lies under `assets/`.
+    fn project_rel(&self, ctx: &EditorContext<'_>) -> Option<String> {
+        let root = ctx.project_info()?.root.clone();
+        crate::assets::asset_rel_path(&root, self.doc.as_ref()?.path.as_ref()?)
+    }
+
+    /// Whether the open rig is a declared asset of the project.
+    pub fn in_project(&self, ctx: &EditorContext<'_>) -> bool {
+        let (Some(story), Some(rel)) = (ctx.story(), self.project_rel(ctx)) else {
+            return false;
+        };
+        story.assets.assets.iter().any(|a| a.path == rel)
+    }
+
+    /// A rig saved in the project's rig folder is declared as an asset, so
+    /// it shows in the characters panel.
+    fn declare_if_in_rig_dir(&mut self, ctx: &mut EditorContext<'_>) {
+        let Some(root) = ctx.project_info().map(|p| p.root.clone()) else { return };
+        let Some(path) = self.doc.as_ref().and_then(|d| d.path.clone()) else { return };
+        if !crate::assets::is_in_rig_dir(&root, &path) || self.in_project(ctx) {
+            return;
+        }
+        let Some(rel) = self.project_rel(ctx) else { return };
+        if ctx
+            .ops_or_toast(|p| orbit_project::ops::add_asset(p, orbit_core::AssetKind::Rig, &rel))
+            .is_some()
+        {
+            ctx.info(ctx.tf("rig.declared", &[("path", &rel)]));
+        }
+    }
+
+    /// Saves the open rig into the project (where it is when already under
+    /// `assets/`, else `assets/rigs/`) and declares it as a `Rig` asset.
+    pub fn add_to_project(&mut self, ctx: &mut EditorContext<'_>) {
+        let Some(root) = ctx.project_info().map(|p| p.root.clone()) else {
+            ctx.warn(ctx.t("rig.no_project"));
+            return;
+        };
+        let Some(doc) = self.doc.as_mut() else { return };
+        let name = doc
+            .path
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .map_or_else(|| "character".to_owned(), |n| n.to_string_lossy().into_owned());
+        let name = name.strip_suffix(".rig").map_or(name.clone(), str::to_owned);
+        let target = {
+            let Some(story) = ctx.story() else { return };
+            crate::assets::plan_rig_target(&root, story, &name, doc.path.as_deref())
+        };
+        if let Some(parent) = target.abs.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = doc.save_as(&target.abs) {
+            ctx.error(ctx.tf("rig.save_failed", &[("error", &e)]));
+            return;
+        }
+        let rel = target.rel.clone();
+        let declared = ctx.ops_or_toast(|p| orbit_project::ops::add_asset(p, orbit_core::AssetKind::Rig, &rel));
+        if declared.is_some() {
+            ctx.info(ctx.tf("rig.declared", &[("path", &target.rel)]));
         }
     }
 
@@ -942,6 +1008,15 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             st.save(ctx);
         }
         ui.label(RichText::new(format!("{name}{}", if dirty { " •" } else { "" })).small());
+        if ctx.has_project() && st.doc.is_some() && !st.in_project(ctx) {
+            if ui
+                .small_button(format!("{}  {}", icons::PLUS, ctx.t("rig.add_to_project")))
+                .on_hover_text(ctx.t("rig.add_to_project.hint"))
+                .clicked()
+            {
+                st.add_to_project(ctx);
+            }
+        }
         ui.separator();
         if ui
             .add_enabled(can_undo, egui::Button::new(RichText::new(icons::ARROW_COUNTER_CLOCKWISE).size(15.0)).frame(false))

@@ -48,7 +48,15 @@ fn empty_project(ui: &mut Ui) {
 
 // ----------------------------------------------------------------- characters
 
-pub struct CharactersPlugin;
+pub struct CharactersPlugin {
+    thumbs: crate::rig_host::SharedThumbs,
+}
+
+impl CharactersPlugin {
+    pub fn new(thumbs: crate::rig_host::SharedThumbs) -> Self {
+        Self { thumbs }
+    }
+}
 
 impl Plugin for CharactersPlugin {
     fn manifest(&self) -> PluginManifest {
@@ -59,11 +67,15 @@ impl Plugin for CharactersPlugin {
 #[derive(Default)]
 struct CharactersUi {
     selected: Cell<Option<CharacterId>>,
+    rigs: super::rig_expr::RigUi,
 }
 
 impl EditorPlugin for CharactersPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
-        let state = Rc::new(CharactersUi::default());
+        let state = Rc::new(CharactersUi {
+            selected: Cell::new(None),
+            rigs: super::rig_expr::RigUi::new(self.thumbs.clone()),
+        });
         reg.panel(PanelDef::new(
             "characters",
             "defs.characters.title",
@@ -351,7 +363,7 @@ fn character_details(
         ui.horizontal(|ui| {
             section_title(ui, &ui.t("defs.expressions"));
         });
-        expressions(ui, ctx, &def);
+        expressions(ui, ctx, &def, &state.rigs);
     });
 
     ui.add_space(10.0);
@@ -396,7 +408,12 @@ fn character_details(
     }
 }
 
-fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Character) {
+fn expressions(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    def: &orbit_core::Character,
+    rigs: &super::rig_expr::RigUi,
+) {
     let Some(story) = ctx.story() else { return };
     enum Do {
         Rename(String, String),
@@ -424,7 +441,7 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    anim_edit::preview(ui, ctx, story, e, egui::vec2(54.0, 68.0));
+                    anim_edit::preview(ui, ctx, story, rigs, (def.id, i), e, egui::vec2(54.0, 68.0));
                     ui.vertical(|ui| {
                         // The name is committed on Enter / focus loss, so the
                         // references follow in one step.
@@ -445,7 +462,8 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
                         } else if buffer != e.name || resp.has_focus() {
                             ui.data_mut(|d| d.insert_temp(buf_id, buffer));
                         }
-                        match anim_edit::editor(ui, story, (def.id, i), e) {
+                        let root = ctx.project_info().map(|p| p.root.clone()).unwrap_or_default();
+                        match anim_edit::editor(ui, story, &root, rigs, (def.id, i), e) {
                             Some(anim_edit::Outcome::Replace(new, key)) => {
                                 action = Some(Do::Replace(i, new, key));
                             }
@@ -457,7 +475,7 @@ fn expressions(ui: &mut Ui, ctx: &mut EditorContext<'_>, def: &orbit_core::Chara
                             }
                             None => {}
                         }
-                        if anim_edit::kind_of(e) == anim_edit::Kind::Still {
+                        if matches!(anim_edit::kind_of(e), anim_edit::Kind::Still | anim_edit::Kind::Rig) {
                             if let Some(a) = asset_picker(
                                 ui,
                                 ("expr_asset", def.id, i),

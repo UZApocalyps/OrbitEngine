@@ -77,6 +77,7 @@
     "asset.kind.music": "Music",
     "asset.kind.sound": "Sound",
     "asset.kind.scene3d": "3D scene",
+    "asset.kind.rig": "Rig",
     "asset.kind.font": "Font",
     "asset.count.image.one": "{count} image",
     "asset.count.image.other": "{count} images",
@@ -86,6 +87,8 @@
     "asset.count.sound.other": "{count} sounds",
     "asset.count.scene3d.one": "{count} 3D scene",
     "asset.count.scene3d.other": "{count} 3D scenes",
+    "asset.count.rig.one": "{count} rig",
+    "asset.count.rig.other": "{count} rigs",
     "asset.count.font.one": "{count} font",
     "asset.count.font.other": "{count} fonts",
     "asset.size.bytes": "{n} B",
@@ -102,6 +105,8 @@
     "asset.issue.case_mismatch": "Different case: “{actual}” on disk, “{path}” in the manifest (not found on Linux and on the web)",
     "asset.issue.case_collision": "“{path}” and “{other}” differ only by case (a single file on Windows)",
     "asset.issue.scene3d": "3D scene “{path}”: {detail}",
+    "asset.issue.rig": "Rig “{path}” cannot be used: {detail}",
+    "asset.issue.rig_image_missing": "Rig “{path}” draws “{image}”, which is not a file of the project",
     "asset.issue.camera_missing": "The 3D scene has no camera named “{camera}”",
 
 }

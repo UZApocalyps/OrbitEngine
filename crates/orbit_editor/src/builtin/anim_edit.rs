@@ -13,7 +13,7 @@ use orbit_editor_api::fields::{self, asset_picker};
 use orbit_editor_api::{EditorContext, UiText, icons};
 
 use super::thumbs;
-use super::ui_util::{danger, weak};
+use super::ui_util::weak;
 
 /// Frames per second of a new animation.
 pub const DEFAULT_FPS: f32 = 12.0;
@@ -27,10 +27,15 @@ pub enum Kind {
     Still,
     Sheet,
     Sequence,
+    /// A skeletal clip of a `.rig.ron`.
+    Rig,
 }
 
-/// The kind of an expression (`Rigged` is not editable yet: seen as a still).
+/// The kind of an expression.
 pub fn kind_of(e: &Expression) -> Kind {
+    if e.rigged().is_some() {
+        return Kind::Rig;
+    }
     match e.animation().map(|a| &a.frames) {
         Some(AnimFrames::SpriteSheet { .. }) => Kind::Sheet,
         Some(AnimFrames::Sequence(_)) => Kind::Sequence,
@@ -41,7 +46,8 @@ pub fn kind_of(e: &Expression) -> Kind {
 /// Switches the expression to `kind`, keeping what can be kept (the picture,
 /// fps and loop mode, the frames when going between sheet and sequence).
 pub fn set_kind(e: &mut Expression, kind: Kind) {
-    if kind_of(e) == kind && !(kind == Kind::Still && e.motion.is_some()) {
+    // Becoming a rig needs a rig asset: see `rig_expr::switch_to_rig`.
+    if kind == Kind::Rig || (kind_of(e) == kind && !(kind == Kind::Still && e.motion.is_some())) {
         return;
     }
     let (fps, loop_mode) = e
@@ -49,6 +55,7 @@ pub fn set_kind(e: &mut Expression, kind: Kind) {
         .map_or((DEFAULT_FPS, LoopMode::Loop), |a| (a.fps, a.loop_mode));
     e.motion = match kind {
         Kind::Still => None,
+        Kind::Rig => return,
         Kind::Sheet => {
             let (asset, count) = match e.animation().map(|a| &a.frames) {
                 Some(AnimFrames::Sequence(v)) if !v.is_empty() => (v[0], v.len() as u32),
@@ -251,7 +258,7 @@ pub enum Outcome {
     ImportAnimation,
 }
 
-fn loop_label(ui: &Ui, mode: LoopMode) -> String {
+pub(super) fn loop_label(ui: &Ui, mode: LoopMode) -> String {
     ui.t(match mode {
         LoopMode::Loop => "defs.anim.loop.loop",
         LoopMode::Once => "defs.anim.loop.once",
@@ -273,6 +280,8 @@ fn first_image(story: &orbit_core::Story) -> Option<AssetId> {
 pub fn editor(
     ui: &mut Ui,
     story: &orbit_core::Story,
+    root: &std::path::Path,
+    rigs: &super::rig_expr::RigUi,
     salt: (orbit_core::CharacterId, usize),
     e: &Expression,
 ) -> Option<Outcome> {
@@ -281,7 +290,7 @@ pub fn editor(
     let mut key: Option<String> = None;
     let kind = kind_of(e);
 
-    // Still / animation.
+    // Still / animation / rig.
     ui.horizontal(|ui| {
         if ui
             .selectable_label(kind == Kind::Still, ui.t("defs.anim.still"))
@@ -290,21 +299,41 @@ pub fn editor(
             set_kind(&mut new, Kind::Still);
         }
         if ui
-            .selectable_label(kind != Kind::Still, ui.t("defs.anim.animation"))
+            .selectable_label(
+                matches!(kind, Kind::Sheet | Kind::Sequence),
+                ui.t("defs.anim.animation"),
+            )
             .clicked()
-            && kind == Kind::Still
+            && matches!(kind, Kind::Still | Kind::Rig)
         {
             set_kind(&mut new, Kind::Sheet);
         }
+        let has_rigs = super::rig_expr::has_rigs(story);
+        let rig_button = ui
+            .add_enabled(
+                has_rigs || kind == Kind::Rig,
+                egui::Button::selectable(kind == Kind::Rig, ui.t("defs.anim.rig")),
+            )
+            .on_hover_text(ui.t(if has_rigs {
+                "defs.anim.rig.hint"
+            } else {
+                "defs.anim.rig.none"
+            }))
+            .on_disabled_hover_text(ui.t("defs.anim.rig.none"));
+        if rig_button.clicked()
+            && kind != Kind::Rig
+            && let Some(rigged) = super::rig_expr::switch_to_rig(story, root, rigs, e)
+        {
+            new = rigged;
+        }
     });
-    if matches!(e.motion, Some(Motion::Rigged)) {
-        ui.label(
-            RichText::new(ui.t("defs.anim.rigged"))
-                .small()
-                .color(danger(ui)),
-        );
-    }
     if kind == Kind::Still {
+        return (new != *e).then(|| Outcome::Replace(new, None));
+    }
+    if kind == Kind::Rig {
+        if let Some(changed) = super::rig_expr::editor(ui, story, root, rigs, salt, &new) {
+            new = changed;
+        }
         return (new != *e).then(|| Outcome::Replace(new, None));
     }
 
@@ -495,9 +524,18 @@ pub fn preview(
     ui: &mut Ui,
     ctx: &EditorContext<'_>,
     story: &orbit_core::Story,
+    rigs: &super::rig_expr::RigUi,
+    key: (orbit_core::CharacterId, usize),
     e: &Expression,
     max: egui::Vec2,
 ) {
+    if e.rigged().is_some() {
+        // The clip drawn by the host; the poster while the rig cannot play.
+        if !super::rig_expr::preview(ui, ctx, story, rigs, key, e, max) {
+            thumbs::show(ui, ctx, story, e.image, max);
+        }
+        return;
+    }
     let Some(anim) = e.animation().filter(|a| a.is_animated()) else {
         thumbs::show(ui, ctx, story, e.image, max);
         return;

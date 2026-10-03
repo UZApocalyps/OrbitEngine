@@ -101,3 +101,47 @@ Outils adossés aux commandes `orbit_project` : `rig_create`, `rig_bone_add` / `
 * Les rigs vivent dans des assets versionnés séparément : un changement de format de rig ne bumpe pas le schéma de l'histoire.
 * La migration v11 supprime une valeur qui n'avait jamais d'effet : aucun projet ne change d'apparence.
 * L'éditeur de rig est le gros du coût de M5b (maillage et poids en L chacun) ; l'import PSD réduit fortement le travail d'entrée pour les artistes et passe en tâche optionnelle.
+
+## Addendum M5B-07 / M5B-08 : runtime, saves, export, MCP (schéma v14, pak v5)
+
+### Format
+
+* **Schéma v14** (le §4 annonçait v11 : la numérotation a avancé entre-temps). `Motion::Rigged(RiggedMotion { rig: AssetId, skin: Option<String>, clip: String, loop_mode: LoopMode })` remplace la variante unitaire ; `AssetKind::Rig` (ajouté en dernier) désigne un fichier `.rig.ron`, rangé par l'éditeur dans `assets/rigs/`. `Expression::assets()` renvoie le poster puis l'asset rig.
+* **Migration v13 → v14** : l'ancien `motion: Some(Rigged)` (ou `motion: Rigged` avec `implicit_some`) est **supprimé du texte avant toute étape de migration** (`drop_unit_rigged`, pour toute version < 14 : les étapes suivantes lisent le texte avec les types courants, qui ne savent plus lire la variante unitaire). L'expression devient une image fixe : le poster était déjà dessiné, **aucun changement visuel**. Fixture figée : `examples/fixtures/compat/v13/story.ron` (avec un `Rigged` unitaire) ; elle est dans la liste de `tests/compat.rs`.
+* **Pak (GamePack)** : la disposition de `Motion::Rigged` change (postcard n'est pas auto-descriptif), donc **version 5**, écrite seulement pour un jeu qui a une expression riggée (`GamePack::uses_rigs`, choisie par `to_bytes` / `to_bytes_with_3d`) ; les autres jeux restent en version 3 (ou 4 avec de la 3D), lisibles par les lecteurs plus anciens. Les versions 1 à 4 se lisent avec la disposition de leur époque : `Expression` a un `Deserialize` manuel qui, quand le lecteur déclare un pak ≤ 4 (`orbit_core::with_legacy_motion_layout`, drapeau local au thread), lit `Motion` avec l'ancienne variante unitaire et la convertit en image fixe. Fixture figée : `examples/fixtures/compat/pak_v3_rigged/game.pack` (un `Rigged` unitaire dans un pak v3).
+* **Saves** : aucun changement (format 6). Le clip n'est pas sauvé : c'est l'état déclaratif `(expression, horloge de scène)` ; la scène sauvée contient déjà l'expression, l'horloge d'animation repart avec la partie chargée, comme pour les animations image par image.
+* Le `.rig.ron` garde son propre `rig_version` (inchangé : 1).
+
+### Conventions de rendu
+
+* Les **unités du rig sont les pixels de l'image poster** de l'expression ; l'origine (0, 0) est l'**ancre bas-centre** du personnage. Le rig est mis à l'échelle comme l'image fixe (hauteur standard du personnage rapportée à la hauteur du poster) puis par l'échelle du `Show` et les effets : échelle uniforme (x) plus un étirement vertical, rotation et teinte des effets, miroir X, miroir Y « en place » (autour du milieu de l'image).
+* `loop_mode` de l'expression **remplace** la boucle du clip (`Loop` = en boucle, `Once` = tient la dernière pose, `PingPong`). Les courbes nommées de l'histoire s'appliquent aux pistes du clip.
+* **Repli** : tant que le rig ou ses images ne sont pas chargés, ou s'il est illisible, le poster est dessiné (jamais d'erreur bloquante).
+
+### Temps, fondu, mouvement réduit
+
+* La pose est une **fonction pure** de `(expression, clip, loop_mode, horloge)` : `AnimClock` (le temps depuis l'apparition de chaque couple personnage/expression, qui n'avance que tant que le jeu tourne, donc **aussi pendant qu'une réplique s'écrit ou attend un clic** : horloge partagée) ; rien n'est stocké par image. `Game::stage_is_animated` demande des redessins tant qu'une expression riggée est à l'écran.
+* **Changement d'expression** d'un personnage qui reste en scène vers une autre expression du **même rig et de la même skin** (`None` = skin `default`) : fondu croisé de 0,2 s (`RIG_BLEND`) entre le clip quitté, qui continue sur son propre temps, et le nouveau, via `RigPose::blend` ; l'horloge mémorise `(expression quittée, début, instant du changement)`. Vers un autre rig, une image fixe ou une nouvelle arrivée : pas de fondu (transition d'expression habituelle).
+* **Mouvement réduit** : la première pose du clip est tenue (temps 0), pas de fondu. Les animations image par image gardent leur comportement.
+* Rollback / saut / chargement : l'horloge repart, la pose retombe sur celle du début du clip, sans état à restaurer (testé : `AnimClock::at` redonne la même pose qu'une horloge jouée).
+
+### Chargement et export
+
+* `orbit_runtime::rigs::RigLoad` : charge le `.rig.ron` (via `AssetLoader`, dossier, pak ou web), le prépare (`PreparedRig`), puis charge les images qu'il nomme (chemins du projet, avec cache par chemin) ; le tout est un seul `PendingAsset`. Aucun format de pak nouveau pour les assets : le rig et ses images sont des entrées ordinaires.
+* Export (`orbit_export::compile`) : pour chaque rig utilisé, les images qu'il dessine **sont ajoutées au pak même si l'histoire ne les déclare pas** ; une image absente bloque l'export (`MissingAssets`), un rig illisible ou un chemin hors projet est un avertissement.
+
+### Validation
+
+* Cœur (`orbit_core::validate`) : l'asset doit exister et être de kind `Rig`, le nom de clip n'est pas vide (`InvalidAnimation`). L'avertissement `RiggedUnsupported` est supprimé.
+* Avec les fichiers du projet (`orbit_project::rigs::rig_problems`) : fichier absent ou illisible, clip ou skin inconnus, image absente, budgets web du rig ; ce sont des **avertissements** (le poster est dessiné). Utilisé par `orbit validate --check-files`, le panneau Problèmes de l'éditeur et l'outil MCP `validate`.
+
+### Éditeur et MCP
+
+* Panneau des personnages : un type d'expression « Rig » (rig, skin, clip, boucle) avec vignette animée. Le maillage automatique et les poids (`meshgen`, `weights`) ont été déplacés de l'éditeur vers `orbit_project::rigmesh` pour être partagés avec le MCP (`spade` y est maintenant une dépendance, hors du chemin du moteur et du lecteur).
+* Outils MCP : `rig_list`, `rig_read`, `rig_sample`, `rig_mesh_auto`, `set_expression_rig` (voir `docs/mcp.md`). `rig_create` / `rig_bone_*` / `rig_clip_key_set` de la liste du §8 ne sont pas livrés : la construction des os et des clips reste un geste d'éditeur ; un script peut produire le `.rig.ron` (format ouvert) puis `rig_read` / `validate` pour le contrôler.
+
+### Reporté
+
+* **Pistes de timeline d'histoire ciblant `Character(id).Bone(nom)`** (§2) : non livrées. Elles demandent une nouvelle cible `AnimTarget`, un état d'os dans `StageFx` et l'édition des pistes ; le besoin (un geste ponctuel par-dessus le clip) est couvert pour l'instant par un autre clip et le fondu croisé. À reprendre avec un addendum de l'ADR 0012.
+* Peau « tenue » (changement de skin au cours d'un clip) : la skin est fixée par l'expression.
+* Fixture : `examples/stories/test_rigged.ron` + `examples/fixtures/assets/robo.*` (images générées par `generate_rig_fixture`, joué en lecture réelle par les tests de `orbit_runtime`). Démo : l'expression « sad » d'Alice respire (`assets/demo/alice_sad.rig.ron`, une région sur un os, générée par `generate_demo_rig`).

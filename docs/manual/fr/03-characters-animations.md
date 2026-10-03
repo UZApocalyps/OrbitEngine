@@ -37,4 +37,15 @@ Une étape **Particules** démarre un émetteur : pluie, neige, pétales, poussi
 
 Les particules sont calculées à partir de l'instant où l'étape s'est exécutée, jamais enregistrées : revenir en arrière, charger une sauvegarde ou passer donnent toujours la même image. L'éditeur prévient quand un émetteur aurait besoin de plus de 1500 particules en même temps (baissez la cadence ou la durée de vie), et l'écran n'en dessine jamais plus de 4000 en tout. Elles sont dessinées sur l'écran, pas dans la caméra : la météo ne tremble donc pas avec la caméra. Avec la **réduction des animations** (voir Accessibilité), aucune particule n'est dessinée.
 
-> L'animation de personnages par squelette n'est pas encore disponible.
+## Animation par squelette (rigs)
+
+Un **rig** donne vie à un dessin avec des os : respiration, bras qui salue, tête qui tourne. Construisez-le dans le panneau **Rig** (os, maillage depuis une image, poids, clips), puis cliquez sur **Ajouter au projet** : le fichier est enregistré en `assets/rigs/<nom>.rig.ron` et apparaît dans la Bibliothèque. Les images dessinées par un rig doivent être des fichiers du projet.
+
+Pour l'utiliser, ouvrez le personnage, choisissez le type **Rig** pour une expression, puis le rig, la **skin** (tenue), le **clip** et ce qui se passe à la fin (boucle, une fois, aller-retour). Une petite vignette animée montre le résultat. L'image de l'expression reste le **poster** : elle sert aux miniatures et s'affiche pendant le chargement du rig ou s'il est inutilisable (le panneau Problèmes explique pourquoi : fichier absent, clip ou skin inconnus, image absente). Le rig est dessiné à l'échelle du poster, son origine au bas-centre du personnage.
+
+- Montrer le même personnage avec une autre expression **du même rig** fait un fondu croisé des deux clips sur 0,2 seconde au lieu d'un changement sec.
+- Les clips continuent pendant qu'une réplique s'affiche ou attend un clic.
+- Avec **Réduire les animations**, le rig garde la première pose de son clip.
+- Revenir en arrière ou charger une sauvegarde relance le clip : rien n'est sauvegardé à son sujet.
+
+Un assistant IA peut lister et lire les rigs, vérifier une pose sans dessiner, générer un maillage depuis une image et affecter un rig à une expression (voir le guide MCP).

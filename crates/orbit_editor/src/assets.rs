@@ -30,6 +30,7 @@ pub fn asset_dir(kind: AssetKind) -> &'static str {
         AssetKind::Music => "assets/music",
         AssetKind::Sound => "assets/sounds",
         AssetKind::Scene3d => "assets/3d",
+        AssetKind::Rig => "assets/rigs",
         AssetKind::Font => "assets/fonts",
     }
 }
@@ -574,6 +575,18 @@ pub enum AssetIssue {
     },
     /// A story command names a camera the 3D scene does not have.
     CameraMissing { asset: AssetId, camera: String },
+    /// A rig file cannot be used (parse or validation error).
+    Rig {
+        asset: AssetId,
+        path: String,
+        detail: String,
+    },
+    /// A rig draws a picture that is not a file of the project (warning).
+    RigImageMissing {
+        asset: AssetId,
+        path: String,
+        image: String,
+    },
 }
 
 impl AssetIssue {
@@ -583,6 +596,8 @@ impl AssetIssue {
             | AssetIssue::CaseMismatch { asset, .. }
             | AssetIssue::CaseCollision { asset, .. }
             | AssetIssue::Scene3d { asset, .. }
+            | AssetIssue::Rig { asset, .. }
+            | AssetIssue::RigImageMissing { asset, .. }
             | AssetIssue::CameraMissing { asset, .. } => *asset,
         }
     }
@@ -591,6 +606,7 @@ impl AssetIssue {
         match self {
             AssetIssue::Missing { .. } => true,
             AssetIssue::Scene3d { error, .. } => *error,
+            AssetIssue::Rig { .. } => true,
             _ => false,
         }
     }
@@ -609,6 +625,13 @@ impl AssetIssue {
             AssetIssue::Scene3d { path, detail, .. } => texts.tf(
                 "asset.issue.scene3d",
                 &[("path", path), ("detail", detail)],
+            ),
+            AssetIssue::Rig { path, detail, .. } => {
+                texts.tf("asset.issue.rig", &[("path", path), ("detail", detail)])
+            }
+            AssetIssue::RigImageMissing { path, image, .. } => texts.tf(
+                "asset.issue.rig_image_missing",
+                &[("path", path), ("image", image)],
             ),
             AssetIssue::CameraMissing { camera, .. } => {
                 texts.tf("asset.issue.camera_missing", &[("camera", camera)])
@@ -684,6 +707,35 @@ pub fn lint_asset_files(root: &Path, story: &Story) -> Vec<AssetIssue> {
         }
     }
     issues.extend(lint_scene3d(root, story));
+    issues.extend(lint_rigs(root, story));
+    issues
+}
+
+/// Findings about the rig files the manifest declares: unusable files
+/// (errors) and pictures they draw that the project does not have
+/// (warnings). Files that are missing are reported by the file lint.
+pub fn lint_rigs(root: &Path, story: &Story) -> Vec<AssetIssue> {
+    let mut issues = Vec::new();
+    for summary in orbit_project::rigs::list_rigs(root, story) {
+        let Some(asset) = summary.asset else { continue };
+        match summary.content {
+            Err(_) if !root.join(&summary.path).exists() => {}
+            Err(detail) => issues.push(AssetIssue::Rig {
+                asset,
+                path: summary.path,
+                detail,
+            }),
+            Ok(content) => {
+                for image in content.missing_images {
+                    issues.push(AssetIssue::RigImageMissing {
+                        asset,
+                        path: summary.path.clone(),
+                        image,
+                    });
+                }
+            }
+        }
+    }
     issues
 }
 
@@ -730,6 +782,51 @@ pub fn scan_assets(root: &Path) -> Vec<DiskFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const RIG: &str = r#"(
+        rig_version: 1,
+        bones: [(id: "root", name: "root")],
+        slots: [(id: "s", name: "body", bone: "root", attachment: Some("body"))],
+        skins: [(name: "default", attachments: {"body": Region((image: "assets/body.png", size: (10.0, 20.0)))})],
+        clips: {"idle": (duration: 1.0, looping: Forever, tracks: [])},
+    )"#;
+
+    #[test]
+    fn rig_assets_live_in_assets_rigs_and_are_linted() {
+        assert_eq!(asset_dir(AssetKind::Rig), "assets/rigs");
+        let dir = std::env::temp_dir().join(format!("orbit_assets_rig_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("assets/rigs")).unwrap();
+        fs::write(dir.join("assets/rigs/good.rig.ron"), RIG).unwrap();
+        fs::write(dir.join("assets/rigs/bad.rig.ron"), "nonsense").unwrap();
+        let mut story = Story::new("t");
+        for (kind, path) in [("good", "assets/rigs/good.rig.ron"), ("bad", "assets/rigs/bad.rig.ron")] {
+            let _ = kind;
+            story.assets.assets.push(AssetEntry {
+                id: AssetId::new(),
+                kind: AssetKind::Rig,
+                path: path.into(),
+            });
+        }
+        let issues = lint_rigs(&dir, &story);
+        // The good rig draws a picture the project lacks (warning); the bad one is an error.
+        assert_eq!(issues.len(), 2, "{issues:?}");
+        assert!(matches!(&issues[0], AssetIssue::RigImageMissing { image, .. } if image == "assets/body.png"));
+        assert!(!issues[0].is_error());
+        assert!(matches!(&issues[1], AssetIssue::Rig { .. }) && issues[1].is_error());
+        fs::write(dir.join("assets/body.png"), b"x").unwrap();
+        assert_eq!(lint_rigs(&dir, &story).len(), 1);
+        // Saved in the rig folder: nothing more to do; elsewhere: a free path in `assets/rigs`.
+        assert!(is_in_rig_dir(&dir, &dir.join("assets/rigs/good.rig.ron")));
+        assert!(!is_in_rig_dir(&dir, &dir.join("assets/3d/x.rig.ron")));
+        let t = plan_rig_target(&dir, &story, "Hero 1", None);
+        assert_eq!(t.rel, "assets/rigs/Hero_1.rig.ron");
+        assert!(!t.in_place);
+        let t = plan_rig_target(&dir, &story, "x", Some(&dir.join("assets/rigs/good.rig.ron")));
+        assert!(t.in_place);
+        assert_eq!(t.rel, "assets/rigs/good.rig.ron");
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn file_names_are_made_safe_and_stable() {
@@ -831,6 +928,51 @@ pub fn plan_scene3d_target(
         abs,
         in_place: false,
     }
+}
+
+/// Decides where "add to project" puts the rig named `name`: where it is when
+/// `current` is already under `assets/`, otherwise a free
+/// `assets/rigs/<name>.rig.ron`.
+pub fn plan_rig_target(
+    root: &Path,
+    story: &Story,
+    name: &str,
+    current: Option<&Path>,
+) -> Scene3dTarget {
+    if let Some(current) = current
+        && let Some(rel) = asset_rel_path(root, current)
+    {
+        return Scene3dTarget {
+            rel,
+            abs: current.to_owned(),
+            in_place: true,
+        };
+    }
+    let taken: HashSet<String> = story
+        .assets
+        .assets
+        .iter()
+        .map(|a| a.path.to_lowercase())
+        .collect();
+    let stem = sanitize_file_name(name);
+    let stem = stem.rsplit_once('.').map_or(stem.as_str(), |(s, _)| s);
+    let wanted = format!("{stem}.rig.ron");
+    let rel = free_path(root, asset_dir(AssetKind::Rig), &wanted, &taken);
+    let abs = root.join(&rel);
+    Scene3dTarget {
+        rel,
+        abs,
+        in_place: false,
+    }
+}
+
+/// Whether the file `path` is under the rig folder of the project `root`
+/// (so saving it there is enough to be picked up as a rig asset).
+pub fn is_in_rig_dir(root: &Path, path: &Path) -> bool {
+    asset_rel_path(root, path).is_some_and(|rel| {
+        rel.strip_prefix(asset_dir(AssetKind::Rig))
+            .is_some_and(|rest| rest.starts_with('/'))
+    })
 }
 
 /// Camera names of the 3D scene asset `asset`, read from its file. `None`

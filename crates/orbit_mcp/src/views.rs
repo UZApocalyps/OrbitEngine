@@ -448,6 +448,7 @@ pub fn characters_json(story: &Story) -> Json {
                         "name": e.name,
                         "asset": e.image.to_string(),
                         "path": story.asset_path(e.image),
+                        "rig": e.rigged().map(|m| crate::rig_tools::motion_json(story, m)),
                     })).collect::<Vec<_>>(),
                 })
             })

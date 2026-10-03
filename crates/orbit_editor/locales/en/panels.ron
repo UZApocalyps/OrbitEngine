@@ -72,6 +72,7 @@
     "search.asset.music": "music",
     "search.asset.sound": "sound",
     "search.asset.scene3d": "3D scene",
+    "search.asset.rig": "rig",
     "search.asset.font": "font",
 
     // ---- new nodes (insert menus)
@@ -114,6 +115,8 @@
     "edit.kind.music": "music",
     "edit.kind.sound": "sound",
     "edit.kind.scene3d": "3D scene",
+    "edit.pick_rig": "Choose a rig",
+    "edit.kind.rig": "rig",
     "edit.pick_font": "Choose a font",
     "edit.kind.font": "font",
     "edit.wrong_kind": "“{path}” is of type “{found}”, “{expected}” expected.",

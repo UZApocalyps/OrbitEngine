@@ -36,7 +36,10 @@ mod collection_save_tests;
 mod screen_save_tests;
 #[cfg(test)]
 mod unlock_tests;
+#[cfg(test)]
 mod stage_save_tests;
+#[cfg(test)]
+mod rig_save_tests;
 pub mod manager;
 pub mod persistent;
 pub mod storage;

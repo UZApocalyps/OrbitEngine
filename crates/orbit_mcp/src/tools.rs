@@ -2395,7 +2395,8 @@ fn import_asset(cx: &mut ToolCx<'_>, a: ImportAssetArgs) -> Result<String, ToolE
 fn validate(cx: &mut ToolCx<'_>, a: ValidateArgs) -> Result<String, ToolError> {
     // Same root as the editor: a story opened alone may keep its assets in a
     // parent folder. Paths are only tested for existence, never read.
-    let root = orbit_project::find_assets_root(cx.sandbox.root(), cx.project.story());
+    let assets_root = orbit_project::find_assets_root(cx.sandbox.root(), cx.project.story());
+    let root = assets_root.clone();
     let exists = move |path: &str| {
         let rel = std::path::Path::new(path);
         let plain = rel
@@ -2409,7 +2410,16 @@ fn validate(cx: &mut ToolCx<'_>, a: ValidateArgs) -> Result<String, ToolError> {
         cx.registry,
         check.then_some(&exists as &dyn Fn(&str) -> bool),
     );
-    Ok(pretty(&report.to_json()))
+    let mut json = report.to_json();
+    if check {
+        let rig_problems: Vec<String> = orbit_project::rigs::rig_problems(&assets_root, cx.project.story())
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        json["rig_problem_count"] = json!(rig_problems.len());
+        json["rig_problems"] = json!(rig_problems);
+    }
+    Ok(pretty(&json))
 }
 
 fn simulate(cx: &mut ToolCx<'_>, a: SimulateArgs) -> Result<String, ToolError> {
@@ -2811,7 +2821,19 @@ pub fn builtin_tools() -> Vec<ToolDef> {
     ];
     tools.extend(ui_tool_defs());
     tools.extend(scene3d_tool_defs());
+    tools.extend(rig_tool_defs());
     tools
+}
+
+fn rig_tool_defs() -> Vec<ToolDef> {
+    use crate::rig_tools as r;
+    vec![
+        def::<r::NoArgs>("rig_list", "List the 2D rigs", "List the project's 2D skeletal rigs (assets of kind rig, plus .rig.ron files in assets/rigs that no asset declares): id, path, bones, slots, skins, clips with their duration, pictures drawn (and the ones missing from the project), IK count, issues and the character expressions that play each rig.", Kind::Read, r::rig_list),
+        def::<r::RigArg>("rig_read", "Read a 2D rig", "Read a 2D rig: bones (parent, rest pose, length), slots, skins with their attachments (region or mesh, picture, vertex counts), clips (duration, loop, track count), IK constraints, validation issues (errors and warnings, web budget) and the full RON. Rig units are pixels of the expression's poster image, origin at the character's bottom-center anchor.", Kind::Read, r::rig_read),
+        def::<r::SampleArgs>("rig_sample", "Sample a rig pose", "Evaluate a rig clip at a time and return the pose without rendering: local and world transform of every bone (world matrix [a,b,c,d,tx,ty], rotation in degrees clockwise on screen, Y down), the attachment and colour of every slot, and the draw order. The time is wrapped with loop_mode (loop, once, ping_pong) exactly like the runtime does.", Kind::Read, r::rig_sample),
+        def::<r::MeshAutoArgs>("rig_mesh_auto", "Generate a rig mesh", "Replace a region or mesh attachment of a rig skin with a mesh generated from a project picture: alpha outline, simplification, interior vertices and triangulation, then automatic bone weights. Optional tolerance, spacing, alpha_threshold, padding, falloff. The result is validated: errors refuse the call and nothing is written; web-budget warnings are returned. The rig file is rewritten (not covered by undo).", Kind::Edit, r::rig_mesh_auto),
+        def::<r::SetRigArgs>("set_expression_rig", "Set an expression's rig clip", "Make a character expression play a clip of a rig (skeletal animation; the expression's image stays the poster), or, without `rig`, go back to the still image. The rig must be an asset of kind rig (an undeclared .rig.ron of the project is declared first); the clip and the skin must exist in the rig. Undoable.", Kind::Edit, r::set_expression_rig),
+    ]
 }
 
 fn ui_tool_defs() -> Vec<ToolDef> {

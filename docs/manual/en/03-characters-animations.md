@@ -37,4 +37,15 @@ A **Particles** step starts an emitter: rain, snow, petals, dust or sparks, or y
 
 Particles are computed from the moment the step ran, never stored: going back in the story, loading a save or skipping always shows the same picture. The editor warns when an emitter would need more than 1500 particles at once (lower the rate or the lifetime), and the screen never draws more than 4000 in all. They are drawn on the screen, not in the camera, so the weather does not shake with the camera. With **Reduce motion** on (see Accessibility), no particles are drawn.
 
-> Skeleton-based character animation is not available yet.
+## Skeleton animation (rigs)
+
+A **rig** brings a drawing to life with bones: breathing, a waving arm, a head that turns. Build it in the **Rig** panel (bones, meshes from a picture, weights, clips), then click **Add to project**: the file is saved as `assets/rigs/<name>.rig.ron` and appears in the Library. The pictures a rig draws must be files of the project.
+
+To use it, open the character, choose the type **Rig** for an expression, then pick the rig, the **skin** (outfit), the **clip** and what happens at the end (loop, play once, ping-pong). A small animated preview shows the result. The expression's picture stays the **poster**: it is used for thumbnails and drawn while the rig loads or if it cannot be used (the Problems panel tells you why: missing file, unknown clip or skin, missing picture). The rig is drawn to the scale of the poster, with its origin at the bottom-center of the character.
+
+- Showing the same character with another expression **of the same rig** cross-fades the two clips over 0.2 seconds instead of cutting.
+- Clips keep playing while a line is displayed or waits for a click.
+- With **Reduce motion** on, the rig holds the first pose of its clip.
+- Going back in the story or loading a save restarts the clip: nothing about it is saved.
+
+An AI assistant can list and read rigs, check a pose without drawing it, generate a mesh from a picture and assign a rig to an expression (see the MCP guide).

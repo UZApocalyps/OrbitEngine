@@ -154,6 +154,48 @@ mod tests {
         assert!(built.stats.stored_bytes < built.stats.raw_bytes);
     }
 
+    // Rigged fixture: the rig and the pictures it draws ship even though the
+    // story declares only the poster and the rig; the pack is version 5.
+    #[test]
+    fn a_rigged_game_ships_its_rig_and_pictures_in_a_version_5_pack() {
+        let dir = TempDir::new("pak_rigged");
+        let project = crate::testing::rigged_project(dir.path());
+        let profile = project.profile(None).unwrap();
+        let compiled = compile(&project, &profile).unwrap();
+        assert!(compiled.warnings.is_empty(), "{:?}", compiled.warnings);
+        let built = build_pak(&compiled, &profile, &mut Reporter::silent()).unwrap();
+        let (_, index) = orbit_pak::container::parse_prefix(&built.bytes).unwrap();
+        for entry in [
+            "game.pack",
+            "fixtures/assets/bg_room.png",
+            "fixtures/assets/robo_poster.png",
+            "fixtures/assets/robo.rig.ron",
+            "fixtures/assets/robo_body.png",
+            "fixtures/assets/robo_arm.png",
+            "fixtures/assets/robo_head.png",
+        ] {
+            assert!(index.contains(entry), "{entry} is missing");
+        }
+        assert!(!index.contains("fixtures/assets/bob_sad.png"));
+        let pack_bytes = index.read_from(&built.bytes, "game.pack").unwrap();
+        assert_eq!(orbit_pak::GamePack::version_of(&pack_bytes), Some(5));
+        let pack = orbit_pak::GamePack::from_bytes(&pack_bytes).unwrap();
+        assert!(pack.uses_rigs());
+        // The shipped rig is the file of the project.
+        let rig = index.read_from(&built.bytes, "fixtures/assets/robo.rig.ron").unwrap();
+        assert_eq!(rig, std::fs::read(dir.path().join("fixtures/assets/robo.rig.ron")).unwrap());
+    }
+
+    #[test]
+    fn a_rig_drawing_a_missing_picture_blocks_the_export_with_the_file_name() {
+        let dir = TempDir::new("pak_rig_missing");
+        let project = crate::testing::rigged_project(dir.path());
+        std::fs::remove_file(dir.path().join("fixtures/assets/robo_head.png")).unwrap();
+        let profile = project.profile(None).unwrap();
+        let err = compile(&project, &profile).unwrap_err().to_string();
+        assert!(err.contains("robo_head.png"), "{err}");
+    }
+
     // Demo: global property only (the pak holds the pack, every compiled asset and the
     // engine fonts); no exact names or counts.
     #[test]

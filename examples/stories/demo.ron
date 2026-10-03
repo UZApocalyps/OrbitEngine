@@ -1,5 +1,5 @@
 (
-    schema_version: 13,
+    schema_version: 14,
     title: "Demo",
     strings: (
         source_lang: "en",
@@ -176,6 +176,11 @@
                 kind: Image,
                 path: "assets/demo/fg_skyline.png",
             ),
+            (
+                id: "01JBX0A0000000000000000017",
+                kind: Rig,
+                path: "assets/demo/alice_sad.rig.ron",
+            ),
         ],
     ),
     characters: [
@@ -210,6 +215,12 @@
                 (
                     name: "sad",
                     image: "01JBX0A0000000000000000005",
+                    motion: Some(Rigged((
+                        rig: "01JBX0A0000000000000000017",
+                        skin: None,
+                        clip: "breathe",
+                        loop_mode: Loop,
+                    ))),
                 ),
             ],
         ),

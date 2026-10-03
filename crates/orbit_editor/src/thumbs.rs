@@ -141,7 +141,7 @@ pub fn generate(req: &ThumbRequest) -> Result<Thumb, String> {
                 info,
             }
         }
-        AssetKind::Scene3d => Thumb {
+        AssetKind::Scene3d | AssetKind::Rig => Thumb {
             image: None,
             info: String::new(),
         },

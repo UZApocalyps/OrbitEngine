@@ -71,4 +71,5 @@ wasm-opt vient de `cargo install wasm-opt --locked` (crate Apache-2.0, binaryen 
 
 * `orbit_export` (sans egui) est l'unique implémentation : CLI (`orbit build`, `orbit export`), panneau Export de l'éditeur (fil de travail + `Waker`, progression, journal, annulation) et outils MCP `build_project` / `export_game`. Le player ne dépend ni de lui ni de l'éditeur (`check-arch`).
 * Les profils d'export vivent dans `orbit.project.ron` (`export_profiles`, champ optionnel : les manifestes existants se chargent sans changement).
+* **GamePack version 5** (ADR 0013, addendum M5B-07) : `Motion::Rigged` prend une charge utile, donc la disposition change ; la version 5 n'est écrite que pour un jeu qui a une expression riggée (le rig `.rig.ron` et les images qu'il dessine sont des entrées ordinaires du pak). Les versions 1 à 4 restent lisibles (l'ancienne variante unitaire se lit comme une image fixe, fixture `pak_v3_rigged`).
 * Dettes : voir ROADMAP (M4, export) : icône de l'exe Windows, template Linux uniquement par la CI, pas de zip du bundle web, export MCP bloquant le fil de l'éditeur, pas de cache incrémental du pak, pas de signature de code ni de macOS.

@@ -150,6 +150,162 @@ impl RigHost {
     }
 }
 
+// ------------------------------------------------------------- thumbnails
+
+/// Size, in physical pixels, of the animated thumbnail of a rigged expression
+/// (the characters panel draws it at half this size in points).
+pub const THUMB_PX: [u32; 2] = [108, 136];
+/// Thumbnails kept at once; past this the unused ones are released.
+const MAX_THUMBS: usize = 48;
+
+/// Which expression a thumbnail is of.
+pub type ThumbKey = (orbit_core::CharacterId, usize);
+
+/// One thumbnail to draw this frame: the clip's pose, framed on the rig's
+/// bounding box.
+pub struct ThumbRequest {
+    pub key: ThumbKey,
+    pub rig: Rc<PreparedRig>,
+    pub pose: RigPose,
+    pub skin: Option<String>,
+    pub root: PathBuf,
+}
+
+/// Link with the host for the thumbnails: the panel leaves requests, the host
+/// publishes one egui texture per key.
+#[derive(Default)]
+pub struct ThumbLink {
+    /// A GPU renderer exists (false in headless tests).
+    pub available: bool,
+    pub requests: Vec<ThumbRequest>,
+    pub textures: HashMap<ThumbKey, egui::TextureId>,
+}
+
+pub type SharedThumbs = Rc<RefCell<ThumbLink>>;
+
+/// Bounding box (rig space) of what a draw list shows.
+pub fn draw_bounds(list: &orbit_anim::rig::RigDrawList<'_>) -> Option<([f32; 2], [f32; 2])> {
+    use orbit_anim::rig::RigDrawItem;
+    let mut out: Option<([f32; 2], [f32; 2])> = None;
+    let mut add = |p: [f32; 2]| {
+        out = Some(match out {
+            None => (p, p),
+            Some((lo, hi)) => ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]),
+        });
+    };
+    for item in &list.items {
+        match item {
+            RigDrawItem::Region { size, transform, .. } => {
+                let (w, h) = (size[0] * 0.5, size[1] * 0.5);
+                for c in [[-w, -h], [w, -h], [-w, h], [w, h]] {
+                    add(transform.apply(c));
+                }
+            }
+            RigDrawItem::Mesh { range, .. } => {
+                for p in list.positions.get(range.clone()).unwrap_or(&[]) {
+                    add(*p);
+                }
+            }
+        }
+    }
+    out.filter(|(lo, hi)| lo.iter().chain(hi.iter()).all(|v| v.is_finite()))
+}
+
+/// Scale and target position of the rig origin that fit `bounds` in a target
+/// of `size` pixels with a margin. A degenerate box gives scale 1 centered on
+/// the origin.
+pub fn fit_bounds(bounds: Option<([f32; 2], [f32; 2])>, size: [u32; 2]) -> (f32, [f32; 2]) {
+    let (w, h) = (size[0] as f32, size[1] as f32);
+    let Some((lo, hi)) = bounds else {
+        return (1.0, [w * 0.5, h * 0.5]);
+    };
+    let (bw, bh) = (hi[0] - lo[0], hi[1] - lo[1]);
+    if bw <= 0.0 && bh <= 0.0 {
+        return (1.0, [w * 0.5, h * 0.5]);
+    }
+    let zoom = (w * 0.92 / bw.max(1e-3)).min(h * 0.92 / bh.max(1e-3));
+    let center = [(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5];
+    (zoom, [w * 0.5 - center[0] * zoom, h * 0.5 - center[1] * zoom])
+}
+
+#[derive(Default)]
+pub struct ThumbHost {
+    targets: HashMap<ThumbKey, TextureId>,
+    registered: HashMap<ThumbKey, egui::TextureId>,
+    images: HashMap<(PathBuf, String), Option<TextureId>>,
+}
+
+impl ThumbHost {
+    /// Draws the pending thumbnails. Returns true when a texture was created
+    /// (the UI needs another frame to pick it up).
+    pub fn update(
+        &mut self,
+        link: &Rc<RefCell<ThumbLink>>,
+        renderer: &mut Renderer2d,
+        egui_renderer: &mut egui_wgpu::Renderer,
+    ) -> bool {
+        let mut link = link.borrow_mut();
+        link.available = true;
+        let requests = std::mem::take(&mut link.requests);
+        if requests.is_empty() {
+            return false;
+        }
+        let [w, h] = THUMB_PX;
+        let mut changed = false;
+        if self.targets.len() >= MAX_THUMBS {
+            for (_, id) in self.targets.drain() {
+                renderer.release_texture(id);
+            }
+            for (_, tex) in self.registered.drain() {
+                egui_renderer.free_texture(&tex);
+            }
+            link.textures.clear();
+        }
+        for req in requests {
+            if !self.targets.contains_key(&req.key) {
+                let Ok(id) = renderer.create_render_target("rig thumbnail", w, h) else { continue };
+                let Some(view) = renderer.target_gamma_view(id) else { continue };
+                let device = renderer.gfx().device().clone();
+                let tex = egui_renderer.register_native_texture(&device, &view, wgpu::FilterMode::Linear);
+                self.targets.insert(req.key, id);
+                self.registered.insert(req.key, tex);
+                link.textures.insert(req.key, tex);
+                changed = true;
+            }
+            let target = self.targets[&req.key];
+            for skin in &req.rig.rig().skins {
+                for att in skin.attachments.values() {
+                    let key = (req.root.clone(), att.image().to_owned());
+                    if !self.images.contains_key(&key) {
+                        let tex = load_image(renderer, &req.root, att.image());
+                        self.images.insert(key, tex);
+                    }
+                }
+            }
+            let (zoom, position) = {
+                let setup = req.rig.setup_pose();
+                let world = req.rig.world(&setup);
+                let list = req.rig.draw_list(&setup, &world, req.skin.as_deref(), &CpuSkinner);
+                fit_bounds(draw_bounds(&list), THUMB_PX)
+            };
+            let world = req.rig.world(&req.pose);
+            let list = req.rig.draw_list(&req.pose, &world, req.skin.as_deref(), &CpuSkinner);
+            let mut scene = Scene::new();
+            scene.clear = Some([0.0, 0.0, 0.0, 0.0]);
+            let placement = RigPlacement { position, scale: zoom, ..RigPlacement::default() };
+            let root = req.root.clone();
+            push_rig(&mut scene, &list, &placement, |name| {
+                self.images.get(&(root.clone(), name.to_owned())).copied().flatten()
+            });
+            let saved = *renderer.camera();
+            *renderer.camera_mut() = Camera2d::new(w as f32, h as f32);
+            let _ = renderer.render_to_target(target, &scene);
+            *renderer.camera_mut() = saved;
+        }
+        changed
+    }
+}
+
 fn load_image(renderer: &mut Renderer2d, root: &std::path::Path, name: &str) -> Option<TextureId> {
     let path = root.join(name);
     let bytes = std::fs::read(&path).ok()?;
@@ -157,4 +313,46 @@ fn load_image(renderer: &mut Renderer2d, root: &std::path::Path, name: &str) -> 
     renderer
         .create_texture(&format!("rig:{}", path.display()), img.width, img.height, &img.rgba, TextureOptions::COLOR)
         .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_thumbnail_frames_the_whole_rig() {
+        let (zoom, pos) = fit_bounds(Some(([-50.0, -200.0], [50.0, 0.0])), [100, 100]);
+        // Height is the limit: 200 units in 92 px.
+        assert!((zoom - 0.46).abs() < 1e-3, "{zoom}");
+        // The middle of the box lands in the middle of the target.
+        assert!((pos[0] - 50.0).abs() < 1e-3);
+        assert!((pos[1] - (50.0 + 100.0 * zoom)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn an_empty_or_degenerate_box_does_not_blow_up() {
+        assert_eq!(fit_bounds(None, [100, 100]), (1.0, [50.0, 50.0]));
+        assert_eq!(fit_bounds(Some(([3.0, 3.0], [3.0, 3.0])), [100, 100]), (1.0, [50.0, 50.0]));
+        let (zoom, _) = fit_bounds(Some(([0.0, 0.0], [0.0, 10.0])), [100, 100]);
+        assert!(zoom.is_finite() && zoom > 0.0);
+    }
+
+    #[test]
+    fn the_draw_bounds_cover_regions() {
+        use orbit_anim::rig::{PreparedRig, load_rig};
+        let rig = load_rig(
+            r#"(rig_version: 1, bones: [(id: "root", name: "root")],
+            slots: [(id: "s", name: "body", bone: "root", attachment: Some("b"))],
+            skins: [(name: "default", attachments: {"b": Region((image: "x.png", size: (10.0, 20.0)))})],
+            clips: {"idle": (duration: 1.0, looping: Forever, tracks: [])})"#,
+        )
+        .unwrap()
+        .rig;
+        let prepared = PreparedRig::new(rig).unwrap();
+        let pose = prepared.setup_pose();
+        let world = prepared.world(&pose);
+        let list = prepared.draw_list(&pose, &world, None, &CpuSkinner);
+        let (lo, hi) = draw_bounds(&list).unwrap();
+        assert!((hi[0] - lo[0] - 10.0).abs() < 1e-3 && (hi[1] - lo[1] - 20.0).abs() < 1e-3, "{lo:?} {hi:?}");
+    }
 }

@@ -9,7 +9,7 @@ Idées validées mais hors des jalons en cours. À replanifier dans la roadmap l
 ## Personnages animés
 - **Fait (schéma v8, ADR 0004 addendum)** : image fixe ou animation par expression (sprite sheet, suite d'images, fps, boucle / une fois / aller-retour), runtime et éditeur (panneau Personnages, aperçu animé de la miniature, aperçu de jeu).
 - Reste : animation dans la vue de scène de l'éditeur (elle montre la première image), import de GIF / APNG, sprite sheet à cellules de tailles inégales (atlas), animations sur les anciens écrans (portraits, UI), saut d'images selon le temps réel lors d'un retard.
-- Plus tard : animation rigged (squelette, type Spine/Live2D-like) : la variante `Motion::Rigged` est réservée.
+- Animation rigged (squelette, type Spine/Live2D-like) : faite (M5B, schéma v14, ADR 0013). Reste : pistes de timeline d'histoire ciblant `Character(id).Bone(nom)`, import PSD (M5B-09), changement de skin au cours d'un clip.
 
 
 ## Moderniser le thème de base du jeu

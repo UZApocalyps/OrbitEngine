@@ -49,6 +49,10 @@ Sauvegardes, localisation, diffs, undo et pilotage par IA exigent des référenc
 - Calcul pur dans `orbit_core::anim` (`frame_index`, `Animation::frame_at`, `sheet_uv`, `sheet_cell_size`), partagé par le runtime et l'éditeur. Runtime : `AnimClock` (temps par personnage, qui n'avance que quand le jeu tourne : figé par un écran de pause ou pendant le chargement), sous-rectangle UV via `Sprite2d::uv` (compatible miroir, échelle et transitions), l'animation redémarre à chaque affichage ; rien dans les sauvegardes ni le rollback. L'export inclut toutes les frames (`asset_users` compte les frames).
 - Format `GamePack` : `motion` est toujours écrit en binaire (comme `Character::default_position`).
 
+## Addendum : schéma v14, expressions riggées (M5B-07)
+
+- `Motion::Rigged(RiggedMotion { rig, skin, clip, loop_mode })` remplace la variante unitaire réservée en v8 ; `AssetKind::Rig` désigne les fichiers `.rig.ron`. Migration v13 → v14 : l'ancien `Rigged` unitaire (qui n'a jamais eu d'effet) est retiré du texte avant les étapes de migration et l'expression devient une image fixe. Fixture figée `examples/fixtures/compat/v13`. Détails : ADR 0013, addendum M5B-07.
+
 ## Addendum : extension `.orbit` des histoires (TL-02)
 
 - **Extension.** Une histoire s'enregistre en `<nom>.orbit`. Le contenu est strictement le même RON (même `schema_version`, même migration) : ce n'est qu'un changement de nom, pas de format. Les nouveaux projets créent `story.orbit`.
