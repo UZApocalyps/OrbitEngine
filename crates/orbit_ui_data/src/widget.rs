@@ -9,7 +9,7 @@ use crate::theme::Style;
 use crate::layout::{Align, Anchor, Dir, PanelKind, Size};
 
 /// Current version of the screen document format.
-pub const UI_VERSION: u32 = 3;
+pub const UI_VERSION: u32 = 4;
 
 fn default_version() -> u32 {
     UI_VERSION

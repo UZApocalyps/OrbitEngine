@@ -62,6 +62,7 @@ pub use widgets::{
     estimate_text_width,
 };
 pub use orbit_ui_data::{AA_COMPONENT, AA_TEXT, ContrastIssue, TEXT_SCALE_RANGE, clamp_text_scale, contrast_ratio};
+pub use orbit_ui_data::{describe_chars, language_missing_chars};
 pub use asset::{
     BindPath, Cond, DataContext, DataScreen, Issue, LayoutDef, ScreenAsset, Severity, SlotsMode, NavStep, PreviewNav,
     SettingKey, SplashContent, SplashDef, TextRef, UI_VERSION, UiAction, UiBundle, WidgetDef,

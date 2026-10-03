@@ -21,6 +21,10 @@ If you rewrite a source text after it was translated, the translation is marked 
 
 Texts are drawn with fonts that support the language, including Chinese, Japanese and Korean characters, with a fallback when a glyph is missing.
 
+The default font only covers Latin scripts. For another language, import a font that has its characters (Library, TTF or OTF), then open the interface editor, **Theme** tab: add the font in **Fonts**, and in **Fonts per language** add it to the language. The list is a fallback chain, preferred font first. It applies to the dialogue box, the choices and every menu. A warning appears there, and in the export log, when some characters of a translation cannot be drawn by any font of its language.
+
+Japanese and Chinese lines wrap between characters without needing spaces, and punctuation such as `。` or `」` is never left alone at the start of a line. Arabic and Hebrew texts are shaped and ordered right to left, and right-aligned.
+
 ## In the game
 
 The player chooses the language in the preferences screen; the game starts in the language set in the export profile when none is chosen.
