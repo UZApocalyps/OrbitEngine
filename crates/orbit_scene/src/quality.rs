@@ -252,6 +252,17 @@ fn walk(
                     }
                 }
             }
+            Node3dKind::Shape { shape, material } => {
+                stats.triangles += shape.triangles();
+                if let Some(r) = material
+                    && let Some(m) = materials
+                        .iter()
+                        .rev()
+                        .find_map(|set| set.iter().find(|m| m.name == r.0))
+                {
+                    material_textures(m, textures);
+                }
+            }
             Node3dKind::Prefab(r) => {
                 if depth >= MAX_PREFAB_DEPTH {
                     continue;

@@ -750,6 +750,29 @@ impl Renderer3d {
         self.last_draw_count
     }
 
+    /// Generates and uploads the procedural shapes (`Node3dKind::Shape`) of
+    /// `scene` and of the registered prefabs that are not uploaded yet.
+    /// Shapes with the same parameters share one mesh. Called by
+    /// [`Renderer3d::render`]; call it before [`Renderer3d::flatten`].
+    pub fn ensure_shapes(&mut self, device: &wgpu::Device, scene: &Scene3d) {
+        let mut missing = Vec::new();
+        let nodes = scene
+            .nodes
+            .iter()
+            .chain(self.prefabs.values().flat_map(|p| p.nodes.iter()));
+        for node in nodes {
+            if let orbit_scene::Node3dKind::Shape { shape, .. } = &node.kind
+                && !self.meshes.contains_key(&shape.mesh_key())
+                && !missing.contains(shape)
+            {
+                missing.push(*shape);
+            }
+        }
+        for shape in missing {
+            self.upload_mesh(device, &shape.mesh());
+        }
+    }
+
     /// Flattens `scene` with the registered prefabs and uploaded meshes.
     pub fn flatten(&self, scene: &Scene3d) -> FlatScene {
         let meshes = |name: &str| self.meshes.get(name).map(Vec::len);
@@ -767,6 +790,7 @@ impl Renderer3d {
         camera: CameraSelect<'_>,
         target: &RenderTarget3d,
     ) -> Result<(), Render3dError> {
+        self.ensure_shapes(device, scene);
         let mut flat = self.flatten(scene);
         let camera = match camera {
             CameraSelect::View(c) => c,

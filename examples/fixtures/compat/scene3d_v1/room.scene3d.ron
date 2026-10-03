@@ -1,0 +1,95 @@
+(
+    scene3d_version: 1,
+    id: "01JAZ3D0V1R00M0000000000SC",
+    name: "room",
+    nodes: [
+        (
+            id: "01JAZ3D0V1N0DE000000000001",
+            name: "root",
+            parent: None,
+            transform: (
+                translation: (0.0, 0.0, 0.0),
+                rotation: (0.0, 0.0, 0.0, 1.0),
+                scale: (1.0, 1.0, 1.0),
+            ),
+            visible: true,
+            kind: Empty,
+        ),
+        (
+            id: "01JAZ3D0V1N0DE000000000002",
+            name: "sun",
+            parent: Some("01JAZ3D0V1N0DE000000000001"),
+            transform: (
+                translation: (0.0, 5.0, 0.0),
+                rotation: (-0.38268343, 0.0, 0.0, 0.9238795),
+                scale: (1.0, 1.0, 1.0),
+            ),
+            visible: true,
+            kind: Light(Directional(
+                color: (1.0, 0.95, 0.9),
+                intensity: 3.0,
+                shadows: true,
+            )),
+        ),
+        (
+            id: "01JAZ3D0V1N0DE000000000003",
+            name: "camera",
+            parent: None,
+            transform: (
+                translation: (0.0, 1.5, 4.0),
+                rotation: (0.0, 0.0, 0.0, 1.0),
+                scale: (1.0, 1.0, 1.0),
+            ),
+            visible: true,
+            kind: Camera((
+                name: "main",
+                projection: Perspective(
+                    fov_y: 0.9,
+                ),
+                near: 0.1,
+                far: 100.0,
+            )),
+        ),
+        (
+            id: "01JAZ3D0V1N0DE000000000004",
+            name: "chair",
+            parent: Some("01JAZ3D0V1N0DE000000000001"),
+            transform: (
+                translation: (1.0, 0.0, 0.0),
+                rotation: (0.0, 0.0, 0.0, 1.0),
+                scale: (1.0, 1.0, 1.0),
+            ),
+            visible: true,
+            kind: Mesh(
+                mesh: ("chair"),
+                materials: [("wood")],
+            ),
+        ),
+    ],
+    materials: [
+        (
+            name: "wood",
+            unlit: false,
+            base_color: (0.6, 0.4, 0.2, 1.0),
+            base_color_texture: None,
+            metallic: 0.0,
+            roughness: 0.7,
+            orm_texture: None,
+            normal_texture: None,
+            normal_scale: 1.0,
+            emissive: (0.0, 0.0, 0.0),
+            emissive_strength: 1.0,
+            emissive_texture: None,
+            occlusion_strength: 1.0,
+            alpha_mode: Opaque,
+            alpha_cutoff: 0.5,
+            double_sided: false,
+        ),
+    ],
+    environment: (
+        background: Color((0.1, 0.1, 0.15)),
+        ambient_color: (1.0, 1.0, 1.0),
+        ambient_intensity: 0.1,
+        fog: None,
+    ),
+)

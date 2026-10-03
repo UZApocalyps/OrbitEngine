@@ -26,9 +26,179 @@ pub struct Imported {
 }
 
 /// Imports a `.glb` / self-contained `.gltf` (embedded or data-URI buffers).
+/// A file referencing external buffers or images is refused with a message:
+/// use [`import_gltf_file`] / [`import_gltf_in`] for those.
 pub fn import_gltf(name: &str, bytes: &[u8]) -> Result<Imported, String> {
-    let (doc, buffers, images) =
-        gltf::import_slice(bytes).map_err(|e| format!("invalid glTF: {e}"))?;
+    import_gltf_impl(name, bytes, None)
+}
+
+/// Imports a `.gltf` / `.glb` file, resolving its relative `uri`s (external
+/// `.bin` buffers, images) from the file's folder.
+pub fn import_gltf_file(path: &std::path::Path) -> Result<Imported, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("model");
+    let base = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    import_gltf_in(name, &bytes, base)
+}
+
+/// Imports `bytes`, resolving relative `uri`s inside `base` only (see
+/// [`external_files`]).
+pub fn import_gltf_in(name: &str, bytes: &[u8], base: &std::path::Path) -> Result<Imported, String> {
+    import_gltf_impl(name, bytes, Some(base))
+}
+
+/// Percent-decodes a URI path (`%20` -> space); bad escapes stay as is.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16);
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2]))
+        {
+            out.push((h * 16 + l) as u8);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Checks a relative `uri` and returns it percent-decoded, normalised
+/// (`a/./b` -> `a/b`). Refused: absolute paths, schemes other than
+/// `data:`, backslashes, and anything that leaves the folder (`..`).
+pub fn safe_relative_uri(uri: &str) -> Result<String, String> {
+    let decoded = percent_decode(uri);
+    let refuse = || format!("external file `{uri}` is outside the model's folder");
+    if decoded.starts_with('/') || decoded.contains('\\') || decoded.contains(':') {
+        return Err(refuse());
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for part in decoded.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop().ok_or_else(refuse)?;
+            }
+            p => parts.push(p),
+        }
+    }
+    if parts.is_empty() {
+        return Err(refuse());
+    }
+    Ok(parts.join("/"))
+}
+
+/// The external files (buffers, images) a glTF references, as safe
+/// relative paths (data URIs and GLB chunks are not listed).
+pub fn external_files(bytes: &[u8]) -> Result<Vec<String>, String> {
+    let gltf = gltf::Gltf::from_slice(bytes).map_err(|e| format!("invalid glTF: {e}"))?;
+    external_uris(&gltf.document)
+        .into_iter()
+        .map(|u| safe_relative_uri(&u))
+        .collect()
+}
+
+fn external_uris(doc: &gltf::Document) -> Vec<String> {
+    let mut out = Vec::new();
+    for b in doc.buffers() {
+        if let gltf::buffer::Source::Uri(u) = b.source()
+            && !u.starts_with("data:")
+        {
+            out.push(u.to_owned());
+        }
+    }
+    for i in doc.images() {
+        if let gltf::image::Source::Uri { uri, .. } = i.source()
+            && !uri.starts_with("data:")
+        {
+            out.push(uri.to_owned());
+        }
+    }
+    out.dedup();
+    out
+}
+
+/// Rewrites the relative `uri`s of a `.gltf` (JSON) under `prefix`
+/// (`scene.bin` -> `<prefix>/scene.bin`), used to copy a multi-file model
+/// into `models/` without name clashes. Returns the new JSON and the
+/// `(original, rewritten)` relative paths. A `.glb` is returned unchanged
+/// (its external references, if any, are rewritten too).
+pub fn relocate_gltf(bytes: &[u8], prefix: &str) -> Result<(Vec<u8>, Vec<(String, String)>), String> {
+    if bytes.starts_with(b"glTF") {
+        let files = external_files(bytes)?;
+        if files.is_empty() {
+            return Ok((bytes.to_vec(), Vec::new()));
+        }
+        return Err("a .glb that references external files is not supported".into());
+    }
+    let mut json: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|e| format!("invalid glTF: {e}"))?;
+    let mut moved = Vec::new();
+    for list in ["buffers", "images"] {
+        let Some(items) = json.get_mut(list).and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        for item in items {
+            let Some(uri) = item.get("uri").and_then(|u| u.as_str()) else {
+                continue;
+            };
+            if uri.starts_with("data:") {
+                continue;
+            }
+            let rel = safe_relative_uri(uri)?;
+            let new = format!("{prefix}/{rel}");
+            // Written back unencoded but with spaces escaped (valid URI).
+            item["uri"] = serde_json::Value::String(new.replace('%', "%25").replace(' ', "%20"));
+            if !moved.iter().any(|(o, _): &(String, String)| *o == rel) {
+                moved.push((rel, new));
+            }
+        }
+    }
+    let out = serde_json::to_vec_pretty(&json).map_err(|e| e.to_string())?;
+    Ok((out, moved))
+}
+
+fn import_gltf_impl(
+    name: &str,
+    bytes: &[u8],
+    base: Option<&std::path::Path>,
+) -> Result<Imported, String> {
+    let gltf::Gltf { document, blob } =
+        gltf::Gltf::from_slice(bytes).map_err(|e| format!("invalid glTF: {e}"))?;
+    let uris = external_uris(&document);
+    if base.is_none()
+        && let Some(u) = uris.first()
+    {
+        return Err(format!(
+            "the model references the external file `{u}`: import the .gltf from its folder"
+        ));
+    }
+    for u in &uris {
+        let rel = safe_relative_uri(u)?;
+        if let Some(base) = base
+            && !base.join(&rel).is_file()
+        {
+            return Err(format!("missing file `{rel}` next to the model"));
+        }
+    }
+    let buffers = gltf::import_buffers(&document, base, blob)
+        .map_err(|e| format!("cannot read the model's buffers: {e}"))?;
+    let images = gltf::import_images(&document, base, &buffers)
+        .map_err(|e| format!("cannot read the model's images: {e}"))?;
+    import_document(name, &document, &buffers, &images)
+}
+
+fn import_document(
+    name: &str,
+    doc: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    images: &[gltf::image::Data],
+) -> Result<Imported, String> {
     let mut warnings = Vec::new();
     if doc.animations().len() > 0 {
         warnings.push(format!(
@@ -92,6 +262,34 @@ pub fn import_gltf(name: &str, bytes: &[u8]) -> Result<Imported, String> {
         def.orm_texture = pbr.metallic_roughness_texture().map(|i| {
             slot(&tex_names, i.texture().index(), i.tex_coord(), i.texture_transform())
         });
+        if let Some(sg) = m.pbr_specular_glossiness() {
+            // KHR_materials_pbrSpecularGlossiness (archived, common in
+            // Sketchfab exports): standard approximation to
+            // metallic-roughness. Diffuse -> base colour, glossiness ->
+            // roughness = 1 - g, dielectric (metallic 0). The
+            // specular-glossiness texture has no metallic-roughness
+            // equivalent and is dropped.
+            def.base_color = sg.diffuse_factor();
+            def.base_color_texture = sg.diffuse_texture().map(|i| {
+                slot(&tex_names, i.texture().index(), i.tex_coord(), i.texture_transform())
+            });
+            def.metallic = 0.0;
+            def.roughness = (1.0 - sg.glossiness_factor()).clamp(0.0, 1.0);
+            if sg.specular_glossiness_texture().is_some() {
+                // The factor only scales the (dropped) texture: without it a
+                // default factor of 1 would give a mirror. Mid roughness.
+                def.roughness = def.roughness.max(0.5);
+            }
+            def.orm_texture = None;
+            warnings.push(format!(
+                "material `{mname}`: specular-glossiness converted to metallic-roughness (approximation{})",
+                if sg.specular_glossiness_texture().is_some() {
+                    ", specular-glossiness texture ignored"
+                } else {
+                    ""
+                }
+            ));
+        }
         if let Some(n) = m.normal_texture() {
             def.normal_scale = n.scale();
             def.normal_texture = Some(slot(&tex_names, n.texture().index(), n.tex_coord(), None));

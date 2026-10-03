@@ -116,6 +116,24 @@ impl Ctx<'_> {
                         });
                     }
                 }
+                Node3dKind::Shape { shape, material } => {
+                    let mesh = shape.mesh_key();
+                    if self.meshes.primitive_count(&mesh).is_none() {
+                        log::warn!("3d: shape '{}' not generated", node.name);
+                        continue;
+                    }
+                    let material = material
+                        .as_ref()
+                        .and_then(|r| find_material(materials, &r.0))
+                        .cloned()
+                        .unwrap_or_else(default_material);
+                    out.draws.push(DrawItem {
+                        mesh,
+                        primitive: 0,
+                        material,
+                        world: w,
+                    });
+                }
                 Node3dKind::Light(light) => out.lights.push(WorldLight {
                     light: light.clone(),
                     position: math::transform_point(&w, [0.0; 3]),

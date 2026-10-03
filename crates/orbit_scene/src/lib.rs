@@ -7,7 +7,10 @@
 
 pub mod assets;
 pub mod migrate;
+pub mod omesh;
+pub mod pack3d;
 pub mod quality;
+pub mod shapes;
 mod validate;
 
 #[cfg(feature = "ktx2")]
@@ -20,10 +23,12 @@ use serde::{Deserialize, Serialize};
 
 pub use orbit_core::Node3dId;
 pub use assets::{MeshAsset, PrimitiveData, TextureAsset};
+pub use shapes::Shape;
 pub use validate::{Issue, Severity, validate, validate_prefab};
 
 /// Current `scene3d_version`.
-pub const SCENE3D_VERSION: u32 = 1;
+/// Version 2 added `Node3dKind::Shape` (procedural primitives).
+pub const SCENE3D_VERSION: u32 = 2;
 
 /// Reference to a mesh asset (name key, resolved by the project).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -185,6 +190,12 @@ pub enum Node3dKind {
     Camera(CameraDef),
     /// Instance of a prefab asset.
     Prefab(PrefabRef),
+    /// Procedural primitive (`scene3d_version` 2): generated from its
+    /// parameters, no file needed. `None` material: the default white one.
+    Shape {
+        shape: Shape,
+        material: Option<MaterialRef>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

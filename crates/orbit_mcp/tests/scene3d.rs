@@ -164,6 +164,51 @@ fn edits_are_written_and_validated() {
 }
 
 #[test]
+fn shapes_are_added_and_changed() {
+    let mut f = Fixture::new("shapes");
+    f.ok("create_scene3d", json!({"name": "room"}));
+    f.ok(
+        "edit_scene3d",
+        json!({"scene": "room", "ops": [
+            {"op": "set_material", "name": "Red", "base_color": [1.0, 0.0, 0.0, 1.0]},
+            {"op": "add_node", "name": "Box", "kind": {"type": "shape", "shape": "cube", "size": [2.0, 1.0, 1.0], "material": "Red"}},
+            {"op": "add_node", "name": "Ball", "kind": {"type": "shape", "shape": "sphere"}, "translation": [0.0, 1.0, 0.0]},
+            {"op": "set_shape", "node": "Ball", "radius": 0.25, "segments": 12},
+            {"op": "set_shape", "node": "Box", "shape": "torus", "material": ""}
+        ]}),
+    );
+    let read = f.ok("read_scene3d", json!({"scene": "room"}));
+    let node = |name: &str| {
+        read["scene"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["name"] == name)
+            .unwrap()["kind"]
+            .clone()
+    };
+    assert_eq!(node("Ball")["type"], "shape");
+    assert_eq!(node("Ball")["shape"], "sphere");
+    assert_eq!(node("Ball")["radius"], json!(0.25));
+    assert_eq!(node("Ball")["segments"], json!(12));
+    assert_eq!(node("Box")["shape"], "torus");
+    assert_eq!(node("Box")["material"], Value::Null);
+    let text = fs::read_to_string(f.dir.join("assets/3d/room.scene3d.ron")).unwrap();
+    assert!(text.contains("Torus"), "{text}");
+
+    // Unknown kind, a parameter the kind does not have, unknown material.
+    for (op, needle) in [
+        (json!({"op": "add_node", "name": "X", "kind": {"type": "shape", "shape": "teapot"}}), "unknown shape"),
+        (json!({"op": "set_shape", "node": "Ball", "tube": 1.0}), "no `tube`"),
+        (json!({"op": "set_shape", "node": "Ball", "material": "Nope"}), "unknown material"),
+        (json!({"op": "set_shape", "node": "Ball", "radius": -1.0}), "positive"),
+    ] {
+        let e = f.err("edit_scene3d", json!({"scene": "room", "ops": [op]}));
+        assert!(e.message.contains(needle), "{needle}: {}", e.message);
+    }
+}
+
+#[test]
 fn validation_checks_the_story_cameras() {
     let mut f = Fixture::new("validate");
     let made = f.ok("create_scene3d", json!({"name": "room"}));

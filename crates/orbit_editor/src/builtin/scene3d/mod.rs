@@ -452,16 +452,7 @@ impl State {
             .and_then(|s| s.to_str())
             .unwrap_or("model")
             .to_owned();
-        let result = std::fs::read(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| {
-                let imp = orbit_scene::import::import_gltf(&name, &bytes)?;
-                std::fs::create_dir_all(&models).map_err(|e| e.to_string())?;
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("glb");
-                std::fs::write(models.join(format!("{name}.{ext}")), &bytes)
-                    .map_err(|e| e.to_string())?;
-                Ok(imp)
-            });
+        let result = copy_model_into(&path, &name, &models);
         match result {
             Ok(imp) => {
                 for w in &imp.warnings {
@@ -478,6 +469,37 @@ impl State {
             Err(e) => ctx.error(ctx.tf("s3d.import_failed", &[("name", &name), ("error", &e)])),
         }
     }
+}
+
+/// Imports the glTF at `path` (external buffers and images resolved from
+/// its folder) and copies it into `models/` as `<name>.<ext>`. The external
+/// files of a multi-file `.gltf` go to `models/<name>.files/...` (its URIs
+/// are rewritten), so two Sketchfab exports that both use `scene.bin` do
+/// not clash. Nothing is written when the import fails.
+pub(crate) fn copy_model_into(
+    path: &std::path::Path,
+    name: &str,
+    models: &std::path::Path,
+) -> Result<orbit_scene::import::Imported, String> {
+    let imp = orbit_scene::import::import_gltf_file(path)?;
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let src_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let prefix = format!("{name}.files");
+    let (bytes, moved) = orbit_scene::import::relocate_gltf(&bytes, &prefix)?;
+    std::fs::create_dir_all(models).map_err(|e| e.to_string())?;
+    if !moved.is_empty() {
+        let _ = std::fs::remove_dir_all(models.join(&prefix));
+    }
+    for (from, to) in &moved {
+        let dst = models.join(to);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::copy(src_dir.join(from), &dst).map_err(|e| format!("{from}: {e}"))?;
+    }
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("glb");
+    std::fs::write(models.join(format!("{name}.{ext}")), &bytes).map_err(|e| e.to_string())?;
+    Ok(imp)
 }
 
 // --------------------------------------------------------------- viewport

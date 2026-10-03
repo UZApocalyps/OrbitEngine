@@ -58,6 +58,12 @@ pub(super) fn hierarchy(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<Ref
                         ui.close();
                     }
                 }
+                if let Some(kind) = shape_menu(ui, ctx) {
+                    let parent = st.selected;
+                    if let Some(doc) = st.doc.as_mut() {
+                        st.selected = Some(doc.add_node(kind, parent));
+                    }
+                }
             },
         );
         if ui
@@ -124,8 +130,36 @@ enum Action {
     Rename(Node3dId, String),
 }
 
+/// The "Shape" submenu of the Add menus: the picked kind (menu closed).
+fn shape_menu(ui: &mut Ui, ctx: &EditorContext<'_>) -> Option<NewKind> {
+    let mut picked = None;
+    ui.menu_button(format!("{}  {}", icons::SHAPES, ctx.t("s3d.add.shape")), |ui| {
+        for kind in orbit_scene::shapes::SHAPE_KINDS {
+            let label = format!("{}  {}", shape_icon(kind), ctx.t(&format!("s3d.shape.{kind}")));
+            if ui.button(label).clicked() {
+                picked = Some(NewKind::Shape(kind));
+                ui.close();
+            }
+        }
+    });
+    picked
+}
+
+fn shape_icon(kind: &str) -> &'static str {
+    match kind {
+        "cube" => icons::CUBE,
+        "sphere" => icons::SPHERE,
+        "plane" => icons::SQUARE,
+        "cylinder" => icons::CYLINDER,
+        "cone" => icons::TRIANGLE,
+        "capsule" => icons::PILL,
+        _ => icons::CIRCLE,
+    }
+}
+
 fn kind_icon(kind: &Node3dKind) -> &'static str {
     match kind {
+        Node3dKind::Shape { shape, .. } => shape_icon(shape.kind()),
         Node3dKind::Empty => icons::CROSSHAIR,
         Node3dKind::Mesh { .. } => icons::CUBE,
         Node3dKind::Light(_) => icons::LIGHTBULB,
@@ -254,6 +288,9 @@ fn tree_row(
                     *action = Some(Action::Add(kind, id));
                     ui.close();
                 }
+            }
+            if let Some(kind) = shape_menu(ui, ctx) {
+                *action = Some(Action::Add(kind, id));
             }
         });
         if ui.button(ctx.t("s3d.unparent")).clicked() {
@@ -422,8 +459,121 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, id: 
                 ui.label(RichText::new(ctx.t("s3d.prefab_missing")).color(crate::builtin::ui_util::warning(ui)));
             }
         }
+        Node3dKind::Shape { shape, material } => {
+            section_title(ui, &ctx.t("s3d.shape"));
+            let mut s = *shape;
+            if shape_editor(ui, ctx, id, &mut s) {
+                doc.set_shape(id, s);
+            }
+            let names: Vec<String> = doc.scene().materials.iter().map(|m| m.name.clone()).collect();
+            let current = material.as_ref().map(|m| m.0.clone()).unwrap_or_default();
+            let mut pick = None;
+            labelled(ui, &ctx.t("s3d.shape_material"), |ui| {
+                ComboBox::from_id_salt(("s3d_shape_mat", id))
+                    .selected_text(if current.is_empty() {
+                        ctx.t("s3d.none")
+                    } else {
+                        current.clone()
+                    })
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(current.is_empty(), ctx.t("s3d.none")).clicked() {
+                            pick = Some(String::new());
+                        }
+                        for n in &names {
+                            if ui.selectable_label(*n == current, n).clicked() {
+                                pick = Some(n.clone());
+                            }
+                        }
+                    });
+            });
+            if let Some(p) = pick {
+                doc.assign_material(id, 0, &p);
+                if !p.is_empty() {
+                    st.material = Some(p);
+                }
+            }
+        }
         Node3dKind::Empty => {}
     }
+}
+
+/// Kind and parameters of a procedural shape. Returns whether it changed.
+fn shape_editor(ui: &mut Ui, ctx: &EditorContext<'_>, id: Node3dId, s: &mut orbit_scene::Shape) -> bool {
+    use orbit_scene::Shape;
+    let mut changed = false;
+    let kind = s.kind();
+    let mut new_kind = kind;
+    labelled(ui, &ctx.t("s3d.shape_kind"), |ui| {
+        ComboBox::from_id_salt(("s3d_shape_kind", id))
+            .selected_text(ctx.t(&format!("s3d.shape.{kind}")))
+            .show_ui(ui, |ui| {
+                for k in orbit_scene::shapes::SHAPE_KINDS {
+                    ui.selectable_value(&mut new_kind, k, ctx.t(&format!("s3d.shape.{k}")));
+                }
+            });
+    });
+    if new_kind != kind
+        && let Some(fresh) = Shape::default_of(new_kind)
+    {
+        *s = fresh;
+        changed = true;
+    }
+    let len = |ui: &mut Ui, label: &str, v: &mut f32| {
+        labelled(ui, label, |ui| {
+            ui.add(DragValue::new(v).speed(0.01).range(0.001..=1000.0).suffix(" m").max_decimals(3))
+        })
+        .changed()
+    };
+    let count = |ui: &mut Ui, label: &str, v: &mut u32, min: u32| {
+        labelled(ui, label, |ui| {
+            ui.add(DragValue::new(v).speed(0.2).range(min..=orbit_scene::shapes::MAX_SEGMENTS))
+        })
+        .changed()
+    };
+    let (t_size, t_radius, t_height, t_segments, t_rings) = (
+        ctx.t("s3d.shape_size"),
+        ctx.t("s3d.shape_radius"),
+        ctx.t("s3d.shape_height"),
+        ctx.t("s3d.shape_segments"),
+        ctx.t("s3d.shape_rings"),
+    );
+    match s {
+        Shape::Cube { size } => {
+            let mut v = *size;
+            if drag3(ui, &t_size, &mut v, 0.01, "") {
+                *size = v.map(|x| x.max(0.001));
+                changed = true;
+            }
+        }
+        Shape::Sphere { radius, segments, rings } => {
+            changed |= len(ui, &t_radius, radius);
+            changed |= count(ui, &t_segments, segments, 3);
+            changed |= count(ui, &t_rings, rings, 2);
+        }
+        Shape::Plane { size, subdivisions } => {
+            changed |= len(ui, &format!("{t_size} X"), &mut size[0]);
+            changed |= len(ui, &format!("{t_size} Z"), &mut size[1]);
+            changed |= count(ui, &ctx.t("s3d.shape_subdivisions"), subdivisions, 1);
+        }
+        Shape::Cylinder { radius, height, segments } | Shape::Cone { radius, height, segments } => {
+            changed |= len(ui, &t_radius, radius);
+            changed |= len(ui, &t_height, height);
+            changed |= count(ui, &t_segments, segments, 3);
+        }
+        Shape::Capsule { radius, height, segments, rings } => {
+            changed |= len(ui, &t_radius, radius);
+            changed |= len(ui, &t_height, height);
+            changed |= count(ui, &t_segments, segments, 3);
+            changed |= count(ui, &t_rings, rings, 1);
+        }
+        Shape::Torus { radius, tube, segments, sides } => {
+            changed |= len(ui, &t_radius, radius);
+            changed |= len(ui, &ctx.t("s3d.shape_tube"), tube);
+            changed |= count(ui, &t_segments, segments, 3);
+            changed |= count(ui, &ctx.t("s3d.shape_sides"), sides, 3);
+        }
+    }
+    changed
 }
 
 fn light_editor(ui: &mut Ui, ctx: &EditorContext<'_>, l: &mut Light) -> bool {

@@ -135,6 +135,16 @@ fn nodes_issues(nodes: &[Node3d], materials: &[MaterialDef], out: &mut Vec<Issue
                     out.push(err(&n.name, "invalid light color or intensity"));
                 }
             }
+            Node3dKind::Shape { shape, material } => {
+                if !shape.is_valid() {
+                    out.push(err(&n.name, "shape sizes must be positive numbers"));
+                }
+                if let Some(r) = material
+                    && !mat_names.contains(r.0.as_str())
+                {
+                    out.push(err(&n.name, format!("unknown material `{}`", r.0)));
+                }
+            }
             _ => {}
         }
     }
@@ -179,6 +189,26 @@ mod tests {
     }
 
     #[test]
+    fn shapes_roundtrip_and_validate() {
+        let mut s = Scene3d::new("s");
+        s.materials.push(MaterialDef::new("red"));
+        for kind in shapes::SHAPE_KINDS {
+            s.nodes.push(Node3d::new(
+                kind,
+                None,
+                Node3dKind::Shape {
+                    shape: Shape::default_of(kind).unwrap(),
+                    material: Some(MaterialRef("red".into())),
+                },
+            ));
+        }
+        assert!(validate(&s).is_empty(), "{:?}", validate(&s));
+        let text = to_ron(&s).unwrap();
+        assert!(text.contains("Capsule"), "{text}");
+        assert_eq!(from_ron(&text).unwrap(), s);
+    }
+
+    #[test]
     fn detects_problems() {
         let mut s = Scene3d::new("s");
         let mut a = Node3d::new("a", None, Node3dKind::Empty);
@@ -195,9 +225,18 @@ mod tests {
                 materials: vec![MaterialRef("x".into())],
             },
         );
-        s.nodes = vec![a, b, c, d];
+        let e = Node3d::new(
+            "e",
+            None,
+            Node3dKind::Shape {
+                shape: Shape::Cube { size: [1.0, 0.0, 1.0] },
+                material: None,
+            },
+        );
+        s.nodes = vec![a, b, c, d, e];
         let msgs: Vec<_> = validate(&s).into_iter().map(|i| i.message).collect();
         for needle in [
+            "shape sizes",
             "cycle",
             "normalized",
             "NaN",

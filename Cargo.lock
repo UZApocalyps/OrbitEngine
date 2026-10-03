@@ -3378,6 +3378,7 @@ dependencies = [
  "ron",
  "ruzstd",
  "serde",
+ "serde_json",
  "wasm-bindgen-test",
 ]
 

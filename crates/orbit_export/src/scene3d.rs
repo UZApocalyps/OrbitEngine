@@ -82,7 +82,11 @@ pub fn load_models(dir: &Path) -> (AssetTable, Vec<String>) {
             _ => continue,
         };
         match ext.as_str() {
-            "glb" | "gltf" => match orbit_scene::import::import_gltf(&name, &bytes) {
+            "glb" | "gltf" => match orbit_scene::import::import_gltf_in(
+                &name,
+                &bytes,
+                dir,
+            ) {
                 Ok(imported) => {
                     for mesh in &imported.meshes {
                         table

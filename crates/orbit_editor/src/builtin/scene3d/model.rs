@@ -14,6 +14,19 @@ use orbit_scene::{
 use super::geom::{self, Bounds, Ray};
 
 const MAX_UNDO: usize = 200;
+/// Material given to new shapes (created in the scene on first use).
+pub const DEFAULT_MATERIAL: &str = "Default";
+
+/// Local bounds of a procedural shape.
+pub fn shape_bounds(shape: &orbit_scene::Shape) -> Bounds {
+    Bounds::of_points(&shape.primitive().positions).unwrap_or(Bounds::cube(0.5))
+}
+
+/// Half height of a shape: lifting it by this puts it on the ground.
+fn shape_half_height(shape: &orbit_scene::Shape) -> f32 {
+    let b = shape_bounds(shape);
+    -b.min[1]
+}
 const MAX_DEPTH: usize = 64;
 
 
@@ -121,10 +134,7 @@ impl ModelLib {
                 }
                 continue;
             }
-            match std::fs::read(&path)
-                .map_err(|e| e.to_string())
-                .and_then(|b| orbit_scene::import::import_gltf(&name, &b))
-            {
+            match orbit_scene::import::import_gltf_file(&path) {
                 Ok(imp) => lib.add_imported(imp),
                 Err(e) => errors.push(format!("{}: {e}", path.display())),
             }
@@ -173,6 +183,7 @@ impl ModelLib {
                 Some(self.mesh_bounds(&mesh.0).unwrap_or(Bounds::cube(0.5)))
             }
             Node3dKind::Prefab(p) => Some(self.prefab_bounds(&p.0).unwrap_or(Bounds::cube(0.5))),
+            Node3dKind::Shape { shape, .. } => Some(shape_bounds(shape)),
             _ => None,
         }
     }
@@ -249,6 +260,8 @@ pub enum NewKind {
     Point,
     Spot,
     Camera,
+    /// A procedural primitive (`orbit_scene::shapes::SHAPE_KINDS` id).
+    Shape(&'static str),
 }
 
 pub struct SceneDoc {
@@ -544,7 +557,11 @@ impl SceneDoc {
 
     pub fn add_node(&mut self, kind: NewKind, parent: Option<Node3dId>) -> Node3dId {
         let parent = parent.filter(|p| self.node(*p).is_some());
+        if let NewKind::Shape(shape_kind) = kind {
+            return self.add_shape(shape_kind, parent);
+        }
         let (name, node_kind) = match kind {
+            NewKind::Shape(_) => unreachable!("handled above"),
             NewKind::Empty => ("Empty", Node3dKind::Empty),
             NewKind::Directional => (
                 "Directional light",
@@ -750,8 +767,14 @@ impl SceneDoc {
         self.edit(None, |s| {
             s.materials.retain(|m| m.name != name);
             for n in &mut s.nodes {
-                if let Node3dKind::Mesh { materials, .. } = &mut n.kind {
-                    materials.retain(|r| r.0 != name);
+                match &mut n.kind {
+                    Node3dKind::Mesh { materials, .. } => materials.retain(|r| r.0 != name),
+                    Node3dKind::Shape { material, .. } => {
+                        if material.as_ref().is_some_and(|r| r.0 == name) {
+                            *material = None;
+                        }
+                    }
+                    _ => {}
                 }
             }
         });
@@ -774,11 +797,14 @@ impl SceneDoc {
                 }
             }
             for n in &mut s.nodes {
-                if let Node3dKind::Mesh { materials, .. } = &mut n.kind {
-                    for r in materials {
-                        if r.0 == old {
-                            r.0 = new.to_owned();
-                        }
+                let refs: Vec<&mut MaterialRef> = match &mut n.kind {
+                    Node3dKind::Mesh { materials, .. } => materials.iter_mut().collect(),
+                    Node3dKind::Shape { material, .. } => material.iter_mut().collect(),
+                    _ => Vec::new(),
+                };
+                for r in refs {
+                    if r.0 == old {
+                        r.0 = new.to_owned();
                     }
                 }
             }
@@ -794,15 +820,74 @@ impl SceneDoc {
         });
     }
 
+    /// Adds a procedural shape (`kind`: `orbit_scene::shapes::SHAPE_KINDS`)
+    /// with its default parameters and the scene's default material
+    /// (created on first use, white and rough, editable like any other).
+    /// One undo step.
+    pub fn add_shape(&mut self, kind: &str, parent: Option<Node3dId>) -> Node3dId {
+        let shape = orbit_scene::Shape::default_of(kind)
+            .unwrap_or(orbit_scene::Shape::Cube { size: [1.0; 3] });
+        let label = match shape.kind() {
+            "cube" => "Cube",
+            "sphere" => "Sphere",
+            "plane" => "Plane",
+            "cylinder" => "Cylinder",
+            "cone" => "Cone",
+            "capsule" => "Capsule",
+            _ => "Torus",
+        };
+        let mut node = Node3d::new(
+            self.unique_name(label),
+            parent,
+            Node3dKind::Shape {
+                shape,
+                material: Some(MaterialRef(DEFAULT_MATERIAL.to_owned())),
+            },
+        );
+        // A plane lies on the ground; other shapes stand on it.
+        if !matches!(shape, orbit_scene::Shape::Plane { .. }) {
+            node.transform.translation[1] = shape_half_height(&shape);
+        }
+        let id = node.id;
+        self.edit(None, |s| {
+            if !s.materials.iter().any(|m| m.name == DEFAULT_MATERIAL) {
+                let mut m = MaterialDef::new(DEFAULT_MATERIAL);
+                m.metallic = 0.0;
+                m.roughness = 0.8;
+                s.materials.push(m);
+            }
+            s.nodes.push(node);
+        });
+        id
+    }
+
+    /// Replaces the shape (kind and parameters) of a shape node.
+    pub fn set_shape(&mut self, node: Node3dId, shape: orbit_scene::Shape) {
+        self.edit(Some(&format!("shape:{node:?}")), |s| {
+            if let Some(n) = s.nodes.iter_mut().find(|n| n.id == node)
+                && let Node3dKind::Shape { shape: old, .. } = &mut n.kind
+            {
+                *old = shape;
+            }
+        });
+    }
+
     pub fn assign_material(&mut self, node: Node3dId, slot: usize, material: &str) {
         self.edit(None, |s| {
-            if let Some(n) = s.nodes.iter_mut().find(|n| n.id == node)
-                && let Node3dKind::Mesh { materials, .. } = &mut n.kind
-            {
-                while materials.len() <= slot {
-                    materials.push(MaterialRef(material.to_owned()));
+            let Some(n) = s.nodes.iter_mut().find(|n| n.id == node) else {
+                return;
+            };
+            match &mut n.kind {
+                Node3dKind::Mesh { materials, .. } => {
+                    while materials.len() <= slot {
+                        materials.push(MaterialRef(material.to_owned()));
+                    }
+                    materials[slot] = MaterialRef(material.to_owned());
                 }
-                materials[slot] = MaterialRef(material.to_owned());
+                Node3dKind::Shape { material: m, .. } => {
+                    *m = (!material.is_empty()).then(|| MaterialRef(material.to_owned()));
+                }
+                _ => {}
             }
         });
     }
@@ -874,6 +959,75 @@ mod tests {
         let (_, errors) = ModelLib::load_dir(&dir);
         assert_eq!(errors.len(), 1, "{errors:?}");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A multi-file `.gltf` (external `.bin`) is copied into `models/` with
+    /// its files under `<name>.files/` and loads again from there; a
+    /// broken one is refused with a message and writes nothing.
+    #[test]
+    fn multi_file_gltf_is_copied_and_reloads() {
+        let dir = tmp("multi_gltf");
+        let src = dir.join("download");
+        std::fs::create_dir_all(&src).unwrap();
+        let mut bin = Vec::new();
+        for c in [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
+            bin.extend_from_slice(&c.to_le_bytes());
+        }
+        std::fs::write(src.join("scene.bin"), &bin).unwrap();
+        let json = r#"{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],
+            "nodes":[{"name":"n","mesh":0}],
+            "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
+            "buffers":[{"uri":"scene.bin","byteLength":36}],
+            "bufferViews":[{"buffer":0,"byteLength":36}],
+            "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}]}"#;
+        std::fs::write(src.join("scene.gltf"), json).unwrap();
+        let models = dir.join("models");
+        let imp = super::super::copy_model_into(&src.join("scene.gltf"), "girl", &models).unwrap();
+        assert_eq!(imp.meshes.len(), 1);
+        assert!(models.join("girl.files/scene.bin").is_file());
+        let (lib, errors) = ModelLib::load_dir(&models);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(lib.prefabs.contains_key("girl"));
+
+        std::fs::remove_file(src.join("scene.bin")).unwrap();
+        let err = super::super::copy_model_into(&src.join("scene.gltf"), "other", &models)
+            .unwrap_err();
+        assert!(err.contains("scene.bin"), "{err}");
+        assert!(!models.join("other.gltf").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn shapes_are_added_with_the_default_material_and_edited() {
+        let mut doc = SceneDoc::new("Test");
+        let lib = ModelLib::default();
+        let cube = doc.add_node(NewKind::Shape("cube"), None);
+        let ball = doc.add_shape("sphere", None);
+        assert!(orbit_scene::validate(doc.scene()).is_empty());
+        // One shared default material, created once.
+        assert_eq!(
+            doc.scene().materials.iter().filter(|m| m.name == DEFAULT_MATERIAL).count(),
+            1
+        );
+        let node = doc.node(cube).unwrap();
+        assert_eq!(node.name, "Cube");
+        assert!((node.transform.translation[1] - 0.5).abs() < 1e-5, "stands on the ground");
+        assert!(lib.kind_bounds(&node.kind).is_some());
+
+        doc.set_shape(ball, orbit_scene::Shape::Torus { radius: 1.0, tube: 0.2, segments: 8, sides: 6 });
+        doc.rename_material(DEFAULT_MATERIAL, "Clay");
+        let Node3dKind::Shape { shape, material } = &doc.node(ball).unwrap().kind else {
+            panic!("not a shape");
+        };
+        assert_eq!(shape.kind(), "torus");
+        assert_eq!(material.as_ref().unwrap().0, "Clay");
+        doc.assign_material(ball, 0, "");
+        doc.remove_material("Clay");
+        assert!(orbit_scene::validate(doc.scene()).is_empty());
+        let text = orbit_scene::to_ron(doc.scene()).unwrap();
+        assert_eq!(orbit_scene::from_ron(&text).unwrap(), *doc.scene());
+        doc.undo();
+        assert!(doc.scene().materials.iter().any(|m| m.name == "Clay"));
     }
 
     #[test]
