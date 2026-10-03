@@ -8,6 +8,7 @@
 mod clip;
 mod curve;
 mod lerp;
+pub mod rig;
 mod track;
 
 pub use clip::{Clip, ClipTrack, Loop, Pose, TrackData, Value};

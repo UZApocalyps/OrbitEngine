@@ -24,7 +24,9 @@
 
 mod batcher;
 mod camera;
+mod mesh;
 mod readback;
+mod rig;
 mod sprite;
 mod texture;
 mod transition;
@@ -33,7 +35,8 @@ pub use camera::{Camera2d, Viewport, letterbox};
 pub use orbit_gfx;
 pub use orbit_gfx::SurfaceFrame;
 pub use readback::{Readback, ReadbackStatus};
-pub use sprite::{Layer, Scene, Sprite2d, intersect_rects, nine_slice_quads};
+pub use rig::{RigPlacement, push_rig};
+pub use sprite::{Layer, Mesh2d, MeshVertex, Scene, Sprite2d, intersect_rects, nine_slice_quads};
 pub use texture::{TARGET_FORMAT, TextureId, TextureOptions};
 pub use transition::Transition;
 
@@ -41,6 +44,7 @@ use orbit_gfx::{Gfx, GfxError, wgpu};
 use thiserror::Error;
 
 use batcher::SpriteGpu;
+use mesh::MeshGpu;
 use texture::TextureStore;
 use transition::{TransitionPipeline, TransitionUniform};
 
@@ -84,6 +88,7 @@ pub struct Renderer2d {
     gfx: Gfx,
     textures: TextureStore,
     sprites: SpriteGpu,
+    meshes: MeshGpu,
     transitions: TransitionPipeline,
     camera: Camera2d,
     bar_color: [f64; 4],
@@ -99,6 +104,7 @@ impl Renderer2d {
     pub fn new(gfx: Gfx) -> Result<Self, RenderError> {
         let mut textures = TextureStore::new(gfx.device());
         let sprites = SpriteGpu::new(gfx.device(), gfx.queue(), &textures.layout);
+        let meshes = MeshGpu::new(gfx.device(), &textures.layout);
         let transitions = TransitionPipeline::new(gfx.device());
         let white = textures.create(
             gfx.device(),
@@ -115,6 +121,7 @@ impl Renderer2d {
             gfx,
             textures,
             sprites,
+            meshes,
             transitions,
             camera: Camera2d::default(),
             bar_color: [0.0, 0.0, 0.0, 1.0],
@@ -450,15 +457,31 @@ impl Renderer2d {
                     .tint(color),
             );
         }
+        let offset = self.scratch.len();
         self.scratch.extend_from_slice(scene.sprites());
 
         self.sprites.ensure_pipeline(self.gfx.device(), format);
+        let view_proj = self.camera.view_proj();
+        // Where each mesh falls in the sorted sprite sequence.
+        let mut slots: Vec<(usize, usize)> = Vec::new();
+        let scratch = &self.scratch;
         self.sprites.prepare(
             self.gfx.device(),
             self.gfx.queue(),
-            &self.camera.view_proj(),
-            &self.scratch,
+            &view_proj,
+            scratch,
+            |order| {
+                if scene.meshes().is_empty() {
+                    return Vec::new();
+                }
+                slots = mesh::plan(scratch, order, offset, scene.meshes(), scene.mesh_after());
+                slots.iter().map(|s| s.0).collect()
+            },
         );
+        if !slots.is_empty() {
+            self.meshes.ensure_pipeline(self.gfx.device(), format);
+        }
+        self.meshes.prepare(self.gfx.device(), self.gfx.queue(), &view_proj, scene.meshes());
 
         let mut encoder =
             self.gfx
@@ -489,9 +512,33 @@ impl Renderer2d {
                 viewport,
                 size: target_size,
             };
-            self.sprites.draw(&mut pass, format, &self.textures, &clip);
+            let batches = self.sprites.batch_count();
+            if slots.is_empty() {
+                self.sprites.draw(&mut pass, format, &self.textures, &clip, 0..batches);
+            } else {
+                // Interleave: sprite batches never span a mesh slot (breaks).
+                let mut next = 0;
+                let mut start = 0;
+                for b in 0..=batches {
+                    let pos = if b < batches { self.sprites.batch_start(b) } else { usize::MAX };
+                    if next < slots.len() && slots[next].0 <= pos {
+                        self.sprites.draw(&mut pass, format, &self.textures, &clip, start..b);
+                        start = b;
+                        while next < slots.len() && slots[next].0 <= pos {
+                            self.meshes.draw(&mut pass, format, &self.textures, &clip, slots[next].1);
+                            next += 1;
+                        }
+                    }
+                }
+                self.sprites.draw(&mut pass, format, &self.textures, &clip, start..batches);
+            }
         }
         self.gfx.queue().submit(Some(encoder.finish()));
+    }
+
+    /// Number of meshes drawn by the last scene (diagnostics).
+    pub fn last_mesh_count(&self) -> usize {
+        self.meshes.draw_count()
     }
 
     /// Number of draw calls used by the last scene (diagnostics).

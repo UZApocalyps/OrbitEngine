@@ -10,13 +10,11 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 libm = "0.2"
+ron.workspace = true
 schemars = { version = "1.2", optional = true }
 
 [features]
 schema = ["dep:schemars"]
-
-[dev-dependencies]
-ron.workspace = true
 
 [lints]
 workspace = true
