@@ -43,6 +43,7 @@ pub fn search(registry: &EditorRegistry, ctx: &EditorContext<'_>, query: &str) -
         .actions()
         .iter()
         .filter(|a| (a.def.enabled)(ctx))
+        .filter(|a| !crate::builtin::hidden_experimental(&a.plugin_id))
         .filter_map(|a| {
             let label = a.label(ctx);
             let (score, positions) = match fuzzy_match(query, &label) {

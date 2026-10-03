@@ -600,6 +600,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                 android_section(ui, &mut state);
             }
             if let Some(story) = ctx.story()
+                && orbit_core::experimental::enabled_3d()
                 && orbit_export::scene3d::uses_3d(story)
             {
                 ui.add_space(6.0);
@@ -759,6 +760,7 @@ fn profile_form(
                 )
                 .changed();
             ui.end_row();
+            if orbit_core::experimental::enabled_3d() {
             ui.label(texts.t("export.field.quality3d"));
             ui.horizontal(|ui| {
                 for (value, key) in [
@@ -774,6 +776,7 @@ fn profile_form(
             .response
             .on_hover_text(texts.t("export.field.quality3d_hint"));
             ui.end_row();
+            }
         });
     if changed {
         state.dirty = true;

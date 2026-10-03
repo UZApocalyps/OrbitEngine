@@ -51,6 +51,7 @@ impl Drop for Fixture {
 #[test]
 fn the_tools_are_advertised() {
     let f = Fixture::new("list");
+    orbit_core::experimental::set_preference_3d(true);
     let tools = f.host.list_tools();
     for name in [
         "list_scenes3d",

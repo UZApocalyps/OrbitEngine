@@ -323,9 +323,20 @@ impl EditorPlugin for ManualPlugin {
     }
 }
 
+/// Chapters shown in the manual: the 3D chapter only with the experimental
+/// 3D switch on.
+pub fn visible_chapters(lang: Lang) -> Vec<(&'static str, &'static str)> {
+    let on = orbit_core::experimental::enabled_3d();
+    chapters(lang)
+        .iter()
+        .filter(|(stem, _)| on || *stem != "09-3d-scenes")
+        .copied()
+        .collect()
+}
+
 fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let lang = ctx.lang();
-    let chapters = chapters(lang);
+    let chapters = visible_chapters(lang);
     let id = egui::Id::new("orbit_manual_chapter");
     let mut current: usize = ui.data(|d| d.get_temp(id)).unwrap_or(0);
     current = current.min(chapters.len().saturating_sub(1));
