@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use orbit_gfx::wgpu;
 
 use crate::sprite::{
-    Batch, INDICES_PER_SPRITE, Sprite2d, VERTEX_SIZE, VERTICES_PER_SPRITE, Vertex, build_batches,
-    clip_to_scissor, fill_indices,
+    Batch, INDICES_PER_SPRITE, Sprite2d, VERTEX_SIZE, VERTICES_PER_SPRITE, Vertex, clip_to_scissor,
+    emit_batches, fill_indices, sort_sprites,
 };
 use crate::texture::TextureStore;
 
@@ -24,7 +24,7 @@ pub(crate) struct ClipSpace {
 impl ClipSpace {
     /// The scissor installed with the viewport (restored after clipped
     /// batches).
-    fn viewport_scissor(&self) -> [u32; 4] {
+    pub(crate) fn viewport_scissor(&self) -> [u32; 4] {
         let (size, vp) = (self.size, self.viewport);
         let x = (vp.x.max(0.0) as u32).min(size[0].saturating_sub(1));
         let y = (vp.y.max(0.0) as u32).min(size[1].saturating_sub(1));
@@ -181,13 +181,17 @@ impl SpriteGpu {
         queue: &wgpu::Queue,
         view_proj: &[[f32; 4]; 4],
         sprites: &[Sprite2d],
+        breaks: impl FnOnce(&[usize]) -> Vec<usize>,
     ) {
         queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(view_proj));
-        build_batches(
+        sort_sprites(sprites, &mut self.order);
+        let breaks = breaks(&self.order);
+        emit_batches(
             sprites,
-            &mut self.order,
+            &self.order,
             &mut self.vertices,
             &mut self.batches,
+            &breaks,
         );
         if sprites.len() > self.capacity {
             self.capacity = sprites.len().next_power_of_two();
@@ -202,13 +206,20 @@ impl SpriteGpu {
         }
     }
 
-    /// Draws the batches prepared by [`SpriteGpu::prepare`].
+    /// Number of prepared batches and the sorted sprite position each one
+    /// starts at.
+    pub(crate) fn batch_start(&self, batch: usize) -> usize {
+        self.batches[batch].first_index as usize / INDICES_PER_SPRITE
+    }
+
+    /// Draws the batches `range` prepared by [`SpriteGpu::prepare`].
     pub(crate) fn draw(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         format: wgpu::TextureFormat,
         textures: &TextureStore,
         clip: &ClipSpace,
+        range: std::ops::Range<usize>,
     ) {
         let Some(pipeline) = self.pipelines.get(&format) else {
             return;
@@ -221,7 +232,7 @@ impl SpriteGpu {
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         let full = clip.viewport_scissor();
-        for batch in &self.batches {
+        for batch in &self.batches[range] {
             let scissor = match batch.clip {
                 Some(rect) => {
                     match clip_to_scissor(rect, clip.visible, clip.viewport, clip.size) {

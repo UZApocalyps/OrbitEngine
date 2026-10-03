@@ -122,6 +122,46 @@ impl Sprite2d {
     }
 }
 
+/// A vertex of a [`Mesh2d`]: world position (virtual pixels, Y down),
+/// texture coordinates and linear RGBA multiplied with the texture.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable, PartialEq)]
+pub struct MeshVertex {
+    pub position: [f32; 2],
+    pub uv: [f32; 2],
+    pub color: [f32; 4],
+}
+
+/// Indexed textured triangles (e.g. a skinned rig mesh), drawn by the mesh
+/// pipeline in the same layer/`z` order as sprites, with the same blending.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Mesh2d {
+    pub texture: TextureId,
+    pub layer: Layer,
+    pub z: f32,
+    pub vertices: Vec<MeshVertex>,
+    /// Triangle list, indices into `vertices`.
+    pub indices: Vec<u32>,
+    /// Optional world scissor `[x, y, w, h]`, like [`Sprite2d::clip`].
+    pub clip: Option<[f32; 4]>,
+}
+
+impl Mesh2d {
+    pub fn new(texture: TextureId, vertices: Vec<MeshVertex>, indices: Vec<u32>) -> Self {
+        Self { texture, layer: Layer::CHARACTERS, z: 0.0, vertices, indices, clip: None }
+    }
+
+    pub fn layer(mut self, layer: Layer) -> Self {
+        self.layer = layer;
+        self
+    }
+
+    pub fn z(mut self, z: f32) -> Self {
+        self.z = z;
+        self
+    }
+}
+
 /// A list of sprites drawn together (one scene = one render pass).
 #[derive(Debug, Clone, Default)]
 pub struct Scene {
@@ -130,6 +170,10 @@ pub struct Scene {
     pub clear: Option<[f32; 4]>,
     sprites: Vec<Sprite2d>,
     clips: Vec<[f32; 4]>,
+    meshes: Vec<Mesh2d>,
+    /// Per mesh, the number of sprites pushed before it (submission order
+    /// between sprites and meshes with equal layer and `z`).
+    mesh_after: Vec<usize>,
 }
 
 /// Intersection of two `[x, y, w, h]` rectangles (zero size when disjoint).
@@ -246,6 +290,8 @@ impl Scene {
 
     pub fn clear_sprites(&mut self) {
         self.sprites.clear();
+        self.meshes.clear();
+        self.mesh_after.clear();
         self.clips.clear();
     }
 
@@ -253,12 +299,34 @@ impl Scene {
         &self.sprites
     }
 
+    /// Adds a triangle mesh, clipped to the active clip stack. It is sorted
+    /// with the sprites by (layer, `z`), then submission order.
+    pub fn push_mesh(&mut self, mut mesh: Mesh2d) {
+        if let Some(&top) = self.clips.last() {
+            mesh.clip = Some(match mesh.clip {
+                Some(own) => intersect_rects(top, own),
+                None => top,
+            });
+        }
+        self.mesh_after.push(self.sprites.len());
+        self.meshes.push(mesh);
+    }
+
+    pub fn meshes(&self) -> &[Mesh2d] {
+        &self.meshes
+    }
+
+    /// Per mesh, how many sprites were pushed before it.
+    pub(crate) fn mesh_after(&self) -> &[usize] {
+        &self.mesh_after
+    }
+
     pub fn len(&self) -> usize {
         self.sprites.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.sprites.is_empty()
+        self.sprites.is_empty() && self.meshes.is_empty()
     }
 }
 
@@ -328,19 +396,36 @@ pub(crate) fn corners(s: &Sprite2d) -> [[f32; 2]; 4] {
 
 /// Sorts `sprites` by (layer, z) — stable, so submission order breaks ties —
 /// and emits quads plus one [`Batch`] per run of equal textures.
+#[cfg(test)]
 pub(crate) fn build_batches(
     sprites: &[Sprite2d],
     order: &mut Vec<usize>,
     vertices: &mut Vec<Vertex>,
     batches: &mut Vec<Batch>,
 ) {
+    sort_sprites(sprites, order);
+    emit_batches(sprites, order, vertices, batches, &[]);
+}
+
+/// Stable sort of sprite indices by (layer, z).
+pub(crate) fn sort_sprites(sprites: &[Sprite2d], order: &mut Vec<usize>) {
     order.clear();
     order.extend(0..sprites.len());
     order.sort_by(|&a, &b| {
         let (sa, sb) = (&sprites[a], &sprites[b]);
         sa.layer.cmp(&sb.layer).then(sa.z.total_cmp(&sb.z))
     });
+}
 
+/// Emits the quads of `order` (see [`sort_sprites`]); a batch never spans
+/// one of the sorted positions in `breaks` (where meshes are drawn).
+pub(crate) fn emit_batches(
+    sprites: &[Sprite2d],
+    order: &[usize],
+    vertices: &mut Vec<Vertex>,
+    batches: &mut Vec<Batch>,
+    breaks: &[usize],
+) {
     vertices.clear();
     batches.clear();
     for (n, &i) in order.iter().enumerate() {
@@ -356,7 +441,11 @@ pub(crate) fn build_batches(
             });
         }
         match batches.last_mut() {
-            Some(last) if last.texture == s.texture && last.clip == s.clip => {
+            Some(last)
+                if last.texture == s.texture
+                    && last.clip == s.clip
+                    && breaks.binary_search(&n).is_err() =>
+            {
                 last.index_count += INDICES_PER_SPRITE as u32;
             }
             _ => batches.push(Batch {

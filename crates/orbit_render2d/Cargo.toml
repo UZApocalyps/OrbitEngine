@@ -8,10 +8,14 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+orbit_anim.workspace = true
 orbit_gfx.workspace = true
 bytemuck.workspace = true
 log.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true
 
 [lints]
 workspace = true
