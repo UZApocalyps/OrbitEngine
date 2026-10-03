@@ -33,6 +33,8 @@ orbit_export.workspace = true
 orbit_i18n.workspace = true
 orbit_mcp.workspace = true
 orbit_ui.workspace = true
+orbit_render3d.workspace = true
+orbit_scene = { path = "../orbit_scene" }
 egui.workspace = true
 egui-winit.workspace = true
 egui-wgpu.workspace = true

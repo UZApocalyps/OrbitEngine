@@ -22,6 +22,7 @@ mod problems;
 pub mod reveal;
 pub mod sample;
 mod scene;
+mod scene3d;
 mod sceneview;
 mod translations;
 mod search;
@@ -62,6 +63,7 @@ pub mod ids {
     pub const PROBLEMS: &str = "orbit.problems";
     pub const SEARCH: &str = "orbit.search";
     pub const SCENEVIEW: &str = "orbit.sceneview";
+    pub const SCENE3D: &str = "orbit.scene3d";
     pub const EXPORT: &str = "orbit.export";
     pub const TRANSLATIONS: &str = "orbit.translations";
     pub const ASSISTANT: &str = "orbit.assistant";
@@ -85,6 +87,9 @@ pub mod panels {
     pub const PROBLEMS: &str = "orbit.problems.problems";
     pub const SEARCH: &str = "orbit.search.search";
     pub const SCENEVIEW: &str = "orbit.sceneview.sceneview";
+    pub const SCENE3D_VIEWPORT: &str = "orbit.scene3d.viewport";
+    pub const SCENE3D_HIERARCHY: &str = "orbit.scene3d.hierarchy";
+    pub const SCENE3D_INSPECTOR: &str = "orbit.scene3d.inspector";
     pub const EXPORT: &str = "orbit.export.export";
     pub const TRANSLATIONS: &str = "orbit.translations.translations";
     pub const ASSISTANT: &str = "orbit.assistant.assistant";
@@ -99,6 +104,8 @@ pub struct Shared {
     pub search: crate::search::SearchHandle,
     /// File moves made by the asset library (undo / redo move them back).
     pub moves: std::rc::Rc<std::cell::RefCell<crate::assets::MoveJournal>>,
+    /// Link with the GPU host of the 3D editor (viewport textures).
+    pub scene3d: crate::scene3d_host::SharedLink,
 }
 
 /// The built-in plugins, in registration order (menus first, then panels in
@@ -131,6 +138,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(assistant::AssistantPlugin),
         Box::new(uied::UiEditorPlugin::default()),
         Box::new(textview::TextViewPlugin),
+        Box::new(scene3d::Scene3dPlugin::new(shared.scene3d.clone())),
         Box::new(SamplePlugin::default()),
     ]
 }

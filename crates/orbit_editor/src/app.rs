@@ -46,6 +46,7 @@ pub struct EditorApp {
     window: Arc<PlatformWindow>,
     /// The preview owns the runtime, which owns the `Gfx` shared with egui.
     preview: PreviewHost,
+    scene3d: crate::scene3d_host::Scene3dHost,
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
     renderer: egui_wgpu::Renderer,
@@ -176,6 +177,7 @@ impl EditorApp {
         Self {
             window,
             preview,
+            scene3d: Default::default(),
             egui_ctx,
             egui_state,
             renderer,
@@ -400,6 +402,9 @@ impl App for EditorApp {
         // target (before egui paints it), state for the next UI pass.
         self.apply_debug_edit(now);
         let wake = self.preview.update(&mut self.core, &mut self.renderer, now);
+        if self.scene3d.update(&self.core.shared.scene3d, self.preview.gfx(), &mut self.renderer) {
+            self.host.push(HostRequest::RequestRedraw);
+        }
         self.preview_wake = wake.at;
         if wake.redraw {
             self.host.push(HostRequest::RequestRedraw);

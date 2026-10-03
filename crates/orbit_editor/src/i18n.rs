@@ -91,6 +91,12 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
         include_str!("../locales/fr/preview.ron"),
     ),
     (
+        "scene3d",
+        &["s3d"],
+        include_str!("../locales/en/scene3d.ron"),
+        include_str!("../locales/fr/scene3d.ron"),
+    ),
+    (
         "uieditor",
         &["uied"],
         include_str!("../locales/en/uieditor.ron"),
