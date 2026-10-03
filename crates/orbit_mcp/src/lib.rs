@@ -21,6 +21,7 @@ pub mod host;
 pub mod live;
 pub mod live_tools;
 pub use orbit_project::sandbox;
+pub mod scene3d_tools;
 pub mod schema;
 pub mod server;
 pub mod tools;

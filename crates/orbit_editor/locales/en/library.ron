@@ -101,5 +101,7 @@
     "asset.issue.missing": "File not found: “{path}”",
     "asset.issue.case_mismatch": "Different case: “{actual}” on disk, “{path}” in the manifest (not found on Linux and on the web)",
     "asset.issue.case_collision": "“{path}” and “{other}” differ only by case (a single file on Windows)",
+    "asset.issue.scene3d": "3D scene “{path}”: {detail}",
+    "asset.issue.camera_missing": "The 3D scene has no camera named “{camera}”",
 
 }

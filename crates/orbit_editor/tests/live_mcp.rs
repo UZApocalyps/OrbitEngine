@@ -406,6 +406,9 @@ fn an_ai_edit_over_http_is_live_unsaved_undoable_and_journaled() {
         "preview_choose",
         "preview_state",
         "preview_screenshot",
+        "capture_scene3d",
+        "list_scenes3d",
+        "edit_scene3d",
         "select_node",
         "build_project",
         "export_game",
@@ -589,6 +592,7 @@ fn preview_screenshot_export_and_select_without_a_gpu() {
             ("preview_state", json!({})),
             ("preview_step", json!({"steps": 2})),
             ("preview_screenshot", json!({})),
+            ("capture_scene3d", json!({"scene": "room"})),
             ("export_game", json!({"target": "windows"})),
             ("build_project", json!({})),
             ("select_node", json!({"node": node.to_string()})),
@@ -602,7 +606,8 @@ fn preview_screenshot_export_and_select_without_a_gpu() {
     });
     for (tool, (is_error, text, images)) in &results {
         match *tool {
-            "preview_play" | "preview_state" | "preview_step" | "preview_screenshot" => {
+            "preview_play" | "preview_state" | "preview_step" | "preview_screenshot"
+            | "capture_scene3d" => {
                 assert!(*is_error, "{tool}: {text}");
                 assert!(text.starts_with("unavailable"), "{tool}: {text}");
                 assert!(text.contains("GPU"), "{tool}: {text}");

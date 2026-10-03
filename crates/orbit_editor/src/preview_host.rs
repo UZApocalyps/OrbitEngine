@@ -1213,6 +1213,24 @@ impl PreviewHost {
                     png: Some(png),
                 });
             }
+            LiveCall::CaptureScene3d {
+                scene,
+                camera,
+                width,
+                height,
+            } => {
+                let png = self.capture_scene3d(core, scene, camera.as_deref(), [*width, *height])?;
+                let text = serde_json::json!({
+                    "scene": scene,
+                    "camera": camera,
+                    "size": [width, height],
+                })
+                .to_string();
+                return Ok(PreviewOutput {
+                    text,
+                    png: Some(png),
+                });
+            }
             LiveCall::SelectNode { .. } | LiveCall::Export(_) => {
                 return Err(ToolError::new(
                     orbit_mcp::ErrorKind::Internal,
@@ -1225,6 +1243,75 @@ impl PreviewHost {
             text: self.state_text(core),
             png: None,
         })
+    }
+
+    /// A 3D scene of the project drawn from one of its cameras (`capture_scene3d`):
+    /// the file as saved on disk, with the models and images next to it.
+    fn capture_scene3d(
+        &self,
+        core: &EditorCore,
+        scene: &str,
+        camera: Option<&str>,
+        size: [u32; 2],
+    ) -> Result<Vec<u8>, ToolError> {
+        use orbit_core::AssetKind;
+        let internal = |m: String| ToolError::new(orbit_mcp::ErrorKind::Internal, m);
+        let story = core
+            .story()
+            .ok_or_else(|| ToolError::unavailable("no project is open in the editor"))?;
+        let root = core
+            .session
+            .as_ref()
+            .map(|s| s.location.root.clone())
+            .ok_or_else(|| ToolError::unavailable("no project is open in the editor"))?;
+        let id = orbit_mcp::convert::find_asset(story, scene, Some(AssetKind::Scene3d)).or_else(
+            |first| {
+                orbit_mcp::convert::find_asset(
+                    story,
+                    &format!("{scene}.scene3d"),
+                    Some(AssetKind::Scene3d),
+                )
+                .map_err(|_| first)
+            },
+        )?;
+        let rel = story
+            .assets
+            .get(id)
+            .map(|a| a.path.clone())
+            .ok_or_else(|| ToolError::not_found(format!("no 3D scene `{scene}`")))?;
+        let abs = root.join(&rel);
+        let text = std::fs::read_to_string(&abs)
+            .map_err(|e| internal(format!("cannot read `{rel}`: {e}")))?;
+        let parsed = orbit_scene::from_ron(&text)
+            .map_err(|e| ToolError::invalid(format!("`{rel}` is not a valid 3D scene: {e}")))?;
+        if let Some(wanted) = camera
+            && !parsed.cameras().any(|(_, c)| c.name == wanted)
+        {
+            let names: Vec<&str> = parsed.cameras().map(|(_, c)| c.name.as_str()).collect();
+            return Err(ToolError::not_found(format!(
+                "the scene has no camera `{wanted}` (cameras: {})",
+                names.join(", ")
+            )));
+        }
+        let models = abs.parent().map(|d| d.join("models"));
+        let (lib, _skipped) = models.map_or_else(
+            Default::default,
+            |d| crate::builtin::scene3d::model::ModelLib::load_dir(&d),
+        );
+        let assets = crate::scene3d_host::ModelAssets {
+            prefabs: lib.prefabs.values().cloned().collect(),
+            meshes: lib.meshes.values().cloned().collect(),
+            textures: lib.textures.clone(),
+        };
+        crate::scene3d_host::capture_png(
+            self.gfx().device(),
+            self.gfx().queue(),
+            &parsed,
+            &assets,
+            camera,
+            size,
+        )
+        .map_err(|e| internal(format!("3D capture failed: {e}")))
     }
 
     fn require_running(&self) -> Result<(), ToolError> {

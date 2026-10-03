@@ -109,7 +109,13 @@ pub fn import_paths(ctx: &mut EditorContext<'_>, paths: &[PathBuf]) -> ImportRep
     };
     let added = report.added();
     if added > 0 {
-        let kinds: Vec<String> = [AssetKind::Image, AssetKind::Music, AssetKind::Sound, AssetKind::Font]
+        let kinds: Vec<String> = [
+            AssetKind::Image,
+            AssetKind::Music,
+            AssetKind::Sound,
+            AssetKind::Font,
+            AssetKind::Scene3d,
+        ]
             .into_iter()
             .filter_map(|k| {
                 let n = report

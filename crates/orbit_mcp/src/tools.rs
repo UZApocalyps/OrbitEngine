@@ -2551,6 +2551,7 @@ pub fn builtin_tools() -> Vec<ToolDef> {
         ),
     ];
     tools.extend(ui_tool_defs());
+    tools.extend(scene3d_tool_defs());
     tools
 }
 
@@ -2567,5 +2568,17 @@ fn ui_tool_defs() -> Vec<ToolDef> {
         def::<u::SystemScreenArgs>("set_ui_system_screen", "Link a system screen", "Make a screen stand in for a system screen (main_menu, pause, preferences, save, load), or unlink it.", Kind::Edit, u::set_ui_system_screen),
         def::<u::AddSplashArgs>("add_ui_splash", "Add a splash", "Add a text or image splash screen shown before the main menu.", Kind::Edit, u::add_ui_splash),
         def::<u::IndexArg>("delete_ui_splash", "Delete a splash", "Delete a splash by index (see list_ui).", Kind::Destructive, u::delete_ui_splash),
+    ]
+}
+
+fn scene3d_tool_defs() -> Vec<ToolDef> {
+    use crate::scene3d_tools as s;
+    vec![
+        def::<s::NoArgs>("list_scenes3d", "List the 3D scenes", "List the project's 3D scenes (assets of kind scene3d): id, path, name, node and material counts, camera names and issue counts, plus .scene3d.ron files that no asset declares.", Kind::Read, s::list_scenes3d),
+        def::<s::SceneArg>("read_scene3d", "Read a 3D scene", "Read a 3D scene: nodes (id, name, parent, transform with Euler angles and quaternion, kind: mesh / prefab / lights / camera), cameras, materials, environment, validation issues and the full RON.", Kind::Read, s::read_scene3d),
+        def::<s::SceneArg>("validate_scene3d", "Validate a 3D scene", "Validate a 3D scene (references, cycles, camera names, NaN, missing models and textures next to the scene) and check that the story's show_scene3d / camera3d commands name cameras it has.", Kind::Read, s::validate_scene3d),
+        def::<s::CreateArgs>("create_scene3d", "Create a 3D scene", "Create a 3D scene file (default assets/3d/<name>.scene3d.ron, with a sun and a camera named `main` unless with_defaults is false) and declare it as an asset, so show_scene3d can use it.", Kind::Edit, s::create_scene3d),
+        def::<s::EditArgs>("edit_scene3d", "Edit a 3D scene", "Apply edits to a 3D scene, in order, all or nothing: add_node / remove_node / rename_node / set_parent / set_visible / set_transform (Euler degrees or quaternion), set_light, set_camera (named cameras are what stories use), set_mesh_materials, set_material (PBR fields and texture slots), remove_material, set_environment (colour or skybox, ambient, fog). The result is validated: errors refuse the whole edit, warnings are returned. Not covered by undo (the file is rewritten).", Kind::Edit, s::edit_scene3d),
+        def::<s::WriteArgs>("write_scene3d", "Replace a 3D scene", "Replace the whole scene file from RON (as returned by read_scene3d). Refused, nothing written, when it has errors.", Kind::Edit, s::write_scene3d),
     ]
 }

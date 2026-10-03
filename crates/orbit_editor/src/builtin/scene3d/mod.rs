@@ -18,7 +18,7 @@
 
 mod geom;
 mod gizmo;
-mod model;
+pub(crate) mod model;
 mod panels;
 #[cfg(test)]
 mod gpu_tests;
@@ -62,17 +62,30 @@ impl Plugin for Scene3dPlugin {
 
 impl EditorPlugin for Scene3dPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
-        // Saving the project saves the open 3D scene too.
+        self.state.borrow_mut().ui_link = Some(reg.ui_link.clone());
+        // Saving the project saves the open 3D scene too; closing the project
+        // drops the scene (its dirty flag must not leak into the next one).
         let saver = self.state.clone();
         reg.project.on_project_event(move |event| {
-            if matches!(event, orbit_plugin_api::ProjectEvent::BeforeSave)
-                && let Ok(mut st) = saver.try_borrow_mut()
-                && let Some(doc) = st.doc.as_mut()
-                && doc.dirty()
-                && doc.path.is_some()
-            {
-                let _ = doc.save();
+            let Ok(mut st) = saver.try_borrow_mut() else {
+                return;
+            };
+            match event {
+                orbit_plugin_api::ProjectEvent::BeforeSave => {
+                    if let Some(doc) = st.doc.as_mut()
+                        && doc.dirty()
+                        && doc.path.is_some()
+                    {
+                        let _ = doc.save();
+                    }
+                }
+                orbit_plugin_api::ProjectEvent::Closed => {
+                    st.doc = None;
+                    st.selected = None;
+                }
+                _ => {}
             }
+            st.sync_dirty();
         });
         let state = self.state.clone();
         reg.panel(PanelDef::new(
@@ -134,6 +147,9 @@ struct Sent {
 
 pub(super) struct State {
     pub link: SharedLink,
+    /// Host flags: the open scene's dirty state counts in the project's
+    /// "modified".
+    pub ui_link: Option<Rc<orbit_editor_api::UiEditorLink>>,
     pub doc: Option<SceneDoc>,
     pub lib: ModelLib,
     pub assets: Rc<ModelAssets>,
@@ -159,6 +175,7 @@ impl State {
     fn new(link: SharedLink) -> Self {
         Self {
             link,
+            ui_link: None,
             doc: None,
             lib: ModelLib::default(),
             assets: Rc::new(ModelAssets::default()),
@@ -238,6 +255,7 @@ impl State {
             doc.end_gesture();
         }
         self.ensure_selection();
+        self.sync_dirty();
     }
 
     /// Handles the keyboard shortcuts shared by the panels.
@@ -322,6 +340,97 @@ impl State {
             self.pending = Some(Pending::New);
         } else {
             self.new_scene();
+        }
+    }
+
+    /// Publishes the open scene's dirty state to the host (the project's
+    /// unsaved-changes counter).
+    pub fn sync_dirty(&self) {
+        if let Some(link) = &self.ui_link {
+            link.scene3d_dirty
+                .set(self.doc.as_ref().is_some_and(SceneDoc::dirty));
+        }
+    }
+
+    /// "Add to project": saves the scene under the project's `assets/3d`
+    /// (or where it already is, under `assets/`) and declares it in the
+    /// asset library so stories can show it. Returns the manifest path.
+    pub fn add_to_project(&mut self, ctx: &mut EditorContext<'_>) -> Option<String> {
+        let Some(root) = ctx.project_info().map(|p| p.root.clone()) else {
+            ctx.warn(ctx.t("s3d.no_project"));
+            return None;
+        };
+        let doc = self.doc.as_mut()?;
+        let target = {
+            let story = ctx.story()?;
+            crate::assets::plan_scene3d_target(
+                &root,
+                story,
+                &doc.scene().name,
+                doc.path.as_deref(),
+            )
+        };
+        if let Err(e) = doc.save_as(&target.abs) {
+            ctx.error(ctx.tf("s3d.save_failed", &[("error", &e)]));
+            return None;
+        }
+        let rel = target.rel.clone();
+        let declared = ctx.ops_or_toast(|p| {
+            orbit_project::ops::add_asset(p, orbit_core::AssetKind::Scene3d, &rel)
+        });
+        self.sync_dirty();
+        declared?;
+        ctx.info(ctx.tf("s3d.added_to_project", &[("path", &target.rel)]));
+        Some(target.rel)
+    }
+
+    /// Whether the open scene is a declared asset of the project.
+    pub fn in_project(&self, ctx: &EditorContext<'_>) -> bool {
+        let (Some(root), Some(story), Some(path)) = (
+            ctx.project_info().map(|p| p.root.clone()),
+            ctx.story(),
+            self.doc.as_ref().and_then(|d| d.path.clone()),
+        ) else {
+            return false;
+        };
+        crate::assets::asset_rel_path(&root, &path)
+            .is_some_and(|rel| story.assets.assets.iter().any(|a| a.path == rel))
+    }
+
+    /// Imports a PNG / JPEG as a texture of the scene (stored in `models/`
+    /// next to the scene file, so it is found again when the scene is
+    /// opened). Returns the texture name.
+    pub fn import_texture(&mut self, ctx: &mut EditorContext<'_>) -> Option<String> {
+        let Some(models) = self.models_dir() else {
+            ctx.warn(ctx.t("s3d.import_save_first"));
+            return None;
+        };
+        let path = rfd::FileDialog::new()
+            .add_filter("Image", &["png", "jpg", "jpeg"])
+            .pick_file()?;
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("texture")
+            .to_owned();
+        let result = std::fs::read(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                self.lib.add_texture_file(&name, &bytes)?;
+                std::fs::create_dir_all(&models).map_err(|e| e.to_string())?;
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+                std::fs::write(models.join(format!("{name}.{ext}")), &bytes)
+                    .map_err(|e| e.to_string())
+            });
+        match result {
+            Ok(()) => {
+                self.refresh_assets();
+                Some(name)
+            }
+            Err(e) => {
+                ctx.error(ctx.tf("s3d.import_failed", &[("name", &name), ("error", &e)]));
+                None
+            }
         }
     }
 
@@ -548,6 +657,21 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             .clicked()
         {
             st.save(ctx);
+        }
+        let in_project = st.in_project(ctx);
+        if ui
+            .add_enabled(
+                ctx.has_project(),
+                egui::Button::new(RichText::new(icons::FOLDER_PLUS).size(15.0)).frame(false),
+            )
+            .on_hover_text(ctx.t(if in_project {
+                "s3d.add_to_project_done"
+            } else {
+                "s3d.add_to_project"
+            }))
+            .clicked()
+        {
+            st.add_to_project(ctx);
         }
         ui.label(RichText::new(format!("{name}{}", if dirty { " •" } else { "" })).small());
         ui.separator();
@@ -1098,5 +1222,39 @@ mod tests {
         rig.frame(panels::hierarchy);
         rig.frame(panels::inspector);
         assert!(rig.take_request(MAIN).is_none());
+    }
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+
+    #[test]
+    fn the_scene_dirty_state_is_published_to_the_host() {
+        let link = Rc::new(orbit_editor_api::UiEditorLink::default());
+        let mut st = State::new(SharedLink::default());
+        st.ui_link = Some(link.clone());
+        st.sync_dirty();
+        assert!(!link.scene3d_dirty.get(), "no scene, nothing to save");
+
+        st.new_scene();
+        st.sync_dirty();
+        assert!(link.scene3d_dirty.get(), "a scene never saved is unsaved");
+
+        let path = std::env::temp_dir()
+            .join(format!("orbit_s3d_dirty_{}", Node3dId::new()))
+            .join("a.scene3d.ron");
+        st.doc.as_mut().unwrap().save_as(&path).unwrap();
+        st.sync_dirty();
+        assert!(!link.scene3d_dirty.get());
+
+        st.doc.as_mut().unwrap().add_node(model::NewKind::Empty, None);
+        st.sync_dirty();
+        assert!(link.scene3d_dirty.get());
+
+        st.doc = None;
+        st.sync_dirty();
+        assert!(!link.scene3d_dirty.get());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

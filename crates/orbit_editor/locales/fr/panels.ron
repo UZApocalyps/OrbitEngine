@@ -153,4 +153,7 @@
     "draft.label.timeline": "Chronologie",
     "draft.label.open_screen": "Ouvrir un écran",
     "draft.label.close_screen": "Fermer un écran",
+    "draft.label.show_scene3d": "Afficher une scène 3D",
+    "draft.label.camera3d": "Caméra 3D",
+    "draft.label.hide_scene3d": "Masquer la scène 3D",
 }

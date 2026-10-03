@@ -468,8 +468,8 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
 }
 
 /// The inspector of the 3D scene commands (ADR 0014): scene asset, camera
-/// name (empty: the first camera of the scene) and transition. Choosing the
-/// camera from the scene's list is M6-11 work.
+/// name (empty: the first camera of the scene) chosen among the cameras of the
+/// scene file, and transition.
 fn scene3d_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, kind: NodeKind) {
     let (scene, camera, transition) = match &kind {
         NodeKind::ShowScene3d {
@@ -503,15 +503,64 @@ fn scene3d_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, kind:
         });
     }
     if let Some(name) = &camera {
-        let mut done = false;
-        if let Some(new) = tfield(ui, "inspector.camera3d", |ui| {
-            let hint = ui.t("inspector.camera3d.hint");
-            fields::text_field(ui, ("camera3d", id), name, &hint, 1, &mut done)
-        }) {
-            commit(ctx, id, rebuild(None, Some(new), transition.clone()), "camera");
-        }
-        if done {
-            ctx.end_merge();
+        // The cameras of the scene file; the free text field is the fallback
+        // when the file cannot be read (no scene yet, broken file).
+        let list = ctx.story().and_then(|story| {
+            let root = ctx.project_info()?.root.clone();
+            let asset = match &kind {
+                NodeKind::ShowScene3d { scene, .. } => Some(*scene),
+                _ => crate::assets::shown_scene3d_before(story, id),
+            }?;
+            crate::assets::scene3d_cameras(&root, story, asset)
+        });
+        match list {
+            Some(cameras) => {
+                let first = matches!(kind, NodeKind::ShowScene3d { .. });
+                let mut chosen: Option<String> = None;
+                tfield(ui, "inspector.camera3d", |ui| {
+                    let missing = !name.is_empty() && !cameras.contains(name);
+                    let shown = if name.is_empty() {
+                        ui.t("inspector.camera3d.first")
+                    } else if missing {
+                        ui.tf("inspector.camera3d.missing", &[("name", name)])
+                    } else {
+                        name.clone()
+                    };
+                    egui::ComboBox::from_id_salt(("camera3d_pick", id))
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            if first {
+                                let label = ui.t("inspector.camera3d.first");
+                                if ui.selectable_label(name.is_empty(), label).clicked() {
+                                    chosen = Some(String::new());
+                                }
+                            }
+                            for c in &cameras {
+                                if ui.selectable_label(name == c, c).clicked() {
+                                    chosen = Some(c.clone());
+                                }
+                            }
+                        });
+                });
+                if cameras.is_empty() {
+                    info(ui, "inspector.camera3d.none");
+                }
+                if let Some(new) = chosen {
+                    commit(ctx, id, rebuild(None, Some(new), transition.clone()), "camera");
+                }
+            }
+            None => {
+                let mut done = false;
+                if let Some(new) = tfield(ui, "inspector.camera3d", |ui| {
+                    let hint = ui.t("inspector.camera3d.hint");
+                    fields::text_field(ui, ("camera3d", id), name, &hint, 1, &mut done)
+                }) {
+                    commit(ctx, id, rebuild(None, Some(new), transition.clone()), "camera");
+                }
+                if done {
+                    ctx.end_merge();
+                }
+            }
         }
     }
     tfield(ui, "inspector.transition", |ui| {

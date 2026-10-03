@@ -575,21 +575,123 @@ fn camera_editor(ui: &mut Ui, ctx: &EditorContext<'_>, c: &mut CameraDef) -> boo
     changed
 }
 
+/// A combo box choosing a texture by name among `names` (`none_label` for
+/// "no texture", when `allow_none`). Returns the new choice (`Some(None)` for
+/// "none") when the user picked something.
+fn texture_combo(
+    ui: &mut Ui,
+    ctx: &EditorContext<'_>,
+    salt: &str,
+    current: Option<&str>,
+    names: &[String],
+    allow_none: bool,
+) -> Option<Option<String>> {
+    let missing = current.is_some_and(|c| !names.iter().any(|n| n == c));
+    let shown = match current {
+        None => ctx.t("s3d.tex.none"),
+        Some(c) if missing => ctx.tf("s3d.tex.missing", &[("name", &c)]),
+        Some(c) => c.to_owned(),
+    };
+    let mut out = None;
+    ComboBox::from_id_salt(salt)
+        .selected_text(shown)
+        .show_ui(ui, |ui| {
+            if allow_none && ui.selectable_label(current.is_none(), ctx.t("s3d.tex.none")).clicked() {
+                out = Some(None);
+            }
+            for n in names {
+                if ui.selectable_label(current == Some(n.as_str()), n).clicked() {
+                    out = Some(Some(n.clone()));
+                }
+            }
+        });
+    out
+}
+
+
+const SLOT_KEYS: [&str; 4] = ["s3d.tex.base", "s3d.tex.orm", "s3d.tex.normal", "s3d.tex.emissive"];
+
+fn slot_mut(m: &mut MaterialDef, i: usize) -> &mut Option<orbit_scene::TextureSlot> {
+    match i {
+        0 => &mut m.base_color_texture,
+        1 => &mut m.orm_texture,
+        2 => &mut m.normal_texture,
+        _ => &mut m.emissive_texture,
+    }
+}
+
+/// Points `slot` at texture `name` (None clears it), keeping the UV
+/// transform of an existing binding.
+pub(super) fn set_slot_texture(slot: &mut Option<orbit_scene::TextureSlot>, name: Option<String>) {
+    match (name, slot.as_mut()) {
+        (None, _) => *slot = None,
+        (Some(n), Some(s)) => s.texture = orbit_scene::TextureRef(n),
+        (Some(n), None) => *slot = Some(orbit_scene::TextureSlot::new(orbit_scene::TextureRef(n))),
+    }
+}
+
+/// Default colour of a plain-colour background.
+const DEFAULT_BACKGROUND: [f32; 3] = [0.12, 0.13, 0.16];
+
 fn environment_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
+    let names = st.lib.texture_names();
+    let mut import = false;
+    environment_ui(ui, ctx, st, &names, &mut import);
+    if import
+        && let Some(name) = st.import_texture(ctx)
+        && let Some(doc) = st.doc.as_mut()
+    {
+        doc.edit(Some("environment"), |s| {
+            s.environment.background = Background::Sky(orbit_scene::TextureRef(name));
+        });
+    }
+}
+
+fn environment_ui(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    st: &mut State,
+    names: &[String],
+    import: &mut bool,
+) {
     let Some(doc) = st.doc.as_mut() else { return };
     section_title(ui, &ctx.t("s3d.environment"));
     let mut env = doc.scene().environment.clone();
     let mut changed = false;
-    match &mut env.background {
-        Background::Color(c) => {
-            changed |= labelled(ui, &ctx.t("s3d.background"), |ui| ui.color_edit_button_rgb(c)).changed();
-        }
-        Background::Sky(t) => {
-            ui.label(format!("{}: {}", ctx.t("s3d.sky"), t.0));
-            if ui.small_button(ctx.t("s3d.sky_clear")).clicked() {
-                env.background = Background::Color([0.12, 0.13, 0.16]);
+    let was_sky = matches!(env.background, Background::Sky(_));
+    let mut sky = was_sky;
+    labelled(ui, &ctx.t("s3d.background"), |ui| {
+        ui.selectable_value(&mut sky, false, ctx.t("s3d.bg_color"));
+        ui.selectable_value(&mut sky, true, ctx.t("s3d.bg_sky"));
+    });
+    if sky != was_sky {
+        match (sky, names.first()) {
+            (true, Some(first)) => {
+                env.background = Background::Sky(orbit_scene::TextureRef(first.clone()));
                 changed = true;
             }
+            // No texture yet: ask for one (the file picker opens).
+            (true, None) => *import = true,
+            (false, _) => {
+                env.background = Background::Color(DEFAULT_BACKGROUND);
+                changed = true;
+            }
+        }
+    }
+    match &mut env.background {
+        Background::Color(c) => {
+            changed |= labelled(ui, &ctx.t("s3d.color"), |ui| ui.color_edit_button_rgb(c)).changed();
+        }
+        Background::Sky(t) => {
+            labelled(ui, &ctx.t("s3d.sky"), |ui| {
+                if let Some(Some(n)) = texture_combo(ui, ctx, "s3d_sky", Some(&t.0), names, false) {
+                    t.0 = n;
+                    changed = true;
+                }
+                if ui.small_button(ctx.t("s3d.tex.import")).clicked() {
+                    *import = true;
+                }
+            });
         }
     }
     changed |= labelled(ui, &ctx.t("s3d.ambient_color"), |ui| {
@@ -647,6 +749,7 @@ fn environment_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut Stat
 
 fn materials_section(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
     section_title(ui, &ctx.t("s3d.materials"));
+    let tex_names = st.lib.texture_names();
     let names: Vec<String> = st
         .doc
         .as_ref()
@@ -746,16 +849,25 @@ fn materials_section(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         });
     }
     ui.checkbox(&mut m.double_sided, ctx.t("s3d.double_sided"));
-    // Textures are shown, not edited here (they come from the glTF import).
-    for (key, slot) in [
-        ("s3d.tex.base", &m.base_color_texture),
-        ("s3d.tex.orm", &m.orm_texture),
-        ("s3d.tex.normal", &m.normal_texture),
-        ("s3d.tex.emissive", &m.emissive_texture),
-    ] {
-        if let Some(s) = slot {
-            ui.label(RichText::new(format!("{}: {}", ctx.t(key), s.texture.0)).small().color(faint(ui)));
+    // Texture slots: any texture of the scene (glTF textures and images
+    // imported next to the scene file).
+    let mut import_slot: Option<usize> = None;
+    for (i, key) in SLOT_KEYS.iter().enumerate() {
+        // An unlit material only reads its base colour and emission.
+        if m.unlit && (i == 1 || i == 2) {
+            continue;
         }
+        labelled(ui, &ctx.t(key), |ui| {
+            let current = slot_mut(&mut m, i).as_ref().map(|s| s.texture.0.clone());
+            if let Some(choice) =
+                texture_combo(ui, ctx, &format!("s3d_tex_{i}"), current.as_deref(), &tex_names, true)
+            {
+                set_slot_texture(slot_mut(&mut m, i), choice);
+            }
+            if ui.small_button(ctx.t("s3d.tex.import")).clicked() {
+                import_slot = Some(i);
+            }
+        });
     }
     if m != mat {
         let n = name.clone();
@@ -769,6 +881,12 @@ fn materials_section(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
     if ui.button(ctx.t("s3d.delete_material")).clicked() {
         doc.remove_material(&name);
         st.material = None;
+    }
+    if let Some(i) = import_slot
+        && let Some(texture) = st.import_texture(ctx)
+        && let Some(doc) = st.doc.as_mut()
+    {
+        doc.edit_material(&name, |dst| set_slot_texture(slot_mut(dst, i), Some(texture)));
     }
 }
 
@@ -880,6 +998,25 @@ fn problems_section(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn texture_slots_set_clear_and_keep_their_uv_transform() {
+        let mut slot = None;
+        set_slot_texture(&mut slot, Some("wall".into()));
+        assert_eq!(slot.as_ref().unwrap().texture.0, "wall");
+        slot.as_mut().unwrap().scale = [2.0, 2.0];
+        set_slot_texture(&mut slot, Some("brick".into()));
+        let s = slot.as_ref().unwrap();
+        assert_eq!((s.texture.0.as_str(), s.scale), ("brick", [2.0, 2.0]));
+        set_slot_texture(&mut slot, None);
+        assert!(slot.is_none());
+        let mut m = MaterialDef::new("M");
+        for i in 0..4 {
+            set_slot_texture(slot_mut(&mut m, i), Some(format!("t{i}")));
+        }
+        assert_eq!(m.normal_texture.as_ref().unwrap().texture.0, "t2");
+        assert_eq!(m.emissive_texture.as_ref().unwrap().texture.0, "t3");
+    }
 
     #[test]
     fn preview_scene_renders_the_material_on_a_lit_sphere() {

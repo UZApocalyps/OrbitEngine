@@ -3166,6 +3166,7 @@ dependencies = [
  "orbit_i18n",
  "orbit_plugin_api",
  "orbit_project",
+ "orbit_scene",
  "orbit_ui_data",
  "orbit_vm",
  "rmcp",

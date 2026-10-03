@@ -133,6 +133,24 @@ pub fn builtin_insertables() -> Vec<Insertable> {
             "draft.group.scene",
         ),
         item(
+            "ShowScene3d",
+            "draft.label.show_scene3d",
+            icons::CUBE,
+            "draft.group.scene",
+        ),
+        item(
+            "Camera3d",
+            "draft.label.camera3d",
+            icons::VIDEO_CAMERA,
+            "draft.group.scene",
+        ),
+        item(
+            "HideScene3d",
+            "draft.label.hide_scene3d",
+            icons::EYE_SLASH,
+            "draft.group.scene",
+        ),
+        item(
             "SetVar",
             "draft.label.set_var",
             icons::FUNCTION,
@@ -354,6 +372,16 @@ pub fn drafts_for(
         "CloseScreen" => vec![NodeDraft::plain(NodeKind::CloseScreen {
             screen: String::new(),
         })],
+        "ShowScene3d" => vec![NodeDraft::plain(NodeKind::ShowScene3d {
+            scene: first_asset(story, AssetKind::Scene3d)?,
+            camera: None,
+            transition: None,
+        })],
+        "Camera3d" => vec![NodeDraft::plain(NodeKind::Camera3d {
+            camera: String::new(),
+            transition: None,
+        })],
+        "HideScene3d" => vec![NodeDraft::plain(NodeKind::HideScene3d { transition: None })],
         "Timeline" => vec![NodeDraft::plain(NodeKind::Timeline {
             duration: 2.0,
             looping: orbit_core::AnimLoop::Once,

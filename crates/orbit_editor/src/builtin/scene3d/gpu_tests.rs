@@ -75,3 +75,37 @@ fn preview_sphere_and_edit_camera_render() {
         .expect("read-back");
     assert!(px(&rgba, 64, 5, 5)[2] > 0, "background color drawn");
 }
+
+#[test]
+fn capture_png_renders_a_named_camera() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter: skipping the 3D capture test");
+        return;
+    };
+    let doc = model::SceneDoc::new("t");
+    let assets = crate::scene3d_host::ModelAssets::default();
+    let png = crate::scene3d_host::capture_png(
+        &device,
+        &queue,
+        doc.scene(),
+        &assets,
+        Some("main"),
+        [64, 48],
+    )
+    .expect("capture");
+    let img = image::load_from_memory(&png).expect("a PNG").to_rgba8();
+    assert_eq!(img.dimensions(), (64, 48));
+    // The new scene's background colour is drawn.
+    assert!(img.get_pixel(3, 3)[2] > 0);
+    // A camera the scene does not have is an error, not a black picture.
+    let err = crate::scene3d_host::capture_png(
+        &device,
+        &queue,
+        doc.scene(),
+        &assets,
+        Some("nope"),
+        [64, 48],
+    )
+    .unwrap_err();
+    assert!(err.contains("nope"), "{err}");
+}
