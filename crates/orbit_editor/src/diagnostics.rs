@@ -330,14 +330,31 @@ pub fn compute(texts: &Translator, story: &Story, revision: u64, extras: &Extras
 /// without a node first).
 fn sort_problems(story: &Story, problems: &mut [Problem]) {
     orbit_profile::scope!("validate: sort");
-    let mut order: HashMap<NodeId, usize> = HashMap::new();
-    let mut n = 0;
-    for scene in &story.scenes {
-        for node in &scene.nodes {
-            order.entry(node.id).or_insert(n);
-            n += 1;
+    // Positions of the nodes that have findings only (a handful), not of
+    // the whole story: this map used to be a fifth of a 10k-node run (TL-04).
+    let mut order: HashMap<NodeId, usize> = problems
+        .iter()
+        .filter_map(|p| match &p.location {
+            Some(Location::Node(id)) => Some((*id, usize::MAX)),
+            _ => None,
+        })
+        .collect();
+    if !order.is_empty() {
+        let mut missing = order.len();
+        let nodes = story.scenes.iter().flat_map(|s| &s.nodes);
+        for (n, node) in nodes.enumerate() {
+            if let Some(slot) = order.get_mut(&node.id)
+                && *slot == usize::MAX
+            {
+                *slot = n;
+                missing -= 1;
+                if missing == 0 {
+                    break;
+                }
+            }
         }
     }
+    order.retain(|_, n| *n != usize::MAX);
     problems.sort_by_key(|p| {
         let level = u8::from(p.level != Level::Error);
         let position = match &p.location {

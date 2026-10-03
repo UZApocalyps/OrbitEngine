@@ -33,7 +33,7 @@ Idées validées mais hors des jalons en cours. À replanifier dans la roadmap l
 
 ## Optimisations
 - Taille du bundle web : fait au M4 (10,2 → 4,4 Mo, budget en CI). TL-03 : 4,79 → 4,62 Mo (JPEG décodé par le navigateur sur le web, `wasm-opt --converge`), budget CI 4,7 Mo, rapport `twiggy` en CI. Restent : `naga` (~530 Ko), `ron`/serde des types story, harfrust/skrifa (swash est nécessaire au rendu des glyphes) ; polices déjà hors du wasm (pak).
-- Profilage CPU/GPU du runtime et de l'éditeur.
+- Profilage CPU/GPU du runtime et de l'éditeur : fait (TL-04). `orbit_profile` (spans `scope!`, absent des players release et du web), timestamps GPU wgpu quand l'adaptateur les offre, panneau « Profileur » de l'éditeur, overlay F3 du player en debug (`--features profiling` en release), `cargo xtask bench` (référence `xtask/bench-baseline.json`, informatif en CI). Corrigé : lecture de `schema_version` qui reparsait toute l'histoire (chargement 10k nœuds 829 → 29 ms en release), tri des problèmes (1 → 0 ms). Restent visibles au bench : sérialisation RON (~26 ms / 10k nœuds), règles de validation (~4 ms), index de recherche (~8 ms), clone de l'histoire à chaque validation en arrière-plan.
 
 ## Dialogues en bulles positionnables
 - Mode d'affichage alternatif à la textbox classique : chaque réplique est rendue dans une **bulle** (style BD / conversation) plutôt que dans la boîte du bas.

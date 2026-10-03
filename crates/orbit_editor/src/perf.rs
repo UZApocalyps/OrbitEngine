@@ -112,11 +112,7 @@ pub fn play_through(story: &Arc<Story>) -> usize {
     loop {
         steps += 1;
         match vm.step() {
-            StepResult::Choice { .. } => {
-                if vm.choose(0).is_err() {
-                    break;
-                }
-            }
+            StepResult::Choice { .. } if vm.choose(0).is_err() => break,
             StepResult::End | StepResult::Error(_) => break,
             _ => {}
         }

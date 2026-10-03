@@ -37,9 +37,52 @@ struct Header {
     schema_version: u32,
 }
 
-/// Reads the `schema_version` field without parsing the rest of the document.
+/// Reads the `schema_version` field. Stories written by the engine start
+/// with it, and it is read from the text directly; any other layout falls
+/// back to a full `ron` parse of the header (which has to go through the
+/// whole document: it used to double the load time of every story, TL-04).
 pub fn read_version(source: &str) -> Result<u32, CoreError> {
+    if let Some(version) = leading_version(source) {
+        return Ok(version);
+    }
     Ok(ron::from_str::<Header>(source)?.schema_version)
+}
+
+/// Skips whitespace and `//` comments. `None` on a block comment (they nest
+/// in RON: left to the full parser).
+fn skip_blank(mut s: &str) -> Option<&str> {
+    loop {
+        s = s.trim_start();
+        if let Some(rest) = s.strip_prefix("//") {
+            s = rest.find('\n').map_or("", |i| &rest[i + 1..]);
+        } else if s.starts_with("/*") {
+            return None;
+        } else {
+            return Some(s);
+        }
+    }
+}
+
+/// `schema_version` when it is the first field of the top-level struct
+/// (after optional `#![enable(...)]` attributes and struct name).
+fn leading_version(source: &str) -> Option<u32> {
+    let mut s = skip_blank(source.strip_prefix('\u{feff}').unwrap_or(source))?;
+    while s.starts_with("#![") {
+        s = skip_blank(&s[s.find(']')? + 1..])?;
+    }
+    let name = s
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(s.len());
+    s = skip_blank(&s[name..])?.strip_prefix('(')?;
+    s = skip_blank(s)?.strip_prefix("schema_version")?;
+    s = skip_blank(s)?.strip_prefix(':')?;
+    s = skip_blank(s)?;
+    let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let rest = skip_blank(&s[digits..])?;
+    if digits == 0 || !(rest.starts_with(',') || rest.starts_with(')')) {
+        return None;
+    }
+    s[..digits].parse().ok()
 }
 
 /// One migration step: rewrites a document from version `N` to `N + 1`.
@@ -368,6 +411,26 @@ fn v4_to_v5(source: &str) -> Result<String, CoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_version_is_read_from_the_text_when_it_comes_first() {
+        for (doc, v) in [
+            ("(schema_version: 7, title: \"t\")", Some(7)),
+            ("\u{feff}  // header\n Story ( schema_version : 12 )", Some(12)),
+            ("#![enable(implicit_some)]\n(schema_version: 3,\n)", Some(3)),
+            ("(title: \"t\", schema_version: 4)", None),
+            ("/* c */ (schema_version: 4)", None),
+            ("(schema_version_x: 4)", None),
+            ("(schema_version: 4x)", None),
+            ("(schema_version: )", None),
+        ] {
+            assert_eq!(leading_version(doc), v, "{doc}");
+        }
+        // Other layouts still work through the full parse.
+        assert_eq!(read_version("(title: \"t\", schema_version: 4)").unwrap(), 4);
+        assert_eq!(read_version("/* c */ (schema_version: 5)").unwrap(), 5);
+        assert!(read_version("(title: \"t\")").is_err());
+    }
 
     const V1_STORY: &str = r#"(
     schema_version: 1,

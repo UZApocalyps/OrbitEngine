@@ -118,7 +118,7 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
         "panels",
         &[
             "console", "problems", "explorer", "search", "draft", "edit", "util", "watch", "misc",
-            "textview",
+            "textview", "profiler",
         ],
         include_str!("../locales/en/panels.ron"),
         include_str!("../locales/fr/panels.ron"),
