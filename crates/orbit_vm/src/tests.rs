@@ -34,7 +34,7 @@ impl B {
 
     fn say(&mut self, speaker: Option<CharacterId>, text: &str) -> NodeId {
         let text_id = self.story.strings.add(text);
-        self.push(NodeKind::Say { speaker, text_id })
+        self.push(NodeKind::Say { speaker, text_id, voice: None })
     }
 
     fn label(&mut self, id: NodeId, name: &str) -> NodeId {
@@ -1788,6 +1788,7 @@ fn goto_story() -> (RbStory, SceneId, NodeId, NodeId) {
                 kind: NodeKind::Say {
                     speaker: None,
                     text_id: b1_text,
+                    voice: None,
                 },
             },
             Node {
@@ -1795,6 +1796,7 @@ fn goto_story() -> (RbStory, SceneId, NodeId, NodeId) {
                 kind: NodeKind::Say {
                     speaker: None,
                     text_id: b2_text,
+                    voice: None,
                 },
             },
             Node {
@@ -1898,6 +1900,7 @@ fn goto_scene_clears_the_call_stack() {
         kind: NodeKind::Say {
             speaker: None,
             text_id,
+            voice: None,
         },
     });
     main.push(Node {

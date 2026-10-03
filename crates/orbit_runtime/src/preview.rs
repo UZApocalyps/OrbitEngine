@@ -276,6 +276,7 @@ mod tests {
             kind: NodeKind::Say {
                 speaker: None,
                 text_id: tweaked.strings.add("orphan"),
+                voice: None,
             },
         };
         let orphan = say.id;
@@ -434,6 +435,7 @@ mod tests {
             kind: NodeKind::Say {
                 speaker: None,
                 text_id: other.strings.add("hi"),
+                voice: None,
             },
         };
         let first = line.id;

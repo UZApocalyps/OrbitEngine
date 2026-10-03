@@ -113,7 +113,7 @@ impl From<NodeKindV8> for NodeKind {
         use NodeKindV8 as V;
         match k {
             V::Label { name } => NodeKind::Label { name },
-            V::Say { speaker, text_id } => NodeKind::Say { speaker, text_id },
+            V::Say { speaker, text_id } => NodeKind::Say { speaker, text_id, voice: None },
             V::Choice { options } => NodeKind::Choice { options },
             V::Jump { target } => NodeKind::Jump { target },
             V::JumpScene { scene, label } => NodeKind::JumpScene { scene, label },
@@ -226,6 +226,7 @@ impl From<StoryV8> for Story {
             positions: s.positions,
             variables: s.variables,
             curves: BTreeMap::new(),
+            achievements: Vec::new(),
             scenes: s
                 .scenes
                 .into_iter()

@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use orbit_core::{
-    AnimLoop, AnimProp, AnimTarget, AssetId, CharacterId, ChoiceOption, Color, CustomData, Curve,
+    AchievementId, AnimLoop, AnimProp, AnimTarget, AssetId, CharacterId, ChoiceOption, Color, CustomData, Curve,
     Ease, Effect, Expr, Key, Node, NodeId, NodeKind, Position, Rgba, Scene, SceneId, Story,
     StoryTrack, StringId, Track, TrackData, Transition, Vec2, Angle, BgLayer, Emitter, ParticlePreset,
 };
@@ -75,7 +75,9 @@ enum Raw {
     Say {
         speaker: Option<Ref>,
         text: String,
+        voice: Option<Ref>,
     },
+    Unlock(Ref),
     Menu(Vec<RawOption>),
     Jump(Ref),
     JumpScene {
@@ -322,6 +324,15 @@ impl LineParser<'_> {
         };
         self.at += 1;
         Ok(Ref { kind, col })
+    }
+
+    /// The optional `voice <asset-ref>` that ends a `Say` line (M7-06).
+    fn voice(&mut self) -> Result<Option<Ref>, LineError> {
+        if self.eat_word("voice") {
+            Ok(Some(self.reference("a voice asset")?))
+        } else {
+            Ok(None)
+        }
     }
 
     /// A number, with an optional leading minus.
@@ -719,9 +730,11 @@ impl LineParser<'_> {
                         condition,
                     })
                 } else {
+                    let voice = self.voice()?;
                     Stmt::Node(Raw::Say {
                         speaker: None,
                         text,
+                        voice,
                     })
                 }
             }
@@ -762,8 +775,14 @@ impl LineParser<'_> {
                             None
                         };
                         let text = self.string("the line's text")?;
-                        Stmt::Node(Raw::Say { speaker, text })
+                        let voice = self.voice()?;
+                        Stmt::Node(Raw::Say {
+                            speaker,
+                            text,
+                            voice,
+                        })
                     }
+                    "unlock" => Stmt::Node(Raw::Unlock(self.reference("an achievement")?)),
                     "menu" => Stmt::Node(Raw::Menu(Vec::new())),
                     "jump" => Stmt::Node(Raw::Jump(self.reference("a label")?)),
                     "jump_scene" => {
@@ -1107,9 +1126,11 @@ impl LineParser<'_> {
                             return self.err(format!("unknown statement `{word}`"));
                         }
                         let text = self.string("the line's text")?;
+                        let voice = self.voice()?;
                         Stmt::Node(Raw::Say {
                             speaker: Some(speaker),
                             text,
+                            voice,
                         })
                     }
                 }
@@ -1525,7 +1546,11 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
             let d = &mut diags;
             let kind = match &pn.raw {
                 Raw::Label(name) => Some(NodeKind::Label { name: name.clone() }),
-                Raw::Say { speaker, text } => {
+                Raw::Say {
+                    speaker,
+                    text,
+                    voice,
+                } => {
                     let speaker = match speaker {
                         None => Some(None),
                         Some(r) => {
@@ -1537,10 +1562,22 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                         Some(NodeKind::Say { text_id, .. }) => Some(*text_id),
                         _ => None,
                     };
-                    speaker.map(|speaker| NodeKind::Say {
-                        speaker,
-                        text_id: string_for(reuse, text),
-                    })
+                    let voice = match voice {
+                        None => Some(None),
+                        Some(r) => by_name::<AssetId>(d, line, r, &names.assets, "asset").map(Some),
+                    };
+                    match (speaker, voice) {
+                        (Some(speaker), Some(voice)) => Some(NodeKind::Say {
+                            speaker,
+                            text_id: string_for(reuse, text),
+                            voice,
+                        }),
+                        _ => None,
+                    }
+                }
+                Raw::Unlock(r) => {
+                    by_name::<AchievementId>(d, line, r, &names.achievements, "achievement")
+                        .map(|achievement| NodeKind::Unlock { achievement })
                 }
                 Raw::Menu(options) => {
                     let old_options = match old {

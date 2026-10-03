@@ -37,6 +37,7 @@
 #[cfg(feature = "3d")]
 pub use orbit_render3d as render3d;
 
+pub mod achievements;
 pub mod compose3d;
 pub mod director;
 pub mod format;
@@ -57,6 +58,7 @@ mod splash;
 mod splash_draw;
 pub mod stage;
 
+pub use achievements::{AchievementEvent, AchievementHook, SharedAchievementHook, achievement_icon_paths};
 pub use director::{AudioCommand, Director, Flow, Line, StageTransition};
 pub use input::{Hotkey, InputAction, InputMapper};
 pub use loading::{AssetStore, LoadedStory, parse_story, scene_asset_paths, successor_scenes};

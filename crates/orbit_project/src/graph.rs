@@ -272,7 +272,7 @@ impl GraphModel {
                     continue;
                 }
                 match &node.kind {
-                    NodeKind::Say { speaker, text_id } => {
+                    NodeKind::Say { speaker, text_id, .. } => {
                         block.lines += 1;
                         match speaker {
                             Some(c) if !block.speakers.contains(c) => block.speakers.push(*c),
@@ -496,6 +496,7 @@ mod tests {
         let say = node(NodeKind::Say {
             speaker: None,
             text_id: say_text,
+            voice: None,
         });
         let choice = node(NodeKind::Choice {
             options: vec![

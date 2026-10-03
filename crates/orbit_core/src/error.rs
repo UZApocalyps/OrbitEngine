@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 use crate::defs::AssetKind;
-use crate::ids::{AssetId, CharacterId, NodeId, SceneId, StringId};
+use crate::ids::{AchievementId, AssetId, CharacterId, NodeId, SceneId, StringId};
 
 /// A semantic problem found by [`crate::validate::validate`]. A story with
 /// errors must not be played.
@@ -121,6 +121,21 @@ pub enum ValidationError {
     /// says what.
     #[error("node {node} has invalid background layers or particles: {message}")]
     InvalidStageNode { node: NodeId, message: String },
+    #[error("duplicate achievement id {0}")]
+    DuplicateAchievementId(AchievementId),
+    /// An achievement definition is malformed (unknown title, description
+    /// or icon, wrong asset kind); `message` says what.
+    #[error("achievement {achievement}: {message}")]
+    InvalidAchievement {
+        achievement: AchievementId,
+        message: String,
+    },
+    /// An `Unlock` node names an achievement the story does not define.
+    #[error("node {node} unlocks unknown achievement {achievement}")]
+    UnknownAchievement {
+        node: NodeId,
+        achievement: AchievementId,
+    },
 }
 
 /// Where a curve lives.
@@ -181,6 +196,10 @@ pub enum ValidationWarning {
     /// A `StopParticles` node names an emitter no `Particles` node defines.
     #[error("node {node} stops the emitter `{name}`, which no Particles node defines")]
     UnknownEmitter { node: NodeId, name: String },
+    /// No `Unlock` node unlocks this achievement: the player can never get
+    /// it (unless a plugin or a script does).
+    #[error("achievement {0} is never unlocked by any Unlock node")]
+    AchievementNeverUnlocked(AchievementId),
 }
 
 /// Errors from loading / saving / migrating a story.

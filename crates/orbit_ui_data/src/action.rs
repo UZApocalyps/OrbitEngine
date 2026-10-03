@@ -54,6 +54,29 @@ pub enum BindPath {
     /// scene names in story order; `ReplayScene(Item)` replays the row. The
     /// list names the eligible scenes (ids or names); empty = every scene.
     ReplayScenes(Vec<String>),
+    /// `Repeat` source (`ui_version` 7, M7-05): the achievements of the story
+    /// in order, as a list of texts (their ids). Inside the row, read
+    /// the achievement with [`BindPath::Achievement`] and tell the unlocked
+    /// ones with `Cond::Unlocked`.
+    Achievements,
+    /// A field of the achievement of the row of an `Achievements` list
+    /// (`ui_version` 7), or the unlock progress of the whole story.
+    Achievement(AchievementField),
+}
+
+/// What [`BindPath::Achievement`] reads (`ui_version` 7, M7-05).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AchievementField {
+    /// Title in the language of the player (a placeholder while a hidden
+    /// achievement is locked).
+    Title,
+    /// Description, likewise.
+    Description,
+    /// Asset path of the icon, empty when it has none or is hidden and
+    /// locked (bind it to an `Image`).
+    Icon,
+    /// `3 / 10`: unlocked achievements out of all (not a row field).
+    Progress,
 }
 
 impl BindPath {
@@ -75,7 +98,15 @@ impl BindPath {
 
     /// Whether the path reads the row of a `Repeat` template.
     pub fn is_item(&self) -> bool {
-        matches!(self, BindPath::Item | BindPath::ItemIndex | BindPath::ItemKey)
+        matches!(
+            self,
+            BindPath::Item
+                | BindPath::ItemIndex
+                | BindPath::ItemKey
+                | BindPath::Achievement(
+                    AchievementField::Title | AchievementField::Description | AchievementField::Icon
+                )
+        )
     }
 }
 

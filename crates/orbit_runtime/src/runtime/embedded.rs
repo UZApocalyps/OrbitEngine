@@ -660,7 +660,7 @@ impl Runtime {
                 emb.music = Some(*asset);
             }
             AudioCommand::StopMusic { .. } => emb.music = None,
-            AudioCommand::PlaySound { .. } => {}
+            AudioCommand::PlaySound { .. } | AudioCommand::PlayVoice { .. } | AudioCommand::StopVoice => {}
         }
         Some(command)
     }

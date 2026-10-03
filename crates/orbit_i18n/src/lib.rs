@@ -32,7 +32,7 @@ use std::fmt;
 
 pub use exchange::{ExchangeFormat, StaleEntry, source_hash, stale_entries};
 
-use orbit_core::{Story, StringId, StringTable};
+use orbit_core::{AssetId, Story, StringId, StringTable};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -56,6 +56,11 @@ pub struct Translation {
     pub name: String,
     #[serde(default)]
     pub entries: BTreeMap<StringId, String>,
+    /// Voice of a line in this language (schema v16, M7-06): replaces the
+    /// `Say::voice` of the lines whose text id is a key (a `Sound` asset of
+    /// the story manifest). A line without an entry keeps the source voice.
+    #[serde(default, deserialize_with = "orbit_core::v16_field", serialize_with = "orbit_core::v16_skip")]
+    pub voices: BTreeMap<StringId, AssetId>,
     /// Hash of the source text each entry was translated from (see
     /// [`source_hash`]), used to detect translations made stale by a source
     /// edit. Optional: files without it keep working (no entry is stale).
@@ -74,6 +79,8 @@ struct TranslationFile {
     #[serde(default)]
     entries: BTreeMap<StringId, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    voices: BTreeMap<StringId, AssetId>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     source_hashes: BTreeMap<StringId, u64>,
 }
 
@@ -83,6 +90,7 @@ impl Translation {
             lang: lang.into(),
             name: name.into(),
             entries: BTreeMap::new(),
+            voices: BTreeMap::new(),
             source_hashes: BTreeMap::new(),
         }
     }
@@ -94,6 +102,7 @@ impl Translation {
             lang: f.lang,
             name: f.name,
             entries: f.entries,
+            voices: f.voices,
             source_hashes: f.source_hashes,
         })
     }
@@ -104,6 +113,7 @@ impl Translation {
             lang: self.lang.clone(),
             name: self.name.clone(),
             entries: self.entries.clone(),
+            voices: self.voices.clone(),
             source_hashes: self.source_hashes.clone(),
         };
         ron::ser::to_string_pretty(&f, cfg).map_err(|e| I18nError::Parse(e.to_string()))
@@ -259,6 +269,17 @@ impl Localizer {
             .map(String::as_str)
             .filter(|s| !s.trim().is_empty())
             .or_else(|| self.source.get(&id).map(String::as_str))
+    }
+
+    /// The voice asset of the line whose text is `id` in the selected
+    /// language (M7-06): the translation's override, else `None` (the
+    /// caller falls back to the voice of the `Say` node).
+    pub fn voice(&self, id: StringId) -> Option<AssetId> {
+        self.current
+            .as_ref()
+            .and_then(|k| self.translations.get(k))
+            .and_then(|t| t.voices.get(&id))
+            .copied()
     }
 
     /// Like [`Localizer::try_text`], with `""` for an unknown id.

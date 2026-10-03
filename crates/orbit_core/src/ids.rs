@@ -128,6 +128,11 @@ id_type!(
     Node3dId
 );
 
+id_type!(
+    /// Stable id of an achievement (schema v16). Unlocks are persisted by id.
+    AchievementId
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -371,7 +371,8 @@ fn save_then_load_restores_the_screen() {
         &Flow::Say(crate::director::Line {
             speaker: None,
             text,
-            already_read: true
+            already_read: true,
+            voice: None
         })
     );
 }

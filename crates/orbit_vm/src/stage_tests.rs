@@ -36,7 +36,7 @@ impl Fx {
 
     fn say(&mut self, text: &str) -> NodeId {
         let text_id = self.story.strings.add(text);
-        self.push(NodeKind::Say { speaker: None, text_id })
+        self.push(NodeKind::Say { speaker: None, text_id, voice: None })
     }
 
     fn emitter(&mut self, preset: ParticlePreset) -> NodeId {
@@ -163,7 +163,7 @@ fn a_scene_change_stops_the_emitters() {
         id: next,
         name: "two".into(),
         nodes: vec![
-            Node { id: end, kind: NodeKind::Say { speaker: None, text_id } },
+            Node { id: end, kind: NodeKind::Say { speaker: None, text_id, voice: None } },
             Node { id: NodeId::new(), kind: NodeKind::End },
         ],
     });

@@ -4,7 +4,7 @@
 //! delegates here for these variants. Every application returns its exact
 //! inverse, like the others.
 
-use orbit_core::{AssetEntry, AssetId, CharacterId, NodeKind, Story, VarDecl};
+use orbit_core::{AchievementId, AssetEntry, AssetId, CharacterId, NodeKind, Story, VarDecl};
 
 use crate::command::{Applied, Command, CommandError};
 
@@ -35,6 +35,8 @@ pub enum AssetUser {
     Node(orbit_core::NodeId),
     /// An expression (sprite) of a character.
     Character(CharacterId),
+    /// The icon of an achievement (M7-05).
+    Achievement(AchievementId),
 }
 
 /// Everything that uses asset `id`: nodes first, then characters whose
@@ -51,6 +53,7 @@ pub fn asset_users(story: &Story, id: AssetId) -> Vec<AssetUser> {
             | NodeKind::ShowScene3d { scene: asset, .. } => *asset == id,
             NodeKind::BackgroundLayers { layers, .. } => layers.iter().any(|l| l.asset == id),
             NodeKind::Particles(e) => e.sprite == Some(id),
+            NodeKind::Say { voice, .. } => *voice == Some(id),
             _ => false,
         })
         .map(|n| AssetUser::Node(n.id));
@@ -59,7 +62,12 @@ pub fn asset_users(story: &Story, id: AssetId) -> Vec<AssetUser> {
         .iter()
         .filter(|c| c.expressions.iter().any(|e| e.assets().contains(&id)))
         .map(|c| AssetUser::Character(c.id));
-    nodes.chain(characters).collect()
+    let achievements = story
+        .achievements
+        .iter()
+        .filter(|a| a.icon == Some(id))
+        .map(|a| AssetUser::Achievement(a.id));
+    nodes.chain(characters).chain(achievements).collect()
 }
 
 pub(crate) fn apply(cmd: &Command, story: &mut Story) -> Result<Applied, CommandError> {
@@ -353,6 +361,9 @@ pub(crate) fn apply(cmd: &Command, story: &mut Story) -> Result<Applied, Command
                         Some(AssetUser::Character(user)) => {
                             return Err(CommandError::AssetInUseByCharacter(*id, *user));
                         }
+                        Some(AssetUser::Achievement(user)) => {
+                            return Err(CommandError::AssetInUseByAchievement(*id, *user));
+                        }
                         None => {}
                     }
                     let old: AssetEntry = story.assets.assets.remove(pos);
@@ -366,6 +377,54 @@ pub(crate) fn apply(cmd: &Command, story: &mut Story) -> Result<Applied, Command
                     })
                 }
                 (None, None) => Err(CommandError::UnknownAsset(*id)),
+            }
+        }
+        Command::SetAchievement {
+            id,
+            achievement,
+            index,
+        } => {
+            let existing = story.achievements.iter().position(|a| a.id == *id);
+            match (existing, achievement) {
+                (Some(pos), Some(new)) => {
+                    let old = std::mem::replace(&mut story.achievements[pos], new.clone());
+                    Ok(Applied {
+                        inverse: Command::SetAchievement {
+                            id: *id,
+                            achievement: Some(old),
+                            index: Some(pos),
+                        },
+                        touched: Vec::new(),
+                    })
+                }
+                (None, Some(new)) => {
+                    insert_at(&mut story.achievements, *index, new.clone());
+                    Ok(Applied {
+                        inverse: Command::SetAchievement {
+                            id: *id,
+                            achievement: None,
+                            index: None,
+                        },
+                        touched: Vec::new(),
+                    })
+                }
+                (Some(pos), None) => {
+                    if let Some(user) = story.scenes.iter().flat_map(|s| &s.nodes).find(
+                        |n| matches!(&n.kind, NodeKind::Unlock { achievement } if achievement == id),
+                    ) {
+                        return Err(CommandError::AchievementInUse(*id, user.id));
+                    }
+                    let old = story.achievements.remove(pos);
+                    Ok(Applied {
+                        inverse: Command::SetAchievement {
+                            id: *id,
+                            achievement: Some(old),
+                            index: Some(pos),
+                        },
+                        touched: Vec::new(),
+                    })
+                }
+                (None, None) => Err(CommandError::UnknownAchievement(*id)),
             }
         }
         // Node-level commands are handled by `Command::apply` itself.

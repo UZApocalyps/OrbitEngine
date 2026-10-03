@@ -45,6 +45,22 @@ pub struct DataContext {
     /// Scene replay (M7-04): every scene of the story in order, as
     /// (id, name, seen in a played game).
     pub scenes: Vec<(String, String, bool)>,
+    /// Achievements (M7-05): every achievement of the story in order, as the
+    /// player sees it (placeholders for the hidden locked ones).
+    pub achievements: Vec<AchievementRow>,
+}
+
+/// One achievement as a data screen shows it (M7-05).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct AchievementRow {
+    pub id: String,
+    /// Localized title (a placeholder while hidden and locked).
+    pub title: String,
+    /// Localized description (a placeholder while hidden and locked).
+    pub description: String,
+    /// Asset path of the icon; empty for none (or hidden and locked).
+    pub icon: String,
+    pub unlocked: bool,
 }
 
 impl DataContext {
@@ -55,6 +71,24 @@ impl DataContext {
         list.iter()
             .map(|p| Value::Str(if self.unlocked.contains(p) { p.clone() } else { String::new() }))
             .collect()
+    }
+
+    /// The rows of an `Achievements` source: the ids, in story order.
+    pub fn achievement_rows(&self) -> Vec<Value> {
+        self.achievements.iter().map(|a| Value::Str(a.id.clone())).collect()
+    }
+
+    fn achievement(&self, item: Option<&Value>) -> Option<&AchievementRow> {
+        match item {
+            Some(Value::Str(id)) => self.achievements.iter().find(|a| &a.id == id),
+            _ => None,
+        }
+    }
+
+    /// `3 / 10`: unlocked achievements out of all.
+    pub fn achievement_progress(&self) -> String {
+        let done = self.achievements.iter().filter(|a| a.unlocked).count();
+        format!("{done} / {}", self.achievements.len())
     }
 
     /// The rows of a `ReplayScenes` source: the names of the seen scenes
@@ -87,6 +121,8 @@ impl DataContext {
             Cond::InGame => self.in_game,
             Cond::Not(c) => !self.eval_with(c, item),
             Cond::Vars(c) => c.eval(&|n| self.vars.get(n).cloned()).unwrap_or(false),
+            Cond::Unlocked => self.achievement(item).is_some_and(|a| a.unlocked),
+            Cond::HasAchievements => !self.achievements.is_empty(),
             Cond::Item => item.is_some_and(|v| match v {
                 Value::Bool(b) => *b,
                 Value::Int(i) => *i != 0,
@@ -298,6 +334,19 @@ impl DataScreen {
             }
             BindPath::ReplayScenes(list) => {
                 return Some(Value::list(orbit_core::ScalarType::Str, self.ctx.replay_rows(list)));
+            }
+            BindPath::Achievements => {
+                return Some(Value::list(orbit_core::ScalarType::Str, self.ctx.achievement_rows()));
+            }
+            BindPath::Achievement(field) => {
+                use orbit_ui_data::AchievementField as F;
+                let row = self.ctx.achievement(item.map(|i| &i.value));
+                return Some(Value::Str(match field {
+                    F::Progress => self.ctx.achievement_progress(),
+                    F::Title => row.map(|a| a.title.clone()).unwrap_or_default(),
+                    F::Description => row.map(|a| a.description.clone()).unwrap_or_default(),
+                    F::Icon => row.map(|a| a.icon.clone()).unwrap_or_default(),
+                }));
             }
         };
         self.lookup(&name, item)

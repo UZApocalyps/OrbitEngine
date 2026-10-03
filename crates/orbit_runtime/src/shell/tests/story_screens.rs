@@ -48,6 +48,7 @@ fn screens_story() -> Arc<Story> {
         node(NodeKind::Say {
             speaker: None,
             text_id: t,
+            voice: None,
         })
     };
     story.scenes.push(Scene {

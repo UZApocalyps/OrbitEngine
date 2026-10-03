@@ -280,6 +280,8 @@ pub(crate) struct Shell {
     plugins: Option<orbit_vm::SharedPluginHost>,
     /// Script engine (M8-01), attached to every VM the shell creates.
     scripts: Option<orbit_vm::SharedScriptHost>,
+    /// Platform hook told of the achievements (M7-05).
+    achievement_hook: Option<crate::achievements::SharedAchievementHook>,
     /// The theme as the project wrote it.
     base_theme: Theme,
     /// What the shell draws with: `base_theme` with the text scale and the
@@ -487,6 +489,7 @@ impl Shell {
             toast_announcer: Announcer::default(),
             plugins: None,
             scripts: None,
+            achievement_hook: None,
             story_screens: Vec::new(),
             hud_pointer: None,
             ghosts: Vec::new(),
@@ -868,6 +871,22 @@ impl Shell {
             );
         }
         out
+    }
+
+    /// The achievements unlocked so far (M7-05): the saved ones and, during
+    /// a playthrough, the ones it unlocked.
+    fn unlocked_achievements(&self) -> std::collections::BTreeSet<orbit_core::AchievementId> {
+        let mut out = self.persistent.unlocked_achievements.clone();
+        if let Some(game) = &self.game
+            && !game.director.vm().is_replay()
+        {
+            out.extend(game.director.vm().unlocked_achievements().iter().copied());
+        }
+        out
+    }
+
+    fn achievement_rows(&self) -> Vec<orbit_ui::AchievementRow> {
+        crate::achievements::rows(&self.story, &self.loc, &self.texts, &self.unlocked_achievements())
     }
 
     /// Whether the scene was entered in a playthrough (saved, or the
@@ -1306,6 +1325,7 @@ impl Shell {
                 speaker: item.speaker.and_then(|id| director.speaker(id)),
                 text: plain_text(self.loc.text(item.string_id)),
                 can_rollback: item.checkpoint.is_some(),
+                has_voice: self.line_voice(item.node, item.string_id).is_some(),
             })
             .collect();
         HistoryView { entries }
@@ -1518,6 +1538,7 @@ impl Shell {
             gallery: gallery_paths(&self.story),
             unlocked: self.unlocked_images(),
             scenes: self.replay_scenes(),
+            achievements: self.achievement_rows(),
         }
     }
 
@@ -1593,6 +1614,23 @@ impl Shell {
             game.director.vm_mut().set_plugin_host(host.clone());
         }
         self.plugins = host;
+    }
+
+    /// Attaches the platform hook of the achievements (M7-05) and catches it
+    /// up with the ones the player already has.
+    pub fn set_achievement_hook(&mut self, hook: Option<crate::achievements::SharedAchievementHook>) {
+        if let Some(h) = &hook {
+            for a in &self.story.achievements {
+                if self.persistent.unlocked_achievements.contains(&a.id) {
+                    h.unlocked(&crate::achievements::AchievementEvent {
+                        id: a.id.to_string(),
+                        title: self.story.text(a.title_id).unwrap_or_default().to_owned(),
+                        fresh: false,
+                    });
+                }
+            }
+        }
+        self.achievement_hook = hook;
     }
 
     /// Attaches the script engine (M8-01): every VM created from now on
@@ -1970,6 +2008,13 @@ impl Shell {
             UiEvent::Custom { name, args } => self.custom_action(name, args),
             UiEvent::VarOp(op) => self.apply_var_op(&op),
             UiEvent::SceneGoto(scene) => self.goto_scene(&scene),
+            UiEvent::ReplayVoice => {
+                if let Some(game) = &mut self.game {
+                    game.director.replay_voice();
+                }
+                self.pump_audio();
+            }
+            UiEvent::ReplayVoiceAt(index) => self.replay_history_voice(index),
             UiEvent::ReplayScene(scene) => {
                 self.start_replay(&scene);
             }
@@ -2124,10 +2169,71 @@ impl Shell {
     }
 
     fn pump_audio(&mut self) {
+        let mut unlocks = Vec::new();
         if let Some(game) = &mut self.game {
+            // A voice is not started while skipping (it would be cut at once).
+            let skipping = game.skipping();
             for command in game.director.take_audio() {
+                if skipping && matches!(command, AudioCommand::PlayVoice { .. }) {
+                    game.director.voice_finished();
+                    continue;
+                }
                 self.effects.push(Effect::Audio(command));
             }
+            unlocks = game.director.take_unlocks();
+        }
+        for id in unlocks {
+            self.announce_unlock(id);
+        }
+    }
+
+    /// An `Unlock` node unlocked `id` for the first time (M7-05): a toast, the
+    /// persistent data written at once (an achievement must not be lost to a
+    /// crash) and the platform hook.
+    fn announce_unlock(&mut self, id: orbit_core::AchievementId) {
+        let Some(def) = self.story.achievements.iter().find(|a| a.id == id) else {
+            return;
+        };
+        let title = plain_text(self.loc.text(def.title_id));
+        let source_title = self.story.text(def.title_id).unwrap_or_default().to_owned();
+        let text = format!("{}: {title}", self.texts.get("ui.achievements.toast"));
+        self.toast(text);
+        self.persistent.unlocked_achievements.insert(id);
+        self.flush_persistent();
+        if let Some(hook) = &self.achievement_hook {
+            hook.unlocked(&crate::achievements::AchievementEvent {
+                id: id.to_string(),
+                title: source_title,
+                fresh: true,
+            });
+        }
+        self.sync_data();
+    }
+
+    /// The voice of a line (M7-06): the one of the selected language, else the
+    /// one of the `Say` node.
+    fn line_voice(&self, node: orbit_core::NodeId, string_id: orbit_core::StringId) -> Option<orbit_core::AssetId> {
+        let vm = self.game.as_ref()?.director.vm();
+        self.loc.voice(string_id).or_else(|| vm.say_voice(node))
+    }
+
+    /// Plays again the voice of the history entry `index` (M7-06).
+    fn replay_history_voice(&mut self, index: usize) {
+        let asset = self
+            .game
+            .as_ref()
+            .and_then(|g| g.director.vm().backlog().into_iter().nth(index))
+            .and_then(|item| self.line_voice(item.node, item.string_id));
+        if let Some(asset) = asset {
+            self.effects.push(Effect::Audio(AudioCommand::PlayVoice { asset }));
+        }
+    }
+
+    /// The host tells whether a voice line is still playing: when it is not,
+    /// auto mode stops waiting for it (M7-06).
+    pub fn sync_voice(&mut self, playing: bool) {
+        if !playing && let Some(game) = &mut self.game {
+            game.director.voice_finished();
         }
     }
 
@@ -2379,6 +2485,7 @@ impl Shell {
             can_quick_load: self.quick_exists,
             skip_active: game.skipping(),
             auto_active: game.auto_on(),
+            can_replay_voice: game.director.line_voice().is_some(),
         });
     }
 

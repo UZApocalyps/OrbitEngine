@@ -21,6 +21,7 @@ fn say(story: &mut Story, text: &str) -> Node {
     node(NodeKind::Say {
         speaker: None,
         text_id,
+        voice: None,
     })
 }
 

@@ -639,6 +639,15 @@ fn describe_event(story: &Story, event: &PresentationEvent) -> String {
         PresentationEvent::HideScene3d { transition } => {
             format!("[hide 3d scene{}]", describe_transition(transition))
         }
+        PresentationEvent::AchievementUnlocked { achievement } => {
+            let title = story
+                .achievements
+                .iter()
+                .find(|a| a.id == *achievement)
+                .and_then(|a| story.text(a.title_id))
+                .unwrap_or("<unknown achievement>");
+            format!("[achievement unlocked: {title}]")
+        }
         PresentationEvent::BackgroundLayers { layers, transition } => {
             let names: Vec<String> = layers.iter().map(|l| asset(l.asset)).collect();
             format!(

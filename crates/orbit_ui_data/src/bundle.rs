@@ -115,6 +115,7 @@ impl UiBundle {
                 include_str!("../../../assets/ui/default/load.screen.ron"),
                 include_str!("../../../assets/ui/default/gallery.screen.ron"),
                 include_str!("../../../assets/ui/default/replay.screen.ron"),
+                include_str!("../../../assets/ui/default/achievements.screen.ron"),
             ],
         )
         .expect("the built-in UI assets are valid")

@@ -28,6 +28,7 @@
                             (id: "load", kind: Button(text: Key("ui.menu.load"), action: [OpenLoad])),
                             (id: "gallery", kind: Button(text: Key("ui.menu.gallery"), action: [Open("gallery")])),
                             (id: "replay", kind: Button(text: Key("ui.menu.replay"), action: [Open("replay")])),
+                            (id: "achievements", kind: Button(text: Key("ui.menu.achievements"), action: [Open("achievements")]), visible: HasAchievements),
                             (id: "prefs", kind: Button(text: Key("ui.menu.preferences"), action: [Open("preferences")])),
                             (id: "quit", kind: Button(text: Key("ui.menu.quit"), action: [GameQuit]), visible: ShowQuit),
                         ],

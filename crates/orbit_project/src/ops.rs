@@ -38,7 +38,7 @@ impl NodeDraft {
         Self {
             node: Node {
                 id: NodeId::new(),
-                kind: NodeKind::Say { speaker, text_id },
+                kind: NodeKind::Say { speaker, text_id, voice: None },
             },
             strings: vec![(text_id, text.into())],
         }
@@ -66,11 +66,11 @@ impl NodeClip {
 
 /// A refusal with a stable `code` (the editor writes the message in its own
 /// language from it) and the French `message` (see [`crate::Rejection`]).
-fn reject(code: &'static str, message: impl Into<String>) -> ProjectError {
+pub(crate) fn reject(code: &'static str, message: impl Into<String>) -> ProjectError {
     reject_with(code, &[], message)
 }
 
-fn reject_with(
+pub(crate) fn reject_with(
     code: &'static str,
     args: &[(&'static str, String)],
     message: impl Into<String>,
@@ -584,7 +584,19 @@ fn describe_asset_users(story: &Story, users: &[crate::ext::AssetUser]) -> Proje
                 .character(*c)
                 .and_then(|c| story.text(c.name_id))
                 .map(|n| format!("« {n} »")),
-            AssetUser::Node(_) => None,
+            AssetUser::Node(_) | AssetUser::Achievement(_) => None,
+        })
+        .collect();
+    let icons: Vec<String> = users
+        .iter()
+        .filter_map(|u| match u {
+            AssetUser::Achievement(a) => story
+                .achievements
+                .iter()
+                .find(|x| x.id == *a)
+                .and_then(|x| story.text(x.title_id))
+                .map(|n| format!("« {n} »")),
+            _ => None,
         })
         .collect();
     let mut parts = Vec::new();
@@ -593,6 +605,9 @@ fn describe_asset_users(story: &Story, users: &[crate::ext::AssetUser]) -> Proje
     }
     if !names.is_empty() {
         parts.push(format!("une expression de {}", names.join(", ")));
+    }
+    if !icons.is_empty() {
+        parts.push(format!("l'icône du succès {}", icons.join(", ")));
     }
     reject_with(
         "asset_in_use",

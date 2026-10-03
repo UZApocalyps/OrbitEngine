@@ -174,6 +174,9 @@ pub struct HistoryEntryView {
     pub text: String,
     /// Show the "Rewind here" button.
     pub can_rollback: bool,
+    /// The line has a voice (M7-06): show the "Voice" button, which sends
+    /// [`UiEvent::ReplayVoiceAt`] with the index of the entry.
+    pub has_voice: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -188,6 +191,8 @@ pub struct QuickMenuView {
     pub can_quick_load: bool,
     pub skip_active: bool,
     pub auto_active: bool,
+    /// The line on screen has a voice (M7-06): show the replay button.
+    pub can_replay_voice: bool,
 }
 
 /// What a screen asks the runtime to do.
@@ -256,6 +261,10 @@ pub enum UiEvent {
     /// Replay a seen scene (scene id, or name) in replay mode, see
     /// `UiAction::ReplayScene` (M7-04).
     ReplayScene(String),
+    /// Play the voice of the line on screen again (M7-06).
+    ReplayVoice,
+    /// Play the voice of the history entry at this index again (M7-06).
+    ReplayVoiceAt(usize),
     /// Show a short notification (already localized).
     Toast(String),
     /// Play a UI sound (see `Theme::sounds`).

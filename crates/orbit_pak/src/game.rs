@@ -44,7 +44,16 @@ const MAGIC: &[u8; 8] = b"ORBITGAM";
 /// themselves); versions 1 to 4 are read with the layout of their time
 /// (`orbit_core::with_legacy_motion_layout`: the old unit `Rigged`, which
 /// never had an effect, reads as a still image).
-pub const PACK_VERSION: u32 = 5;
+///
+/// Version 6 (schema v16) adds the voice of a `Say`, the achievements of the
+/// story, the `Unlock` node and the voices of a translation. It is written
+/// only for a game that uses one of them ([`GamePack::uses_v16`]): any other
+/// game is encoded in the layout of versions 3 to 5, byte for byte as before
+/// (`orbit_core::with_legacy_v15_layout`), so older players keep reading it.
+/// Versions 1 to 5 are read with that layout.
+pub const PACK_VERSION: u32 = 6;
+/// Version written for a game with a rigged expression (and nothing newer).
+pub const PACK_VERSION_RIGGED: u32 = 5;
 /// Version written for a game without pak-level 3D content.
 pub const BASE_PACK_VERSION: u32 = 3;
 /// Version written for a game with pak-level 3D content.
@@ -139,12 +148,38 @@ impl GamePack {
             .any(|e| e.rigged().is_some())
     }
 
+    /// Whether the game needs version 6 (schema v16): a voiced line, an
+    /// achievement, an `Unlock` node or a translated voice.
+    pub fn uses_v16(&self) -> bool {
+        !self.story.achievements.is_empty()
+            || self.translations.iter().any(|t| !t.voices.is_empty())
+            || self.story.scenes.iter().flat_map(|s| &s.nodes).any(|n| {
+                matches!(
+                    n.kind,
+                    orbit_core::NodeKind::Unlock { .. }
+                        | orbit_core::NodeKind::Say { voice: Some(_), .. }
+                )
+            })
+    }
+
     fn encode(&self, version: u32) -> Result<Vec<u8>, PackError> {
-        let version = if self.uses_rigs() { PACK_VERSION } else { version };
+        let v16 = self.uses_v16();
+        let version = if v16 {
+            PACK_VERSION
+        } else if self.uses_rigs() {
+            PACK_VERSION_RIGGED
+        } else {
+            version
+        };
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(&version.to_le_bytes());
-        let body = postcard::to_stdvec(self).map_err(|e| PackError::Corrupt(e.to_string()))?;
+        let encode = || postcard::to_stdvec(self).map_err(|e| PackError::Corrupt(e.to_string()));
+        let body = if v16 {
+            encode()?
+        } else {
+            orbit_core::with_legacy_v15_layout(encode)?
+        };
         out.extend_from_slice(&body);
         Ok(out)
     }
@@ -191,9 +226,17 @@ impl GamePack {
             // rigged motion (handled by the flag above).
             postcard::from_bytes(body).map_err(|e| PackError::Corrupt(e.to_string()))
         };
-        if version <= 4 {
-            // `Motion::Rigged` had no payload before version 5.
-            orbit_core::with_legacy_motion_layout(decode)
+        // `Motion::Rigged` had no payload before version 5; `Say`, `Story` and
+        // translations had no v16 fields before version 6.
+        let decode = || {
+            if version <= 4 {
+                orbit_core::with_legacy_motion_layout(decode)
+            } else {
+                decode()
+            }
+        };
+        if version <= 5 {
+            orbit_core::with_legacy_v15_layout(decode)
         } else {
             decode()
         }
@@ -705,6 +748,91 @@ mod tests {
         assert_eq!(back, pack);
         // The pack from before still decodes with the current reader.
         assert!(GamePack::from_bytes(&before).is_ok());
+    }
+
+    /// Written by the build of schema v15 (pack version 5: a rigged
+    /// expression and a `Script` node): `examples/fixtures/compat/pak_v5/game.pack`,
+    /// never regenerate.
+    const PACK_V5: &[u8] = include_bytes!("../../../examples/fixtures/compat/pak_v5/game.pack");
+
+    #[test]
+    fn a_frozen_version_5_pack_loads_in_the_v15_layout_and_reencodes_identically() {
+        assert_eq!(&PACK_V5[8..12], &5u32.to_le_bytes());
+        let back = GamePack::from_bytes(PACK_V5).unwrap();
+        assert_eq!(back.info.id, "compat");
+        assert!(back.uses_rigs());
+        assert!(back.story.achievements.is_empty());
+        assert!(!back.uses_v16());
+        assert!(
+            back.story
+                .scenes
+                .iter()
+                .flat_map(|s| &s.nodes)
+                .any(|n| matches!(n.kind, orbit_core::NodeKind::Script { .. }))
+        );
+        // Nothing of schema v16 is used: the same bytes come out, readable
+        // by a player of schema v15.
+        assert_eq!(back.to_bytes().unwrap(), PACK_V5);
+    }
+
+    #[test]
+    fn voices_and_achievements_need_version_6_and_survive_postcard() {
+        use orbit_core::{
+            Achievement, AchievementId, AssetEntry, AssetId, AssetKind, Node, NodeId, NodeKind,
+        };
+        let mut pack = fixture_pack();
+        let plain = pack.to_bytes().unwrap();
+        assert_eq!(GamePack::version_of(&plain), Some(3));
+        let voice = AssetId::new();
+        pack.story.assets.assets.push(AssetEntry {
+            id: voice,
+            kind: AssetKind::Sound,
+            path: "voice/line.ogg".into(),
+        });
+        for node in pack.story.scenes.iter_mut().flat_map(|s| &mut s.nodes) {
+            if let NodeKind::Say { voice: v, .. } = &mut node.kind {
+                *v = Some(voice);
+                break;
+            }
+        }
+        assert!(pack.uses_v16());
+        let bytes = pack.to_bytes().unwrap();
+        assert_eq!(GamePack::version_of(&bytes), Some(6));
+        assert_eq!(GamePack::from_bytes(&bytes).unwrap(), pack);
+        assert_eq!(
+            GamePack::version_of(&pack.to_bytes_with_3d().unwrap()),
+            Some(6)
+        );
+
+        let mut pack = fixture_pack();
+        let achievement = AchievementId::new();
+        let (title_id, description_id) = (
+            pack.story.strings.add("First step"),
+            pack.story.strings.add("Take it."),
+        );
+        pack.story.achievements.push(Achievement {
+            id: achievement,
+            title_id,
+            description_id,
+            hidden: true,
+            icon: None,
+        });
+        pack.story.scenes[0].nodes.insert(
+            0,
+            Node {
+                id: NodeId::new(),
+                kind: NodeKind::Unlock { achievement },
+            },
+        );
+        assert_eq!(GamePack::version_of(&pack.to_bytes().unwrap()), Some(6));
+        assert_eq!(GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap(), pack);
+
+        let mut pack = fixture_pack();
+        pack.translations[0].voices.insert(title_id, voice);
+        assert!(pack.uses_v16());
+        let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
+        assert_eq!(back.translations[0].voices.get(&title_id), Some(&voice));
+        assert_eq!(back, pack);
     }
 
     #[test]

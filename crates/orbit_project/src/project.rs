@@ -498,6 +498,7 @@ mod tests {
                 kind: NodeKind::Say {
                     speaker: None,
                     text_id,
+                    voice: None,
                 },
             },
         )

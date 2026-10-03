@@ -16,6 +16,9 @@ const T_REWIND: Tag = 1000;
 
 const PANEL: [f32; 2] = [1760.0, 980.0];
 const REWIND_W: f32 = 240.0;
+const VOICE_W: f32 = 140.0;
+/// Voice buttons are tagged `T_VOICE + entry index`.
+const T_VOICE: Tag = 100_000;
 
 /// Scrollable list of past lines (colored speaker + text) with a "rewind
 /// here" button where the view-model allows it. Opens at the latest line.
@@ -75,8 +78,9 @@ impl HistoryScreen {
             );
             // Width left to the text column: panel inner width minus bar,
             // paddings and the button column.
-            let text_w = PANEL[0] - 80.0 - w.list.bar_width - 8.0 - 2.0 * 20.0 - REWIND_W - 24.0;
+            let base_text_w = PANEL[0] - 80.0 - w.list.bar_width - 8.0 - 2.0 * 20.0 - REWIND_W - 24.0;
             for (i, e) in self.view.entries.iter().enumerate() {
+                let text_w = if e.has_voice { base_text_w - VOICE_W - 24.0 } else { base_text_w };
                 let row = ui.add(
                     list,
                     Node::hbox()
@@ -102,6 +106,14 @@ impl HistoryScreen {
                 }
                 let lines = estimate_lines(&e.text, w.text_size, text_w);
                 ui.add(col, Node::label(e.text.clone()).lines(lines));
+                if e.has_voice {
+                    ui.add(
+                        row,
+                        Node::button(T_VOICE + i as Tag, self.texts.get("ui.history.voice"))
+                            .small()
+                            .w(Size::Fixed(VOICE_W)),
+                    );
+                }
                 if e.can_rollback {
                     ui.add(
                         row,
@@ -151,6 +163,9 @@ impl Screen for HistoryScreen {
         let mut out = Vec::new();
         forward(self.ui.handle(input), &mut out, |ev, out| match ev {
             WidgetEvent::Cancelled | WidgetEvent::Activated(T_BACK) => out.push(UiEvent::Back),
+            WidgetEvent::Activated(tag) if tag >= T_VOICE => {
+                out.push(UiEvent::ReplayVoiceAt((tag - T_VOICE) as usize));
+            }
             WidgetEvent::Activated(tag) if tag >= T_REWIND => {
                 let index = (tag - T_REWIND) as usize;
                 if let Some(entry) = self.view.entries.get(index) {
@@ -192,6 +207,7 @@ mod tests {
             speaker: Some(("Alice".into(), [255, 150, 190])),
             text: format!("Line number {i} of the dialogue"),
             can_rollback,
+            has_voice: false,
         }
     }
 

@@ -6,6 +6,7 @@ use orbit_anim::{Curve, Loop};
 use serde::{Deserialize, Serialize};
 
 use crate::custom::CustomData;
+use crate::achievements::Achievement;
 use crate::defs::{
     AssetManifest, Character, Position, PositionDef, StringTable, Transition, VarDecl,
     builtin_position,
@@ -13,12 +14,12 @@ use crate::defs::{
 use crate::effects::{Effect, StoryTrack};
 use crate::error::CoreError;
 use crate::expr::Expr;
-use crate::ids::{AssetId, CharacterId, NodeId, SceneId, StringId};
+use crate::ids::{AchievementId, AssetId, CharacterId, NodeId, SceneId, StringId};
 use crate::migrate;
 use crate::validate;
 
 /// Version of the on-disk schema produced by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 15;
+pub const CURRENT_SCHEMA_VERSION: u32 = 16;
 
 /// A whole story: definitions (characters, assets, strings...) and an ordered
 /// list of scenes. Execution starts at the first node of the first non-empty
@@ -47,6 +48,10 @@ pub struct Story {
     /// Named easing curves (schema v9), referenced by `Curve::Named`.
     #[serde(default)]
     pub curves: BTreeMap<String, Curve>,
+    /// Achievements the player can unlock (schema v16, M7-05); unlocked by
+    /// [`NodeKind::Unlock`]. Not written to the RON file when empty.
+    #[serde(default, deserialize_with = "crate::achievements::v16_field", serialize_with = "crate::achievements::v16_skip")]
+    pub achievements: Vec<Achievement>,
     pub scenes: Vec<Scene>,
 }
 
@@ -81,6 +86,11 @@ pub enum NodeKind {
         #[serde(default)]
         speaker: Option<CharacterId>,
         text_id: StringId,
+        /// Voice acting (schema v16, M7-06): a `Sound` asset played with the
+        /// line. A translation can replace it (`orbit_i18n::Translation`).
+        /// Not written to the RON file when `None`.
+        #[serde(default, deserialize_with = "crate::achievements::v16_field", serialize_with = "crate::achievements::v16_skip")]
+        voice: Option<AssetId>,
     },
     /// Presents options to the player; each option jumps to a Label. Options
     /// whose condition is false are hidden.
@@ -287,6 +297,13 @@ pub enum NodeKind {
         #[serde(default)]
         on_error: Option<NodeId>,
     },
+    /// Unlocks an achievement (schema v16, M7-05). The first time it runs
+    /// in a (non-replay) playthrough it unlocks the achievement for good
+    /// (persistent data) and announces it with a toast; afterwards, and
+    /// after a rollback, it does nothing. Appended last.
+    Unlock {
+        achievement: AchievementId,
+    },
 }
 
 /// A named output of a [`NodeKind::Script`].
@@ -371,6 +388,7 @@ impl Story {
             positions: Vec::new(),
             variables: Vec::new(),
             curves: BTreeMap::new(),
+            achievements: Vec::new(),
             scenes: Vec::new(),
         }
     }
@@ -482,7 +500,9 @@ impl Story {
 /// non self-describing format such as the postcard game pack would misalign
 /// on a skipped field) and dropped from the human-readable RON, where each
 /// field is on its own line and these names appear nowhere else as keys.
-const DEFAULT_LINES: [&str; 5] = [
+const DEFAULT_LINES: [&str; 7] = [
+    "voice: None,",
+    "achievements: [],",
     "scale: None,",
     "scale_y: None,",
     "flip_x: false,",
@@ -517,6 +537,7 @@ mod tests {
             kind: NodeKind::Say {
                 speaker: None,
                 text_id,
+                voice: None,
             },
         };
         let jump = Node {

@@ -129,6 +129,10 @@ pub struct RuntimeConfig {
     /// uses scripts; without the feature such a story is refused with a
     /// message.
     pub scripts: Option<orbit_vm::SharedScriptHost>,
+    /// Platform hook told of the achievements (M7-05), e.g. a Steam
+    /// integration. `None`: the achievements only live in the persistent
+    /// data of the game.
+    pub achievement_hook: Option<crate::achievements::SharedAchievementHook>,
 }
 
 /// Where the fonts of the engine are inside a pak (`engine/<path>`).
@@ -167,6 +171,7 @@ impl RuntimeConfig {
             ui_bundle: None,
             plugins: None,
             scripts: None,
+            achievement_hook: None,
         }
     }
 }
@@ -964,6 +969,7 @@ impl Runtime {
                 .and_then(crate::scripts::engine)
         });
         shell.set_script_host(scripts);
+        shell.set_achievement_hook(self.config.achievement_hook.clone());
         if let Some(bundle) = &ui {
             shell.set_ui_bundle(bundle);
         }
@@ -1950,6 +1956,12 @@ fn play_command(audio: &mut AudioEngine, store: &AssetStore, story: &Story, comm
                 audio.play_sfx(effect);
             }
         }
+        AudioCommand::PlayVoice { asset } => {
+            if let Some(voice) = sound(asset) {
+                audio.play_voice(voice);
+            }
+        }
+        AudioCommand::StopVoice => audio.stop_voice(),
     }
 }
 
@@ -1981,8 +1993,10 @@ impl App for Runtime {
         }
         let blocked = self.is_blocked();
         self.update_splash(dt_secs);
+        let voice_playing = self.audio.is_voice_playing();
         if let Phase::Running(shell) = &mut self.phase {
             shell.set_now(orbit_platform::unix_time_ms());
+            shell.sync_voice(voice_playing);
             if !blocked {
                 orbit_profile::scope!("shell update");
                 shell.update(dt_secs);

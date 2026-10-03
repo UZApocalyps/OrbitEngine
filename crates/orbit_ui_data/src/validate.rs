@@ -282,7 +282,11 @@ fn check_items(sid: &str, w: &WidgetDef, inside: bool, depth: usize, out: &mut V
             BindPath::Param(name) if name.trim().is_empty() => {
                 out.push(Issue::error(sid, wid, "empty parameter name"));
             }
-            BindPath::Var(_) | BindPath::Param(_) | BindPath::Gallery(_) | BindPath::ReplayScenes(_) => {}
+            BindPath::Var(_)
+            | BindPath::Param(_)
+            | BindPath::Gallery(_)
+            | BindPath::ReplayScenes(_)
+            | BindPath::Achievements => {}
             BindPath::Item if inside => {
                 out.push(Issue::error(sid, wid, "lists cannot hold lists: a generated list needs a list or map variable or parameter"));
             }

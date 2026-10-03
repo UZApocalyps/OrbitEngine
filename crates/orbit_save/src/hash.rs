@@ -56,6 +56,7 @@ fn kind_tag(kind: &NodeKind) -> u8 {
         NodeKind::Particles(_) => 27,
         NodeKind::StopParticles { .. } => 28,
         NodeKind::Script { .. } => 29,
+        NodeKind::Unlock { .. } => 30,
     }
 }
 

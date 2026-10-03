@@ -16,6 +16,7 @@ const T_QSAVE: Tag = 5;
 const T_QLOAD: Tag = 6;
 const T_PREFS: Tag = 7;
 const T_MENU: Tag = 8;
+const T_VOICE: Tag = 9;
 
 /// Back (rollback), History, Skip, Auto, Q.Save, Q.Load, Preferences, Menu.
 /// Pointer only (keyboard shortcuts belong to the game input); Skip and Auto
@@ -67,7 +68,7 @@ impl QuickMenu {
         let mut ui = Ui::new(theme.clone());
         ui.set_layer(Layer::UI);
         let bar = ui.add_root(Node::hbox().gap(8.0).anchor(Anchor::bottom_center(-8.0)));
-        let items = [
+        let mut items = Vec::from([
             (T_BACK, "ui.quick.back", false, v.can_rollback),
             (T_HISTORY, "ui.quick.history", false, true),
             (T_SKIP, "ui.quick.skip", v.skip_active, true),
@@ -76,7 +77,13 @@ impl QuickMenu {
             (T_QLOAD, "ui.quick.qload", false, v.can_quick_load),
             (T_PREFS, "ui.quick.prefs", false, true),
             (T_MENU, "ui.quick.menu", false, true),
-        ];
+        ]);
+        if v.can_replay_voice {
+            items.insert(2, (T_VOICE, "ui.quick.voice", false, true));
+        }
+        if v.can_replay_voice {
+            items.insert(2, (T_VOICE, "ui.quick.voice", false, true));
+        }
         for (tag, key, active, enabled) in items {
             ui.add(
                 bar,
@@ -117,6 +124,7 @@ impl Screen for QuickMenu {
                     T_QLOAD => UiEvent::QuickLoad,
                     T_PREFS => UiEvent::OpenPreferences,
                     T_MENU => UiEvent::OpenPause,
+                    T_VOICE => UiEvent::ReplayVoice,
                     _ => return,
                 });
             }

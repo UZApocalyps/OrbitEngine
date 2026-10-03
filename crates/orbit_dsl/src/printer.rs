@@ -15,6 +15,7 @@
 //! "text"                                         narrator line (Say)
 //! <speaker> "text"                               Say; speaker a bare name
 //! say <ref> "text"                               Say, any speaker reference
+//! ... "text" voice <asset-ref>                    any Say line may end with its voice (a sound)
 //! menu                                           Choice; options follow:
 //!     "text" -> <label-ref> [if <expr>]
 //! jump <label-ref>                               Jump
@@ -50,6 +51,7 @@
 //! particles "<name>" <preset> [<key> <value> ...]   Particles (an emitter)
 //! stop particles ["<name>"]                      StopParticles
 //! script "<rhai source>" [branch <name> -> <label-ref> ...] [on_error <label-ref>]   Script
+//! unlock <achievement-ref>                        Unlock (an achievement, by its title)
 //! ```
 //!
 //! A Rhai condition is the expression `rhai "<code>"` (`if rhai "…" -> l`,
@@ -82,7 +84,7 @@
 use std::collections::HashMap;
 
 use orbit_core::{
-    Angle, AnimLoop, AnimTarget, AnimValue as Value, AssetId, CharacterId, Color, CustomData,
+    Angle, AchievementId, AnimLoop, AnimTarget, AnimValue as Value, AssetId, CharacterId, Color, CustomData,
     Curve, Effect, Expr, Node, NodeId, NodeKind, OpKind, Position, Rgba, Scene, SceneId, Story,
     StoryTrack, TrackData, Transition, TransitionKind, Vec2, VarOp,
 };
@@ -113,6 +115,8 @@ pub const KEYWORDS: &[&str] = &[
     "end",
     "custom",
     "script",
+    "unlock",
+    "voice",
     "scene3d",
     "camera3d",
     "hide_scene3d",
@@ -172,6 +176,8 @@ pub(crate) fn fmt_name(s: &str) -> String {
 pub(crate) struct Names {
     pub characters: HashMap<String, Vec<CharacterId>>,
     pub assets: HashMap<String, Vec<AssetId>>,
+    /// Achievements by the source text of their title.
+    pub achievements: HashMap<String, Vec<AchievementId>>,
 }
 
 impl Names {
@@ -188,6 +194,15 @@ impl Names {
         }
         for a in &story.assets.assets {
             names.assets.entry(a.path.clone()).or_default().push(a.id);
+        }
+        for a in &story.achievements {
+            if let Some(title) = story.text(a.title_id) {
+                names
+                    .achievements
+                    .entry(title.to_owned())
+                    .or_default()
+                    .push(a.id);
+            }
         }
         names
     }
@@ -281,6 +296,19 @@ impl<'a> Ctx<'a> {
         match self.story.assets.get(id) {
             Some(a) if unique(&self.names.assets, &a.path) == Some(id) => fmt_name(&a.path),
             _ => format!("@{id}"),
+        }
+    }
+
+    fn achievement_ref(&self, id: AchievementId) -> String {
+        let title = self
+            .story
+            .achievements
+            .iter()
+            .find(|a| a.id == id)
+            .and_then(|a| self.story.text(a.title_id));
+        match title {
+            Some(t) if unique(&self.names.achievements, t) == Some(id) => fmt_name(t),
+            _ => format!(""),
         }
     }
 
@@ -501,15 +529,28 @@ fn write_node(ctx: &Ctx<'_>, scene: SceneId, node: &Node, out: &mut String) {
     let label = |id: NodeId| ctx.label_ref(scene, id);
     let body = match &node.kind {
         NodeKind::Label { name } => format!("label {}", fmt_name(name)),
-        NodeKind::Say { speaker, text_id } => match speaker {
-            None => ctx.text(*text_id),
-            Some(c) => match ctx.character_name(*c) {
-                Some(name) if is_ident(name) && !KEYWORDS.contains(&name) => {
-                    format!("{name} {}", ctx.text(*text_id))
-                }
-                _ => format!("say {} {}", ctx.character_ref(*c), ctx.text(*text_id)),
-            },
-        },
+        NodeKind::Say {
+            speaker,
+            text_id,
+            voice,
+        } => {
+            let mut line = match speaker {
+                None => ctx.text(*text_id),
+                Some(c) => match ctx.character_name(*c) {
+                    Some(name) if is_ident(name) && !KEYWORDS.contains(&name) => {
+                        format!("{name} {}", ctx.text(*text_id))
+                    }
+                    _ => format!("say {} {}", ctx.character_ref(*c), ctx.text(*text_id)),
+                },
+            };
+            if let Some(voice) = voice {
+                line.push_str(&format!(" voice {}", ctx.asset_ref(*voice)));
+            }
+            line
+        }
+        NodeKind::Unlock { achievement } => {
+            format!("unlock {}", ctx.achievement_ref(*achievement))
+        }
         NodeKind::Choice { options } => {
             out.push_str(&format!("    menu #@{}\n", node.id));
             for o in options {

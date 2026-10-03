@@ -139,6 +139,7 @@ fn hand_edits_merge_into_the_story() {
             NodeKind::Say {
                 speaker: None,
                 text_id,
+                ..
             } => Some((n.id, story.text(*text_id).unwrap())),
             _ => None,
         })

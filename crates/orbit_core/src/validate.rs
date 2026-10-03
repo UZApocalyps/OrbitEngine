@@ -50,6 +50,15 @@ pub fn validate(story: &Story) -> ValidationReport {
     cx.nodes(&flat, &index);
     cx.variables(&flat);
     cx.flow(&flat, &index);
+    for a in &story.achievements {
+        let unlocked = flat.iter().any(
+            |n| matches!(&n.kind, NodeKind::Unlock { achievement } if *achievement == a.id),
+        );
+        if !unlocked {
+            cx.warnings
+                .push(ValidationWarning::AchievementNeverUnlocked(a.id));
+        }
+    }
     ValidationReport {
         errors: cx.errors,
         warnings: cx.warnings,
@@ -165,6 +174,35 @@ impl Cx<'_> {
                     node: None,
                     scale: c.default_scale,
                 });
+            }
+        }
+
+        let mut achievement_ids = HashSet::new();
+        for a in &story.achievements {
+            if !achievement_ids.insert(a.id) {
+                self.errors
+                    .push(ValidationError::DuplicateAchievementId(a.id));
+            }
+            let mut bad = |message: String| {
+                self.errors.push(ValidationError::InvalidAchievement {
+                    achievement: a.id,
+                    message,
+                });
+            };
+            if story.strings.get(a.title_id).is_none() {
+                bad(format!("unknown title string {}", a.title_id));
+            }
+            if story.strings.get(a.description_id).is_none() {
+                bad(format!("unknown description string {}", a.description_id));
+            }
+            if let Some(icon) = a.icon {
+                match story.assets.get(icon) {
+                    None => bad(format!("unknown icon asset {icon}")),
+                    Some(e) if e.kind != AssetKind::Image => {
+                        bad(format!("the icon {icon} is a {}, not an image", e.kind));
+                    }
+                    Some(_) => {}
+                }
             }
         }
 
@@ -432,6 +470,20 @@ impl Cx<'_> {
             }
             for s in node.kind.strings() {
                 self.check_string(id, s);
+            }
+            if let NodeKind::Say {
+                voice: Some(voice), ..
+            } = &node.kind
+            {
+                self.check_asset(Some(id), *voice, AssetKind::Sound);
+            }
+            if let NodeKind::Unlock { achievement } = &node.kind
+                && !story.achievements.iter().any(|a| a.id == *achievement)
+            {
+                self.errors.push(ValidationError::UnknownAchievement {
+                    node: id,
+                    achievement: *achievement,
+                });
             }
             match &node.kind {
                 NodeKind::Say {
@@ -1070,6 +1122,7 @@ mod tests {
         node(NodeKind::Say {
             speaker: None,
             text_id: story.strings.add("x"),
+            voice: None,
         })
     }
 

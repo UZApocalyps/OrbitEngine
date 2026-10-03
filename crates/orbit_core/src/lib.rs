@@ -4,6 +4,7 @@
 //! to `wasm32-unknown-unknown`. The story model is serialized as RON, one file
 //! per story, and every node carries a stable ULID.
 
+pub mod achievements;
 pub mod anim;
 pub mod custom;
 pub mod defs;
@@ -40,7 +41,8 @@ pub use error::{AnimationIssue, CoreError, CurveOwner, ValidationError, Validati
 pub use expr::{
     BinOp, EvalError, Expr, Func, ParseError, RHAI_PREFIX, TypeError, UnOp, fold_list, fold_map,
 };
-pub use ids::{AssetId, CharacterId, Node3dId, NodeId, SceneId, StringId};
+pub use achievements::{Achievement, is_legacy_v15_layout, v16_field, v16_skip, with_legacy_v15_layout};
+pub use ids::{AchievementId, AssetId, CharacterId, Node3dId, NodeId, SceneId, StringId};
 pub use story::{
     CURRENT_SCHEMA_VERSION, ChoiceOption, Node, NodeKind, Scene, ScreenParam, ScriptBranch, Story,
 };

@@ -229,6 +229,15 @@ impl Vm {
         Ok(&self.story.scenes[s].nodes[n])
     }
 
+    /// The voice asset of the `Say` node `id` (M7-06), in the source
+    /// language; a translation may replace it (`orbit_i18n::Localizer`).
+    pub fn say_voice(&self, id: NodeId) -> Option<orbit_core::AssetId> {
+        match &self.node(id).ok()?.kind {
+            NodeKind::Say { voice, .. } => *voice,
+            _ => None,
+        }
+    }
+
     /// The node executed after `id` when it does not jump: the next node of
     /// its scene. A scene never falls into the next one: after its last node
     /// the story ends (`None`), unless a `JumpScene` leaves it.
@@ -345,7 +354,7 @@ impl Vm {
 
             match &node.kind {
                 NodeKind::Label { .. } => self.state.pc = next,
-                NodeKind::Say { speaker, text_id } => {
+                NodeKind::Say { speaker, text_id, .. } => {
                     self.state.pc = next;
                     self.state.shown = Some(Interaction::Say {
                         node: pc,
@@ -785,6 +794,10 @@ impl Vm {
                             }
                         }
                     }
+                }
+                NodeKind::Unlock { achievement } => {
+                    self.state.pc = next;
+                    self.unlock_achievement(*achievement);
                 }
             }
         }

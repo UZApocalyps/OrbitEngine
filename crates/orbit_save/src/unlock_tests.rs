@@ -36,14 +36,14 @@ fn story() -> (Story, SceneId, SceneId) {
             name: "one".into(),
             nodes: vec![
                 node(NodeKind::Background { asset: bg, transition: None }),
-                node(NodeKind::Say { speaker: None, text_id: a }),
+                node(NodeKind::Say { speaker: None, text_id: a, voice: None }),
                 node(NodeKind::JumpScene { scene: two, label: None }),
             ],
         },
         Scene {
             id: two,
             name: "two".into(),
-            nodes: vec![node(NodeKind::Say { speaker: None, text_id: b })],
+            nodes: vec![node(NodeKind::Say { speaker: None, text_id: b, voice: None })],
         },
     ];
     (story, one, two)

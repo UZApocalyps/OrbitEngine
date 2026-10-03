@@ -182,6 +182,8 @@ pub struct AudioEngine {
     tracks: Option<Tracks>,
     volumes: [f32; 4],
     music: Option<StaticSoundHandle>,
+    /// The voice line being played (one at a time).
+    voice: Option<StaticSoundHandle>,
     pending_music: Option<(Sound, MusicOptions)>,
     /// The game is in the background: music paused, everything silent.
     paused: bool,
@@ -211,6 +213,7 @@ impl AudioEngine {
             tracks: None,
             volumes: [1.0; 4],
             music: None,
+            voice: None,
             pending_music: None,
             paused: false,
         }
@@ -309,6 +312,14 @@ impl AudioEngine {
                 music.resume(fade);
             }
         }
+        if let Some(voice) = self.voice.as_mut() {
+            let fade = tween(Duration::from_millis(30));
+            if paused {
+                voice.pause(fade);
+            } else {
+                voice.resume(fade);
+            }
+        }
         self.apply_volume(Bus::Master, Duration::from_millis(30));
     }
 
@@ -393,13 +404,44 @@ impl AudioEngine {
         self.play_on(Bus::Sfx, sound, volume);
     }
 
-    /// Plays a voice line on the voice bus.
+    /// Plays a voice line on the voice bus, replacing the one playing (a
+    /// single line is voiced at a time). Dropped while locked/unavailable:
+    /// [`AudioEngine::is_voice_playing`] is then `false` at once.
     pub fn play_voice(&mut self, sound: &Sound) {
-        self.play_on(Bus::Voice, sound, 1.0);
+        self.stop_voice();
+        if self.state != AudioState::Running {
+            log::debug!("voice dropped: audio is {:?}", self.state);
+            return;
+        }
+        if let Some(tracks) = self.tracks.as_mut() {
+            match tracks.voice.play(sound.data.clone()) {
+                Ok(handle) => self.voice = Some(handle),
+                Err(err) => log::warn!("could not play voice: {err}"),
+            }
+        }
+    }
+
+    /// Cuts the voice line that is playing.
+    pub fn stop_voice(&mut self) {
+        if let Some(mut h) = self.voice.take() {
+            h.stop(tween(Duration::ZERO));
+        }
+    }
+
+    /// `true` while a voice line is audibly playing.
+    pub fn is_voice_playing(&self) -> bool {
+        self.voice
+            .as_ref()
+            .is_some_and(|h| h.state() != PlaybackState::Stopped)
     }
 
     /// Housekeeping; call once per frame. Forgets finished music.
     pub fn update(&mut self) {
+        if let Some(h) = &self.voice
+            && h.state() == PlaybackState::Stopped
+        {
+            self.voice = None;
+        }
         if let Some(h) = &self.music
             && h.state() == PlaybackState::Stopped
         {

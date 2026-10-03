@@ -1,7 +1,7 @@
 //! Typed commands on the story IR.
 
 use orbit_core::{
-    AssetEntry, AssetId, Character, CharacterId, Node, NodeId, NodeKind, Scene, SceneId, Story,
+    Achievement, AchievementId, AssetEntry, AssetId, Character, CharacterId, Node, NodeId, NodeKind, Scene, SceneId, Story,
     StringId, VarDecl,
 };
 use thiserror::Error;
@@ -89,6 +89,13 @@ pub enum Command {
         entry: Option<AssetEntry>,
         index: Option<usize>,
     },
+    /// Defines or replaces (`Some`) or removes (`None`) an achievement
+    /// (schema v16). Removing one that an `Unlock` node names is refused.
+    SetAchievement {
+        id: AchievementId,
+        achievement: Option<Achievement>,
+        index: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -125,6 +132,14 @@ pub enum CommandError {
     AssetInUse(AssetId, NodeId),
     #[error("asset {0} is still used by an expression of character {1}")]
     AssetInUseByCharacter(AssetId, CharacterId),
+    #[error("unknown achievement {0}")]
+    UnknownAchievement(AchievementId),
+    #[error("achievement {0} is still unlocked by node {1}")]
+    AchievementInUse(AchievementId, NodeId),
+    #[error("asset {0} is still the icon of achievement {1}")]
+    AssetInUseByAchievement(AssetId, AchievementId),
+    #[error("string {0} is still the title or description of achievement {1}")]
+    StringUsedByAchievement(StringId, AchievementId),
     #[error("a curve needs a non-empty name")]
     EmptyCurveName,
     #[error("named curve `{0}` cannot refer to another named curve")]
@@ -185,6 +200,7 @@ impl Command {
             Command::SetCharacter { .. } => "Modifier un personnage",
             Command::SetVariable { .. } => "Modifier une variable",
             Command::SetAsset { .. } => "Modifier un asset",
+            Command::SetAchievement { .. } => "Modifier un succès",
         }
     }
 
@@ -298,6 +314,13 @@ impl Command {
                         if let Some(user) = users_of_string(story, *id).first() {
                             return Err(CommandError::StringInUse(*id, *user));
                         }
+                        if let Some(a) = story
+                            .achievements
+                            .iter()
+                            .find(|a| a.title_id == *id || a.description_id == *id)
+                        {
+                            return Err(CommandError::StringUsedByAchievement(*id, a.id));
+                        }
                         story
                             .strings
                             .entries
@@ -324,7 +347,8 @@ impl Command {
             | Command::SetNodeKind { .. }
             | Command::SetCharacter { .. }
             | Command::SetVariable { .. }
-            | Command::SetAsset { .. } => crate::ext::apply(self, story),
+            | Command::SetAsset { .. }
+            | Command::SetAchievement { .. } => crate::ext::apply(self, story),
         }
     }
 }

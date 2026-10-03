@@ -21,10 +21,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use orbit_core::{AssetId, SceneId, Story, Value, VarScope};
+use orbit_core::{AchievementId, AssetId, SceneId, Story, Value, VarScope};
 
 use crate::error::VmError;
-use crate::event::StepResult;
+use crate::event::{PresentationEvent, StepResult};
 use crate::state::Pending;
 use crate::vm::Vm;
 
@@ -39,6 +39,8 @@ pub(crate) struct Tracking {
     visits: BTreeMap<SceneId, BTreeMap<String, Value>>,
     /// Images shown as a background.
     images: BTreeSet<AssetId>,
+    /// Achievements unlocked (M7-05).
+    achievements: BTreeSet<AchievementId>,
 }
 
 impl Vm {
@@ -112,6 +114,35 @@ impl Vm {
     /// Replaces the recorded images (loaded from persistent storage).
     pub fn set_shown_images(&mut self, images: BTreeSet<AssetId>) {
         self.tracking.images = images;
+    }
+
+    /// Achievements unlocked (this session and, through
+    /// [`Vm::set_unlocked_achievements`], before). Like the read lines this
+    /// lives outside the state: a rollback or a load never takes one back.
+    pub fn unlocked_achievements(&self) -> &BTreeSet<AchievementId> {
+        &self.tracking.achievements
+    }
+
+    /// Replaces the unlocked achievements (loaded from persistent storage).
+    pub fn set_unlocked_achievements(&mut self, achievements: BTreeSet<AchievementId>) {
+        self.tracking.achievements = achievements;
+    }
+
+    /// Unlocks `id` (M7-05): the `Unlock` node, a plugin or a script.
+    /// Returns `true` the first time (the host shows a toast and persists
+    /// it), `false` when it was already unlocked, is not defined by the
+    /// story, or when this VM replays a scene: a replay unlocks nothing.
+    /// An unlock emits [`PresentationEvent::AchievementUnlocked`].
+    pub fn unlock_achievement(&mut self, id: AchievementId) -> bool {
+        if self.tracking.replay.is_some()
+            || !self.story.achievements.iter().any(|a| a.id == id)
+            || !self.tracking.achievements.insert(id)
+        {
+            return false;
+        }
+        self.events
+            .push(PresentationEvent::AchievementUnlocked { achievement: id });
+        true
     }
 
     pub(crate) fn record_image(&mut self, asset: AssetId) {

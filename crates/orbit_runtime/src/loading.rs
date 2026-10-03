@@ -115,6 +115,9 @@ pub fn scene_asset_paths(story: &Story, scene: usize) -> Vec<String> {
             | NodeKind::PlayMusic { asset, .. }
             | NodeKind::PlaySound { asset }
             | NodeKind::ShowScene3d { scene: asset, .. } => add(*asset),
+            NodeKind::Say {
+                voice: Some(voice), ..
+            } => add(*voice),
             NodeKind::BackgroundLayers { layers, .. } => {
                 for layer in layers {
                     add(layer.asset);

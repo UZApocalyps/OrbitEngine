@@ -34,6 +34,7 @@ fn phone_story() -> Story {
             node(NodeKind::Say {
                 speaker: None,
                 text_id: hello,
+                voice: None,
             }),
             node(NodeKind::OpenScreen {
                 screen: "phone".into(),
@@ -47,6 +48,7 @@ fn phone_story() -> Story {
             node(NodeKind::Say {
                 speaker: None,
                 text_id: after,
+                voice: None,
             }),
             node(NodeKind::End),
         ],

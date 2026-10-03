@@ -273,6 +273,7 @@ impl StageState {
             PresentationEvent::PlayMusic { .. }
             | PresentationEvent::StopMusic { .. }
             | PresentationEvent::PlaySound { .. }
+            | PresentationEvent::AchievementUnlocked { .. }
             | PresentationEvent::Custom { .. } => StageEffect::None,
         }
     }

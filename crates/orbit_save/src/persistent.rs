@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use orbit_core::{NodeId, SceneId, Value};
+use orbit_core::{AchievementId, NodeId, SceneId, Value};
 use orbit_vm::Vm;
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +39,10 @@ pub struct PersistentData {
     /// (the gallery unlocks, M7-03).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub unlocked_images: BTreeSet<String>,
+    /// Achievements unlocked in any playthrough (M7-05). Files written before
+    /// this field existed have none.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub unlocked_achievements: BTreeSet<AchievementId>,
 }
 
 impl PersistentData {
@@ -58,6 +62,7 @@ impl PersistentData {
                 .iter()
                 .filter_map(|id| story.assets.get(*id).map(|a| a.path.clone()))
                 .collect(),
+            unlocked_achievements: vm.unlocked_achievements().clone(),
         }
     }
 
@@ -104,6 +109,14 @@ impl PersistentData {
             .map(|a| a.id)
             .collect();
         vm.set_shown_images(images);
+        let defined: HashSet<AchievementId> = story.achievements.iter().map(|a| a.id).collect();
+        vm.set_unlocked_achievements(
+            self.unlocked_achievements
+                .iter()
+                .filter(|id| defined.contains(id))
+                .copied()
+                .collect(),
+        );
     }
 
     pub fn to_ron(&self) -> Result<String, SaveError> {

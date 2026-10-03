@@ -105,6 +105,7 @@ fn inventory_story() -> Story {
             kind: NodeKind::Say {
                 speaker: None,
                 text_id,
+                voice: None,
             },
         });
     }

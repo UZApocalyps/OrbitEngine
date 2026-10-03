@@ -129,4 +129,10 @@ pub enum PresentationEvent {
         layers: Vec<orbit_core::BgLayer>,
         transition: Option<Transition>,
     },
+    /// An achievement was unlocked for the first time (an `Unlock` node,
+    /// M7-05): the host shows a toast and persists it. Never emitted again
+    /// after a rollback, and never by a replay. Appended last.
+    AchievementUnlocked {
+        achievement: orbit_core::AchievementId,
+    },
 }

@@ -213,6 +213,7 @@ fn fake_history() -> HistoryView {
                     speaker: speaker.map(|(n, c)| (n.to_owned(), c)),
                     text: format!("{} ({})", text, i + 1),
                     can_rollback: i % 3 != 1,
+                    has_voice: i % 4 == 0,
                 }
             })
             .collect(),
@@ -296,6 +297,7 @@ impl Ready {
         let quick_view = QuickMenuView {
             can_rollback: true,
             can_quick_load: true,
+            can_replay_voice: true,
             ..Default::default()
         };
         let mut dialogue = DialogueBox::new(theme.textbox.clone());
@@ -409,7 +411,9 @@ impl Ready {
                 | UiEvent::Custom { .. }
                 | UiEvent::VarOp(_)
                 | UiEvent::SceneGoto(_)
-                | UiEvent::ReplayScene(_) => {}
+                | UiEvent::ReplayScene(_)
+                | UiEvent::ReplayVoice
+                | UiEvent::ReplayVoiceAt(_) => {}
                 UiEvent::Back | UiEvent::BackWith(_) => self.pop(),
                 UiEvent::ReturnToMainMenu => self.jump(Which::Main),
                 UiEvent::Quit => self.toasts.push("Quit requested (ignored in the gallery)"),

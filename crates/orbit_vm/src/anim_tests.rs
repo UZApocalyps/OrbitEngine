@@ -51,7 +51,7 @@ impl Fx {
 
     fn say(&mut self, text: &str) -> NodeId {
         let text_id = self.story.strings.add(text);
-        self.push(NodeKind::Say { speaker: None, text_id })
+        self.push(NodeKind::Say { speaker: None, text_id, voice: None })
     }
 
     fn mv(&mut self, dx: f32, duration: f32, wait: bool) -> NodeId {
@@ -313,7 +313,7 @@ fn changing_scene_stops_animations_and_restarts_the_clock() {
     story.scenes.push(Scene {
         id: second,
         name: "two".into(),
-        nodes: vec![Node { id: NodeId::new(), kind: NodeKind::Say { speaker: None, text_id } }],
+        nodes: vec![Node { id: NodeId::new(), kind: NodeKind::Say { speaker: None, text_id, voice: None } }],
     });
     let mut vm = Vm::from_start(Arc::new(story)).unwrap();
     say_node(&mut vm);

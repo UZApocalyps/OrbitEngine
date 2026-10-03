@@ -32,6 +32,9 @@ pub struct Line {
     /// The line was already shown before (this or another playthrough, or a
     /// rollback): candidates for skipping.
     pub already_read: bool,
+    /// Voice acting of the line (M7-06): the translation's voice for the
+    /// selected language, else the one of the `Say` node.
+    pub voice: Option<AssetId>,
 }
 
 /// What the story is doing right now.
@@ -68,6 +71,12 @@ pub enum AudioCommand {
     PlaySound {
         asset: AssetId,
     },
+    /// Plays a voice line on the voice bus, replacing the one playing.
+    PlayVoice {
+        asset: AssetId,
+    },
+    /// Cuts the voice line that is playing.
+    StopVoice,
 }
 
 /// The visual change being animated: the stage before it, and how to blend.
@@ -100,6 +109,11 @@ pub struct Director {
     /// The blocking `Effect` / `Timeline` the flow is waiting for.
     anim_wait: Option<orbit_core::NodeId>,
     audio: Vec<AudioCommand>,
+    /// A voice line was started and the host did not report its end yet
+    /// ([`Director::voice_finished`]): auto mode waits for it.
+    voice_active: bool,
+    /// Achievements unlocked since the last [`Director::take_unlocks`].
+    unlocked: Vec<orbit_core::AchievementId>,
     /// The music the host was last asked to play.
     music: Option<MusicState>,
     generation: u64,
@@ -144,6 +158,8 @@ impl Director {
             pending: None,
             anim_wait: None,
             audio: Vec::new(),
+            voice_active: false,
+            unlocked: Vec::new(),
             music: None,
             generation: 0,
             progress: 0,
@@ -260,6 +276,52 @@ impl Director {
     /// Audio requests accumulated since the last call.
     pub fn take_audio(&mut self) -> Vec<AudioCommand> {
         std::mem::take(&mut self.audio)
+    }
+
+    /// Achievements unlocked since the last call (M7-05), for the host's toast
+    /// and persistence.
+    pub fn take_unlocks(&mut self) -> Vec<orbit_core::AchievementId> {
+        std::mem::take(&mut self.unlocked)
+    }
+
+    /// Whether the voice of the line on screen is still playing (as far as the
+    /// host reported): auto mode waits for it to end (M7-06).
+    pub fn voice_active(&self) -> bool {
+        self.voice_active
+    }
+
+    /// The host reports that the voice it was asked to play ended (or could
+    /// not play).
+    pub fn voice_finished(&mut self) {
+        self.voice_active = false;
+    }
+
+    /// The voice of the line on screen, if it has one.
+    pub fn line_voice(&self) -> Option<AssetId> {
+        match &self.flow {
+            Flow::Say(line) => line.voice,
+            _ => None,
+        }
+    }
+
+    /// Plays the voice of the line on screen again (the replay button of the
+    /// text box and of the history). Returns `false` for a line without
+    /// voice.
+    pub fn replay_voice(&mut self) -> bool {
+        match self.line_voice() {
+            Some(asset) => {
+                self.audio.push(AudioCommand::PlayVoice { asset });
+                self.voice_active = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Starts the voice of the line that was just shown going forward (a
+    /// rollback or a load stays silent: the player replays it by hand).
+    fn start_voice(&mut self) {
+        self.replay_voice();
     }
 
     /// Advances timers (pauses and transitions); resumes the VM when they end.
@@ -463,11 +525,14 @@ impl Director {
     fn flow_for(&self, interaction: &Interaction, already_read: bool) -> Flow {
         match interaction {
             Interaction::Say {
-                speaker, string_id, ..
+                node,
+                speaker,
+                string_id,
             } => Flow::Say(Line {
                 speaker: speaker.and_then(|id| self.speaker(id)),
                 text: self.text(*string_id),
                 already_read,
+                voice: self.loc.voice(*string_id).or_else(|| self.vm.say_voice(*node)),
             }),
             Interaction::Choice { options, .. } => {
                 Flow::Choice(options.iter().map(|o| self.text(o.string_id)).collect())
@@ -501,6 +566,11 @@ impl Director {
     /// Shows a line or a choice. `already_read` is `true` for a line shown
     /// again (rollback, load).
     fn present(&mut self, interaction: Interaction, already_read: bool) {
+        if self.voice_active {
+            // A new line, choice or screen cuts the voice of the previous one.
+            self.audio.push(AudioCommand::StopVoice);
+            self.voice_active = false;
+        }
         self.pending = None; // a transition not waited for is a cut
         self.anim_wait = None;
         self.flow = self.flow_for(&interaction, already_read);
@@ -534,6 +604,9 @@ impl Director {
                 }
                 PresentationEvent::PlaySound { asset } => {
                     self.audio.push(AudioCommand::PlaySound { asset: *asset })
+                }
+                PresentationEvent::AchievementUnlocked { achievement } => {
+                    self.unlocked.push(*achievement);
                 }
                 _ => {}
             }
@@ -579,6 +652,7 @@ impl Director {
                         },
                         already_read,
                     );
+                    self.start_voice();
                     return;
                 }
                 StepResult::Choice { node, options } => {
@@ -1051,7 +1125,7 @@ mod tests {
             let text_id = story.strings.add(t);
             nodes.push(Node {
                 id: NodeId::new(),
-                kind: NodeKind::Say { speaker: None, text_id },
+                kind: NodeKind::Say { speaker: None, text_id, voice: None },
             });
         }
         say(&mut story, &mut nodes, "a");
@@ -1099,7 +1173,7 @@ mod tests {
         }];
         for t in ["a", "b"] {
             let text_id = story.strings.add(t);
-            nodes.push(Node { id: NodeId::new(), kind: NodeKind::Say { speaker: None, text_id } });
+            nodes.push(Node { id: NodeId::new(), kind: NodeKind::Say { speaker: None, text_id, voice: None } });
         }
         story.scenes.push(Scene { id: SceneId::new(), name: "s".into(), nodes });
         Director::new(Vm::from_start(story).unwrap())
@@ -1180,7 +1254,7 @@ mod tests {
                     }],
                 },
             },
-            Node { id: NodeId::new(), kind: NodeKind::Say { speaker: None, text_id } },
+            Node { id: NodeId::new(), kind: NodeKind::Say { speaker: None, text_id, voice: None } },
         ];
         story.scenes.push(Scene { id: SceneId::new(), name: "s".into(), nodes });
         let mut d = Director::new(Vm::from_start(story).unwrap());

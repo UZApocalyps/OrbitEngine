@@ -111,16 +111,35 @@ fn label_ref(story: &Story, id: orbit_core::NodeId) -> String {
     }
 }
 
+/// `"Title" (id)` of an achievement.
+pub fn achievement_label(story: &Story, id: orbit_core::AchievementId) -> String {
+    match story.achievements.iter().find(|a| a.id == id) {
+        Some(a) => format!(
+            "{} ({id})",
+            quote(story.text(a.title_id).unwrap_or("<missing title>"))
+        ),
+        None => format!("{id} (missing)"),
+    }
+}
+
 /// One-line, human-readable description of a node's content.
 pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
     match kind {
         NodeKind::Label { name } => format!("label {}", quote(name)),
-        NodeKind::Say { speaker, text_id } => {
+        NodeKind::Say {
+            speaker,
+            text_id,
+            voice,
+        } => {
             let who = speaker.map_or_else(|| "narrator".to_owned(), |c| character_name(story, c));
+            let voiced = voice.map_or_else(String::new, |a| format!(" (voice {})", asset_label(story, a)));
             format!(
-                "say [{who}]: {}",
+                "say [{who}]: {}{voiced}",
                 quote(story.text(*text_id).unwrap_or("<missing text>"))
             )
+        }
+        NodeKind::Unlock { achievement } => {
+            format!("unlock achievement {}", achievement_label(story, *achievement))
         }
         NodeKind::Choice { options } => {
             let items: Vec<String> = options
@@ -747,6 +766,9 @@ fn describe_event(story: &Story, event: &PresentationEvent) -> String {
         }
         PresentationEvent::StopMusic { .. } => "music stops".to_owned(),
         PresentationEvent::PlaySound { asset } => format!("sound {}", asset_label(story, *asset)),
+        PresentationEvent::AchievementUnlocked { achievement } => {
+            format!("achievement unlocked {}", achievement_label(story, *achievement))
+        }
         PresentationEvent::Custom {
             plugin_id, kind, ..
         } => format!("custom {plugin_id}/{kind}"),

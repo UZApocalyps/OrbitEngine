@@ -307,6 +307,7 @@ fn build(scenes: Vec<(usize, Vec<Spec>)>) -> Story {
                 Spec::Say(speaker, t) => NodeKind::Say {
                     speaker: speaker.map(character),
                     text_id: story.strings.add(t),
+                    voice: None,
                 },
                 Spec::Choice(options) => NodeKind::Choice {
                     options: options

@@ -374,6 +374,7 @@ mod tests {
             kind: NodeKind::Say {
                 speaker: None,
                 text_id: story.strings.add(text),
+                voice: None,
             },
         }
     }

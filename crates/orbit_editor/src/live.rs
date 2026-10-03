@@ -766,6 +766,7 @@ mod tests {
                 speaker: Some(("Alice".into(), [1, 2, 3])),
                 text: "Hi".into(),
                 already_read: false,
+                voice: None,
             }),
             ..snapshot
         };

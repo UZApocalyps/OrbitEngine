@@ -1174,7 +1174,7 @@ fn add_dialogue(cx: &mut ToolCx<'_>, a: AddDialogueArgs) -> Result<String, ToolE
     let text_id = StringId::new();
     let say = Node {
         id: NodeId::new(),
-        kind: NodeKind::Say { speaker, text_id },
+        kind: NodeKind::Say { speaker, text_id, voice: None },
     };
     let say_id = say.id;
     let show_id = show.as_ref().map(|n| n.id);
@@ -1220,7 +1220,7 @@ fn edit_dialogue(cx: &mut ToolCx<'_>, a: EditDialogueArgs) -> Result<String, Too
     let node = story
         .node(id)
         .ok_or_else(|| ToolError::not_found(format!("no node {id}")))?;
-    let NodeKind::Say { speaker, text_id } = &node.kind else {
+    let NodeKind::Say { speaker, text_id, .. } = &node.kind else {
         return Err(ToolError::invalid(format!(
             "node {id} is not a dialogue (say) node"
         )));

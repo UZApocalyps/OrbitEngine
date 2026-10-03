@@ -22,7 +22,7 @@ pub use orbit_ui_data::{
     from_ron, migrate, scene_issues, to_ron, validate, validate_with_vars, variable_issues,
 };
 pub use preview::{NavStep, PreviewNav, sample_saves};
-pub use screen::{DataContext, DataScreen};
+pub use screen::{AchievementRow, DataContext, DataScreen};
 pub use slots::{SlotsPage, slots_page};
 
 #[cfg(test)]

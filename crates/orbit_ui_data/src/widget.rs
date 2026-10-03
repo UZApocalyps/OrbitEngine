@@ -10,7 +10,7 @@ use crate::layout::{Align, Anchor, Dir, PanelKind, Size};
 use crate::transition::ScreenTransition;
 
 /// Current version of the screen document format.
-pub const UI_VERSION: u32 = 6;
+pub const UI_VERSION: u32 = 7;
 
 fn default_version() -> u32 {
     UI_VERSION
@@ -92,6 +92,11 @@ pub enum Cond {
     /// A gallery row tells an unlocked image (its path) from a locked one
     /// (empty) with it. Always false outside a generated list.
     Item,
+    /// Inside an `Achievements` row (`ui_version` 7): the achievement of the
+    /// row is unlocked. Always false outside such a row.
+    Unlocked,
+    /// The story defines at least one achievement (`ui_version` 7).
+    HasAchievements,
 }
 
 /// Size, spacing and placement of a widget.

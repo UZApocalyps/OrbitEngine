@@ -20,6 +20,8 @@ pub mod ops;
 pub mod rigmesh;
 pub mod rigs;
 pub mod scripts;
+pub mod achievements;
+pub mod voices;
 mod project;
 pub mod sandbox;
 mod storage;
