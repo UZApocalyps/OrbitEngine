@@ -142,7 +142,16 @@ fn tools_advertise_schemas_and_hints() {
         .filter(|t| t.destructive)
         .map(|t| t.name.as_str())
         .collect();
-    assert_eq!(destructive, ["delete_scene", "delete_node"]);
+    assert_eq!(
+        destructive,
+        [
+            "delete_scene",
+            "delete_node",
+            "delete_ui_screen",
+            "delete_ui_style",
+            "delete_ui_splash"
+        ]
+    );
     let read_only: Vec<&str> = tools
         .iter()
         .filter(|t| t.read_only)
