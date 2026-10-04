@@ -13,7 +13,7 @@ use std::thread;
 
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-    ListResourcesResult, ListToolsResult, PaginatedRequestParams, ReadResourceRequestParams,
+    CacheScope, ListResourcesResult, ListToolsResult, PaginatedRequestParams, ReadResourceRequestParams,
     ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ServerCapabilities,
     ServerConfig, Tool, ToolAnnotations,
 };
@@ -176,7 +176,9 @@ impl ServerHandler for OrbitMcpServer {
         let infos = self.ask(Job::ListTools).await?;
         Ok(ListToolsResult::with_all_items(
             infos.into_iter().map(to_tool).collect(),
-        ))
+        )
+        .with_ttl_ms(0)
+        .with_cache_scope(CacheScope::Private))
     }
 
     async fn call_tool(
@@ -214,7 +216,9 @@ impl ServerHandler for OrbitMcpServer {
         let infos = self.ask(Job::ListResources).await?;
         Ok(ListResourcesResult::with_all_items(
             infos.into_iter().map(to_resource).collect(),
-        ))
+        )
+        .with_ttl_ms(0)
+        .with_cache_scope(CacheScope::Private))
     }
 
     async fn read_resource(
@@ -300,4 +304,25 @@ pub fn serve_stdio_with(project: &Path, force: bool) -> Result<(), String> {
             .map_err(|e| format!("MCP session ended with an error: {e}"))?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod cache_meta_tests {
+    use super::*;
+
+    /// Spec 2026-07-28 requires `ttlMs` (number >= 0) and `cacheScope`
+    /// ("public" | "private") on list results; Claude Code rejects them otherwise.
+    #[test]
+    fn list_results_carry_valid_cache_fields() {
+        let tools = ListToolsResult::with_all_items(vec![])
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private);
+        let res = ListResourcesResult::with_all_items(vec![])
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private);
+        for v in [serde_json::to_value(&tools).unwrap(), serde_json::to_value(&res).unwrap()] {
+            assert!(v["ttlMs"].is_u64(), "ttlMs missing: {v}");
+            assert!(matches!(v["cacheScope"].as_str(), Some("public" | "private")), "bad cacheScope: {v}");
+        }
+    }
 }
