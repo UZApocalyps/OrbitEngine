@@ -101,15 +101,7 @@ impl EditorPlugin for RigPlugin {
         }));
         reg.action(
             ActionDef::new("open", "rig.open", |ctx| {
-                for p in [
-                    panel_ids::RIG_VIEWPORT,
-                    panel_ids::RIG_HIERARCHY,
-                    panel_ids::RIG_INSPECTOR,
-                    panel_ids::RIG_CLIPS,
-                    panel_ids::RIG_TIMELINE,
-                ] {
-                    ctx.request(EditorRequest::ShowPanel(p.to_owned()));
-                }
+                ctx.request(EditorRequest::ShowWorkspace(rig_workspace()));
             })
             .icon(icons::BONE)
             .category("category.tools")
@@ -118,13 +110,7 @@ impl EditorPlugin for RigPlugin {
         let state = self.state.clone();
         reg.action(
             ActionDef::new("new_from_image", "rig.image.new", move |ctx| {
-                for p in [
-                    panel_ids::RIG_VIEWPORT,
-                    panel_ids::RIG_HIERARCHY,
-                    panel_ids::RIG_INSPECTOR,
-                ] {
-                    ctx.request(EditorRequest::ShowPanel(p.to_owned()));
-                }
+                ctx.request(EditorRequest::ShowWorkspace(rig_workspace()));
                 if let Ok(mut st) = state.try_borrow_mut() {
                     st.request_new_from_image(ctx);
                 }
@@ -427,6 +413,9 @@ impl State {
     }
 
     pub fn undo_redo_keys(&mut self, ui: &Ui) {
+        if ui.ctx().egui_wants_keyboard_input() {
+            return;
+        }
         let (undo, redo) = ui.input(|i| {
             let ctrl = i.modifiers.command;
             (
@@ -765,6 +754,20 @@ impl State {
 
 /// Picture files dropped on `rect` this frame (a drop whose position is
 /// unknown counts when the pointer was last seen over it).
+/// The rig editor workspace: the viewport in the center, its side panels as
+/// one sub-tab group under it.
+fn rig_workspace() -> Vec<String> {
+    [
+        panel_ids::RIG_VIEWPORT,
+        panel_ids::RIG_HIERARCHY,
+        panel_ids::RIG_INSPECTOR,
+        panel_ids::RIG_CLIPS,
+        panel_ids::RIG_TIMELINE,
+    ]
+    .map(str::to_owned)
+    .to_vec()
+}
+
 fn dropped_pictures(ui: &Ui, rect: Rect) -> Vec<PathBuf> {
     ui.input(|i| {
         if i.raw.dropped_files.is_empty() {
@@ -1022,6 +1025,9 @@ fn navigate(ui: &Ui, st: &mut State, response: &egui::Response, rect: Rect) {
 }
 
 fn keys(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, rect: Rect) {
+    if ui.ctx().egui_wants_keyboard_input() {
+        return;
+    }
     st.undo_redo_keys(ui);
     let (m, p) = ui.input(|i| {
         let plain = !i.modifiers.command && !i.modifiers.alt;

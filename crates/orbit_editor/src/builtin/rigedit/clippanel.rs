@@ -759,7 +759,7 @@ fn delete_selected(st: &mut State) {
 }
 
 fn handle_keys(ui: &Ui, st: &mut State, _clip: &RigClip) {
-    if !ui.rect_contains_pointer(ui.max_rect()) {
+    if !ui.rect_contains_pointer(ui.max_rect()) || ui.ctx().egui_wants_keyboard_input() {
         return;
     }
     let del = ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace));
