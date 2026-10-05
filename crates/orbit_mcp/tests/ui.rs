@@ -111,3 +111,52 @@ fn bad_input_is_refused_without_writing() {
     );
     assert!(!dir.join("ui").exists() || fs::read_dir(dir.join("ui")).unwrap().next().is_none());
 }
+
+/// `ui_version` 8: image-state styles, the dialogue box section and
+/// applying a style to a widget, through the MCP tools.
+#[test]
+fn image_button_styles_and_the_dialogue_box_through_mcp() {
+    let (dir, mut h) = host("dlg");
+    let style = "(fills: (normal: Some(Image(image: \"assets/ui/b.png\", fit: Stretch)), \
+                 hover: Some(NineSlice(image: \"assets/ui/b_hover.png\", insets: (8.0, 8.0, 8.0, 8.0)))), \
+                 show_text: Some(false), shadow: Some((color: (0, 0, 0, 90), offset: (4.0, 4.0))))";
+    h.call_tool("write_ui_style", json!({"name": "img_button", "ron": style})).unwrap();
+    let r = json_of(h.call_tool("read_ui_style", json!({"name": "img_button"})).unwrap());
+    let ron = r["ron"].as_str().unwrap();
+    assert!(ron.contains("b_hover.png") && ron.contains("show_text"), "{ron}");
+
+    h.call_tool(
+        "write_ui_screen",
+        json!({"ron": "(id: \"menu\", root: (kind: Stack(dir: Vertical), children: [\
+                 (id: \"go\", kind: Button(text: Literal(\"Go\"))),\
+                 (id: \"logo\", kind: Image(asset: Some(\"assets/ui/logo.png\"), action: [Open(\"menu\")]))]))"}),
+    )
+    .unwrap();
+    h.call_tool("set_ui_widget_style", json!({"screen": "menu", "widget": "go", "style": "img_button"}))
+        .unwrap();
+    let screen = fs::read_to_string(dir.join("ui/menu.screen.ron")).unwrap();
+    assert!(screen.contains("img_button") && screen.contains("Open(\"menu\")"), "{screen}");
+    assert!(
+        h.call_tool("set_ui_widget_style", json!({"screen": "menu", "widget": "nope", "style": "x"}))
+            .is_err()
+    );
+
+    // The dialogue box: a section written alone leaves the others.
+    let r = json_of(
+        h.call_tool(
+            "write_ui_dialogue",
+            json!({"ron": "(textbox: (style: Some(\"img_button\"), name_plate: Some((style: Some(\"ghost\"))), \
+                   anchor: Some((canvas: (0.5, 1.0), pivot: (0.5, 1.0), offset: (0.0, -20.0)))))"}),
+        )
+        .unwrap(),
+    );
+    let issues = r["issues"].as_array().unwrap();
+    assert!(
+        issues.iter().any(|i| i["message"].as_str().unwrap().contains("unknown style `ghost`")),
+        "{issues:?}"
+    );
+    let r = json_of(h.call_tool("read_ui_dialogue", json!({})).unwrap());
+    let ron = r["ron"].as_str().unwrap();
+    assert!(ron.contains("img_button") && ron.contains("show_numbers"), "{ron}");
+    assert!(h.call_tool("write_ui_dialogue", json!({"ron": "(textbox: 3)"})).is_err());
+}

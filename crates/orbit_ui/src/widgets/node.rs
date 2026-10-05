@@ -77,6 +77,9 @@ pub enum Kind {
     Image {
         texture: Option<TextureId>,
         uv: [f32; 4],
+        /// Clickable and focusable like a button (`ui_version` 8 image
+        /// actions): activating it emits `Activated(tag)`.
+        clickable: bool,
     },
 }
 
@@ -84,7 +87,11 @@ impl Kind {
     pub fn is_interactive(&self) -> bool {
         matches!(
             self,
-            Kind::Button(_) | Kind::Slider { .. } | Kind::Toggle { .. } | Kind::Selector { .. }
+            Kind::Button(_)
+                | Kind::Slider { .. }
+                | Kind::Toggle { .. }
+                | Kind::Selector { .. }
+                | Kind::Image { clickable: true, .. }
         )
     }
 }
@@ -328,7 +335,18 @@ impl Node {
         Self::base(Kind::Image {
             texture,
             uv: [0.0, 0.0, 1.0, 1.0],
+            clickable: false,
         })
+    }
+
+    /// An image that is clicked like a button (emits `Activated(tag)`).
+    pub fn clickable_image(tag: Tag, texture: Option<TextureId>) -> Self {
+        let mut n = Self::image(texture);
+        if let Kind::Image { clickable, .. } = &mut n.kind {
+            *clickable = true;
+        }
+        n.tag = tag;
+        n
     }
 
     // ---- chained setters ----

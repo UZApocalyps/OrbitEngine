@@ -696,6 +696,19 @@ impl PreviewHost {
                 (bundle_ron, UiPreviewTarget::Screen(id.as_str()))
             }
             UiPreviewRequest::Splashes { bundle_ron } => (bundle_ron, UiPreviewTarget::Splashes),
+            UiPreviewRequest::Dialogue {
+                bundle_ron,
+                speaker,
+                line,
+                choices,
+            } => (
+                bundle_ron,
+                UiPreviewTarget::Dialogue {
+                    speaker,
+                    line,
+                    choices,
+                },
+            ),
         };
         let shown = orbit_ui::UiBundle::from_ron(bundle_ron)
             .and_then(|bundle| self.runtime.set_ui_preview(&bundle, target, &language));

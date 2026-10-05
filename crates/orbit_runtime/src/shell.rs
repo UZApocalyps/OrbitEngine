@@ -594,6 +594,7 @@ impl Shell {
     pub fn set_ui_images(&mut self, images: std::collections::HashMap<String, TextureId>) {
         if images != self.ui_images {
             self.ui_images = images;
+            self.quick.set_images(self.ui_images.clone());
             self.sync_data();
         }
     }
@@ -2705,6 +2706,7 @@ impl Shell {
                             ctx.renderer,
                             ctx.scene,
                             ctx.white,
+                            &self.ui_images,
                         ),
                         FlowKind::Choice => {
                             if let Some(menu) = &mut game.menu {
@@ -2714,6 +2716,7 @@ impl Shell {
                                     ctx.renderer,
                                     ctx.scene,
                                     ctx.white,
+                                    &self.ui_images,
                                 );
                             }
                         }

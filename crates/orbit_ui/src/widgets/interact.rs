@@ -205,7 +205,9 @@ impl Ui {
         self.focus = Some(id);
         self.hover = Some(id);
         match self.nodes[id.0].kind {
-            Kind::Button(_) | Kind::Toggle { .. } => self.pressed = Some(id),
+            Kind::Button(_) | Kind::Toggle { .. } | Kind::Image { clickable: true, .. } => {
+                self.pressed = Some(id)
+            }
             Kind::Slider { .. } => {
                 self.drag = Some(id);
                 self.set_slider_from_x(id, p[0], out);
@@ -271,7 +273,7 @@ impl Ui {
         let tag = self.nodes[id.0].tag;
         let confirm = self.sound_event(id, UiSound::Confirm);
         match &mut self.nodes[id.0].kind {
-            Kind::Button(_) => {
+            Kind::Button(_) | Kind::Image { clickable: true, .. } => {
                 out.push(confirm);
                 out.push(WidgetEvent::Activated(tag));
             }

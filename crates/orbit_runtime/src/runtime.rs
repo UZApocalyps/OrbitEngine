@@ -978,6 +978,9 @@ impl Runtime {
         }
         shell.set_menu_background(menu_background(&story, &self.store));
         let mut images = theme_images(&self.ctx.theme, &self.store);
+        if let Some(bundle) = &ui {
+            images.extend(bundle_images(bundle, &self.store));
+        }
         images.extend(gallery_images(&story, &self.store));
         shell.set_ui_images(images);
         shell
@@ -1582,17 +1585,30 @@ fn menu_background(story: &Story, store: &AssetStore) -> Option<TextureId> {
     menu_background_path(story).and_then(|path| store.texture(path))
 }
 
-/// Textures of the nine-slice images the styles of `theme` use (the ones
-/// already loaded in `store`), by asset path.
+/// Textures of the images the theme draws (style fills of every state,
+/// nine-slices, the textbox indicator; the ones already loaded in `store`),
+/// by asset path.
 pub(crate) fn theme_images(
     theme: &orbit_ui::Theme,
     store: &AssetStore,
 ) -> std::collections::HashMap<String, TextureId> {
     theme
-        .styles
-        .values()
-        .filter_map(|style| style.nine_slice().map(|(path, _)| path))
-        .filter_map(|path| store.texture(path).map(|t| (path.to_owned(), t)))
+        .image_paths()
+        .into_iter()
+        .filter_map(|path| store.texture(&path).map(|t| (path, t)))
+        .collect()
+}
+
+/// Textures of the images a UI bundle draws (its theme's and the fixed
+/// images of its screens) that are loaded, by path.
+pub(crate) fn bundle_images(
+    bundle: &orbit_ui::UiBundle,
+    store: &AssetStore,
+) -> std::collections::HashMap<String, TextureId> {
+    bundle
+        .image_paths()
+        .into_iter()
+        .filter_map(|path| store.texture(&path).map(|t| (path, t)))
         .collect()
 }
 

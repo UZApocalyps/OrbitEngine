@@ -264,22 +264,28 @@ impl Theme {
 
 fn contrast_style(style: &mut Style) {
     let sets_text = style.text_colors != StateColors::default();
-    let sets_back = style.colors != StateColors::default() || style.fill.is_some();
+    let sets_back =
+        style.colors != StateColors::default() || style.fill.is_some() || !style.fills.is_empty();
     if sets_text {
         style.text_colors = StateColors {
             normal: Some(WHITE),
             hover: Some(BLACK),
             pressed: Some(BLACK),
             disabled: Some([170, 170, 170, 255]),
+            focused: Some(BLACK),
         };
     }
     if sets_back {
         style.fill = style.fill.take().and(Some(Fill::Color(BLACK)));
+        // Images and gradients give way to the plain high-contrast colors.
+        style.fills = Default::default();
+        style.shadow = None;
         style.colors = StateColors {
             normal: Some(BLACK),
             hover: Some(YELLOW),
             pressed: Some([200, 170, 0, 255]),
             disabled: Some([30, 30, 30, 255]),
+            focused: Some(YELLOW),
         };
     }
     if let Some(border) = &mut style.border {

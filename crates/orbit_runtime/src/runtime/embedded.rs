@@ -110,12 +110,69 @@ pub enum UiPreviewTarget<'a> {
     Screen(&'a str),
     /// The splash sequence (engine splash, then the bundle's), in a loop.
     Splashes,
+    /// The dialogue box of the bundle's theme with a sample line (and the
+    /// quick menu), or its choice menu when `choices` is not empty.
+    Dialogue {
+        speaker: &'a str,
+        line: &'a str,
+        choices: &'a [String],
+    },
 }
 
 /// A UI screen or the splashes standing in for the game (editor UI preview).
 pub(super) enum UiPreview {
     Screen(Box<ScreenPreview>),
     Splashes(SplashState, Vec<orbit_ui::SplashDef>),
+    Dialogue(Box<DialoguePreview>),
+}
+
+/// The dialogue box, choices and quick menu of a theme, drawn by the same
+/// code as in the game (editor "Dialogue box" tab).
+pub(super) struct DialoguePreview {
+    dialogue: orbit_ui::DialogueBox,
+    menu: Option<orbit_ui::ChoiceMenu>,
+    quick: orbit_ui::QuickMenu,
+    images: std::collections::HashMap<String, TextureId>,
+    background: [u8; 4],
+}
+
+impl DialoguePreview {
+    fn new(
+        theme: &Theme,
+        texts: &orbit_ui::Texts,
+        speaker: &str,
+        line: &str,
+        choices: &[String],
+        images: std::collections::HashMap<String, TextureId>,
+    ) -> Self {
+        // A still picture: the line shown whole, the marker not blinking.
+        let mut textbox = theme.textbox.clone();
+        textbox.indicator_blink = false;
+        let mut dialogue = orbit_ui::DialogueBox::new(textbox);
+        dialogue.set_styles(orbit_ui::DialogueStyles::from_theme(theme));
+        let mut menu = None;
+        if choices.is_empty() {
+            let who = (!speaker.trim().is_empty()).then_some((speaker, [255, 150, 190]));
+            dialogue.set_line(who, line);
+            dialogue.advance();
+        } else {
+            menu = Some(orbit_ui::ChoiceMenu::styled(theme, choices));
+        }
+        let view = orbit_ui::QuickMenuView {
+            can_rollback: true,
+            can_quick_load: true,
+            ..Default::default()
+        };
+        let mut quick = orbit_ui::QuickMenu::new(theme, texts, view);
+        quick.set_images(images.clone());
+        Self {
+            dialogue,
+            menu,
+            quick,
+            images,
+            background: theme.screens.background,
+        }
+    }
 }
 
 /// A screen of the project shown as the player would see it: the screen on
@@ -154,12 +211,14 @@ impl ScreenPreview {
         theme: Theme,
         texts: orbit_ui::Texts,
         vars: &std::collections::BTreeMap<String, orbit_core::Value>,
+        images: std::collections::HashMap<String, TextureId>,
     ) -> Result<Self, String> {
         let stock = orbit_ui::UiBundle::builtin();
         let asset =
             Self::find(bundle, &stock, id).ok_or_else(|| format!("no screen called `{id}`"))?;
         let mut nav = orbit_ui::PreviewNav::new(id);
         nav.set_declared(vars);
+        nav.images = images;
         let screen = orbit_ui::DataScreen::new(asset, &theme, &texts, nav.context("Preview"));
         Ok(Self {
             screen,
@@ -182,8 +241,10 @@ impl ScreenPreview {
         theme: Theme,
         texts: orbit_ui::Texts,
         vars: &std::collections::BTreeMap<String, orbit_core::Value>,
+        images: std::collections::HashMap<String, TextureId>,
     ) {
         self.nav.set_declared(vars);
+        self.nav.images = images;
         self.bundle = bundle.clone();
         self.theme = theme;
         self.texts = texts;
@@ -404,6 +465,7 @@ impl Runtime {
             self.ui_sounds = UiSoundBank::new(&self.config.theme, &self.assets_loader);
         }
         let mut images = super::theme_images(&self.ctx.theme, &self.store);
+        images.extend(super::bundle_images(&bundle, &self.store));
         if let Some(story) = self.shell_mut().map(|s| s.story().clone()) {
             images.extend(super::gallery_images(&story, &self.store));
         }
@@ -728,7 +790,7 @@ impl Runtime {
         };
         match &emb.ui_preview {
             Some(UiPreview::Splashes(..)) => return true,
-            Some(UiPreview::Screen(_)) => return emb.ui_settle > 0.0,
+            Some(UiPreview::Screen(_) | UiPreview::Dialogue(_)) => return emb.ui_settle > 0.0,
             None => {}
         }
         if emb.awaiting.is_some() {
@@ -962,7 +1024,20 @@ impl Runtime {
         target: UiPreviewTarget<'_>,
         language: &str,
     ) -> Result<(), String> {
+        let mut images = super::bundle_images(bundle, &self.store);
+        images.extend(super::theme_images(&self.ctx.theme, &self.store));
         let preview = match target {
+            UiPreviewTarget::Dialogue {
+                speaker,
+                line,
+                choices,
+            } => {
+                let theme = bundle.theme.clone().unwrap_or_else(|| self.ctx.theme.clone());
+                let texts = crate::shell::make_texts(language, &self.config.ui_text_overrides);
+                UiPreview::Dialogue(Box::new(DialoguePreview::new(
+                    &theme, &texts, speaker, line, choices, images,
+                )))
+            }
             UiPreviewTarget::Screen(id) => {
                 let theme = bundle.theme.clone().unwrap_or_else(|| self.ctx.theme.clone());
                 // The same table the shell of the game would use.
@@ -986,13 +1061,13 @@ impl Runtime {
                     self.embedded.as_mut().and_then(|e| e.ui_preview.as_mut())
                     && p.nav.top() == id
                 {
-                    p.update_bundle(bundle, theme, texts, &vars);
+                    p.update_bundle(bundle, theme, texts, &vars, images);
                     let emb = self.emb_mut();
                     emb.ui_settle = UI_SETTLE;
                     emb.dirty = true;
                     return Ok(());
                 }
-                UiPreview::Screen(Box::new(ScreenPreview::new(bundle, id, theme, texts, &vars)?))
+                UiPreview::Screen(Box::new(ScreenPreview::new(bundle, id, theme, texts, &vars, images)?))
             }
             UiPreviewTarget::Splashes => {
                 let state = SplashState::new(&bundle.splashes);
@@ -1011,7 +1086,7 @@ impl Runtime {
     pub fn ui_preview_shown(&self) -> Option<&str> {
         match self.embedded.as_ref()?.ui_preview.as_ref()? {
             UiPreview::Screen(p) => Some(p.nav.top()),
-            UiPreview::Splashes(..) => None,
+            UiPreview::Splashes(..) | UiPreview::Dialogue(_) => None,
         }
     }
 
@@ -1020,7 +1095,7 @@ impl Runtime {
     pub fn take_ui_pick(&mut self) -> Option<(String, Vec<usize>)> {
         match self.embedded.as_mut()?.ui_preview.as_mut()? {
             UiPreview::Screen(p) => p.pick.take(),
-            UiPreview::Splashes(..) => None,
+            UiPreview::Splashes(..) | UiPreview::Dialogue(_) => None,
         }
     }
 
@@ -1074,6 +1149,14 @@ impl Runtime {
                 }
                 emb.dirty = true;
             }
+            UiPreview::Dialogue(p) => {
+                use orbit_ui::Screen as _;
+                if emb.ui_settle > 0.0 {
+                    p.quick.update(secs);
+                    emb.ui_settle -= secs;
+                    emb.dirty = true;
+                }
+            }
         }
         true
     }
@@ -1088,6 +1171,28 @@ impl Runtime {
                 // others flash a notice (see `ScreenPreview::handle`).
                 p.handle(input);
                 emb.ui_settle = if p.toasts.is_empty() { UI_SETTLE } else { TOAST_SETTLE };
+                emb.dirty = true;
+            }
+            (Some(UiPreview::Dialogue(p)), InputAction::Ui(input)) => {
+                use orbit_ui::Screen as _;
+                if let Some(menu) = p.menu.as_mut() {
+                    if let UiInput::PointerMove(at) = input {
+                        menu.handle(orbit_ui::MenuInput::Hover(at));
+                    }
+                    match input {
+                        UiInput::Up => drop(menu.handle(orbit_ui::MenuInput::Up)),
+                        UiInput::Down => drop(menu.handle(orbit_ui::MenuInput::Down)),
+                        _ => {}
+                    }
+                } else if matches!(
+                    input,
+                    UiInput::PointerMove(_) | UiInput::PointerDown(_) | UiInput::PointerUp(_)
+                ) {
+                    // Hover and press looks of the quick menu; its actions
+                    // do nothing here.
+                    p.quick.handle(input);
+                }
+                emb.ui_settle = UI_SETTLE;
                 emb.dirty = true;
             }
             (
@@ -1119,6 +1224,44 @@ impl Runtime {
                     self.splash_assets
                         .scene(state, renderer, text_engine, text_renderer, true);
                 out.scene(renderer, &scene)
+            }
+            UiPreview::Dialogue(p) => {
+                use orbit_ui::Screen as _;
+                let mut back = Scene::new();
+                back.clear = Some(tint(p.background));
+                out.scene(renderer, &back)?;
+                let mut ui_scene = Scene::new();
+                {
+                    let mut ctx = DrawCtx {
+                        engine: text_engine,
+                        text_renderer,
+                        renderer,
+                        scene: &mut ui_scene,
+                        white: *white,
+                    };
+                    match &mut p.menu {
+                        Some(menu) => menu.draw(
+                            ctx.engine,
+                            ctx.text_renderer,
+                            ctx.renderer,
+                            ctx.scene,
+                            ctx.white,
+                            &p.images,
+                        ),
+                        None => {
+                            p.dialogue.draw(
+                                ctx.engine,
+                                ctx.text_renderer,
+                                ctx.renderer,
+                                ctx.scene,
+                                ctx.white,
+                                &p.images,
+                            );
+                            p.quick.draw(&mut ctx);
+                        }
+                    }
+                }
+                out.scene(renderer, &ui_scene)
             }
             UiPreview::Screen(p) => {
                 use orbit_ui::Screen as _;

@@ -14,6 +14,7 @@ mod layout;
 mod node;
 
 pub use draw::DrawCtx;
+pub(crate) use draw::{styled_markup, text_align};
 pub use interact::WidgetEvent;
 #[cfg(test)]
 pub(crate) use interact::POPUP_TAG;

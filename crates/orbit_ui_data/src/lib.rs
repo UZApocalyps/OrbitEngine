@@ -28,9 +28,9 @@ pub use coverage::{describe_chars, language_missing_chars, missing_chars};
 pub use sound::UiSound;
 pub use transition::{ScreenFx, ScreenTransition, ScreenTransitionKind};
 pub use theme::{
-    Border, ButtonTheme, ChoiceTheme, ControlTheme, Fill, FontRef, ListTheme, PanelTheme, ScreenTheme,
-    StateColors, Style, StyleSounds, TextBoxTheme, Theme, UiSounds, WidgetTheme,
-    resolve_style,
+    Border, ButtonTheme, CANVAS, ChoiceTheme, ControlTheme, DialogueLayout, Fill, FontRef, ImageFit, ListTheme,
+    NamePlate, PanelTheme, QuickMenuTheme, STYLE_FIELDS, ScreenTheme, Shadow, StateColors, StateFills, Style,
+    StyleSounds, TextAlignment, TextBoxTheme, Theme, UiSounds, WidgetState, WidgetTheme, anchored, resolve_style,
 };
 pub use validate::{Issue, Severity, scene_issues, validate, validate_with_vars, variable_issues};
 pub use widget::{

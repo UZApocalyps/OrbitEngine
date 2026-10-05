@@ -78,6 +78,14 @@ pub enum UiPreviewRequest {
     Screen { bundle_ron: String, id: String },
     /// The splash sequence of the bundle (after the engine splash), looping.
     Splashes { bundle_ron: String },
+    /// The dialogue box of the bundle's theme showing a sample line (and
+    /// the quick menu), or its choice buttons when `choices` is not empty.
+    Dialogue {
+        bundle_ron: String,
+        speaker: String,
+        line: String,
+        choices: Vec<String>,
+    },
     /// Back to the game.
     Off,
 }

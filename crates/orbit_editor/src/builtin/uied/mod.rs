@@ -7,7 +7,11 @@
 //!   duplicate, delete, "stands in for" a system screen), the widget tree
 //!   of the selected one (add, delete, duplicate, move, drag and drop) and
 //!   the properties of the selected widget;
-//! * **Theme**: the named styles (add, rename, delete, edit);
+//! * **Theme**: the named styles (add, duplicate, rename, delete, usage,
+//!   apply to the selected widget) in a visual editor with a live preview
+//!   of sample widgets per state ([`style_ed`]);
+//! * **Dialogue box**: the textbox, name plate, choices and quick menu of
+//!   the theme, previewed by the real runtime ([`dialogue_tab`]);
 //! * **Splashes**: the splash screens, the mandatory engine one shown as a
 //!   locked first row.
 //!
@@ -16,8 +20,10 @@
 //! is the egui shell around them. The preview is the Preview panel put in
 //! "UI mode" ([`UiPreviewRequest`]).
 
+mod dialogue_tab;
 mod model;
 mod props;
+mod style_ed;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -103,6 +109,7 @@ impl EditorPlugin for UiEditorPlugin {
 enum Tab {
     Screens,
     Theme,
+    Dialogue,
     Splashes,
 }
 
@@ -111,6 +118,7 @@ enum Mode {
     Off,
     Screen,
     Splashes,
+    Dialogue,
 }
 
 struct State {
@@ -138,6 +146,11 @@ struct State {
     /// The screen the preview showed last time we looked (to notice when a
     /// click inside it navigated).
     last_shown: Option<String>,
+    /// Dialogue box tab: the preview shows the choices instead of a line.
+    dlg_choices: bool,
+    /// Dialogue box tab: sample speaker and line of the preview.
+    dlg_speaker: String,
+    dlg_line: String,
 }
 
 impl Default for State {
@@ -163,6 +176,9 @@ impl Default for State {
             saw_active: false,
             focused: false,
             last_shown: None,
+            dlg_choices: false,
+            dlg_speaker: String::new(),
+            dlg_line: String::new(),
         }
     }
 }
@@ -276,6 +292,10 @@ impl State {
             Mode::Off => None,
             Mode::Screen => self.screen.clone().map(|id| (Mode::Screen, id)),
             Mode::Splashes => Some((Mode::Splashes, String::new())),
+            Mode::Dialogue => Some((
+                Mode::Dialogue,
+                format!("{}|{}|{}", self.dlg_choices, self.dlg_speaker, self.dlg_line),
+            )),
         };
         match want {
             Some((mode, id)) => {
@@ -284,8 +304,15 @@ impl State {
                     let bundle_ron = doc.bundle_ron();
                     ctx.state_mut().preview.ui_language =
                         (!self.preview_lang.is_empty()).then(|| self.preview_lang.clone());
+                    let sample = dialogue_tab::sample(ctx, self);
                     ctx.state_mut().preview.ui_request = Some(match mode {
                         Mode::Splashes => UiPreviewRequest::Splashes { bundle_ron },
+                        Mode::Dialogue => UiPreviewRequest::Dialogue {
+                            bundle_ron,
+                            speaker: sample.0,
+                            line: sample.1,
+                            choices: sample.2,
+                        },
                         _ => UiPreviewRequest::Screen { bundle_ron, id },
                     });
                     self.sent = Some(key);
@@ -384,6 +411,7 @@ fn panel(
         match st.tab {
             Tab::Screens => screens_tab(ui, ctx, &mut st),
             Tab::Theme => theme_tab(ui, ctx, &mut st),
+            Tab::Dialogue => dialogue_tab::dialogue_tab(ui, ctx, &mut st),
             Tab::Splashes => splash_tab(ui, ctx, &mut st),
         }
     });
@@ -451,6 +479,7 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         for (tab, key) in [
             (Tab::Screens, "uied.tab.screens"),
             (Tab::Theme, "uied.tab.theme"),
+            (Tab::Dialogue, "uied.tab.dialogue"),
             (Tab::Splashes, "uied.tab.splashes"),
         ] {
             if ui
@@ -462,12 +491,12 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             {
                 st.tab = tab;
                 if st.mode != Mode::Off {
-                    st.mode = if tab == Tab::Splashes { Mode::Splashes } else { Mode::Screen };
+                    st.mode = tab_mode(tab);
                 }
             }
         }
         ui.separator();
-        let want = if st.tab == Tab::Splashes { Mode::Splashes } else { Mode::Screen };
+        let want = tab_mode(st.tab);
         let on = st.mode == want;
         let label = if st.tab == Tab::Splashes {
             ctx.t("uied.preview_splashes")
@@ -515,6 +544,15 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
     });
 }
 
+/// What the preview shows for a tab.
+fn tab_mode(tab: Tab) -> Mode {
+    match tab {
+        Tab::Splashes => Mode::Splashes,
+        Tab::Dialogue => Mode::Dialogue,
+        Tab::Screens | Tab::Theme => Mode::Screen,
+    }
+}
+
 // ---------------------------------------------------------------- helpers
 
 /// A full-width row that can be clicked and dragged. Returns it with its
@@ -551,6 +589,19 @@ fn row_text(ui: &Ui, rect: egui::Rect, x: f32, icon: &str, text: &str, color: Co
         FontId::proportional(13.0),
         ui.visuals().text_color(),
     );
+}
+
+fn sounds_of(ctx: &EditorContext<'_>) -> Vec<String> {
+    ctx.story()
+        .map(|s| {
+            s.assets
+                .assets
+                .iter()
+                .filter(|a| a.kind == AssetKind::Sound)
+                .map(|a| a.path.clone())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn images_of(ctx: &EditorContext<'_>) -> Vec<String> {
@@ -626,6 +677,9 @@ fn screens_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
     let fonts = theme_font_names(st);
     let vars = ctx.story().map(orbit_editor_api::varwidgets::story_vars).unwrap_or_default();
     let scenes = story_scenes(ctx);
+    let theme_copy = st.doc.as_ref().and_then(|d| d.bundle.theme.clone());
+    let sounds = sounds_of(ctx);
+    let lookup = style_ed::ImageLookup::new(ctx);
     let env = Env {
         tr: &tr,
         screens: &screens,
@@ -635,6 +689,9 @@ fn screens_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         vars: &vars,
         scenes: &scenes,
         curves: &curves,
+        theme: theme_copy.as_ref(),
+        sounds: &sounds,
+        lookup: &lookup,
     };
     let enable_card = st
         .doc
@@ -1069,6 +1126,9 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
     let story_path = ctx
         .project_info()
         .map(|p| p.root.join(&p.story_file));
+    let theme_copy = st.doc.as_ref().and_then(|d| d.bundle.theme.clone());
+    let sounds = sounds_of(ctx);
+    let lookup = style_ed::ImageLookup::new(ctx);
     let env = Env {
         tr: &tr,
         screens: &[],
@@ -1078,6 +1138,9 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         vars: &[],
         scenes: &[],
         curves: &curves,
+        theme: theme_copy.as_ref(),
+        sounds: &sounds,
+        lookup: &lookup,
     };
     let contrast = st
         .doc
@@ -1437,13 +1500,20 @@ fn style_props(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, env: &E
         ui.label(RichText::new(env.tr.t("uied.select_style")).color(weak(ui)));
         return;
     };
-    let Some(original) = st
-        .doc
-        .as_ref()
-        .and_then(|d| d.bundle.theme.as_ref())
-        .and_then(|t| t.styles.get(&name))
-        .cloned()
-    else {
+    let Some((original, parent)) = st.doc.as_ref().and_then(|d| d.bundle.theme.as_ref()).and_then(|t| {
+        let style = t.styles.get(&name)?.clone();
+        // The runtime merges one level: the parent's own fields.
+        let parent = style
+            .extends
+            .as_deref()
+            .filter(|p| *p != name)
+            .and_then(|p| t.styles.get(p))
+            .map(|p| orbit_ui::Style {
+                extends: None,
+                ..p.clone()
+            });
+        Some((style, parent))
+    }) else {
         return;
     };
     if st.style_rename_for != name {
@@ -1452,11 +1522,15 @@ fn style_props(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, env: &E
     }
     section_title(ui, &env.tr.t("uied.style_props"));
     let mut remove = false;
+    let mut duplicate = false;
     let mut rename_to = None;
     ui.horizontal(|ui| {
         let response = ui.add(egui::TextEdit::singleline(&mut st.style_rename).desired_width(150.0));
         if response.lost_focus() && st.style_rename != name && !st.style_rename.trim().is_empty() {
             rename_to = Some(st.style_rename.trim().to_owned());
+        }
+        if icon_button(ui, icons::COPY, &env.tr.t("uied.duplicate_style")).clicked() {
+            duplicate = true;
         }
         if icon_button(ui, icons::TRASH, &env.tr.t("uied.delete_style")).clicked() {
             remove = true;
@@ -1482,6 +1556,13 @@ fn style_props(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, env: &E
         }
         return;
     }
+    if duplicate && let Some(doc) = st.doc.as_mut() {
+        let copy = doc.edit(|b| b.theme.as_mut().and_then(|t| model::duplicate_style(t, &name)));
+        if copy.is_some() {
+            st.style = copy;
+        }
+        return;
+    }
     if remove && let Some(doc) = st.doc.as_mut() {
         doc.edit(|b| {
             let screens = &mut b.screens;
@@ -1491,8 +1572,71 @@ fn style_props(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, env: &E
         });
         return;
     }
+
+    // ---- apply to the widget selected in the Screens tab
+    let target = st.screen.clone().and_then(|screen| {
+        let w = model::get(&st.screen()?.root, &st.widget)?;
+        Some((screen, st.widget.clone(), widget_label(w), w.style.as_deref() == Some(name.as_str())))
+    });
+    if let Some((screen, path, label, already)) = target {
+        let text = env.tr.tf("uied.apply_style", &[("widget", &format!("{screen} › {label}"))]);
+        if ui
+            .add_enabled(!already, egui::Button::new(format!("{}  {text}", icons::PAINT_BRUSH)))
+            .on_hover_text(env.tr.t("uied.apply_style_tip"))
+            .clicked()
+            && let Some(doc) = st.doc.as_mut()
+        {
+            doc.edit(|b| model::apply_style(b, &screen, &path, Some(&name)));
+        }
+    }
+
+    // ---- usage
+    let usage = st
+        .doc
+        .as_ref()
+        .map(|d| model::style_usage(&d.bundle, &name))
+        .unwrap_or_default();
+    let mut go = None;
+    egui::CollapsingHeader::new(env.tr.tf("uied.style_usage", &[("n", &usage.len())]))
+        .id_salt(("uied_style_usage", &name))
+        .show(ui, |ui| {
+            if usage.is_empty() {
+                ui.label(RichText::new(env.tr.t("uied.style_unused")).small().color(weak(ui)));
+            }
+            for u in &usage {
+                match u {
+                    model::StyleUse::Widget { screen, path, label } => {
+                        if ui.link(format!("{}  {screen} › {label}", icons::CURSOR_CLICK)).clicked() {
+                            go = Some((Tab::Screens, Some((screen.clone(), path.clone()))));
+                        }
+                    }
+                    model::StyleUse::Parent(other) => {
+                        if ui.link(format!("{}  {}", icons::PALETTE, env.tr.tf("uied.style_used_parent", &[("style", other)]))).clicked() {
+                            st.style = Some(other.clone());
+                        }
+                    }
+                    model::StyleUse::Dialogue(at) => {
+                        if ui.link(format!("{}  {}", icons::CHAT_TEXT, env.tr.t(&format!("uied.dlg_ref.{at}")))).clicked() {
+                            go = Some((Tab::Dialogue, None));
+                        }
+                    }
+                }
+            }
+        });
+    if let Some((tab, target)) = go {
+        st.tab = tab;
+        if st.mode != Mode::Off {
+            st.mode = tab_mode(tab);
+        }
+        if let Some((screen, path)) = target {
+            st.screen = Some(screen);
+            st.widget = path;
+        }
+        return;
+    }
+
     let mut style = original.clone();
-    props::style_editor(ui, env, &mut style, Some(&name));
+    style_ed::style_editor(ui, env, env.lookup, &mut style, parent.as_ref(), Some(&name), "theme_style", true);
     if style != original
         && let Some(doc) = st.doc.as_mut()
     {

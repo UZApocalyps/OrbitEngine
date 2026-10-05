@@ -301,6 +301,7 @@ impl Ready {
             ..Default::default()
         };
         let mut dialogue = DialogueBox::new(theme.textbox.clone());
+        dialogue.set_styles(orbit_ui::DialogueStyles::from_theme(&theme));
         dialogue.set_line(
             Some(("Alice", [255, 150, 190])),
             "This is the {color=#ffd24a}play{/color} view: the quick menu sits under the \
@@ -627,6 +628,7 @@ impl Ready {
                 ctx.renderer,
                 ctx.scene,
                 ctx.white,
+                &std::collections::HashMap::new(),
             );
             self.quick.draw(&mut ctx);
         }

@@ -25,6 +25,8 @@ pub struct QuickMenu {
     ui: Ui,
     view: QuickMenuView,
     texts: Texts,
+    /// Project images the button style may draw.
+    images: std::collections::HashMap<String, orbit_render2d::TextureId>,
 }
 
 impl QuickMenu {
@@ -33,6 +35,7 @@ impl QuickMenu {
             ui: Ui::new(theme.clone()),
             view,
             texts: texts.clone(),
+            images: Default::default(),
         };
         s.rebuild();
         s
@@ -41,6 +44,14 @@ impl QuickMenu {
     pub fn set_view(&mut self, view: QuickMenuView) {
         if view != self.view {
             self.view = view;
+            self.rebuild();
+        }
+    }
+
+    /// Loaded project images (style backgrounds of the buttons).
+    pub fn set_images(&mut self, images: std::collections::HashMap<String, orbit_render2d::TextureId>) {
+        if images != self.images {
+            self.images = images;
             self.rebuild();
         }
     }
@@ -66,8 +77,14 @@ impl QuickMenu {
         let t = &self.texts;
         let v = self.view;
         let mut ui = Ui::new(theme.clone());
+        ui.set_images(self.images.clone());
         ui.set_layer(Layer::UI);
-        let bar = ui.add_root(Node::hbox().gap(8.0).anchor(Anchor::bottom_center(-8.0)));
+        let q = &theme.quick_menu;
+        let bar = ui.add_root(
+            Node::hbox()
+                .gap(q.gap.unwrap_or(8.0))
+                .anchor(q.anchor.unwrap_or(Anchor::bottom_center(-8.0))),
+        );
         let mut items = Vec::from([
             (T_BACK, "ui.quick.back", false, v.can_rollback),
             (T_HISTORY, "ui.quick.history", false, true),
@@ -81,18 +98,18 @@ impl QuickMenu {
         if v.can_replay_voice {
             items.insert(2, (T_VOICE, "ui.quick.voice", false, true));
         }
-        if v.can_replay_voice {
-            items.insert(2, (T_VOICE, "ui.quick.voice", false, true));
-        }
-        for (tag, key, active, enabled) in items {
-            ui.add(
-                bar,
-                Node::button(tag, t.get(key))
-                    .small()
-                    .w(Size::Fixed(150.0))
-                    .selected(active)
-                    .enabled(enabled),
-            );
+        // A hidden bar keeps its (empty) root: `bar_rect` still answers.
+        let items = if q.hidden { &items[..0] } else { &items[..] };
+        for &(tag, key, active, enabled) in items {
+            let mut node = Node::button(tag, t.get(key))
+                .small()
+                .w(Size::Fixed(q.button_width.unwrap_or(150.0)))
+                .selected(active)
+                .enabled(enabled);
+            if let Some(style) = &q.button_style {
+                node = node.style(style.clone());
+            }
+            ui.add(bar, node);
         }
         ui.layout();
         self.ui = ui;

@@ -4,13 +4,44 @@ Les menus de votre jeu (menu principal, pause, sauvegarde, chargement, préfére
 
 ## L'éditeur d'interface
 
-Ouvrez le panneau **Interface**. Il comporte trois onglets :
+Ouvrez le panneau **Interface**. Il comporte quatre onglets :
 
 - **Écrans** : choisissez un écran et modifiez-le. Ajoutez des boutons, des textes, des images et des conteneurs, déplacez-les, et réglez l'action d'un bouton (lancer le jeu, ouvrir un autre écran, quitter...). Un aperçu en direct de la vraie interface du jeu est affiché à côté de l'éditeur.
-- **Thème** : couleurs, polices et apparence commune à tous les écrans.
+- **Thème** : les polices et les **styles** nommés communs à tous les écrans, dans un éditeur de styles visuel.
+- **Boîte de dialogue** : la boîte de texte, le nom du personnage, les choix et le menu rapide affichés pendant le jeu.
 - **Splashes** : les écrans affichés au démarrage du jeu.
 
 Le modèle **Démarrage visual novel** contient déjà un jeu complet d'écrans à adapter. Les modifications sont enregistrées dans le dossier `ui/` ; annuler et rétablir fonctionnent comme d'habitude. Le panneau Interface liste les problèmes (par exemple un bouton qui pointe vers un écran inexistant).
+
+## Les styles
+
+Un **style** est une apparence nommée (fond, bordure, ombre, marge intérieure, police, couleur du texte, sons) que tout widget peut utiliser. Sélectionnez un style dans l'onglet **Thème** pour le modifier :
+
+- L'**aperçu** en haut montre un bouton, une étiquette, un panneau, un curseur, une case et une liste déroulante dessinés avec le style. Les **onglets d'état** (Normal, Survol, Appuyé, Désactivé, Focus) changent à la fois l'aperçu et les champs modifiés : chaque état peut avoir son propre fond et sa couleur de texte. Un état laissé vide reprend l'aspect survolé (appuyé et focus) ou normal.
+- **Fond** : aucun, une couleur, un **dégradé** vertical, une **image** (étirée, ajustée ou couvrante) ou une image **9-slice**. Pour un 9-slice, faites glisser les quatre repères sur l'image pour choisir les bordures qui gardent leur taille (les coins restent nets, le centre s'étire). Les couleurs ont un canal alpha.
+- **Boîte** : couleur et épaisseur de la bordure, **ombre** portée (couleur et décalage), marge intérieure. Les marges extérieures se règlent sur chaque widget (section Disposition).
+- **Texte** : police, taille, gras, alignement et couleur de l'état courant. Désactivez **Afficher le texte** pour un bouton image seule (les lecteurs d'écran lisent toujours le texte).
+- **Sons** joués au survol et au clic.
+- **Étend** : un style peut partir d'un autre. Les champs que le style change sont en surbrillance ; les autres affichent la valeur du parent, marquée *hérité*. Le bouton de réinitialisation à côté d'un champ le rend au parent.
+- **Dupliquez**, renommez ou supprimez un style depuis son en-tête. **Utilisé par** liste les widgets, styles et éléments de la boîte de dialogue qui l'utilisent (cliquez pour y aller), et **Appliquer à** donne le style au widget sélectionné dans l'onglet Écrans.
+
+Les anciens projets gardent leur apparence. Un style créé avec une version précédente affiche une note proposant de **convertir** son fond en fonds par état ; la conversion garde chaque état identique.
+
+### Boutons image et images cliquables
+
+Pour faire un bouton en images, donnez à son style (ou aux **changements locaux** du bouton, en bas de ses propriétés) un fond image par état : une image pour normal, une pour le survol, une pour appuyé... Gardez le texte par-dessus, ou désactivez **Afficher le texte** pour un bouton image seule. Un widget **Image** devient cliquable dès que vous lui donnez des **actions au clic** ; son style peut alors lui donner aussi des fonds survolé et appuyé.
+
+## La boîte de dialogue
+
+L'onglet **Boîte de dialogue** stylise ce que le joueur voit pendant l'histoire, avec un aperçu en direct dessiné par le jeu lui-même (choisissez **Une réplique** ou **Des choix**, et tapez un personnage et une réplique d'exemple) :
+
+- **Boîte de texte** : une position fixe ou un placement ancré à l'écran (en bas, en haut, au centre... plus un décalage), sa taille, sa marge intérieure, le décalage du texte, la vitesse du texte, et un **style de la boîte** pour son fond (image ou 9-slice compris), sa bordure, son ombre, sa police et la couleur du texte.
+- **Nom du personnage** : taille et style, dans la couleur du personnage ou celle du style, éventuellement sur une **plaque** avec son propre style, décalage et taille (une largeur de 0 s'ajuste au nom).
+- **Indicateur « continuer »** : sa taille, sa couleur ou son image, et s'il clignote.
+- **Choix** : taille des boutons, espacement, placement, numérotation, assombrissement de l'écran, et un **style des boutons** dont l'aspect survolé marque le choix sélectionné.
+- **Menu rapide** : placement, style et largeur des boutons, espacement, ou le masquer.
+
+Le bouton **+** à côté d'un champ de style crée un style à partir des couleurs actuelles et le relie ; le crayon l'ouvre dans l'onglet Thème. Un projet créé avant ces options garde exactement la même boîte de dialogue.
 
 ## Les splashes
 

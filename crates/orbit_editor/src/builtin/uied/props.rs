@@ -7,8 +7,8 @@ use orbit_core::{Condition, Expr, Operand};
 use orbit_editor_api::varwidgets::{self, VarInfo};
 use orbit_editor_api::{Translator, icons};
 use orbit_ui::{
-    AchievementField, Align, Anchor, BindPath, Border, Cond, Dir, Fill, LayoutDef, PanelKind, SettingKey, Size,
-    StateColors, Style, StyleSounds, TextRef, UiAction, WidgetDef, WidgetKind,
+    AchievementField, Align, Anchor, BindPath, Cond, Dir, LayoutDef, PanelKind, SettingKey, Size, Style,
+    TextRef, UiAction, WidgetDef, WidgetKind,
 };
 
 use super::model::{BUILTIN_SCREEN_IDS, KindTag};
@@ -31,6 +31,13 @@ pub struct Env<'a> {
     pub scenes: &'a [(String, String)],
     /// The story's named curves (easings of the screen transitions).
     pub curves: &'a std::collections::BTreeMap<String, orbit_core::Curve>,
+    /// The theme being edited (styles to resolve parents, widget defaults
+    /// for the previews).
+    pub theme: Option<&'a orbit_ui::Theme>,
+    /// Audio assets of the project (paths), for style sounds.
+    pub sounds: &'a [String],
+    /// Thumbnails of the image assets.
+    pub lookup: &'a super::style_ed::ImageLookup,
 }
 
 impl Env<'_> {
@@ -68,7 +75,7 @@ fn setting_name(key: SettingKey) -> &'static str {
 }
 
 /// A caption on the left, the editor on the right.
-fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
+pub(super) fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
     ui.horizontal(|ui| {
         ui.add_sized(
             [92.0, 20.0],
@@ -113,16 +120,16 @@ fn heading(ui: &mut Ui, text: &str) {
     ui.separator();
 }
 
-fn num(ui: &mut Ui, value: &mut f32, speed: f32) {
+pub(super) fn num(ui: &mut Ui, value: &mut f32, speed: f32) {
     ui.add(DragValue::new(value).speed(speed).max_decimals(2));
 }
 
-fn color(ui: &mut Ui, c: &mut [u8; 4]) {
+pub(super) fn color(ui: &mut Ui, c: &mut [u8; 4]) {
     ui.color_edit_button_srgba_unmultiplied(c);
 }
 
 /// An optional value: a checkbox that adds / removes it, then the editor.
-fn optional<T: Clone>(
+pub(super) fn optional<T: Clone>(
     ui: &mut Ui,
     value: &mut Option<T>,
     default: T,
@@ -138,7 +145,7 @@ fn optional<T: Clone>(
 }
 
 /// A combo over `(id, label)` options, setting `current` to the picked id.
-fn pick<T: Copy + PartialEq>(
+pub(super) fn pick<T: Copy + PartialEq>(
     ui: &mut Ui,
     salt: impl std::hash::Hash + std::fmt::Debug,
     current: &mut T,
@@ -912,7 +919,7 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
                 ui.checkbox(dim, env.t("uied.dim_text"));
             });
         }
-        WidgetKind::Image { asset, bind } => {
+        WidgetKind::Image { asset, bind, action } => {
             row(ui, "", |ui| {
                 let mut from_row = bind.is_some();
                 if ui
@@ -946,6 +953,10 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
                     *asset = (!path.is_empty()).then_some(path);
                 });
             }
+            ui.add_space(4.0);
+            ui.label(RichText::new(env.t("uied.image_actions")).small().color(weak(ui)))
+                .on_hover_text(env.t("uied.image_actions_tip"));
+            actions_editor(ui, env, "img_act", action);
         }
         WidgetKind::Slider {
             bind,
@@ -1191,7 +1202,13 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
         w.style = (!name.is_empty()).then_some(name);
     });
     ui.collapsing(env.t("uied.overrides"), |ui| {
-        style_editor(ui, env, &mut w.overrides, None);
+        let parent = w.style.clone();
+        ui.label(
+            RichText::new(env.t("uied.overrides_hint"))
+                .small()
+                .color(weak(ui)),
+        );
+        style_editor(ui, env, &mut w.overrides, parent.as_deref());
     });
 }
 
@@ -1262,184 +1279,13 @@ fn layout_editor(ui: &mut Ui, env: &Env, l: &mut LayoutDef, is_root: bool) {
 
 // ------------------------------------------------------------------ style
 
-fn state_colors(ui: &mut Ui, env: &Env, colors: &mut StateColors) {
-    for (label, slot) in [
-        ("uied.state.normal", &mut colors.normal),
-        ("uied.state.hover", &mut colors.hover),
-        ("uied.state.pressed", &mut colors.pressed),
-        ("uied.state.disabled", &mut colors.disabled),
-    ] {
-        row(ui, &env.t(label), |ui| {
-            optional(ui, slot, [60, 66, 90, 255], |ui, c| color(ui, c));
-        });
-    }
-}
-
-/// A style (theme entry or widget override). `exclude` is the name of the
-/// style itself, which cannot extend itself.
-pub fn style_editor(ui: &mut Ui, env: &Env, s: &mut Style, exclude: Option<&str>) {
-    row(ui, &env.t("uied.extends"), |ui| {
-        let mut name = s.extends.clone().unwrap_or_default();
-        let text = if name.is_empty() {
-            env.t("uied.none")
-        } else {
-            name.clone()
-        };
-        ComboBox::from_id_salt("extends")
-            .selected_text(text)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut name, String::new(), env.t("uied.none"));
-                for other in env.styles.iter().filter(|o| Some(o.as_str()) != exclude) {
-                    ui.selectable_value(&mut name, other.clone(), other);
-                }
-            });
-        s.extends = (!name.is_empty()).then_some(name);
-    });
-    row(ui, &env.t("uied.font"), |ui| {
-        let mut font = s.font.clone().unwrap_or_default();
-        // The project fonts of the theme, or a family name typed by hand.
-        if !env.fonts.is_empty() {
-            ComboBox::from_id_salt("style_font")
-                .selected_text(if font.is_empty() {
-                    env.t("uied.font_default")
-                } else {
-                    font.clone()
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut font, String::new(), env.t("uied.font_default"));
-                    for name in env.fonts {
-                        ui.selectable_value(&mut font, name.clone(), name);
-                    }
-                });
-        }
-        ui.add(egui::TextEdit::singleline(&mut font).desired_width(100.0));
-        s.font = (!font.is_empty()).then_some(font);
-    });
-    row(ui, &env.t("uied.font_size"), |ui| {
-        optional(ui, &mut s.text_size, 30.0, |ui, v| num(ui, v, 0.5));
-    });
-    row(ui, &env.t("uied.padding"), |ui| {
-        optional(ui, &mut s.padding, [20.0, 12.0], |ui, p| {
-            num(ui, &mut p[0], 1.0);
-            num(ui, &mut p[1], 1.0);
-        });
-    });
-    fill_editor(ui, env, &mut s.fill);
-    row(ui, &env.t("uied.border"), |ui| {
-        optional(
-            ui,
-            &mut s.border,
-            Border {
-                color: [255, 255, 255, 80],
-                width: 2.0,
-            },
-            |ui, b| {
-                color(ui, &mut b.color);
-                num(ui, &mut b.width, 0.1);
-            },
-        );
-    });
-    ui.label(RichText::new(env.t("uied.bg_colors")).small().color(weak(ui)));
-    state_colors(ui, env, &mut s.colors);
-    ui.label(RichText::new(env.t("uied.text_colors")).small().color(weak(ui)));
-    state_colors(ui, env, &mut s.text_colors);
-    row(ui, &env.t("uied.sound_hover"), |ui| {
-        sound_field(ui, s, true);
-    });
-    row(ui, &env.t("uied.sound_confirm"), |ui| {
-        sound_field(ui, s, false);
-    });
-}
-
-/// Kind of a style background, for the picker.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum FillKind {
-    None,
-    Color,
-    NineSlice,
-}
-
-fn fill_kind(fill: &Option<Fill>) -> FillKind {
-    match fill {
-        None => FillKind::None,
-        Some(Fill::Color(_)) => FillKind::Color,
-        Some(Fill::NineSlice { .. }) => FillKind::NineSlice,
-    }
-}
-
-/// The background of a style: nothing, a color, or a 9-slice image with
-/// its four insets (pixels of the image kept as borders).
-fn fill_editor(ui: &mut Ui, env: &Env, fill: &mut Option<Fill>) {
-    row(ui, &env.t("uied.fill"), |ui| {
-        let mut kind = fill_kind(fill);
-        let before = kind;
-        pick(
-            ui,
-            "fill_kind",
-            &mut kind,
-            &[
-                (FillKind::None, env.t("uied.none")),
-                (FillKind::Color, env.v("fill_color")),
-                (FillKind::NineSlice, env.v("fill_nine_slice")),
-            ],
-        );
-        if kind != before {
-            *fill = match kind {
-                FillKind::None => None,
-                FillKind::Color => Some(Fill::Color([40, 44, 66, 255])),
-                FillKind::NineSlice => Some(Fill::NineSlice {
-                    image: env.images.first().cloned().unwrap_or_default(),
-                    insets: [16.0; 4],
-                }),
-            };
-        }
-        if let Some(Fill::Color(c)) = fill {
-            color(ui, c);
-        }
-    });
-    if let Some(Fill::NineSlice { image, insets }) = fill {
-        row(ui, &env.t("uied.nine_image"), |ui| {
-            let text = if image.is_empty() {
-                env.t("uied.none")
-            } else {
-                image.clone()
-            };
-            ComboBox::from_id_salt("nine_image")
-                .selected_text(text)
-                .width(160.0)
-                .show_ui(ui, |ui| {
-                    for img in env.images {
-                        ui.selectable_value(image, img.clone(), img);
-                    }
-                });
-        });
-        for (label, slot) in [
-            ("uied.inset_left", 0),
-            ("uied.inset_top", 1),
-            ("uied.inset_right", 2),
-            ("uied.inset_bottom", 3),
-        ] {
-            row(ui, &env.t(label), |ui| {
-                ui.add(DragValue::new(&mut insets[slot]).speed(0.5).range(0.0..=4096.0));
-                ui.label(RichText::new("px").small().color(weak(ui)));
-            });
-        }
-    }
-}
-
-fn sound_field(ui: &mut Ui, s: &mut Style, hover: bool) {
-    let sounds = s.sounds.get_or_insert_with(StyleSounds::default);
-    let slot = if hover {
-        &mut sounds.hover
-    } else {
-        &mut sounds.confirm
-    };
-    let mut path = slot.clone().unwrap_or_default();
-    ui.add(egui::TextEdit::singleline(&mut path).desired_width(f32::INFINITY));
-    *slot = (!path.is_empty()).then_some(path);
-    if sounds.hover.is_none() && sounds.confirm.is_none() {
-        s.sounds = None;
-    }
+/// The local overrides of a widget, on top of its named style (the
+/// visual style editor, see [`super::style_ed`]).
+pub fn style_editor(ui: &mut Ui, env: &Env, s: &mut Style, parent_name: Option<&str>) {
+    let parent = parent_name
+        .zip(env.theme)
+        .and_then(|(name, theme)| orbit_ui::resolve_style(&theme.styles, name));
+    super::style_ed::style_editor(ui, env, env.lookup, s, parent.as_ref(), None, "overrides", false);
 }
 
 #[cfg(test)]

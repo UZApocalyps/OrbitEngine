@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use orbit_core::Story;
 use orbit_i18n::Localizer;
-use orbit_ui::{Advance, ChoiceMenu, DialogueBox, MenuInput, TextBoxTheme, Theme};
+use orbit_ui::{Advance, ChoiceMenu, DialogueBox, DialogueStyles, MenuInput, TextBoxTheme, Theme};
 
 use crate::director::{Director, Flow};
 
@@ -118,7 +118,11 @@ impl Game {
         let mut game = Self {
             story,
             director,
-            dialogue: DialogueBox::new(textbox_theme(&theme.textbox, &settings)),
+            dialogue: {
+                let mut d = DialogueBox::new(textbox_theme(&theme.textbox, &settings));
+                d.set_styles(DialogueStyles::from_theme(theme));
+                d
+            },
             menu: None,
             spoken: None,
             choice_labels: Vec::new(),
@@ -154,6 +158,7 @@ impl Game {
     pub fn set_theme(&mut self, theme: &Theme) {
         self.dialogue
             .set_theme(textbox_theme(&theme.textbox, &self.settings));
+        self.dialogue.set_styles(DialogueStyles::from_theme(theme));
         self.seen_generation = u64::MAX;
         self.seen_progress = self.director.progress();
         self.sync(theme);
@@ -351,7 +356,7 @@ impl Game {
                     self.spoken = None;
                     self.choice_labels = labels.iter().map(|l| orbit_ui::a11y::plain(l)).collect();
                     self.dialogue.clear();
-                    self.menu = Some(ChoiceMenu::new(theme.choice.clone(), labels));
+                    self.menu = Some(ChoiceMenu::styled(theme, labels));
                 }
                 _ => {}
             }

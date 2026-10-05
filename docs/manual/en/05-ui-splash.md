@@ -4,13 +4,44 @@ The menus of your game (main menu, pause, save, load, preferences) are **screens
 
 ## The Interface editor
 
-Open the **Interface** panel. It has three tabs:
+Open the **Interface** panel. It has four tabs:
 
 - **Screens**: pick a screen and edit it. Add buttons, texts, images and containers, move them, and set what a button does (start the game, open another screen, quit...). A live preview of the real game interface is shown next to the editor.
-- **Theme**: colors, fonts and the look shared by all screens.
+- **Theme**: fonts and the named **styles** shared by all screens, in a visual style editor.
+- **Dialogue box**: the textbox, speaker name, choices and quick menu shown during play.
 - **Splashes**: the screens shown when the game starts.
 
 The **Visual novel starter** template already contains a full set of screens to adapt. Changes are saved into the `ui/` folder; use undo and redo as usual. The Interface panel lists problems (for example a button that points to a screen that does not exist).
+
+## Styles
+
+A **style** is a named look (background, border, shadow, padding, font, text color, sounds) that any widget can use. Select a style in the **Theme** tab to edit it:
+
+- The **preview** at the top shows a button, a label, a panel, a slider, a toggle and a dropdown drawn with the style. The **state tabs** (Normal, Hover, Pressed, Disabled, Focused) switch both the preview and the fields you edit: each state can have its own background and text color. A state you leave empty uses the hover look (pressed and focused) or the normal one.
+- **Background**: none, a color, a vertical **gradient**, an **image** (stretched, fitted or covering) or a **9-slice** image. For a 9-slice, drag the four guides over the picture to choose the borders that keep their size (the corners stay sharp, the middle stretches). Colors have an alpha channel.
+- **Box**: border color and width, drop **shadow** (color and offset), inner padding. Margins are set on each widget (Layout section).
+- **Text**: font, size, bold, alignment and the color of the current state. Turn **Show the text** off for an image-only button (screen readers still read the text).
+- **Sounds** played on hover and on click.
+- **Extends**: a style can start from another one. Fields the style changes are highlighted; the others show the parent's value, marked *inherited*. The reset button next to a field gives it back to the parent.
+- **Duplicate**, rename or delete a style from its header. **Used by** lists the widgets, styles and dialogue box parts that use it (click one to go there), and **Apply to** gives the style to the widget selected in the Screens tab.
+
+Older projects keep their look. A style made with an earlier version shows a note offering to **convert** its background to per-state backgrounds; the conversion keeps every state identical.
+
+### Image buttons and clickable images
+
+To make a button out of pictures, give its style (or the button's own **local changes**, at the bottom of its properties) an image background per state: one picture for normal, one for hover, one for pressed... Keep the text on top, or turn **Show the text** off for an image-only button. An **Image** widget becomes clickable as soon as you give it **actions on click**; its style can then give it hover and pressed backgrounds too.
+
+## The dialogue box
+
+The **Dialogue box** tab styles what the player sees during the story, with a live preview drawn by the game itself (choose **A line** or **Choices**, and type a sample speaker and line):
+
+- **Textbox**: a fixed position or a placement anchored to the screen (bottom, top, center... plus an offset), its size, padding, text offset, text speed, and a **box style** for its background (image or 9-slice included), border, shadow, font and text color.
+- **Speaker name**: size and style, in the character's color or the style's color, optionally on a **name plate** with its own style, offset and size (a width of 0 fits the name).
+- **"Continue" indicator**: its size, color or image, and whether it blinks.
+- **Choices**: button size, spacing, placement, number prefixes, the screen dimming, and a **button style** whose hover look marks the selected choice.
+- **Quick menu**: placement, button style and width, spacing, or hide it.
+
+The **+** button next to a style field creates a style from the current colors and links it; the pencil opens it in the Theme tab. A project made before these options keeps exactly the same dialogue box.
 
 ## Splash screens
 

@@ -1,0 +1,51 @@
+// Frozen theme of a ui_version 6 project (before the style and dialogue
+// box work of ui_version 7). Never regenerate: it must keep loading and
+// the dialogue box must keep its exact layout.
+(
+    textbox: (
+        rect: (60.0, 720.0, 1800.0, 320.0),
+        background: (20, 10, 30, 220),
+        padding: (64.0, 24.0),
+        name_size: 48.0,
+        text_offset: 70.0,
+        text_size: 36.0,
+        text_color: (250, 240, 220, 255),
+        chars_per_second: 55.0,
+        indicator_color: (255, 200, 120, 255),
+        indicator_size: 26.0,
+        indicator_blink: false,
+    ),
+    choice: (
+        overlay: (0, 0, 0, 140),
+        button_size: (1000.0, 80.0),
+        spacing: 20.0,
+        text_size: 34.0,
+        button_color: (30, 20, 40, 230),
+        selected_color: (150, 90, 200, 240),
+        text_color: (230, 220, 240, 255),
+        selected_text_color: (255, 255, 255, 255),
+        show_numbers: false,
+    ),
+    styles: {
+        "card": (
+            fill: Some(NineSlice(image: "assets/ui/card.png", insets: (12.0, 12.0, 12.0, 12.0))),
+            colors: (hover: Some((90, 60, 140, 255))),
+            text_colors: (normal: Some((240, 230, 255, 255)), hover: Some((255, 255, 255, 255))),
+            border: Some((color: (255, 255, 255, 60), width: 2.0)),
+            sounds: Some((hover: Some("assets/sfx/tick.ogg"), confirm: None)),
+        ),
+        "flat": (
+            extends: Some("card"),
+            fill: Some(Color((40, 30, 60, 255))),
+            colors: (normal: Some((50, 40, 70, 255)), pressed: Some((20, 10, 30, 255)), disabled: Some((60, 60, 60, 120))),
+            text_size: Some(28.0),
+            padding: Some((24.0, 10.0)),
+        ),
+    },
+    fonts: {
+        "Title": (asset: "assets/fonts/title.ttf", family: "Title Sans"),
+    },
+    language_fonts: {
+        "ja": ["Title", "Noto Sans JP"],
+    },
+)

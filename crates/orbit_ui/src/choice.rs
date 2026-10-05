@@ -1,14 +1,15 @@
 //! The choice screen: stacked buttons.
 
+use std::collections::HashMap;
+
 use orbit_render2d::{Layer, Renderer2d, Scene, Sprite2d, TextureId};
 use orbit_text::{DrawParams, TextBlock, TextEngine, TextRenderer, TextStyle};
 
-use crate::theme::{ChoiceTheme, tint};
+use crate::paint::Painter;
+use crate::theme::{ChoiceTheme, Fill, Style, Theme, WidgetState, resolve_style, tint};
 
 /// Virtual canvas height buttons are laid out in.
 const CANVAS: [f32; 2] = [1920.0, 1080.0];
-/// Vertical room kept free above and below the stack.
-const MARGIN_Y: f32 = 60.0;
 
 /// Logical input of the menu (already decoded from mouse / keyboard).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -26,24 +27,11 @@ pub enum MenuInput {
     Click([f32; 2]),
 }
 
-/// `[x, y, w, h]` of each of `count` buttons, centered on the canvas. When the
-/// stack would not fit the screen, heights and spacing shrink.
+/// `[x, y, w, h]` of each of `count` buttons, centered on the canvas (or
+/// placed by the theme's anchor). When the stack would not fit the screen,
+/// heights and spacing shrink.
 pub fn button_rects(theme: &ChoiceTheme, count: usize) -> Vec<[f32; 4]> {
-    if count == 0 {
-        return Vec::new();
-    }
-    let [w, h] = theme.button_size;
-    let n = count as f32;
-    let full = n * h + (n - 1.0) * theme.spacing;
-    let avail = CANVAS[1] - 2.0 * MARGIN_Y;
-    let k = if full > avail { avail / full } else { 1.0 };
-    let (h, gap) = (h * k, theme.spacing * k);
-    let total = n * h + (n - 1.0) * gap;
-    let top = (CANVAS[1] - total) * 0.5;
-    let x = (CANVAS[0] - w) * 0.5;
-    (0..count)
-        .map(|i| [x, top + i as f32 * (h + gap), w, h])
-        .collect()
+    theme.button_rects(count)
 }
 
 /// Index of the rectangle containing `point`.
@@ -56,6 +44,8 @@ pub fn hit_test(rects: &[[f32; 4]], point: [f32; 2]) -> Option<usize> {
 /// A set of option buttons with a selection.
 pub struct ChoiceMenu {
     theme: ChoiceTheme,
+    /// The resolved `button_style` (`ui_version` 8), if any.
+    style: Option<Style>,
     /// `[normal, selected]` label per button (colors are baked in a block).
     labels: Vec<[TextBlock; 2]>,
     rects: Vec<[f32; 4]>,
@@ -64,36 +54,71 @@ pub struct ChoiceMenu {
 
 impl ChoiceMenu {
     pub fn new(theme: ChoiceTheme, options: &[String]) -> Self {
+        Self::build(theme, None, None, options)
+    }
+
+    /// A menu drawn with the theme's choice section and its button style.
+    pub fn styled(theme: &Theme, options: &[String]) -> Self {
+        let style = theme
+            .choice
+            .button_style
+            .as_deref()
+            .and_then(|n| resolve_style(&theme.styles, n));
+        let family = style
+            .as_ref()
+            .and_then(|s| s.font.as_deref())
+            .map(|f| theme.font_family(f).to_owned());
+        Self::build(theme.choice.clone(), style, family, options)
+    }
+
+    fn build(theme: ChoiceTheme, style: Option<Style>, family: Option<String>, options: &[String]) -> Self {
         let rects = button_rects(&theme, options.len());
+        let s = style.as_ref();
+        let size = s.and_then(|s| s.text_size).unwrap_or(theme.text_size);
+        let align = s
+            .and_then(|s| s.text_align)
+            .map_or(orbit_text::TextAlign::Center, crate::widgets::text_align);
+        let inset = s.and_then(|s| s.padding).map_or(30.0, |p| p[0]);
+        let colors = [
+            s.and_then(|s| s.text_color_for(WidgetState::Normal)).unwrap_or(theme.text_color),
+            s.and_then(|s| s.text_color_for(WidgetState::Hover))
+                .unwrap_or(theme.selected_text_color),
+        ];
+        let show = s.is_none_or(Style::text_visible);
         let labels = options
             .iter()
             .enumerate()
             .map(|(i, text)| {
-                let markup = if theme.show_numbers {
+                let markup = if !show {
+                    String::new()
+                } else if theme.show_numbers {
                     format!("{}. {text}", i + 1)
                 } else {
                     text.clone()
                 };
+                let markup = crate::widgets::styled_markup(s, markup);
                 let make = |color: [u8; 4]| {
                     let mut block = TextBlock::new(
                         &markup,
                         TextStyle {
-                            font_size: theme.text_size,
+                            font_size: size,
                             color,
-                            align: orbit_text::TextAlign::Center,
+                            align,
+                            family: family.clone(),
                             ..Default::default()
                         },
-                        Some(theme.button_size[0] - 60.0),
+                        Some(theme.button_size[0] - 2.0 * inset),
                         f32::INFINITY,
                     );
                     block.skip_to_end();
                     block
                 };
-                [make(theme.text_color), make(theme.selected_text_color)]
+                [make(colors[0]), make(colors[1])]
             })
             .collect();
         Self {
             theme,
+            style,
             labels,
             rects,
             selected: 0,
@@ -142,6 +167,8 @@ impl ChoiceMenu {
         None
     }
 
+    /// `images` are the loaded project images the button style may draw.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         engine: &mut TextEngine,
@@ -149,6 +176,7 @@ impl ChoiceMenu {
         renderer: &Renderer2d,
         scene: &mut Scene,
         white: TextureId,
+        images: &HashMap<String, TextureId>,
     ) {
         let t = &self.theme;
         scene.push(
@@ -158,6 +186,14 @@ impl ChoiceMenu {
                 .z(-1.0)
                 .tint(tint(t.overlay)),
         );
+        let painter = Painter {
+            renderer,
+            white,
+            images,
+            alpha: 1.0,
+        };
+        let size = self.style.as_ref().and_then(|s| s.text_size).unwrap_or(t.text_size);
+        let inset = self.style.as_ref().and_then(|s| s.padding).map_or(30.0, |p| p[0]);
         for (i, (&[x, y, w, h], label)) in self.rects.iter().zip(&mut self.labels).enumerate() {
             let selected = i == self.selected;
             let bg = if selected {
@@ -165,17 +201,40 @@ impl ChoiceMenu {
             } else {
                 t.button_color
             };
-            scene.push(
-                Sprite2d::new(white, [x, y], [w, h])
-                    .anchor([0.0, 0.0])
-                    .layer(Layer::UI)
-                    .z(0.0)
-                    .tint(tint(bg)),
-            );
+            let rect = [x, y, w, h];
+            match &self.style {
+                None => scene.push(
+                    Sprite2d::new(white, [x, y], [w, h])
+                        .anchor([0.0, 0.0])
+                        .layer(Layer::UI)
+                        .z(0.0)
+                        .tint(tint(bg)),
+                ),
+                Some(style) => {
+                    let state = if selected { WidgetState::Hover } else { WidgetState::Normal };
+                    if let Some(shadow) = &style.shadow {
+                        painter.shadow(scene, shadow, rect, Layer::UI, 0.0);
+                    }
+                    let fill = style.fill_for(state);
+                    let sliced = match &fill {
+                        Some(f) if painter.fill(scene, f, rect, Layer::UI, 0.0) => {
+                            matches!(f, Fill::NineSlice { .. })
+                        }
+                        _ => {
+                            let c = fill.as_ref().and_then(Fill::flat_color).unwrap_or(bg);
+                            painter.quad(scene, rect, c, Layer::UI, 0.0);
+                            false
+                        }
+                    };
+                    if !sliced && let Some(border) = &style.border {
+                        painter.border(scene, rect, border.width, border.color, Layer::UI, 0.2);
+                    }
+                }
+            }
             // Vertically centered on a single line (labels are short).
-            let line = t.text_size * 1.35;
+            let line = size * 1.35;
             let params = DrawParams {
-                origin: [x + 30.0, y + (h - line) * 0.5],
+                origin: [x + inset, y + (h - line) * 0.5],
                 z: 2.0,
                 ..Default::default()
             };

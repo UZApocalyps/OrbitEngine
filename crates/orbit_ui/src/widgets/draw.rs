@@ -8,7 +8,8 @@ use orbit_text::{DrawParams, TextAlign, TextEngine, TextRenderer};
 use super::Ui;
 use super::layout::LINE_HEIGHT;
 use super::node::{ButtonKind, Kind, Node, NodeId, PanelKind, TextCache, escape_markup};
-use crate::theme::{Style, Theme, resolve_style, tint};
+use crate::paint::Painter;
+use crate::theme::{Fill, Style, TextAlignment, Theme, WidgetState, resolve_style, tint};
 
 /// Everything drawing needs from the host.
 pub struct DrawCtx<'a> {
@@ -79,32 +80,44 @@ impl Drawer<'_, '_, '_> {
         );
     }
 
-    /// Draws the nine-slice background of `style` (when it has one and the
-    /// image is loaded): returns whether it did, else the caller falls back
-    /// to a plain color.
-    fn nine_slice(&mut self, style: Option<&Style>, rect: [f32; 4], layer: Layer, z: f32) -> bool {
-        let Some((image, insets)) = style.and_then(Style::nine_slice) else {
-            return false;
+    /// The background of a styled widget in `state`: its shadow, then the
+    /// style's fill for the state (see [`Style::fill_for`]), else
+    /// `default`. An image that is not loaded falls back to the style's
+    /// colors, then `default`. Returns whether a nine-slice was drawn (no
+    /// border goes on top of one).
+    fn background(
+        &mut self,
+        style: Option<&Style>,
+        state: WidgetState,
+        rect: [f32; 4],
+        layer: Layer,
+        default: [u8; 4],
+    ) -> bool {
+        let painter = Painter {
+            renderer: self.ctx.renderer,
+            white: self.ctx.white,
+            images: self.images,
+            alpha: self.alpha,
         };
-        let Some(&texture) = self.images.get(image) else {
-            return false;
-        };
-        let Some(size) = self.ctx.renderer.texture_size(texture) else {
-            return false;
-        };
-        if rect[2] <= 0.0 || rect[3] <= 0.0 {
-            return true;
+        if let Some(shadow) = style.and_then(|s| s.shadow.as_ref()) {
+            painter.shadow(self.ctx.scene, shadow, rect, layer, 0.0);
         }
-        self.ctx.scene.push_nine_slice(
-            texture,
-            [size[0] as f32, size[1] as f32],
-            rect,
-            insets,
-            layer,
-            z,
-            [1.0, 1.0, 1.0, self.alpha],
-        );
-        true
+        let fill = style.and_then(|s| s.fill_for(state));
+        if let Some(fill) = &fill
+            && painter.fill(self.ctx.scene, fill, rect, layer, 0.0)
+        {
+            return matches!(fill, Fill::NineSlice { .. });
+        }
+        let color = style
+            .and_then(|s| {
+                s.colors.pick_state(state).or(match &s.fill {
+                    Some(f) => f.flat_color(),
+                    None => None,
+                })
+            })
+            .unwrap_or(default);
+        painter.quad(self.ctx.scene, rect, color, layer, 0.0);
+        false
     }
 
     fn border(&mut self, rect: [f32; 4], width: f32, color: [u8; 4], layer: Layer, z: f32) {
@@ -169,6 +182,14 @@ impl Drawer<'_, '_, '_> {
         let hot = self.hover == Some(id) || (self.focus == Some(id) && self.focus_visible);
         let ring = self.focus == Some(id) && self.focus_visible && enabled;
         let pressed = self.pressed == Some(id) && self.hover == Some(id);
+        let state = WidgetState::of(
+            enabled,
+            pressed,
+            self.hover == Some(id),
+            self.focus == Some(id) && self.focus_visible,
+        );
+        // Panels and labels only tell enabled from disabled.
+        let still = if enabled { WidgetState::Normal } else { WidgetState::Disabled };
         let theme = self.theme;
         let w = &theme.widgets;
         let style = self.nodes[id.0]
@@ -189,16 +210,11 @@ impl Drawer<'_, '_, '_> {
             Kind::Panel(PanelKind::Dim) => self.quad(rect, w.panel.dim, layer, 0.0),
             Kind::Panel(PanelKind::Solid) => self.quad(rect, theme.screens.background, layer, 0.0),
             Kind::Panel(PanelKind::Normal) => {
-                let bg = style
-                    .as_ref()
-                    .and_then(|s| s.background(enabled, false, false))
-                    .unwrap_or(w.panel.background);
                 let (bw, bc) = match style.as_ref().and_then(|s| s.border.as_ref()) {
                     Some(b) => (b.width, b.color),
                     None => (w.panel.border_width, w.panel.border_color),
                 };
-                if !self.nine_slice(style.as_ref(), rect, layer, 0.0) {
-                    self.quad(rect, bg, layer, 0.0);
+                if !self.background(style.as_ref(), still, rect, layer, w.panel.background) {
                     self.border(rect, bw, bc, layer, 0.2);
                 }
             }
@@ -209,7 +225,7 @@ impl Drawer<'_, '_, '_> {
                     .unwrap_or(w.text_size);
                 let color = l
                     .color
-                    .or(style.as_ref().and_then(|s| s.text_colors.pick(enabled, false, false)))
+                    .or(style.as_ref().and_then(|s| s.text_color_for(still)))
                     .unwrap_or(if l.dim {
                         w.dim_text_color
                     } else {
@@ -220,6 +236,14 @@ impl Drawer<'_, '_, '_> {
                 } else {
                     escape_markup(&l.text)
                 };
+                let markup = styled_markup(style.as_ref(), markup);
+                let mut l = l.clone();
+                if l.align == TextAlign::Left
+                    && let Some(a) = style.as_ref().and_then(|s| s.text_align)
+                {
+                    l.align = text_align(a);
+                }
+                let l = &l;
                 // The layout width of a label is only an estimate (no font
                 // access): a single-line label gets some room so that wide
                 // glyphs never wrap it ("Demo" must not become "Dem" / "o").
@@ -257,12 +281,9 @@ impl Drawer<'_, '_, '_> {
                 } else {
                     bt.normal
                 };
-                let bg = style
-                    .as_ref()
-                    .and_then(|s| s.background(enabled, pressed, hot))
-                    .unwrap_or(bg);
-                if !self.nine_slice(style.as_ref(), rect, layer, 0.0) {
-                    self.quad(rect, bg, layer, 0.0);
+                let sliced = self.background(style.as_ref(), state, rect, layer, bg);
+                if !sliced && let Some(border) = style.as_ref().and_then(|s| s.border.as_ref()) {
+                    self.border(rect, border.width, border.color, layer, 0.2);
                 }
                 if b.selected && !hot && enabled {
                     self.border(rect, 2.0, w.accent_color, layer, 0.2);
@@ -277,29 +298,47 @@ impl Drawer<'_, '_, '_> {
                 } else {
                     bt.text_color
                 };
-let color = style
+                let color = style
                     .as_ref()
-                    .and_then(|s| s.text_colors.pick(enabled, pressed, hot))
+                    .and_then(|s| s.text_color_for(state))
                     .unwrap_or(color);
                 let size = match b.kind {
                     ButtonKind::Normal => style
                         .as_ref()
                         .and_then(|s| s.text_size)
                         .unwrap_or(w.text_size),
-                    ButtonKind::Small => w.small_text_size,
+                    ButtonKind::Small => style
+                        .as_ref()
+                        .and_then(|s| s.text_size)
+                        .unwrap_or(w.small_text_size),
                 };
+                // A style's horizontal padding is the room on each side;
+                // the stock inset is half the theme's.
+                let inset = style
+                    .as_ref()
+                    .and_then(|s| s.padding)
+                    .map_or(bt.padding_x * 0.5, |p| p[0]);
                 let text_rect = [
-                    rect[0] + bt.padding_x * 0.5,
+                    rect[0] + inset,
                     rect[1],
-                    (rect[2] - bt.padding_x).max(1.0),
+                    (rect[2] - 2.0 * inset).max(1.0),
                     rect[3],
                 ];
+                let label = if style.as_ref().is_none_or(Style::text_visible) {
+                    styled_markup(style.as_ref(), escape_markup(&b.label))
+                } else {
+                    String::new()
+                };
+                let align = style
+                    .as_ref()
+                    .and_then(|s| s.text_align)
+                    .map_or(TextAlign::Center, text_align);
                 self.text(
                     &mut cache,
-                    &escape_markup(&b.label),
+                    &label,
                     color,
                     size,
-                    TextAlign::Center,
+                    align,
                     text_rect,
                     true,
                     layer,
@@ -401,13 +440,7 @@ let color = style
             } => {
                 let bt = &w.button;
                 let bg = if hot { bt.hover } else { bt.normal };
-                let bg = style
-                    .as_ref()
-                    .and_then(|s| s.background(enabled, pressed, hot))
-                    .unwrap_or(bg);
-                if !self.nine_slice(style.as_ref(), rect, layer, 0.0) {
-                    self.quad(rect, bg, layer, 0.0);
-                }
+                self.background(style.as_ref(), state, rect, layer, bg);
                 if ring {
                     self.border(rect, bt.focus_width, bt.focus_color, layer, 0.4);
                 }
@@ -465,7 +498,17 @@ let color = style
                     layer,
                 );
             }
-            Kind::Image { texture, uv } => {
+            Kind::Image { texture, uv, clickable } => {
+                // A style gives an image a background per state (a
+                // clickable image's hover / pressed look).
+                if let Some(s) = style.as_ref()
+                    && s.fill_for(state).is_some()
+                {
+                    self.background(Some(s), state, rect, layer, [0, 0, 0, 0]);
+                }
+                if *clickable && ring {
+                    self.border(rect, w.button.focus_width, w.button.focus_color, layer, 0.4);
+                }
                 if let Some(tex) = texture {
                     let mut t = [1.0, 1.0, 1.0, self.alpha];
                     t[3] = self.alpha;
@@ -473,11 +516,11 @@ let color = style
                         Sprite2d::new(*tex, [rect[0], rect[1]], [rect[2], rect[3]])
                             .anchor([0.0, 0.0])
                             .layer(layer)
-                            .z(0.0)
+                            .z(0.1)
                             .uv(*uv)
                             .tint(t),
                     );
-                } else {
+                } else if style.as_ref().is_none_or(|s| s.fill_for(state).is_none()) {
                     self.quad(rect, w.button.disabled, layer, 0.0);
                 }
             }
@@ -523,5 +566,23 @@ let color = style
         if clip_list {
             self.ctx.scene.pop_clip();
         }
+    }
+}
+
+/// The engine alignment of a style alignment.
+pub(crate) fn text_align(a: TextAlignment) -> TextAlign {
+    match a {
+        TextAlignment::Left => TextAlign::Left,
+        TextAlignment::Center => TextAlign::Center,
+        TextAlignment::Right => TextAlign::Right,
+    }
+}
+
+/// `markup` in bold when the style asks for it.
+pub(crate) fn styled_markup(style: Option<&Style>, markup: String) -> String {
+    if style.and_then(|s| s.bold) == Some(true) && !markup.is_empty() {
+        format!("{{b}}{markup}{{/b}}")
+    } else {
+        markup
     }
 }

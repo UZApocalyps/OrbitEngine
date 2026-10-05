@@ -2,8 +2,9 @@
 //! only GPU-side helper and re-exports the data types under their old path.
 
 pub use orbit_ui_data::{
-    Border, ButtonTheme, ChoiceTheme, ControlTheme, Fill, FontRef, ListTheme, PanelTheme, ScreenTheme,
-    StateColors, Style, StyleSounds, TextBoxTheme, Theme, UiSounds, WidgetTheme, resolve_style,
+    Border, ButtonTheme, ChoiceTheme, ControlTheme, DialogueLayout, Fill, FontRef, ImageFit, ListTheme, NamePlate,
+    PanelTheme, QuickMenuTheme, ScreenTheme, Shadow, StateColors, StateFills, Style, StyleSounds, TextAlignment,
+    TextBoxTheme, Theme, UiSounds, WidgetState, WidgetTheme, resolve_style,
 };
 
 /// Converts an sRGBA byte color to the linear RGBA expected by sprite tints.

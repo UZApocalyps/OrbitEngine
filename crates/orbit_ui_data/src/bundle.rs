@@ -218,6 +218,26 @@ impl UiBundle {
     }
 
     /// Problems of every screen and splash (errors make a bundle unusable).
+    /// Every project image the UI draws: the theme's (see
+    /// [`Theme::image_paths`]) and the fixed images of the screens
+    /// (`Image(asset: ...)`, `@` names excluded), each once, sorted.
+    pub fn image_paths(&self) -> Vec<String> {
+        let mut out = self.theme.as_ref().map(Theme::image_paths).unwrap_or_default();
+        for screen in &self.screens {
+            screen.root.walk(&mut |w| {
+                if let crate::widget::WidgetKind::Image { asset: Some(path), .. } = &w.kind
+                    && !path.starts_with('@')
+                    && !path.trim().is_empty()
+                {
+                    out.push(path.clone());
+                }
+            });
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
     pub fn validate(&self) -> Vec<Issue> {
         let mut out = Vec::new();
         let theme = self.theme.as_ref();
@@ -233,6 +253,7 @@ impl UiBundle {
             for issue in theme.contrast_issues() {
                 out.push(Issue::warning("theme", "", issue.message()));
             }
+            out.extend(theme.style_issues());
         }
         for (system, id) in &self.system_screens {
             if !SYSTEM_SCREENS.contains(&system.as_str()) {

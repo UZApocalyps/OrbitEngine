@@ -10,7 +10,7 @@ use crate::layout::{Align, Anchor, Dir, PanelKind, Size};
 use crate::transition::ScreenTransition;
 
 /// Current version of the screen document format.
-pub const UI_VERSION: u32 = 7;
+pub const UI_VERSION: u32 = 8;
 
 fn default_version() -> u32 {
     UI_VERSION
@@ -213,6 +213,11 @@ pub enum WidgetKind {
         /// loaded. Takes over `asset` when set.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bind: Option<BindPath>,
+        /// Run when the image is clicked (`ui_version` 8): a non-empty list
+        /// makes the image a clickable, focusable control (its style can
+        /// give it hover / pressed backgrounds).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        action: Vec<UiAction>,
     },
     Slider {
         bind: BindPath,
@@ -266,6 +271,24 @@ pub enum WidgetKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         empty: Option<TextRef>,
     },
+}
+
+impl WidgetKind {
+    /// The actions the widget runs when activated (a button, a clickable
+    /// image).
+    pub fn actions(&self) -> Option<&Vec<UiAction>> {
+        match self {
+            WidgetKind::Button { action, .. } | WidgetKind::Image { action, .. } => Some(action),
+            _ => None,
+        }
+    }
+
+    pub fn actions_mut(&mut self) -> Option<&mut Vec<UiAction>> {
+        match self {
+            WidgetKind::Button { action, .. } | WidgetKind::Image { action, .. } => Some(action),
+            _ => None,
+        }
+    }
 }
 
 /// Rows a [`WidgetKind::Repeat`] builds at most (the rest is left out).

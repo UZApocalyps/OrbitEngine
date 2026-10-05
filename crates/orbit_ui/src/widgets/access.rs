@@ -108,7 +108,8 @@ impl Ui {
                 Some(text) => node(A11yRole::Label, text),
                 None => return,
             },
-            Kind::Image { .. } => return,
+            Kind::Image { clickable: false, .. } => return,
+            Kind::Image { .. } => node(A11yRole::Button, named("")),
             Kind::Button(b) => {
                 let mut name = plain(&b.label);
                 if name.is_empty() {

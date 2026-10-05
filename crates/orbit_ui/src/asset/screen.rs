@@ -599,17 +599,26 @@ impl DataScreen {
                 }
                 n
             }
-            WidgetKind::Image { asset, bind } => {
+            WidgetKind::Image { asset, bind, action } => {
                 let bound = bind.as_ref().map(|b| match self.bind_value(b, item) {
                     Some(Value::Str(path)) => path,
                     _ => String::new(),
                 });
-                Node::image(match bound.as_deref().or(asset.as_deref()) {
+                let texture = match bound.as_deref().or(asset.as_deref()) {
                     Some(MENU_BACKGROUND) => self.ctx.background,
-                    // A gallery image (loaded by the host), or nothing.
-                    Some(path) if bind.is_some() => self.ctx.images.get(path).copied(),
-                    _ => None,
-                })
+                    // A gallery or project image the host loaded, or
+                    // nothing.
+                    Some(path) => self.ctx.images.get(path).copied(),
+                    None => None,
+                };
+                if action.is_empty() {
+                    Node::image(texture)
+                } else {
+                    let tag = Self::new_tag(st);
+                    st.binds
+                        .insert(tag, Bound::Button(self.resolve_actions(action, item)));
+                    Node::clickable_image(tag, texture)
+                }
             }
             WidgetKind::Slider {
                 bind,
@@ -1408,6 +1417,32 @@ mod tests {
         let resolved = crate::theme::resolve_style(&s.ui().theme().styles, &name).unwrap();
         assert_eq!(resolved.text_size, Some(50.0));
         assert_eq!(resolved.padding, Some([1.0, 2.0]));
+    }
+
+    /// `ui_version` 8: an image with actions is clicked like a button (and
+    /// focused by the keyboard); one without stays inert.
+    #[test]
+    fn an_image_with_actions_is_a_clickable_control() {
+        let asset = from_ron(
+            "(id: \"s\", root: (kind: Stack(dir: Vertical), children: [\
+             (kind: Image(asset: Some(\"assets/logo.png\"), action: [Open(\"extras\")]), \
+              layout: (width: Fixed(200.0), height: Fixed(100.0))),\
+             (kind: Image(asset: Some(\"assets/logo.png\")), layout: (width: Fixed(200.0), height: Fixed(100.0))),\
+             ]))",
+        )
+        .unwrap();
+        let mut s = DataScreen::new(asset, &Theme::default(), &Texts::builtin("en"), ctx());
+        let tag = 1;
+        let id = s.ui().find(tag).unwrap();
+        assert!(matches!(s.ui().node(id).kind, crate::widgets::Kind::Image { clickable: true, .. }));
+        assert_eq!(click(&mut s, tag), vec![UiEvent::OpenScreen("extras".into())]);
+        let inert = s
+            .ui()
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.kind, crate::widgets::Kind::Image { clickable: false, .. }))
+            .count();
+        assert_eq!(inert, 1);
     }
 
     #[test]

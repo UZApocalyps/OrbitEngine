@@ -94,8 +94,7 @@ pub fn variable_issues(
                 }
             }
         }
-        match &w.kind {
-            WidgetKind::Button { action, .. } => {
+        if let Some(action) = w.kind.actions() {
                 for a in action {
                     match a {
                         UiAction::VarSet(op) => add(wid, op.issues(ty_of), &mut out),
@@ -105,7 +104,8 @@ pub fn variable_issues(
                         _ => {}
                     }
                 }
-            }
+        }
+        match &w.kind {
             WidgetKind::Repeat {
                 source: BindPath::Var(name),
                 ..
@@ -181,7 +181,7 @@ pub fn scene_issues(screen: &ScreenAsset, known: &dyn Fn(&str) -> bool) -> Vec<I
     };
     check(&screen.on_cancel, "");
     screen.root.walk(&mut |w| {
-        if let WidgetKind::Button { action, .. } = &w.kind {
+        if let Some(action) = w.kind.actions() {
             check(action, &w.id);
         }
     });
@@ -266,7 +266,9 @@ fn check_items(sid: &str, w: &WidgetDef, inside: bool, depth: usize, out: &mut V
             }
             WidgetKind::Toggle { text, bind } => text_item(text) || bind.is_item(),
             WidgetKind::Slider { bind, .. } | WidgetKind::Dropdown { bind, .. } => bind.is_item(),
-            WidgetKind::Image { bind: Some(bind), .. } => bind.is_item(),
+            WidgetKind::Image { bind, action, .. } => {
+                bind.as_ref().is_some_and(BindPath::is_item) || action.iter().any(action_uses_item)
+            }
             _ => false,
         };
         if uses {
@@ -368,6 +370,11 @@ fn check_widget(sid: &str, w: &WidgetDef, theme: Option<&Theme>, out: &mut Vec<I
         }
         WidgetKind::Button { text, action } => {
             check_text(sid, wid, text, out);
+            for a in action {
+                check_action(sid, wid, a, out);
+            }
+        }
+        WidgetKind::Image { action, .. } => {
             for a in action {
                 check_action(sid, wid, a, out);
             }

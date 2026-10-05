@@ -137,7 +137,11 @@ impl KindTag {
                 center: false,
                 dim: false,
             },
-            Self::Image => WidgetKind::Image { asset: None, bind: None },
+            Self::Image => WidgetKind::Image {
+                asset: None,
+                bind: None,
+                action: Vec::new(),
+            },
             Self::Slider => WidgetKind::Slider {
                 bind: BindPath::Setting(SettingKey::MasterVolume),
                 min: 0.0,
@@ -496,7 +500,7 @@ pub fn rename_screen(bundle: &mut UiBundle, old: &str, new: &str) -> Result<(), 
         }
         fix_actions(&mut screen.on_cancel, old, new);
         walk_mut(&mut screen.root, &mut |w| {
-            if let WidgetKind::Button { action, .. } = &mut w.kind {
+            if let Some(action) = w.kind.actions_mut() {
                 fix_actions(action, old, new);
             }
         });
@@ -580,11 +584,7 @@ pub fn delete_style(theme: &mut Theme, screens: &mut [ScreenAsset], name: &str) 
 }
 
 fn retarget_style(theme: &mut Theme, screens: &mut [ScreenAsset], old: &str, new: Option<&str>) {
-    for style in theme.styles.values_mut() {
-        if style.extends.as_deref() == Some(old) {
-            style.extends = new.map(str::to_owned);
-        }
-    }
+    theme.retarget_style(old, new);
     for screen in screens {
         walk_mut(&mut screen.root, &mut |w| {
             if w.style.as_deref() == Some(old) {
@@ -595,6 +595,77 @@ fn retarget_style(theme: &mut Theme, screens: &mut [ScreenAsset], old: &str, new
             }
         });
     }
+}
+
+/// A copy of the style `name` under a new unique name (`name_copy`...).
+pub fn duplicate_style(theme: &mut Theme, name: &str) -> Option<String> {
+    let style = theme.styles.get(name)?.clone();
+    let new = unique_name(&format!("{name}_copy"), |n| theme.styles.contains_key(n));
+    theme.styles.insert(new.clone(), style);
+    Some(new)
+}
+
+/// One place that uses a style.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StyleUse {
+    /// A widget of a screen (its path in the tree), by `style` or as the
+    /// parent of its local overrides.
+    Widget { screen: String, path: WidgetPath, label: String },
+    /// Another style extends it.
+    Parent(String),
+    /// The dialogue box, choice or quick menu section (`"textbox.style"`...).
+    Dialogue(&'static str),
+}
+
+/// Everything that uses the style `name`.
+pub fn style_usage(bundle: &UiBundle, name: &str) -> Vec<StyleUse> {
+    let mut out = Vec::new();
+    if let Some(theme) = &bundle.theme {
+        for (other, style) in &theme.styles {
+            if style.extends.as_deref() == Some(name) && other != name {
+                out.push(StyleUse::Parent(other.clone()));
+            }
+        }
+        for (at, used) in theme.dialogue_style_refs() {
+            if used == name {
+                out.push(StyleUse::Dialogue(at));
+            }
+        }
+    }
+    for screen in &bundle.screens {
+        for (path, _) in all_paths(&screen.root) {
+            let Some(w) = get(&screen.root, &path) else { continue };
+            if w.style.as_deref() == Some(name) || w.overrides.extends.as_deref() == Some(name) {
+                out.push(StyleUse::Widget {
+                    screen: screen.id.clone(),
+                    path,
+                    label: widget_text(w),
+                });
+            }
+        }
+    }
+    out
+}
+
+fn widget_text(w: &WidgetDef) -> String {
+    if w.id.is_empty() {
+        KindTag::of(&w.kind).name().to_owned()
+    } else {
+        w.id.clone()
+    }
+}
+
+/// Gives the widget at `path` of screen `screen` the style `name` (`None`:
+/// the default look). Returns whether the widget exists.
+pub fn apply_style(bundle: &mut UiBundle, screen: &str, path: &[usize], name: Option<&str>) -> bool {
+    let Some(s) = bundle.screens.iter_mut().find(|s| s.id == screen) else {
+        return false;
+    };
+    let Some(w) = get_mut(&mut s.root, path) else {
+        return false;
+    };
+    w.style = name.map(str::to_owned);
+    true
 }
 
 /// An empty style called `base` (made unique).
@@ -652,7 +723,7 @@ pub fn dangling_actions(bundle: &UiBundle) -> Vec<Issue> {
         };
         check(&screen.on_cancel, "");
         screen.root.walk(&mut |w| {
-            if let WidgetKind::Button { action, .. } = &w.kind {
+            if let Some(action) = w.kind.actions() {
                 check(action, &w.id);
             }
         });
@@ -1059,6 +1130,44 @@ mod tests {
         assert!(delete_style(&mut theme, &mut screens, "fancy"));
         assert_eq!(screens[0].root.children[0].style, None);
         assert_eq!(theme.styles["mine_2"].extends, None);
+    }
+
+    /// `ui_version` 8: duplicate, usage, apply, and the dialogue box
+    /// references following a rename / delete.
+    #[test]
+    fn style_duplicate_usage_apply_and_dialogue_references() {
+        let mut b = UiBundle::builtin();
+        let theme = b.theme.as_mut().unwrap();
+        let base = add_style(theme, "frame");
+        theme.styles.get_mut(&base).unwrap().bold = Some(true);
+        let copy = duplicate_style(theme, &base).unwrap();
+        assert_eq!(copy, "frame_copy");
+        assert_eq!(theme.styles[&copy], theme.styles[&base]);
+        assert!(duplicate_style(theme, "ghost").is_none());
+        theme.styles.get_mut(&copy).unwrap().extends = Some(base.clone());
+        theme.textbox.style = Some(base.clone());
+        theme.choice.button_style = Some(base.clone());
+        let screen = b.screens[0].id.clone();
+        assert!(apply_style(&mut b, &screen, &[0], Some(&base)));
+        assert!(!apply_style(&mut b, &screen, &[99], Some(&base)));
+        assert!(!apply_style(&mut b, "nope", &[0], Some(&base)));
+
+        let usage = style_usage(&b, &base);
+        assert!(usage.contains(&StyleUse::Parent(copy.clone())), "{usage:?}");
+        assert!(usage.contains(&StyleUse::Dialogue("textbox.style")));
+        assert!(usage.contains(&StyleUse::Dialogue("choice.button_style")));
+        assert!(usage.iter().any(|u| matches!(u, StyleUse::Widget { screen: s, path, .. } if *s == screen && path == &vec![0])));
+
+        let mut screens = std::mem::take(&mut b.screens);
+        let theme = b.theme.as_mut().unwrap();
+        rename_style(theme, &mut screens, &base, "panel_frame").unwrap();
+        assert_eq!(theme.textbox.style.as_deref(), Some("panel_frame"));
+        assert_eq!(theme.choice.button_style.as_deref(), Some("panel_frame"));
+        assert_eq!(screens[0].root.children[0].style.as_deref(), Some("panel_frame"));
+        delete_style(theme, &mut screens, "panel_frame");
+        assert_eq!(theme.textbox.style, None);
+        assert_eq!(theme.choice.button_style, None);
+        assert_eq!(theme.styles[&copy].extends, None);
     }
 
     #[test]

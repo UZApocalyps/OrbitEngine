@@ -36,6 +36,8 @@ pub struct PreviewNav {
     /// Mock story variables (declared initial values, set by the editor);
     /// variable operations change them.
     pub vars: BTreeMap<String, Value>,
+    /// Loaded project images (style backgrounds, fixed images).
+    pub images: std::collections::HashMap<String, orbit_render2d::TextureId>,
 }
 
 fn slot(category: SlotCategory, index: u32, state: SlotState) -> SlotView {
@@ -105,6 +107,7 @@ impl PreviewNav {
             prefs: sample_prefs(),
             saves: sample_saves(),
             vars: BTreeMap::new(),
+            images: Default::default(),
         }
     }
 
@@ -149,6 +152,7 @@ impl PreviewNav {
             title: title.to_owned(),
             saves: self.saves.clone(),
             vars: self.vars.clone(),
+            images: self.images.clone(),
             ..DataContext::default()
         }
     }

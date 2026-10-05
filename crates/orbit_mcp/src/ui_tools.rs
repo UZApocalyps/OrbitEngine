@@ -394,3 +394,92 @@ pub fn delete_ui_splash(cx: &mut ToolCx<'_>, a: IndexArg) -> Result<String, Tool
     let issues = commit(cx, &b)?;
     out(json!({"deleted": a.index, "issues": issues}))
 }
+
+// ------------------------------------------------------------ dialogue box
+
+/// The dialogue box part of the theme (`ui_version` 8): what
+/// `read_ui_dialogue` returns and `write_ui_dialogue` takes.
+#[derive(serde::Serialize, Deserialize, Default)]
+#[serde(default)]
+struct DialogueSection {
+    textbox: orbit_ui_data::TextBoxTheme,
+    choice: orbit_ui_data::ChoiceTheme,
+    quick_menu: orbit_ui_data::QuickMenuTheme,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WriteDialogueArgs {
+    /// RON `(textbox: (...), choice: (...), quick_menu: (...))`; a missing
+    /// section is left unchanged, missing fields of a given section take
+    /// their defaults.
+    ron: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WidgetStyleArgs {
+    /// Screen id.
+    screen: String,
+    /// Id of the widget in the screen.
+    widget: String,
+    /// Style name of the theme; omit to remove the style.
+    style: Option<String>,
+}
+
+pub fn read_ui_dialogue(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
+    let b = load(cx)?;
+    let theme = b.theme.unwrap_or_default();
+    let section = DialogueSection {
+        textbox: theme.textbox,
+        choice: theme.choice,
+        quick_menu: theme.quick_menu,
+    };
+    let ron = ron::ser::to_string_pretty(&section, ron::ser::PrettyConfig::new())
+        .map_err(|e| ToolError::invalid(e.to_string()))?;
+    out(json!({"ron": ron}))
+}
+
+pub fn write_ui_dialogue(cx: &mut ToolCx<'_>, a: WriteDialogueArgs) -> Result<String, ToolError> {
+    let has = |key: &str| a.ron.contains(&format!("{key}:"));
+    let section: DialogueSection =
+        ron::from_str(&a.ron).map_err(|e| ToolError::invalid(format!("dialogue RON: {e}")))?;
+    let mut b = load(cx)?;
+    let theme = b.theme.get_or_insert_with(Default::default);
+    if has("textbox") {
+        theme.textbox = section.textbox;
+    }
+    if has("choice") {
+        theme.choice = section.choice;
+    }
+    if has("quick_menu") {
+        theme.quick_menu = section.quick_menu;
+    }
+    let issues = commit(cx, &b)?;
+    out(json!({"written": true, "issues": issues}))
+}
+
+pub fn set_ui_widget_style(cx: &mut ToolCx<'_>, a: WidgetStyleArgs) -> Result<String, ToolError> {
+    fn visit(w: &mut orbit_ui_data::WidgetDef, id: &str, style: &Option<String>, found: &mut bool) {
+        if w.id == id {
+            w.style.clone_from(style);
+            *found = true;
+        }
+        for c in &mut w.children {
+            visit(c, id, style, found);
+        }
+    }
+    let mut b = load(cx)?;
+    let screen = b
+        .screens
+        .iter_mut()
+        .find(|s| s.id == a.screen)
+        .ok_or_else(|| ToolError::not_found(format!("no screen `{}`", a.screen)))?;
+    let mut found = false;
+    visit(&mut screen.root, &a.widget, &a.style, &mut found);
+    if !found {
+        return Err(ToolError::not_found(format!("no widget `{}` in `{}`", a.widget, a.screen)));
+    }
+    let issues = commit(cx, &b)?;
+    out(json!({"screen": a.screen, "widget": a.widget, "style": a.style, "issues": issues}))
+}
