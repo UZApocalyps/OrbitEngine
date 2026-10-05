@@ -860,3 +860,133 @@ fn headless_mcp_refuses_a_project_the_editor_holds() {
     assert!(err.contains("l'éditeur"), "{err}");
     assert!(err.contains("--force"), "{err}");
 }
+
+// ------------------------------------------------- responsiveness (idle editor)
+
+/// Regression: a client got `initialize` but no answer to `tools/list` for
+/// 30 s. `tools/list` (like `initialize` and `ping`) must not need the editor
+/// thread at all: here it never runs a frame.
+#[test]
+fn tools_list_is_answered_while_the_editor_thread_runs_no_frame() {
+    let _serial = serial();
+    let dir = TempDir::new("nopump");
+    let (mut core, _ctx) = editor_with_demo(&dir);
+    core.state.ai.port = 0;
+    live::start(&mut core).unwrap();
+    let (port, token) = (core.mcp.port().unwrap(), core.state.ai.token.clone());
+    let started = std::time::Instant::now();
+    let mut client = Client::new(port, &token);
+    client.initialize();
+    let ping = client.request("ping", json!({}));
+    assert!(ping["result"].is_object(), "{ping}");
+    let tools = client.request("tools/list", json!({}));
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "took {:?}",
+        started.elapsed()
+    );
+    let tools = tools["result"]["tools"].as_array().unwrap();
+    assert!(tools.iter().any(|t| t["name"] == "add_dialogue"));
+    assert!(tools.iter().any(|t| t["name"] == "preview_play"));
+    live::stop(&mut core);
+}
+
+/// The window draws on demand: an idle editor runs a frame only when woken.
+/// A request must wake it (the waker the window app installs) and be
+/// answered promptly, with no input event at all.
+#[test]
+fn a_request_wakes_an_idle_editor_that_draws_on_demand() {
+    let _serial = serial();
+    let dir = TempDir::new("wake");
+    let (mut core, _ctx) = editor_with_demo(&dir);
+    let (wake_tx, wake_rx) = std::sync::mpsc::channel::<()>();
+    core.set_waker(move || {
+        let _ = wake_tx.send(());
+    });
+    core.state.ai.port = 0;
+    live::start(&mut core).unwrap();
+    let (port, token) = (core.mcp.port().unwrap(), core.state.ai.token.clone());
+    let scene = core.story().unwrap().scenes[0].name.clone();
+    let before = dialogue_texts(&core).len();
+    let (elapsed, text) = std::thread::scope(|scope| {
+        let handle = scope.spawn(|| {
+            let mut client = Client::new(port, &token);
+            client.initialize();
+            let started = std::time::Instant::now();
+            let text = client.ok("add_dialogue", json!({"scene": scene, "text": "Réveil"}));
+            (started.elapsed(), text)
+        });
+        // The event loop of an idle window: sleep until woken (or until
+        // the core's own wake-up time), then run one frame.
+        let started = std::time::Instant::now();
+        while !handle.is_finished() {
+            let wait = core
+                .next_wake()
+                .map_or(Duration::from_millis(500), |at| {
+                    at.saturating_duration_since(std::time::Instant::now())
+                })
+                .min(Duration::from_millis(500));
+            if wake_rx.recv_timeout(wait).is_ok() || core.mcp.has_pending() {
+                core.pump_live(&mut NoPreview);
+            }
+            assert!(started.elapsed() < Duration::from_secs(30), "never answered");
+        }
+        handle.join().unwrap()
+    });
+    assert!(elapsed < Duration::from_secs(2), "took {elapsed:?}");
+    assert!(text.contains("Réveil"), "{text}");
+    assert_eq!(dialogue_texts(&core).len(), before + 1);
+    live::stop(&mut core);
+}
+
+/// The editor thread is blocked (a native file dialog): a call needing it
+/// gets a clear "editor busy" error within seconds, not a silent timeout,
+/// and is never run afterwards.
+#[test]
+fn a_blocked_editor_answers_busy_quickly_and_never_runs_the_call_later() {
+    let _serial = serial();
+    let dir = TempDir::new("busy");
+    let (mut core, _ctx) = editor_with_demo(&dir);
+    core.state.ai.port = 0;
+    live::start(&mut core).unwrap();
+    let (port, token) = (core.mcp.port().unwrap(), core.state.ai.token.clone());
+    core.mcp.set_busy(Some("the \"open project\" file dialog is open".into()));
+    let scene = core.story().unwrap().scenes[0].name.clone();
+    let before = dialogue_texts(&core);
+    let started = std::time::Instant::now();
+    let mut client = Client::new(port, &token);
+    client.initialize();
+    let (is_error, text, _) = client.call("add_dialogue", json!({"scene": scene, "text": "Jamais"}));
+    assert!(started.elapsed() < Duration::from_secs(10), "took {:?}", started.elapsed());
+    assert!(is_error, "{text}");
+    assert!(text.contains("editor busy"), "{text}");
+    assert!(text.contains("file dialog"), "{text}");
+    // The dialog closes, the editor runs frames again: nothing happens.
+    core.mcp.set_busy(None);
+    core.pump_live(&mut NoPreview);
+    assert!(!core.mcp.has_pending());
+    assert_eq!(dialogue_texts(&core), before);
+    live::stop(&mut core);
+}
+
+/// The editor's own modal dialogs (recovery, unsaved changes, file changed
+/// on disk) are drawn by egui: they never stop the live queue.
+#[test]
+fn an_editor_modal_dialog_does_not_block_live_calls() {
+    let _serial = serial();
+    let dir = TempDir::new("modal");
+    let (mut core, _ctx) = editor_with_demo(&dir);
+    core.dialog = Some(orbit_editor::core::Dialog::ExternalChange { conflict: false });
+    core.state.ai.port = 0;
+    live::start(&mut core).unwrap();
+    let (port, token) = (core.mcp.port().unwrap(), core.state.ai.token.clone());
+    let text = with_editor(&mut core, || {
+        let mut client = Client::new(port, &token);
+        client.initialize();
+        client.request("tools/list", json!({}));
+        client.ok("list_scenes", json!({}))
+    });
+    assert!(!text.is_empty());
+    assert!(core.dialog.is_some(), "the dialog is left to the user");
+    live::stop(&mut core);
+}

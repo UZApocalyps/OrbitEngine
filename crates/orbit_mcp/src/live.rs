@@ -82,10 +82,23 @@ pub struct LiveJob {
 
 type Waker = Box<dyn Fn() + Send + Sync>;
 
+/// How long a posted request may wait for the editor thread to pick it up
+/// before the editor counts as busy (a native file dialog blocks its thread,
+/// for example). The request is then withdrawn, never run, and the client
+/// gets a clear `unavailable` error instead of a silent timeout.
+const PICKUP_GRACE: Duration = Duration::from_secs(5);
+
 #[derive(Default)]
 struct QueueInner {
-    jobs: Mutex<VecDeque<LiveJob>>,
+    jobs: Mutex<VecDeque<(u64, LiveJob)>>,
+    next_id: AtomicU64,
     waker: Mutex<Option<Waker>>,
+    /// The editor's tool list, published from its thread: `tools/list`
+    /// never needs the editor thread (see [`CommandQueue::publish_tools`]).
+    tools: Mutex<Option<Vec<ToolInfo>>>,
+    /// Why the editor cannot answer right now, when it knows (shown to the
+    /// client in the "editor busy" error).
+    busy: Mutex<Option<String>>,
 }
 
 /// The thread-safe queue between the server thread and the editor thread.
@@ -107,10 +120,19 @@ impl CommandQueue {
         }
     }
 
-    pub fn push(&self, job: LiveJob) {
+    /// Posts a job and wakes the editor; returns its ticket (see
+    /// [`CommandQueue::withdraw`]).
+    pub fn push(&self, job: LiveJob) -> u64 {
+        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         if let Ok(mut jobs) = self.inner.jobs.lock() {
-            jobs.push_back(job);
+            jobs.push_back((id, job));
         }
+        self.wake();
+        id
+    }
+
+    /// Asks the editor loop for a frame (the window draws on demand).
+    pub fn wake(&self) {
         if let Ok(slot) = self.inner.waker.lock()
             && let Some(wake) = slot.as_ref()
         {
@@ -118,13 +140,54 @@ impl CommandQueue {
         }
     }
 
+    /// Takes back a job the editor has not picked up yet. `false`: it was
+    /// already taken (it runs or ran).
+    pub fn withdraw(&self, id: u64) -> bool {
+        let Ok(mut jobs) = self.inner.jobs.lock() else {
+            return false;
+        };
+        let before = jobs.len();
+        jobs.retain(|(job_id, _)| *job_id != id);
+        jobs.len() != before
+    }
+
     /// Takes everything posted so far, in order.
     pub fn drain(&self) -> Vec<LiveJob> {
         self.inner
             .jobs
             .lock()
-            .map(|mut jobs| jobs.drain(..).collect())
+            .map(|mut jobs| jobs.drain(..).map(|(_, job)| job).collect())
             .unwrap_or_default()
+    }
+
+    /// The editor publishes its full tool list (3D tools included: they are
+    /// filtered when read, with the switch of that moment). `tools/list` is
+    /// then answered from the server thread, even while the editor thread is
+    /// asleep or blocked.
+    pub fn publish_tools(&self, tools: Vec<ToolInfo>) {
+        if let Ok(mut slot) = self.inner.tools.lock() {
+            *slot = Some(tools);
+        }
+    }
+
+    /// The published tool list, filtered by the experimental-3D switch.
+    pub fn tools(&self) -> Option<Vec<ToolInfo>> {
+        let mut tools = self.inner.tools.lock().ok()?.clone()?;
+        if !orbit_core::experimental::enabled_3d() {
+            tools.retain(|t| !crate::host::is_3d_tool(&t.name));
+        }
+        Some(tools)
+    }
+
+    /// The editor says why it cannot answer for a while (`None`: it can).
+    pub fn set_busy(&self, reason: Option<String>) {
+        if let Ok(mut slot) = self.inner.busy.lock() {
+            *slot = reason;
+        }
+    }
+
+    fn busy_reason(&self) -> Option<String> {
+        self.inner.busy.lock().ok().and_then(|r| r.clone())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -148,17 +211,61 @@ impl LiveHost {
     }
 
     fn ask(&self, request: LiveRequest, timeout: Duration) -> Result<LiveReply, ToolError> {
+        self.ask_with_grace(request, timeout, PICKUP_GRACE)
+    }
+
+    /// Posts `request` and waits for the answer. When the editor thread has
+    /// not even picked the job up after `grace` (it is blocked: a native file
+    /// dialog, a frozen window), the job is withdrawn — it will never run —
+    /// and the caller gets an "editor busy" error at once rather than after
+    /// `timeout`.
+    fn ask_with_grace(
+        &self,
+        request: LiveRequest,
+        timeout: Duration,
+        grace: Duration,
+    ) -> Result<LiveReply, ToolError> {
         let (reply, answer) = mpsc::channel();
-        self.queue.push(LiveJob { request, reply });
-        answer.recv_timeout(timeout).map_err(|e| match e {
-            mpsc::RecvTimeoutError::Timeout => ToolError::unavailable(format!(
-                "the editor did not answer within {} s (is it busy with a dialog or closed?)",
-                timeout.as_secs()
-            )),
-            mpsc::RecvTimeoutError::Disconnected => {
-                ToolError::unavailable("the editor dropped the request (it is closing)")
+        let id = self.queue.push(LiveJob { request, reply });
+        let started = Instant::now();
+        let mut picked = false;
+        loop {
+            let slice = Duration::from_millis(200).min(timeout.saturating_sub(started.elapsed()));
+            match answer.recv_timeout(slice) {
+                Ok(reply) => return Ok(reply),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(ToolError::unavailable(
+                        "the editor dropped the request (it is closing)",
+                    ));
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
-        })
+            let elapsed = started.elapsed();
+            if !picked && elapsed >= grace {
+                if self.queue.withdraw(id) {
+                    let reason = self.queue.busy_reason().unwrap_or_else(|| {
+                        "its window is not processing events (a native dialog such as a file \
+                         picker may be open, or the window is frozen)"
+                            .to_owned()
+                    });
+                    return Err(ToolError::unavailable(format!(
+                        "editor busy: {reason}. The request was not run; close the dialog in \
+                         the editor and try again."
+                    )));
+                }
+                picked = true; // the editor runs it: wait for the answer
+            }
+            if elapsed >= timeout {
+                return Err(ToolError::unavailable(format!(
+                    "the editor did not answer within {} s (is it busy with a dialog or closed?)",
+                    timeout.as_secs()
+                )));
+            }
+            if !picked {
+                // A lost wake-up must not cost the whole grace period.
+                self.queue.wake();
+            }
+        }
     }
 }
 
@@ -171,6 +278,9 @@ fn protocol_error() -> ToolError {
 
 impl ProjectHost for LiveHost {
     fn list_tools(&self) -> Vec<ToolInfo> {
+        if let Some(tools) = self.queue.tools() {
+            return tools;
+        }
         match self.ask(LiveRequest::ListTools, REPLY_TIMEOUT) {
             Ok(LiveReply::Tools(tools)) => tools,
             _ => Vec::new(),
@@ -341,8 +451,10 @@ impl LiveServer {
             .map_err(|e| format!("cannot read the listener address: {e}"))?;
 
         // The generic MCP worker thread; its host forwards to the editor.
+        let tools = queue.clone();
         let mcp = OrbitMcpServer::spawn(move || Ok(LiveHost::new(queue)))?
-            .with_instructions(LIVE_INSTRUCTIONS);
+            .with_instructions(LIVE_INSTRUCTIONS)
+            .with_tool_list(move || tools.tools());
 
         let status = Arc::new(ServerStatus::default());
         let cancel = CancellationToken::new();
@@ -550,5 +662,50 @@ mod tests {
             .ask(LiveRequest::ListTools, Duration::from_millis(50))
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Unavailable);
+    }
+
+    #[test]
+    fn a_blocked_editor_gets_a_quick_busy_error_and_the_job_is_withdrawn() {
+        let queue = CommandQueue::new();
+        queue.set_busy(Some("a file dialog is open".into()));
+        let host = LiveHost::new(queue.clone());
+        let started = Instant::now();
+        let err = host
+            .ask_with_grace(
+                LiveRequest::CallTool {
+                    name: "add_dialogue".into(),
+                    args: Json::Null,
+                },
+                Duration::from_secs(60),
+                Duration::from_millis(100),
+            )
+            .unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(err.kind, ErrorKind::Unavailable);
+        assert!(err.message.contains("editor busy: a file dialog is open"), "{}", err.message);
+        // Never run later, when the editor comes back.
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn tools_list_is_answered_from_the_published_list_without_the_editor() {
+        let queue = CommandQueue::new();
+        assert!(queue.tools().is_none());
+        queue.publish_tools(vec![ToolInfo {
+            name: "list_scenes".into(),
+            title: "List scenes".into(),
+            description: String::new(),
+            input_schema: serde_json::Map::new(),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        }]);
+        // Nobody drains the queue: still an immediate answer.
+        let host = LiveHost::new(queue.clone());
+        let started = Instant::now();
+        let tools = host.list_tools();
+        assert!(started.elapsed() < Duration::from_millis(500));
+        assert_eq!(tools.len(), 1);
+        assert!(queue.is_empty());
     }
 }

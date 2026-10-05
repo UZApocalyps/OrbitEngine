@@ -109,6 +109,16 @@ impl ToolRunner {
 
     /// The built-in tools followed by the tools of the installed plugins.
     pub fn list(&self, registry: &ProjectRegistry) -> Vec<ToolInfo> {
+        let mut infos = self.list_all(registry);
+        if !orbit_core::experimental::enabled_3d() {
+            infos.retain(|i| !is_3d_tool(&i.name));
+        }
+        infos
+    }
+
+    /// [`Self::list`] with the experimental 3D tools whatever the switch says
+    /// (the live server filters its published copy when it is read).
+    pub fn list_all(&self, registry: &ProjectRegistry) -> Vec<ToolInfo> {
         let mut infos: Vec<ToolInfo> = self
             .tools
             .iter()
@@ -136,9 +146,6 @@ impl ToolRunner {
                 destructive: def.destructive,
                 idempotent: false,
             });
-        }
-        if !orbit_core::experimental::enabled_3d() {
-            infos.retain(|i| !is_3d_tool(&i.name));
         }
         infos
     }

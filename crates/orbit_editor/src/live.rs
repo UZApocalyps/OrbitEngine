@@ -80,6 +80,8 @@ pub struct LiveService {
     lock: Option<ProjectLock>,
     /// The takeover of our lock was already reported.
     takeover_reported: bool,
+    /// When the tool list was last published to the queue.
+    tools_published: Option<Instant>,
 }
 
 impl Default for LiveService {
@@ -91,11 +93,23 @@ impl Default for LiveService {
             next_log_id: 1,
             lock: None,
             takeover_reported: false,
+            tools_published: None,
         }
     }
 }
 
 impl LiveService {
+    /// Requests of the server wait for the editor thread.
+    pub fn has_pending(&self) -> bool {
+        !self.queue.is_empty()
+    }
+
+    /// Tells clients why the editor cannot answer for a while (a blocking
+    /// native dialog); `None` when it can again.
+    pub fn set_busy(&self, reason: Option<String>) {
+        self.queue.set_busy(reason);
+    }
+
     pub fn is_running(&self) -> bool {
         self.server.is_some()
     }
@@ -156,6 +170,9 @@ pub fn start(core: &mut EditorCore) -> Result<(), String> {
     }
     let waker = core.state.waker.clone();
     core.mcp.queue.set_waker(move || waker.wake());
+    // `tools/list` is answered from this list on the server thread: a client
+    // gets it even while the editor sleeps or sits in a blocking dialog.
+    publish_tools(core);
     let config = LiveConfig {
         port: core.state.ai.port,
         token: core.state.ai.token.clone(),
@@ -258,6 +275,14 @@ fn check_lock(core: &mut EditorCore) {
 pub fn pump(core: &mut EditorCore, backend: &mut dyn PreviewBackend) {
     process_commands(core);
     check_lock(core);
+    if core.mcp.server.is_some()
+        && core
+            .mcp
+            .tools_published
+            .is_none_or(|at| at.elapsed() >= TOOLS_REFRESH)
+    {
+        publish_tools(core); // plugins may have added or removed tools
+    }
     let jobs = core.mcp.queue.drain();
     for job in jobs {
         let LiveJob { request, reply } = job;
@@ -404,8 +429,27 @@ fn execute(
     }
 }
 
+/// How often the published tool list is rebuilt (plugin tools may change).
+const TOOLS_REFRESH: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Publishes the full tool list to the queue (the 3D tools are filtered when
+/// it is read, see `CommandQueue::tools`).
+fn publish_tools(core: &mut EditorCore) {
+    let tools = all_tools(core);
+    core.mcp.queue.publish_tools(tools);
+    core.mcp.tools_published = Some(Instant::now());
+}
+
 fn list_tools(core: &EditorCore) -> Vec<ToolInfo> {
-    let mut tools = core.mcp.runner.list(&core.registry.project);
+    let mut tools = all_tools(core);
+    if !orbit_core::experimental::enabled_3d() {
+        tools.retain(|t| !orbit_mcp::host::is_3d_tool(&t.name));
+    }
+    tools
+}
+
+fn all_tools(core: &EditorCore) -> Vec<ToolInfo> {
+    let mut tools = core.mcp.runner.list_all(&core.registry.project);
     for tool in &mut tools {
         if tool.name == "save" {
             tool.read_only = false;
@@ -416,9 +460,6 @@ fn list_tools(core: &EditorCore) -> Vec<ToolInfo> {
         }
     }
     tools.extend(live_tool_infos());
-    if !orbit_core::experimental::enabled_3d() {
-        tools.retain(|t| !orbit_mcp::host::is_3d_tool(&t.name));
-    }
     tools
 }
 

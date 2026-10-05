@@ -706,19 +706,23 @@ impl EditorCore {
             EditorRequest::RunAction(id) => self.run_action(&id),
             EditorRequest::OpenProject(path) => self.open_project(&path),
             EditorRequest::PickOpenProject => {
-                if let Some(path) = rfd::FileDialog::new()
+                self.mcp.set_busy(Some("the \"open project\" file dialog is open".into()));
+                let picked = rfd::FileDialog::new()
                     .set_title(self.state.t("host.pick_project"))
-                    .pick_folder()
-                {
+                    .pick_folder();
+                self.mcp.set_busy(None);
+                if let Some(path) = picked {
                     self.open_project(&path);
                 }
             }
             EditorRequest::PickOpenStory => {
-                if let Some(path) = rfd::FileDialog::new()
+                self.mcp.set_busy(Some("the \"open story\" file dialog is open".into()));
+                let picked = rfd::FileDialog::new()
                     .set_title(self.state.t("host.pick_story"))
                     .add_filter(self.state.t("host.story_filter"), &["orbit", "ron"])
-                    .pick_file()
-                {
+                    .pick_file();
+                self.mcp.set_busy(None);
+                if let Some(path) = picked {
                     self.open_project(&path);
                 }
             }
@@ -1209,7 +1213,10 @@ impl EditorCore {
             .as_mut()
             .and_then(|s| s.autosave_wake(self.options.autosave_interval));
         let validation = self.live.next_wake();
-        [toasts, autosave, validation].into_iter().flatten().min()
+        // A request of the live MCP server is waiting: run a frame now, even
+        // if its wake-up event was lost or coalesced.
+        let mcp = self.mcp.has_pending().then(Instant::now);
+        [toasts, autosave, validation, mcp].into_iter().flatten().min()
     }
 
     /// Title of the window ("● Mon jeu — OrbitEngine").

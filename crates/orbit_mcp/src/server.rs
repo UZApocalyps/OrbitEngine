@@ -66,7 +66,13 @@ enum Job {
 pub struct OrbitMcpServer {
     jobs: mpsc::Sender<Job>,
     instructions: &'static str,
+    /// Answers `tools/list` without the worker thread when it has a list
+    /// (live mode: the editor publishes it), so the list never waits behind
+    /// a long call or a busy editor.
+    tool_list: Option<Arc<ToolListFn>>,
 }
+
+type ToolListFn = dyn Fn() -> Option<Vec<ToolInfo>> + Send + Sync;
 
 impl OrbitMcpServer {
     /// Starts the worker thread owning the host built by `make` (built on
@@ -92,19 +98,29 @@ impl OrbitMcpServer {
                     }
                 };
                 for job in inbox {
-                    // The requester may have gone away (cancelled): ignore.
+                    // A requester that has gone away (cancelled, timed out)
+                    // is skipped: running it would delay every later request
+                    // for nothing (and run an edit nobody waits for).
                     match job {
                         Job::ListTools(reply) => {
-                            let _ = reply.send(host.list_tools());
+                            if !reply.is_closed() {
+                                let _ = reply.send(host.list_tools());
+                            }
                         }
                         Job::CallTool { name, args, reply } => {
-                            let _ = reply.send(host.call_tool_rich(&name, args));
+                            if !reply.is_closed() {
+                                let _ = reply.send(host.call_tool_rich(&name, args));
+                            }
                         }
                         Job::ListResources(reply) => {
-                            let _ = reply.send(host.list_resources());
+                            if !reply.is_closed() {
+                                let _ = reply.send(host.list_resources());
+                            }
                         }
                         Job::ReadResource { uri, reply } => {
-                            let _ = reply.send(host.read_resource(&uri));
+                            if !reply.is_closed() {
+                                let _ = reply.send(host.read_resource(&uri));
+                            }
                         }
                     }
                 }
@@ -116,7 +132,18 @@ impl OrbitMcpServer {
         Ok(Self {
             jobs,
             instructions: INSTRUCTIONS,
+            tool_list: None,
         })
+    }
+
+    /// Answers `tools/list` with `list` when it returns a list, without
+    /// going through the worker thread.
+    pub fn with_tool_list(
+        mut self,
+        list: impl Fn() -> Option<Vec<ToolInfo>> + Send + Sync + 'static,
+    ) -> Self {
+        self.tool_list = Some(Arc::new(list));
+        self
     }
 
     /// Replaces the instructions sent to the client at `initialize`.
@@ -173,7 +200,11 @@ impl ServerHandler for OrbitMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let infos = self.ask(Job::ListTools).await?;
+        let cached = self.tool_list.as_ref().and_then(|list| list());
+        let infos = match cached {
+            Some(infos) => infos,
+            None => self.ask(Job::ListTools).await?,
+        };
         Ok(ListToolsResult::with_all_items(
             infos.into_iter().map(to_tool).collect(),
         )
