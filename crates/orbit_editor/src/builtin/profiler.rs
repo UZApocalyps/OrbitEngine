@@ -31,7 +31,8 @@ impl EditorPlugin for ProfilerPlugin {
             icons::GAUGE,
             DockSlot::Hidden,
             panel,
-        ));
+        )
+        .opens_in(DockSlot::Bottom));
     }
 }
 

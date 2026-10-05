@@ -30,6 +30,10 @@ pub struct PanelDef {
     /// Icon glyph (see [`crate::icons`]), empty for none.
     pub icon: &'static str,
     pub default_dock: DockSlot,
+    /// Area whose tab group receives the panel when it is opened while not
+    /// in the layout (a `Hidden` panel, a closed tab). Defaults to
+    /// `default_dock`, or `Center` for hidden panels; see [`Self::opens_in`].
+    pub home: DockSlot,
     pub ui: PanelUi,
 }
 
@@ -46,8 +50,22 @@ impl PanelDef {
             title: title.into(),
             icon,
             default_dock,
+            home: if default_dock == DockSlot::Hidden {
+                DockSlot::Center
+            } else {
+                default_dock
+            },
             ui: Box::new(ui),
         }
+    }
+
+    /// Opens the panel as a tab of the `slot` area instead of the default
+    /// one (`Hidden` is ignored).
+    pub fn opens_in(mut self, slot: DockSlot) -> Self {
+        if slot != DockSlot::Hidden {
+            self.home = slot;
+        }
+        self
     }
 }
 

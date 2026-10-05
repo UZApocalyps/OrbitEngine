@@ -195,10 +195,7 @@ impl EditorCore {
         }
         translator.install(ctx);
 
-        let mut dock = config
-            .dock
-            .unwrap_or_else(|| dock::default_layout(&registry));
-        dock::sanitize(&mut dock, &registry);
+        let dock = dock::restore(config.dock, config.dock_layout_version, &registry);
 
         builtin::apply_saved_prefs(&config.plugin_prefs);
         let mut state = EditorState {
@@ -375,7 +372,7 @@ impl EditorCore {
         self.registry.ui_link.dirty.set(false);
         self.registry.ui_link.scene3d_dirty.set(false);
         self.registry.ui_link.focus.set(false);
-        dock::show_panel(&mut self.dock, builtin::panels::SCENE);
+        dock::show_panel(&mut self.dock, &self.registry, builtin::panels::SCENE);
         self.sync_info();
         self.remember(&title, &remembered);
         self.registry
@@ -750,7 +747,11 @@ impl EditorCore {
             }
             EditorRequest::ShowPanel(id) => {
                 self.state.maximized_panel = None;
-                dock::show_panel(&mut self.dock, &id);
+                dock::show_panel(&mut self.dock, &self.registry, &id);
+            }
+            EditorRequest::ShowWorkspace(ids) => {
+                self.state.maximized_panel = None;
+                dock::show_workspace(&mut self.dock, &self.registry, &ids);
             }
             EditorRequest::ToggleMaximizePanel(id) => {
                 self.state.maximized_panel = if self.state.maximized_panel.as_deref() == Some(&id) {
@@ -1227,6 +1228,7 @@ impl EditorCore {
             theme: self.state.theme,
             language: self.language_pref,
             dock: Some(self.dock.clone()),
+            dock_layout_version: dock::LAYOUT_VERSION,
             recent: self.state.recent.clone(),
             plugin_prefs: self.state.plugin_prefs.clone(),
         }

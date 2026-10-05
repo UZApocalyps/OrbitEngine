@@ -84,8 +84,10 @@ impl EditorPlugin for UiEditorPlugin {
         ));
         reg.action(
             ActionDef::new("open", "uied.open", |ctx| {
-                ctx.request(EditorRequest::ShowPanel(panels::UI_EDITOR.to_owned()));
+                // The preview stays in its own (right) group: it is shared
+                // with the story, not a sub-panel of the UI editor.
                 ctx.request(EditorRequest::ShowPanel(panels::PREVIEW.to_owned()));
+                ctx.request(EditorRequest::ShowPanel(panels::UI_EDITOR.to_owned()));
             })
             .icon(icons::BROWSERS)
             .category("category.tools")
