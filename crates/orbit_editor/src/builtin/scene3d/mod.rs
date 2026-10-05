@@ -113,13 +113,15 @@ impl EditorPlugin for Scene3dPlugin {
         ));
         reg.action(
             ActionDef::new("open", "s3d.open", |ctx| {
-                for p in [
-                    panel_ids::SCENE3D_VIEWPORT,
-                    panel_ids::SCENE3D_HIERARCHY,
-                    panel_ids::SCENE3D_INSPECTOR,
-                ] {
-                    ctx.request(EditorRequest::ShowPanel(p.to_owned()));
-                }
+                ctx.request(EditorRequest::ShowWorkspace(
+                    [
+                        panel_ids::SCENE3D_VIEWPORT,
+                        panel_ids::SCENE3D_HIERARCHY,
+                        panel_ids::SCENE3D_INSPECTOR,
+                    ]
+                    .map(str::to_owned)
+                    .to_vec(),
+                ));
             })
             .icon(icons::CUBE)
             .category("category.tools")
@@ -260,6 +262,9 @@ impl State {
 
     /// Handles the keyboard shortcuts shared by the panels.
     pub fn undo_redo_keys(&mut self, ui: &Ui) {
+        if ui.ctx().egui_wants_keyboard_input() {
+            return;
+        }
         let (undo, redo) = ui.input(|i| {
             let ctrl = i.modifiers.command;
             (

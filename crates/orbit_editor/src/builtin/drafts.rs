@@ -53,6 +53,14 @@ fn item(key: &str, label: &str, icon: &'static str, group: &'static str) -> Inse
 
 /// Built-in node types, grouped for the menus.
 pub fn builtin_insertables() -> Vec<Insertable> {
+    let mut items = all_builtin_insertables();
+    if !orbit_core::experimental::enabled_3d() {
+        items.retain(|i| !matches!(i.key.as_str(), "ShowScene3d" | "Camera3d" | "HideScene3d"));
+    }
+    items
+}
+
+fn all_builtin_insertables() -> Vec<Insertable> {
     vec![
         item(
             "Say",

@@ -111,6 +111,11 @@ impl RigHost {
             for att in skin.attachments.values() {
                 let name = att.image();
                 let key = (req.root.clone(), name.to_owned());
+                // A picture that could not be loaded is retried once its
+                // file exists (imported or copied after the first draw).
+                if self.images.get(&key).is_some_and(Option::is_none) && req.root.join(name).is_file() {
+                    self.images.remove(&key);
+                }
                 if !self.images.contains_key(&key) {
                     let tex = load_image(renderer, &req.root, name);
                     self.images.insert(key.clone(), tex);

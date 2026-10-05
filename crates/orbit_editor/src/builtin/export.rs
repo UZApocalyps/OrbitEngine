@@ -53,7 +53,8 @@ impl EditorPlugin for ExportPlugin {
             icons::EXPORT,
             DockSlot::Hidden,
             panel,
-        ));
+        )
+        .opens_in(DockSlot::Right));
         reg.action(
             ActionDef::new("open", "export.open", |c| {
                 c.request(EditorRequest::ShowPanel(panels::EXPORT.to_owned()));
@@ -458,6 +459,9 @@ impl ExportUi {
             Ok(project) => project.profiles(),
             Err(_) => vec![ExportProfile::new("release", name)],
         };
+        if self.profiles.is_empty() {
+            self.profiles.push(ExportProfile::new("release", name));
+        }
         self.has_manifest = has_manifest;
         self.plugins = PluginStatus::detect(root);
         self.scenes3d = None;
@@ -600,6 +604,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                 android_section(ui, &mut state);
             }
             if let Some(story) = ctx.story()
+                && orbit_core::experimental::enabled_3d()
                 && orbit_export::scene3d::uses_3d(story)
             {
                 ui.add_space(6.0);
@@ -759,6 +764,7 @@ fn profile_form(
                 )
                 .changed();
             ui.end_row();
+            if orbit_core::experimental::enabled_3d() {
             ui.label(texts.t("export.field.quality3d"));
             ui.horizontal(|ui| {
                 for (value, key) in [
@@ -774,6 +780,7 @@ fn profile_form(
             .response
             .on_hover_text(texts.t("export.field.quality3d_hint"));
             ui.end_row();
+            }
         });
     if changed {
         state.dirty = true;

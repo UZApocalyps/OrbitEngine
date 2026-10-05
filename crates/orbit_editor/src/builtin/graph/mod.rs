@@ -304,6 +304,13 @@ fn build_content(
                         (SlotKind::Next, _) => texts.t("graph.slot.next"),
                         (SlotKind::Else, _) if target.is_none() => texts.t("graph.slot.else_next"),
                         (SlotKind::Else, _) => texts.t("graph.slot.else"),
+                        (SlotKind::Branch(_), _) => {
+                            texts.tf("graph.slot.branch", &[("name", &slot.label)])
+                        }
+                        (SlotKind::OnError, _) if target.is_none() => {
+                            texts.t("graph.slot.on_error_next")
+                        }
+                        (SlotKind::OnError, _) => texts.t("graph.slot.on_error"),
                         (SlotKind::Then, Some(NodeKind::If { condition, .. })) => {
                             texts.tf("graph.slot.if", &[("condition", condition)])
                         }
@@ -334,7 +341,8 @@ fn build_content(
                         broken,
                         conditional: slot.conditional,
                         soft: matches!(slot.kind, SlotKind::Next)
-                            || (slot.kind == SlotKind::Else && target.is_none()),
+                            || (matches!(slot.kind, SlotKind::Else | SlotKind::OnError)
+                                && target.is_none()),
                     }
                 })
                 .collect();

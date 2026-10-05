@@ -375,4 +375,5 @@
     "varop.type_int": "integer",
     "varop.type_float": "decimal",
     "varop.type_text": "text",
+    "inspector.scene3d.hidden_notice": "Experimental 3D features are hidden (View > Experimental 3D features). This node still works.",
 }

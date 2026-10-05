@@ -29,6 +29,17 @@ pub fn default_config_dir() -> Option<PathBuf> {
     Some(base.join("orbit-engine").join("editor"))
 }
 
+/// [`UserConfig`] without the layout: the fallback read of a config whose
+/// layout no longer parses (the `dock` field is skipped as unknown).
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct WithoutLayout {
+    theme: ThemeMode,
+    language: Option<Lang>,
+    recent: Vec<RecentProject>,
+    plugin_prefs: BTreeMap<String, BTreeMap<String, String>>,
+}
+
 /// What is remembered between launches.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -39,6 +50,9 @@ pub struct UserConfig {
     pub language: Option<Lang>,
     /// Dock layout: the tabs are panel ids.
     pub dock: Option<DockState<String>>,
+    /// [`crate::dock::LAYOUT_VERSION`] of `dock`; 0 for configs written
+    /// before layouts were versioned (their layout is replaced).
+    pub dock_layout_version: u32,
     pub recent: Vec<RecentProject>,
     pub plugin_prefs: BTreeMap<String, BTreeMap<String, String>>,
 }
@@ -90,6 +104,20 @@ impl ConfigStore {
         };
         match ron::from_str(&text) {
             Ok(config) => config,
+            // A layout an older or newer egui_dock cannot read must not cost
+            // the recent projects and preferences: keep the rest, reset the
+            // layout.
+            Err(e) if ron::from_str::<WithoutLayout>(&text).is_ok() => {
+                log::warn!("config {}: dock layout reset ({e})", path.display());
+                let rest: WithoutLayout = ron::from_str(&text).unwrap_or_default();
+                UserConfig {
+                    theme: rest.theme,
+                    language: rest.language,
+                    recent: rest.recent,
+                    plugin_prefs: rest.plugin_prefs,
+                    ..UserConfig::default()
+                }
+            }
             Err(e) => {
                 log::warn!("config {} ignored: {e}", path.display());
                 UserConfig::default()
@@ -117,6 +145,23 @@ impl ConfigStore {
 mod tests {
     use super::*;
     use crate::storage::testing::TempDir;
+
+    #[test]
+    fn an_unreadable_layout_keeps_the_rest_of_the_config() {
+        let dir = TempDir::new("config_bad_dock");
+        let store = ConfigStore::new(Some(dir.path().to_owned()));
+        std::fs::write(
+            dir.path().join(CONFIG_FILE),
+            "(theme: Light, dock: Some((surfaces: [Garbage(1)], other: 2)), \
+             recent: [(name: \"Demo\", path: \"/p/demo\")])",
+        )
+        .unwrap();
+        let config = store.load();
+        assert!(config.dock.is_none());
+        assert_eq!(config.dock_layout_version, 0);
+        assert_eq!(config.theme, ThemeMode::Light);
+        assert_eq!(config.recent.len(), 1);
+    }
 
     #[test]
     fn config_round_trips_including_the_dock_layout() {

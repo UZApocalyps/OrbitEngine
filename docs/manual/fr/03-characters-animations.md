@@ -39,7 +39,14 @@ Les particules sont calculées à partir de l'instant où l'étape s'est exécut
 
 ## Animation par squelette (rigs)
 
-Un **rig** donne vie à un dessin avec des os : respiration, bras qui salue, tête qui tourne. Construisez-le dans le panneau **Rig** (os, maillage depuis une image, poids, clips), puis cliquez sur **Ajouter au projet** : le fichier est enregistré en `assets/rigs/<nom>.rig.ron` et apparaît dans la Bibliothèque. Les images dessinées par un rig doivent être des fichiers du projet.
+Un **rig** donne vie à un dessin avec des os : respiration, bras qui salue, tête qui tourne. La vue du rig affiche une barre d'étapes (**1. Importer l'image → 2. Dessiner les os → 3. Lier → 4. Poser / animer**) qui indique quoi faire ensuite :
+
+1. **Importer l'image.** Choisissez **Outils > Nouveau rig depuis une image…** (ou le grand bouton de la vue du rig vide, ou déposez-y un PNG). L'image est copiée dans le projet (`assets/images/`) si besoin et devient un rig avec un os `root` aux pieds du personnage et un maillage tracé d'après sa transparence. Elle est cadrée et affichée tout de suite. Les morceaux séparés (un bras, la tête…) s'ajoutent avec **Ajouter une partie (image)…** ou en déposant d'autres PNG sur la vue : chacun devient un emplacement, aligné sur la première image s'il a la même taille.
+2. **Dessiner les os** avec l'outil os (**B**) : glissez sur l'image d'une articulation à la suivante (hanches vers cou, épaule vers coude, coude vers main). Un nouvel os pend de l'os sélectionné ; cliquez dans le vide pour commencer une nouvelle chaîne.
+3. **Lier.** Cliquez sur **Lier aux os** : chaque image reçoit des poids automatiques (chaque partie suit l'os le plus proche, adouci entre deux os). Pour affiner, prenez le pinceau de poids (**P**) : la carte de chaleur montre l'influence de l'os sélectionné (Ctrl-clic choisit un os), peignez en Ajouter / Retirer / Lisser.
+4. **Poser et animer.** Après la liaison, la vue passe en **mode pose** (**Tab**) : sélectionnez un os et tirez son anneau pour plier l'image. Le mode pose ne modifie jamais le rig ; enregistrez des clips dans les panneaux Clips et Timeline.
+
+Si vous ajoutez des os ensuite, la barre d'étapes demande de lier à nouveau. Cliquez enfin sur **Ajouter au projet** : le fichier est enregistré en `assets/rigs/<nom>.rig.ron` et apparaît dans la Bibliothèque. Les images dessinées par un rig doivent être des fichiers du projet.
 
 Pour l'utiliser, ouvrez le personnage, choisissez le type **Rig** pour une expression, puis le rig, la **skin** (tenue), le **clip** et ce qui se passe à la fin (boucle, une fois, aller-retour). Une petite vignette animée montre le résultat. L'image de l'expression reste le **poster** : elle sert aux miniatures et s'affiche pendant le chargement du rig ou s'il est inutilisable (le panneau Problèmes explique pourquoi : fichier absent, clip ou skin inconnus, image absente). Le rig est dessiné à l'échelle du poster, son origine au bas-centre du personnage.
 

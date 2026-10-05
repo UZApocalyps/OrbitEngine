@@ -108,6 +108,63 @@ pub fn auto_weights(
         .collect()
 }
 
+/// Blends every vertex's weights toward the average of its mesh neighbours
+/// (`amount` `0..1`), `iterations` times. Softens the seams the distance
+/// rule leaves between bones; lists stay normalized.
+pub fn smooth_weights(weights: &mut [Vec<Influence>], adj: &[Vec<usize>], iterations: usize, amount: f32) {
+    let f = amount.clamp(0.0, 1.0);
+    for _ in 0..iterations {
+        let before = weights.to_vec();
+        for (i, list) in weights.iter_mut().enumerate() {
+            let near = adj.get(i).map_or(&[][..], Vec::as_slice);
+            if near.is_empty() || before[i].is_empty() {
+                continue;
+            }
+            let share = f / near.len() as f32;
+            let mut out: Vec<Influence> = before[i].iter().map(|(b, w)| (b.clone(), w * (1.0 - f))).collect();
+            for &n in near {
+                for (b, w) in before.get(n).map_or(&[][..], Vec::as_slice) {
+                    match out.iter_mut().find(|(x, _)| x == b) {
+                        Some(e) => e.1 += w * share,
+                        None => out.push((b.clone(), w * share)),
+                    }
+                }
+            }
+            normalize(&mut out);
+            if !out.is_empty() {
+                *list = out;
+            }
+        }
+    }
+}
+
+/// "Bind to bones": automatic weights of a mesh from the bones of `rig`
+/// (distance to each bone *segment*, so a vertex along a forearm follows
+/// the forearm, not the closest joint), then two light smoothing passes
+/// along the mesh edges. `falloff`: sharpness of the split between bones.
+pub fn bind_mesh(rig: &Rig, m: &MeshAttachment, falloff: f32) -> Vec<Vec<Influence>> {
+    let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+    for v in &m.vertices {
+        lo = [lo[0].min(v[0]), lo[1].min(v[1])];
+        hi = [hi[0].max(v[0]), hi[1].max(v[1])];
+    }
+    let diag = (hi[0] - lo[0]).hypot(hi[1] - lo[1]);
+    let mut w = auto_weights(&m.vertices, &bone_segments(rig), falloff, (diag / 20.0).max(1.0));
+    // Smooth along short edges only: a long outline edge must not carry the
+    // head's weights to the feet.
+    let near = (diag / 8.0).max(1.0);
+    let mut adj = adjacency(m.vertices.len(), &m.triangles);
+    for (i, list) in adj.iter_mut().enumerate() {
+        let a = m.vertices[i];
+        list.retain(|&j| {
+            let b = m.vertices[j];
+            (a[0] - b[0]).hypot(a[1] - b[1]) <= near
+        });
+    }
+    smooth_weights(&mut w, &adj, 2, 0.35);
+    w
+}
+
 /// A brush gesture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BrushMode {

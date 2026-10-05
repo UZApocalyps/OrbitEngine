@@ -435,6 +435,17 @@ pub fn set_slot_target(
                 *else_target = Some(label);
                 Ok(())
             }
+            (NodeKind::Script { branches, .. }, SlotKind::Branch(i)) => {
+                branches
+                    .get_mut(i)
+                    .ok_or_else(|| reject("branch_missing", "Cette branche n'existe plus."))?
+                    .target = label;
+                Ok(())
+            }
+            (NodeKind::Script { on_error, .. }, SlotKind::OnError) => {
+                *on_error = Some(label);
+                Ok(())
+            }
             _ => Err(reject("link_stale", "Ce lien ne correspond plus au nœud.")),
         })
     })
@@ -450,6 +461,20 @@ fn sever(p: &mut Project, node: NodeId, kind: SlotKind) -> Result<(), ProjectErr
         SlotKind::Jump | SlotKind::JumpScene | SlotKind::Call | SlotKind::Then => {
             ops::delete_nodes(p, &[node])
         }
+        SlotKind::OnError => update_kind(p, node, |k| match k {
+            NodeKind::Script { on_error, .. } => {
+                *on_error = None;
+                Ok(())
+            }
+            _ => Err(reject("link_stale", "Ce lien ne correspond plus au nœud.")),
+        }),
+        SlotKind::Branch(i) => update_kind(p, node, |k| match k {
+            NodeKind::Script { branches, .. } if i < branches.len() => {
+                branches.remove(i);
+                Ok(())
+            }
+            _ => Err(reject("link_stale", "Ce lien ne correspond plus au nœud.")),
+        }),
         SlotKind::Else => update_kind(p, node, |k| match k {
             NodeKind::If { else_target, .. } => {
                 *else_target = None;
@@ -608,6 +633,18 @@ fn references(
                 }
                 if else_target.is_some_and(|t| inside.contains(&t)) {
                     out.push((node.id, SlotKind::Else));
+                }
+            }
+            NodeKind::Script {
+                branches, on_error, ..
+            } => {
+                for (i, b) in branches.iter().enumerate().rev() {
+                    if inside.contains(&b.target) {
+                        out.push((node.id, SlotKind::Branch(i)));
+                    }
+                }
+                if on_error.is_some_and(|t| inside.contains(&t)) {
+                    out.push((node.id, SlotKind::OnError));
                 }
             }
             NodeKind::Choice { options } => {
@@ -963,6 +1000,56 @@ mod tests {
             .unwrap()
             .slots
             .len()
+    }
+
+    #[test]
+    fn script_branches_and_on_error_are_linkable_and_cuttable() {
+        let (mut p, head) = start();
+        let a = one_entry(&mut p, |p| create_scene(p, "A"));
+        let b = one_entry(&mut p, |p| create_scene(p, "B"));
+        let label_a = ensure_label(&mut p, a).unwrap();
+        let script = NodeId::new();
+        let BlockId::Scene(sid) = head else {
+            unreachable!()
+        };
+        p.execute(Command::InsertNode {
+            scene: sid,
+            index: 1,
+            node: Node {
+                id: script,
+                kind: NodeKind::Script {
+                    source: "branch(\"x\")".into(),
+                    branches: vec![orbit_core::ScriptBranch {
+                        name: "x".into(),
+                        target: label_a,
+                    }],
+                    on_error: None,
+                },
+            },
+        })
+        .unwrap();
+        let model = GraphModel::build(p.story());
+        let slots = &model.block(head).unwrap().slots;
+        let kinds: Vec<_> = slots.iter().map(|s| s.kind).collect();
+        assert_eq!(
+            kinds,
+            [SlotKind::Branch(0), SlotKind::OnError, SlotKind::Next]
+        );
+        assert_eq!(slots[0].label, "x");
+        assert_eq!(slots[1].target, SlotTarget::None);
+        let slot = |kind| SlotRef {
+            block: head,
+            node: Some(script),
+            kind,
+        };
+        one_entry(&mut p, |p| set_slot_target(p, slot(SlotKind::OnError), b));
+        assert!(matches!(targets(&p, head)[1], SlotTarget::Block(_)));
+        one_entry(&mut p, |p| set_slot_target(p, slot(SlotKind::Branch(0)), b));
+        assert_eq!(targets(&p, head)[0], targets(&p, head)[1]);
+        one_entry(&mut p, |p| remove_slot(p, slot(SlotKind::OnError)));
+        assert_eq!(targets(&p, head)[1], SlotTarget::None);
+        one_entry(&mut p, |p| remove_slot(p, slot(SlotKind::Branch(0))));
+        assert_eq!(model_slots(&p, head), 2);
     }
 
     #[test]

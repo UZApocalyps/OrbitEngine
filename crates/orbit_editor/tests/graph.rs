@@ -349,6 +349,64 @@ fn an_option_is_redirected_by_dragging_and_a_condition_is_added() {
 }
 
 #[test]
+fn script_pins_connect_and_cut_from_the_graph() {
+    let (mut core, ctx, _dir, _root) = new_project("script_pins");
+    frames(&mut core, &ctx, 3);
+    let (intro_scene, _) = intro(&core);
+    let head = BlockId::Scene(intro_scene);
+    let script = NodeId::new();
+    with_ctx(&mut core, |c| {
+        c.exec(orbit_project::Command::InsertNode {
+            scene: intro_scene,
+            index: 1,
+            node: orbit_core::Node {
+                id: script,
+                kind: NodeKind::Script {
+                    source: "branch(\"x\")".into(),
+                    branches: Vec::new(),
+                    on_error: None,
+                },
+            },
+        })
+        .unwrap();
+    });
+    frames(&mut core, &ctx, 3);
+    let target = {
+        // A second scene to point the error pin at.
+        let mut id = None;
+        with_ctx(&mut core, |c| {
+            id = Some(
+                c.ops(|p| orbit_project::graph_ops::create_scene(p, "Erreur"))
+                    .unwrap(),
+            );
+        });
+        id.unwrap()
+    };
+    frames(&mut core, &ctx, 2);
+    let kinds: Vec<_> = model(&core)
+        .block(head)
+        .unwrap()
+        .slots
+        .iter()
+        .map(|s| s.kind)
+        .collect();
+    assert_eq!(kinds, [SlotKind::OnError, SlotKind::Next]);
+    let pin = SlotRef {
+        block: head,
+        node: Some(script),
+        kind: SlotKind::OnError,
+    };
+    one_undo_step(&mut core, &ctx, GraphEvent::Connect(pin, target));
+    let slots = model(&core).block(head).unwrap().slots.clone();
+    assert!(matches!(slots[0].target, SlotTarget::Block(_)));
+    one_undo_step(&mut core, &ctx, GraphEvent::Disconnect(pin));
+    assert_eq!(
+        model(&core).block(head).unwrap().slots[0].target,
+        SlotTarget::None
+    );
+}
+
+#[test]
 fn deleting_asks_first_when_links_or_lines_would_be_lost() {
     let (mut core, ctx, _dir, _root) = new_project("delete");
     frames(&mut core, &ctx, 3);

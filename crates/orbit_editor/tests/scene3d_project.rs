@@ -310,6 +310,8 @@ fn problems_reach_the_diagnostics_of_the_editor() {
 #[test]
 fn the_palette_offers_the_three_3d_nodes() {
     let (mut core, _ctx, _dir, root) = new_project("palette");
+    // 3D nodes are hidden unless the experimental switch is on.
+    orbit_core::experimental::set_preference_3d(true);
     let keys: Vec<String> = drafts::builtin_insertables().into_iter().map(|i| i.key).collect();
     for k in ["ShowScene3d", "Camera3d", "HideScene3d"] {
         assert!(keys.iter().any(|x| x == k), "{k} missing from the palette");

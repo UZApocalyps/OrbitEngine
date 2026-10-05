@@ -36,6 +36,27 @@ mod rig_expr;
 mod rigedit;
 mod scene;
 pub(crate) mod scene3d;
+
+/// Plugin id and preference key of the "experimental 3D features" switch.
+pub const PREF_PLUGIN: &str = "orbit.editor";
+pub const PREF_3D: &str = "experimental_3d";
+
+/// Is this plugin's UI (menu entries, palette actions) hidden because it
+/// belongs to the experimental 3D features and they are off?
+pub fn hidden_experimental(plugin_id: &str) -> bool {
+    plugin_id == ids::SCENE3D && !orbit_core::experimental::enabled_3d()
+}
+
+/// Applies the saved preference to the process-wide switch (editor start).
+pub fn apply_saved_prefs(
+    prefs: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+) {
+    let on = prefs
+        .get(PREF_PLUGIN)
+        .and_then(|p| p.get(PREF_3D))
+        .is_some_and(|v| v == "1");
+    orbit_core::experimental::set_preference_3d(on);
+}
 mod sceneview;
 mod timeline;
 mod timeline_model;

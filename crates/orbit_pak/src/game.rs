@@ -434,9 +434,27 @@ mod tests {
     /// Builds the frozen fixture above from the current encoder: the byte of
     /// `motion: None` of expression 1 is replaced by `Some(Rigged)` as the
     /// old layout wrote it (`Some`, variant 1, no payload).
+    /// Fixture generators run only with `ORBIT_REGENERATE_FIXTURES=1` and refuse
+    /// to overwrite an existing file unless it is `force`.
+    fn regen_allowed(out: &std::path::Path) -> bool {
+        let mode = std::env::var("ORBIT_REGENERATE_FIXTURES").unwrap_or_default();
+        if mode != "1" && mode != "force" {
+            eprintln!("skipped: set ORBIT_REGENERATE_FIXTURES=1 to regenerate the frozen fixtures");
+            return false;
+        }
+        if out.exists() && mode != "force" {
+            eprintln!("skipped: {} exists; ORBIT_REGENERATE_FIXTURES=force overwrites it", out.display());
+            return false;
+        }
+        true
+    }
+
     #[test]
     #[ignore = "writes a fixture; run once with --ignored"]
     fn generate_pak_v3_rigged() {
+        if !regen_allowed(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/fixtures/compat/pak_v3_rigged/game.pack")) {
+            return;
+        }
         use orbit_core::{AnimFrames, Animation, LoopMode, Motion};
         let plain = fixture_pack();
         let mut marked = plain.clone();

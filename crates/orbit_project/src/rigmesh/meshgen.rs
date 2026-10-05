@@ -52,6 +52,18 @@ impl MeshParams {
             ..Self::default()
         }
     }
+
+    /// Settings for a whole character picture: denser than
+    /// [`MeshParams::for_image`] (about 12 interior vertices across the
+    /// largest side) so elbows and knees have vertices to bend on.
+    pub fn for_character(w: u32, h: u32) -> Self {
+        let side = w.max(h) as f32;
+        Self {
+            tolerance: (side / 150.0).clamp(1.0, 6.0),
+            spacing: (side / 12.0).max(4.0),
+            ..Self::default()
+        }
+    }
 }
 
 /// Why a mesh operation was refused (`key()`: i18n message).
@@ -446,7 +458,7 @@ pub fn generate(w: u32, h: u32, rgba: &[u8], params: &MeshParams) -> Result<Gene
                 .map(|p| [p[0].clamp(0.0, wf), p[1].clamp(0.0, hf)])
                 .collect();
             c.dedup();
-            simplify_closed(&c, params.tolerance)
+            densify_closed(&simplify_closed(&c, params.tolerance), params.spacing)
         })
         .filter(|l| l.len() >= 3 && area(l).abs() >= min_area)
         .collect();
@@ -476,6 +488,26 @@ pub fn generate(w: u32, h: u32, rgba: &[u8], params: &MeshParams) -> Result<Gene
         triangles,
         skipped,
     })
+}
+
+/// Splits the outline edges longer than `spacing` (0: unchanged), so a
+/// long straight side (an arm, a leg) has vertices to bend on, like the
+/// interior.
+pub fn densify_closed(pts: &[P], spacing: f32) -> Vec<P> {
+    if spacing <= 0.0 || pts.len() < 3 {
+        return pts.to_vec();
+    }
+    let mut out = Vec::with_capacity(pts.len());
+    for (i, a) in pts.iter().enumerate() {
+        let b = pts[(i + 1) % pts.len()];
+        out.push(*a);
+        let n = ((b[0] - a[0]).hypot(b[1] - a[1]) / spacing).ceil() as usize;
+        for k in 1..n.min(256) {
+            let t = k as f32 / n as f32;
+            out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+        }
+    }
+    out
 }
 
 /// Drops the points no triangle uses.

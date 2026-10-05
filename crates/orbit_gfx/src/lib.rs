@@ -16,7 +16,7 @@ mod timing;
 pub use error::GfxError;
 pub use sprite::Sprite;
 pub use texture::{TEXTURE_FORMAT, Texture};
-pub use timing::MAX_TIMED_PASSES;
+pub use timing::{MAX_TIMED_PASSES, gpu_timing, set_gpu_timing};
 pub use wgpu;
 
 use sprite::SpritePipeline;
@@ -53,7 +53,7 @@ pub struct Gfx {
     target_factory: Option<TargetFactory>,
     pub(crate) sprites: SpritePipeline,
     /// Set by wgpu's device-lost callback: see [`Gfx::device_lost`].
-    lost: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    lost: LostSlot,
     /// GPU pass timings (TL-04): `None` when the profiler is compiled out or
     /// the adapter has no timestamp queries (WebGL2, some GL drivers).
     timer: Option<timing::GpuTimer>,
@@ -73,10 +73,54 @@ fn profiling_features(adapter: &wgpu::Adapter) -> wgpu::Features {
 }
 
 fn gpu_timer(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<timing::GpuTimer> {
+    if std::env::var_os("ORBIT_GPU_TIMING").is_some_and(|v| v == "1") {
+        timing::set_gpu_timing(true);
+    }
     device
         .features()
         .contains(wgpu::Features::TIMESTAMP_QUERY)
         .then(|| timing::GpuTimer::new(device, queue))
+}
+
+type LostSlot = std::sync::Arc<std::sync::Mutex<Option<String>>>;
+
+/// Installs the device-lost callback and the uncaptured-error handler.
+///
+/// A lost device (driver reset / TDR, GPU removed) makes wgpu fail later
+/// calls: the reason is recorded so that the caller can stop recording
+/// frames. Errors raised *after* the loss (e.g. unmapping a buffer the
+/// loss destroyed) are only logged; wgpu's default handler would panic on
+/// them. A validation error on a healthy device still panics, as before:
+/// it is a bug in our code.
+fn install_device_hooks(device: &wgpu::Device) -> LostSlot {
+    let lost: LostSlot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    {
+        let lost = lost.clone();
+        device.set_device_lost_callback(move |reason, message| {
+            let text = format!("{reason:?}: {message}");
+            if reason != wgpu::DeviceLostReason::Destroyed {
+                log::error!("GPU device lost ({text})");
+            }
+            if let Ok(mut slot) = lost.lock() {
+                slot.get_or_insert(text);
+            }
+        });
+    }
+    {
+        let lost = lost.clone();
+        device.on_uncaptured_error(std::sync::Arc::new(move |error: wgpu::Error| {
+            let is_lost = lost.lock().map(|slot| slot.is_some()).unwrap_or(true);
+            if is_lost {
+                log::warn!("wgpu error after device loss (ignored): {error}");
+                return;
+            }
+            match error {
+                wgpu::Error::Validation { .. } => panic!("wgpu error: {error}"),
+                other => log::error!("wgpu error: {other}"),
+            }
+        }));
+    }
+    lost
 }
 
 impl Gfx {
@@ -125,22 +169,8 @@ impl Gfx {
                 ..Default::default()
             })
             .await?;
-        // A lost device (driver reset / TDR, GPU removed) makes wgpu fail every
-        // later call *silently* (no validation panic): record it so that the
-        // caller can stop instead of tripping over `None` results downstream.
-        let lost = std::sync::Arc::new(std::sync::Mutex::new(None));
-        {
-            let lost = lost.clone();
-            device.set_device_lost_callback(move |reason, message| {
-                let text = format!("{reason:?}: {message}");
-                if reason != wgpu::DeviceLostReason::Destroyed {
-                    log::error!("GPU device lost ({text})");
-                }
-                if let Ok(mut slot) = lost.lock() {
-                    slot.get_or_insert(text);
-                }
-            });
-        }
+        let lost = install_device_hooks(&device);
+
 
         let mut config = surface
             .get_default_config(&adapter, size.0.max(1), size.1.max(1))
@@ -198,19 +228,8 @@ impl Gfx {
                 ..Default::default()
             })
             .await?;
-        let lost = std::sync::Arc::new(std::sync::Mutex::new(None));
-        {
-            let lost = lost.clone();
-            device.set_device_lost_callback(move |reason, message| {
-                let text = format!("{reason:?}: {message}");
-                if reason != wgpu::DeviceLostReason::Destroyed {
-                    log::error!("GPU device lost ({text})");
-                }
-                if let Ok(mut slot) = lost.lock() {
-                    slot.get_or_insert(text);
-                }
-            });
-        }
+        let lost = install_device_hooks(&device);
+
         let format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -432,6 +451,11 @@ impl Gfx {
     /// hosts that present by other means call it once per frame.
     pub fn finish_gpu_timings(&self) {
         if let Some(timer) = &self.timer {
+            if self.device_lost().is_some() {
+                // The loss destroys the read-back buffer: never touch it again.
+                timer.abandon();
+                return;
+            }
             timer.end_frame(&self.device, &self.queue);
         }
     }

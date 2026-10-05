@@ -493,9 +493,27 @@ pub(crate) mod tests {
     /// 3D pak read by `orbit_runtime` (`a_mesh_from_a_pak_is_drawn`): the
     /// export of [`project_3d`] stripped to the game pack, the scene and the
     /// `3d/` entries. Never regenerate once committed (plan §1.3).
+    /// Fixture generators run only with `ORBIT_REGENERATE_FIXTURES=1` and refuse
+    /// to overwrite an existing file unless it is `force`.
+    fn regen_allowed(out: &std::path::Path) -> bool {
+        let mode = std::env::var("ORBIT_REGENERATE_FIXTURES").unwrap_or_default();
+        if mode != "1" && mode != "force" {
+            eprintln!("skipped: set ORBIT_REGENERATE_FIXTURES=1 to regenerate the frozen fixtures");
+            return false;
+        }
+        if out.exists() && mode != "force" {
+            eprintln!("skipped: {} exists; ORBIT_REGENERATE_FIXTURES=force overwrites it", out.display());
+            return false;
+        }
+        true
+    }
+
     #[test]
     #[ignore = "writes the frozen fixture; run once by hand"]
     fn write_frozen_3d_pak() {
+        if !regen_allowed(&crate::testing::repo_root().join("examples/fixtures/compat/pak3d_v4/game.pak")) {
+            return;
+        }
         let dir = TempDir::new("pak3d_fixture");
         let project = project_3d(dir.path());
         let (pak, _) = pak_of(&project);

@@ -85,7 +85,12 @@ fn run_roll(node: &CustomNode<'_>, ctx: &mut PluginContext<'_>) -> PluginOutcome
         return PluginOutcome::Continue;
     };
     let faces = roll_dice(ctx, int(data, "count", 1), int(data, "sides", 6));
-    let total = faces.iter().sum::<i64>() + int(data, "modifier", 0);
+    // The node data comes from the game file: a huge modifier must not
+    // overflow (a panic in debug builds, a wrapped total in release).
+    let Some(total) = faces.iter().sum::<i64>().checked_add(int(data, "modifier", 0)) else {
+        ctx.fail("the modifier is out of range");
+        return PluginOutcome::Continue;
+    };
     if ctx.set(target, total).is_err() {
         // `fail` was called by `set`: nothing is applied.
         return PluginOutcome::Continue;
@@ -268,6 +273,26 @@ mod tests {
         vm.step();
         assert_eq!(vm.variable("name"), Some(&Value::Str(String::new())));
         assert_eq!(vm.snapshot().rng, rng_before, "the RNG is not advanced");
+        assert!(!vm.take_warnings().is_empty());
+    }
+
+    #[test]
+    fn hostile_node_data_fails_cleanly() {
+        // A downloaded game is untrusted: extreme values must not panic.
+        for (count, sides, modifier) in [
+            (1, 6, i64::MAX),
+            (20, 100, i64::MAX - 1),
+            (i64::MAX, i64::MAX, i64::MIN),
+            (i64::MIN, i64::MIN, 0),
+        ] {
+            let mut vm = vm(story(vec![roll_node(count, sides, modifier, "total", f64::NAN)]), 1);
+            vm.step();
+            let _ = vm.take_warnings();
+        }
+        let mut vm = vm(story(vec![roll_node(1, 6, i64::MAX, "total", 0.0)]), 1);
+        let rng_before = vm.snapshot().rng;
+        vm.step();
+        assert_eq!(vm.snapshot().rng, rng_before, "nothing applied");
         assert!(!vm.take_warnings().is_empty());
     }
 

@@ -416,6 +416,9 @@ fn list_tools(core: &EditorCore) -> Vec<ToolInfo> {
         }
     }
     tools.extend(live_tool_infos());
+    if !orbit_core::experimental::enabled_3d() {
+        tools.retain(|t| !orbit_mcp::host::is_3d_tool(&t.name));
+    }
     tools
 }
 

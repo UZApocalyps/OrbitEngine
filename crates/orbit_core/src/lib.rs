@@ -10,6 +10,7 @@ pub mod custom;
 pub mod defs;
 pub mod effects;
 pub mod error;
+pub mod experimental;
 pub mod expr;
 pub mod ids;
 pub mod migrate;

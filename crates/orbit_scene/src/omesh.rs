@@ -267,9 +267,27 @@ mod tests {
         assert_eq!(p.tangents.len(), 4);
     }
 
+    /// Fixture generators run only with `ORBIT_REGENERATE_FIXTURES=1` and refuse
+    /// to overwrite an existing file unless it is `force`.
+    fn regen_allowed(out: &std::path::Path) -> bool {
+        let mode = std::env::var("ORBIT_REGENERATE_FIXTURES").unwrap_or_default();
+        if mode != "1" && mode != "force" {
+            eprintln!("skipped: set ORBIT_REGENERATE_FIXTURES=1 to regenerate the frozen fixtures");
+            return false;
+        }
+        if out.exists() && mode != "force" {
+            eprintln!("skipped: {} exists; ORBIT_REGENERATE_FIXTURES=force overwrites it", out.display());
+            return false;
+        }
+        true
+    }
+
     #[test]
     #[ignore = "writes the frozen fixture; run once by hand"]
     fn write_frozen_v1_blob() {
+        if !regen_allowed(&std::path::PathBuf::from("../../examples/fixtures/compat/omesh_v1/plane.omesh")) {
+            return;
+        }
         let shape = Shape::Plane { size: [1.0, 1.0], subdivisions: 1 };
         std::fs::create_dir_all("../../examples/fixtures/compat/omesh_v1").unwrap();
         std::fs::write(

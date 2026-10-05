@@ -7,7 +7,22 @@
 //! resolved and copied after its passes, mapped asynchronously and read on a
 //! later frame; frames recorded while a read is in flight are not timed.
 
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+
+/// GPU pass timing is opt-in (Profiler panel, or `ORBIT_GPU_TIMING=1`):
+/// timestamp queries on every pass of every frame are a known source of
+/// driver trouble (and of TDR device losses on some Windows drivers).
+static GPU_TIMING: AtomicBool = AtomicBool::new(false);
+
+/// Turns GPU pass timing on or off (off by default).
+pub fn set_gpu_timing(on: bool) {
+    GPU_TIMING.store(on, Ordering::Relaxed);
+}
+
+/// Whether GPU pass timing is on (see [`set_gpu_timing`]).
+pub fn gpu_timing() -> bool {
+    GPU_TIMING.load(Ordering::Relaxed)
+}
 use std::sync::{Arc, Mutex};
 
 /// Most timed passes per frame (two queries each).
@@ -17,6 +32,8 @@ const IDLE: u8 = 0;
 const PENDING: u8 = 1;
 const MAPPED: u8 = 2;
 const FAILED: u8 = 3;
+/// The device was lost: the buffers are gone, timing stops for good.
+const LOST: u8 = 4;
 
 pub(crate) struct GpuTimer {
     query_set: wgpu::QuerySet,
@@ -68,7 +85,7 @@ impl GpuTimer {
         &self,
         label: &'static str,
     ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
-        if !orbit_profile::is_enabled() || self.state.load(Ordering::Acquire) != IDLE {
+        if !gpu_timing() || !orbit_profile::is_enabled() || self.state.load(Ordering::Acquire) != IDLE {
             return None;
         }
         let pass = self.next.fetch_add(1, Ordering::Relaxed);
@@ -85,9 +102,26 @@ impl GpuTimer {
         })
     }
 
+    /// Stops timing for good after a device loss: a pending read-back is
+    /// dropped without unmapping (the loss destroyed the buffer, and
+    /// unmapping it is a validation error).
+    pub(crate) fn abandon(&self) {
+        self.state.store(LOST, Ordering::Release);
+        self.next.store(0, Ordering::Relaxed);
+        if let Ok(mut labels) = self.labels.lock() {
+            labels.clear();
+        }
+        if let Ok(mut labels) = self.in_flight.lock() {
+            labels.clear();
+        }
+    }
+
     /// Ends the frame: reports a finished read-back to the profiler, then
     /// resolves this frame's queries (if any) and starts reading them.
     pub(crate) fn end_frame(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.state.load(Ordering::Acquire) == LOST {
+            return;
+        }
         let _ = device.poll(wgpu::PollType::Poll);
         match self.state.load(Ordering::Acquire) {
             MAPPED => {
@@ -111,6 +145,7 @@ impl GpuTimer {
                 orbit_profile::report_gpu(passes);
             }
             FAILED => self.state.store(IDLE, Ordering::Release),
+            LOST => return,
             _ => {}
         }
         let used = self.next.swap(0, Ordering::Relaxed).min(MAX_TIMED_PASSES);
@@ -137,7 +172,9 @@ impl GpuTimer {
         self.readback
             .slice(..)
             .map_async(wgpu::MapMode::Read, move |r| {
-                state.store(if r.is_ok() { MAPPED } else { FAILED }, Ordering::Release);
+                // Never overwrite LOST (set by `abandon` meanwhile).
+                let next = if r.is_ok() { MAPPED } else { FAILED };
+                let _ = state.compare_exchange(PENDING, next, Ordering::AcqRel, Ordering::Acquire);
             });
     }
 }

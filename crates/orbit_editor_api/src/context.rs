@@ -135,6 +135,10 @@ pub enum EditorRequest {
     ResetLayout,
     /// Brings a panel (full id) to the front, adding it to the layout if needed.
     ShowPanel(String),
+    /// Opens a tool workspace: the first panel (full id) goes to its home
+    /// area, the others form one tab group under it (sub-tabs). Panels
+    /// already open stay where the user put them; the first one is focused.
+    ShowWorkspace(Vec<String>),
     SetTheme(ThemeMode),
     /// Switches the interface language (instantly, and remembers it).
     SetLanguage(Lang),

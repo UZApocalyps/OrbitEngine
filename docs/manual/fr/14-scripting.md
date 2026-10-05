@@ -48,7 +48,7 @@ Un script ne garde rien pour lui : tout ce qui compte est dans des variables, et
 
 ## Limites
 
-Pour protéger les joueurs, un script s'arrête en erreur au-delà de 100 000 opérations, de 32 niveaux d'appels de fonctions, d'un texte de plus de 64 Ko ou d'une liste ou table de plus de 10 000 éléments.
+Pour protéger les joueurs, un script s'arrête en erreur au-delà de 100 000 opérations, de 32 niveaux d'appels de fonctions, d'un texte de plus de 64 Ko ou d'une liste ou table de plus de 1 024 éléments (les listes et tables imbriquées comptent ensemble, sur 64 niveaux au plus). Les modules s'importent les uns les autres sur 8 niveaux au plus et jamais en cycle. Les fonctions anonymes (`|x| x + 1`) ne peuvent pas capturer de variables, et `curry` et `sleep` ne sont pas disponibles.
 
 ## Export
 

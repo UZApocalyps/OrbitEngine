@@ -378,6 +378,11 @@ impl EditorApp {
         if !self.device_lost_handled {
             self.device_lost_handled = true;
             log::error!("GPU device lost ({reason}); the editor closes");
+            // Unsaved edits go to the recovery snapshot first: the next open
+            // of the project offers to restore them.
+            if self.core.write_recovery_snapshot() {
+                log::warn!("unsaved edits kept in a recovery snapshot; reopen the project to restore them");
+            }
             self.core.shutdown();
             self.host.push(HostRequest::Quit);
         }

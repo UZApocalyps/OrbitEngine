@@ -31,7 +31,8 @@ impl EditorPlugin for ProfilerPlugin {
             icons::GAUGE,
             DockSlot::Hidden,
             panel,
-        ));
+        )
+        .opens_in(DockSlot::Bottom));
     }
 }
 
@@ -67,6 +68,14 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             .changed()
         {
             orbit_profile::set_enabled(recording);
+        }
+        let mut gpu = orbit_gfx::gpu_timing();
+        if ui
+            .checkbox(&mut gpu, ctx.t("profiler.gpu_timing"))
+            .on_hover_text(ctx.t("profiler.gpu_timing_hint"))
+            .changed()
+        {
+            orbit_gfx::set_gpu_timing(gpu);
         }
         if icon_button(ui, icons::BROOM, &ctx.t("profiler.clear")).clicked() {
             orbit_profile::clear();
