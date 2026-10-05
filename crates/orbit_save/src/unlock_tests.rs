@@ -113,3 +113,83 @@ fn unlocks_of_vanished_scenes_and_images_are_dropped_on_load() {
     assert_eq!(vm.scene_visits().len(), 1);
     assert_eq!(vm.shown_images().len(), 1);
 }
+
+// ------------------------------------------------------------ achievements
+
+/// `one`: "a", unlock `gold`, "b". Returns the story and the achievement.
+fn trophy_story() -> (Story, orbit_core::AchievementId, SceneId) {
+    let mut story = Story::new("trophies");
+    let gold = orbit_core::AchievementId::new();
+    let title_id = story.strings.add("Gold");
+    let description_id = story.strings.add("Win gold.");
+    story.achievements.push(orbit_core::Achievement {
+        id: gold,
+        title_id,
+        description_id,
+        hidden: false,
+        icon: None,
+    });
+    let a = story.strings.add("a");
+    let b = story.strings.add("b");
+    let scene = SceneId::new();
+    story.scenes = vec![Scene {
+        id: scene,
+        name: "one".into(),
+        nodes: vec![
+            node(NodeKind::Say { speaker: None, text_id: a, voice: None }),
+            node(NodeKind::Unlock { achievement: gold }),
+            node(NodeKind::Say { speaker: None, text_id: b, voice: None }),
+        ],
+    }];
+    (story, gold, scene)
+}
+
+#[test]
+fn an_unlock_survives_the_persistent_round_trip_and_is_not_announced_again() {
+    let (story, gold, _) = trophy_story();
+    let story = Arc::new(story);
+    let mut vm = Vm::from_start(story.clone()).unwrap();
+    play(&mut vm);
+    let data = PersistentData::from_vm(&vm);
+    assert!(data.unlocked_achievements.contains(&gold));
+    let text = data.to_ron().unwrap();
+    assert!(text.contains("unlocked_achievements"));
+    let back = PersistentData::from_ron(&text).unwrap();
+    assert_eq!(back, data);
+    // The next playthrough starts with it unlocked: the node says nothing.
+    let mut next = Vm::from_start(story).unwrap();
+    back.apply_to(&mut next);
+    play(&mut next);
+    let announced = next
+        .take_events()
+        .into_iter()
+        .filter(|e| matches!(e, orbit_vm::PresentationEvent::AchievementUnlocked { .. }))
+        .count();
+    assert_eq!(announced, 0);
+    assert_eq!(PersistentData::from_vm(&next), data);
+}
+
+#[test]
+fn a_replay_never_unlocks_and_old_files_have_no_achievements() {
+    let (story, _, scene) = trophy_story();
+    let story = Arc::new(story);
+    let mut vm = Vm::replay(story, scene, None, &BTreeMap::new()).unwrap();
+    PersistentData::default().apply_to(&mut vm);
+    play(&mut vm);
+    assert!(vm.unlocked_achievements().is_empty());
+    // A file written before achievements loads and stays as it was.
+    let old = PersistentData::from_ron("(format_version: 1, vars: {}, read_nodes: [])").unwrap();
+    assert!(old.unlocked_achievements.is_empty());
+    assert!(!old.to_ron().unwrap().contains("unlocked_achievements"));
+}
+
+#[test]
+fn unlocked_achievements_the_story_no_longer_defines_are_dropped_on_load() {
+    let (story, gold, _) = trophy_story();
+    let mut data = PersistentData::default();
+    data.unlocked_achievements.insert(gold);
+    data.unlocked_achievements.insert(orbit_core::AchievementId::new());
+    let mut vm = Vm::from_start(story).unwrap();
+    data.apply_to(&mut vm);
+    assert_eq!(vm.unlocked_achievements().len(), 1);
+}

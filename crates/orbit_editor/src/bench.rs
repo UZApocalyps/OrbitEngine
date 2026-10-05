@@ -107,6 +107,7 @@ pub fn generate_story(nodes: usize) -> Story {
             add(NodeKind::Say {
                 speaker: (i % 5 != 4).then(|| characters[(block + i) % characters.len()]),
                 text_id,
+                voice: None,
             });
         }
         add(NodeKind::SetVar {
@@ -149,6 +150,7 @@ pub fn generate_story(nodes: usize) -> Story {
             kind: NodeKind::Say {
                 speaker: Some(who),
                 text_id: text,
+                voice: None,
             },
         });
         list.push(Node {
@@ -167,6 +169,7 @@ pub fn generate_story(nodes: usize) -> Story {
             kind: NodeKind::Say {
                 speaker: None,
                 text_id: text,
+                voice: None,
             },
         });
         list.push(Node {

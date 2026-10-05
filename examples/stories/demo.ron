@@ -1,5 +1,5 @@
 (
-    schema_version: 14,
+    schema_version: 16,
     title: "Demo",
     strings: (
         source_lang: "en",
@@ -92,6 +92,10 @@
             "01JBX0T0000000000000000085": "Your reputation: legendary. Your name is whispered in every alley.",
             "01JBX0T0000000000000000086": "The music fades away.",
             "01JBX0T0000000000000000087": "Thank you for playing the OrbitEngine demo!",
+            "01JBX0T0000000000000000088": "First contract",
+            "01JBX0T0000000000000000089": "Take Bob's job and hit the street.",
+            "01JBX0T0000000000000000090": "Ghost in the machine",
+            "01JBX0T0000000000000000091": "Meet the AI that woke up.",
         },
     ),
     assets: (
@@ -319,6 +323,19 @@
             name: "used_item",
             initial: Str(""),
             scope: Game,
+        ),
+    ],
+    achievements: [
+        (
+            id: "01JBX0H0000000000000000001",
+            title_id: "01JBX0T0000000000000000088",
+            description_id: "01JBX0T0000000000000000089",
+        ),
+        (
+            id: "01JBX0H0000000000000000002",
+            title_id: "01JBX0T0000000000000000090",
+            description_id: "01JBX0T0000000000000000091",
+            hidden: true,
         ),
     ],
     scenes: [
@@ -780,6 +797,12 @@
                     id: "01JBX0N0000000000000000027",
                     kind: Label(
                         name: "go",
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000300",
+                    kind: Unlock(
+                        achievement: "01JBX0H0000000000000000001",
                     ),
                 ),
                 (
@@ -1918,6 +1941,12 @@
                     kind: SetVar(
                         var: "ghost_met",
                         value: Lit(Bool(true)),
+                    ),
+                ),
+                (
+                    id: "01JBX0N0000000000000000301",
+                    kind: Unlock(
+                        achievement: "01JBX0H0000000000000000002",
                     ),
                 ),
                 (

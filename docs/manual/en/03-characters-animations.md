@@ -49,3 +49,18 @@ To use it, open the character, choose the type **Rig** for an expression, then p
 - Going back in the story or loading a save restarts the clip: nothing about it is saved.
 
 An AI assistant can list and read rigs, check a pose without drawing it, generate a mesh from a picture and assign a rig to an expression (see the MCP guide).
+
+
+## Voice acting
+
+Each line of dialogue can have a **voice**: select the line, and in the inspector choose a sound of the project under **Voice** (or *Add file* to import a .ogg or .wav, *Remove* to go back to silence).
+
+* The voice starts with the line and is cut when the player moves on (a click, skip, rollback, a choice). It plays on its own **Voice** volume (Preferences). A line is not voiced again after a rollback or a load: use the **Voice** button of the quick menu (shown when the line on screen has a voice) or the **Voice** button of its row in the **History** to hear it again.
+* **Auto mode waits for the end of the voice**, then applies its usual delay. Skipping never starts a voice.
+* A translation can have its own voices: for the selected language the translation's voice replaces the one of the line (the lines without one keep the source voice).
+
+### Importing many voices at once
+
+*Import voices…* (inspector of a line) takes a **folder** of audio files named after the lines: `<id>.ogg`, `.wav`, `.mp3` or `.flac`, where the id is the id of the line (the id of the dialogue node, or the id of its text; the editor and the `orbit` tools show both). Put the files of a translation in a sub-folder named after the language: `voice/fr/<id>.ogg`. *From a CSV…* does the same without renaming files: one row per voice, `line,file[,language]` (a header row is skipped), the file being a path inside the project. The whole import is one undo step; the files outside the project are copied under `assets/voice/`, the files that match no line are listed and ignored. The voices of a language are written into its translation file (the language must already exist). The MCP tool `import_voices` does the same (with `dry_run` to preview).
+
+The validator reports a voice that is not a sound of the project, and the export refuses a voice file that is missing.

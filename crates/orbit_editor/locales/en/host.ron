@@ -193,4 +193,7 @@
     "problem.script.module": "{module}: {place}{message}",
     "problem.invalid_stage_node": "Background layers or particles: {message}",
     "problem.unknown_emitter": "No “Particles” node is named “{name}”",
+    "problem.unknown_achievement": "This node unlocks an achievement that does not exist",
+    "problem.invalid_achievement": "Achievement: {message}",
+    "problem.achievement_never_unlocked": "An achievement is never unlocked by any “Achievement” node",
 }

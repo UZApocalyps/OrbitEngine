@@ -44,7 +44,7 @@ pub(crate) fn ensure_sound(tx: &mut Transaction<'_>, path: &str) -> Result<Asset
     }
     if !is_valid_asset_path(path) {
         return Err(reject_with(
-            "asset_bad_path",
+            "asset_path_invalid",
             &[("path", path.to_string())],
             format!("« {path} » n'est pas un chemin de ressource valide."),
         ));

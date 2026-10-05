@@ -139,7 +139,7 @@ impl SearchIndex {
             );
             for node in &scene.nodes {
                 match &node.kind {
-                    NodeKind::Say { speaker, text_id } => {
+                    NodeKind::Say { speaker, text_id, .. } => {
                         let text = story.text(*text_id).unwrap_or_default();
                         let who = speaker.map_or_else(
                             || texts.t("search.narrator"),
@@ -359,6 +359,7 @@ mod tests {
                 kind: NodeKind::Say {
                     speaker: who,
                     text_id,
+                    voice: None,
                 },
             });
         }
@@ -427,6 +428,7 @@ mod tests {
             kind: NodeKind::Say {
                 speaker: None,
                 text_id: b,
+                voice: None,
             },
         });
         story.scenes[0].nodes.push(Node {
@@ -434,6 +436,7 @@ mod tests {
             kind: NodeKind::Say {
                 speaker: None,
                 text_id: a,
+                voice: None,
             },
         });
         let mut idx = SearchIndex::default();

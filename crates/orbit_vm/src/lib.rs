@@ -37,6 +37,9 @@ mod screen_tests;
 #[cfg(test)]
 mod replay_tests;
 
+#[cfg(test)]
+mod achievement_tests;
+
 pub use error::VmError;
 pub use event::{ChoiceView, PresentationEvent, StepResult};
 pub use history::{

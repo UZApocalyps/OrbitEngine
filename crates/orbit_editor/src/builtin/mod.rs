@@ -19,8 +19,10 @@ mod inspector;
 mod inspector_fx;
 mod inspector_screen;
 mod inspector_script;
+mod inspector_voice;
 mod script_highlight;
 mod scripts_panel;
+mod achievements_panel;
 mod inspector_stage;
 mod library;
 pub mod manual;
@@ -76,6 +78,7 @@ pub mod ids {
     pub const LIBRARY: &str = "orbit.library";
     pub const PROBLEMS: &str = "orbit.problems";
     pub const SCRIPTS: &str = "orbit.scripts";
+    pub const ACHIEVEMENTS: &str = "orbit.achievements";
     pub const SEARCH: &str = "orbit.search";
     pub const SCENEVIEW: &str = "orbit.sceneview";
     pub const SCENE3D: &str = "orbit.scene3d";
@@ -105,6 +108,7 @@ pub mod panels {
     pub const LIBRARY: &str = "orbit.library.library";
     pub const PROBLEMS: &str = "orbit.problems.problems";
     pub const SEARCH: &str = "orbit.search.search";
+    pub const ACHIEVEMENTS: &str = "orbit.achievements.achievements";
     pub const SCENEVIEW: &str = "orbit.sceneview.sceneview";
     pub const SCENE3D_VIEWPORT: &str = "orbit.scene3d.viewport";
     pub const SCENE3D_HIERARCHY: &str = "orbit.scene3d.hierarchy";
@@ -164,6 +168,7 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(console::ConsolePlugin),
         Box::new(problems::ProblemsPlugin),
         Box::new(scripts_panel::ScriptsPlugin),
+        Box::new(achievements_panel::AchievementsPlugin),
         Box::new(profiler::ProfilerPlugin),
         Box::new(search::SearchPlugin::new(shared.search.clone())),
         Box::new(export::ExportPlugin),

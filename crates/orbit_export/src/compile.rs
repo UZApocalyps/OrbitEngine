@@ -373,6 +373,20 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
     }
     let mut warnings: Vec<String> = report.warnings.iter().map(ToString::to_string).collect();
 
+    // The translations come first: the voices they name are used assets.
+    let translations = load_translations(project, &story, &mut warnings)?;
+    let voice_problems: Vec<String> = translations
+        .iter()
+        .flat_map(|t| orbit_i18n::voice_issues(&story, t))
+        .collect();
+    if !voice_problems.is_empty() {
+        return Err(ExportError::Invalid(voice_problems));
+    }
+    let translated_voices: HashSet<orbit_core::AssetId> = translations
+        .iter()
+        .flat_map(|t| t.voices.values().copied())
+        .collect();
+
     // Used and unused assets.
     let mut assets = Vec::new();
     let mut unreferenced = Vec::new();
@@ -381,7 +395,7 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
     let declared: HashSet<String> = story.assets.assets.iter().map(|a| a.path.clone()).collect();
     for entry in &story.assets.assets {
         let source = project.root.join(&entry.path);
-        if asset_users(&story, entry.id).is_empty() {
+        if asset_users(&story, entry.id).is_empty() && !translated_voices.contains(&entry.id) {
             unreferenced.push(entry.path.clone());
             continue;
         }
@@ -458,7 +472,6 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
         .assets
         .retain(|a| keep.contains(a.path.as_str()));
 
-    let translations = load_translations(project, &story, &mut warnings)?;
     if let Some(lang) = &profile.default_language
         && !lang.trim().is_empty()
     {

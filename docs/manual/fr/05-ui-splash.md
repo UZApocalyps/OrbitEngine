@@ -72,3 +72,20 @@ L'interface standard compte deux écrans de plus, ouverts depuis le menu princip
 Dans l'éditeur **Interface**, sélectionner la liste générée de l'écran `gallery` (ou `replay`). Sa **Liste** peut être **Images de la galerie** ou **Scènes à rejouer** ; cocher les images ou scènes proposées (aucune cochée = tous les fonds de l'histoire / toutes les scènes). Ce choix est rangé dans l'écran, pas dans l'histoire.
 
 Pour composer ses propres écrans : dans une liste générée, une **Image** avec **Image de la ligne** affiche l'image de la ligne ; la condition **l'élément de la ligne est renseigné** distingue une image débloquée d'une image verrouillée ; un bouton avec l'action **Rejouer une scène** (case **Scène de la ligne** cochée) rejoue la scène de la ligne. « Rejouer une scène » peut aussi viser une scène fixe. Un rejouer ne démarre que depuis l'écran titre.
+
+
+## Succès
+
+Les succès se définissent dans le panneau **Succès** : un **titre**, une **description**, une **icône** facultative (une image du projet) et la case **Caché tant qu'il n'est pas débloqué**. Un succès caché montre un texte neutre (titre, description et icône) dans la liste tant qu'il n'est pas débloqué. Titres et descriptions sont des textes ordinaires de l'histoire : ils se traduisent dans le panneau **Traductions** comme les autres.
+
+On en débloque un depuis l'histoire avec l'étape **Débloquer un succès** (groupe Logique), ou avec le bouton *Ajouter un nœud de déblocage ici* du panneau. La première fois que l'histoire atteint l'étape dans une vraie partie, le succès est débloqué pour de bon et une **notification** l'annonce (« Succès débloqué : Premiers mots »). Ensuite l'étape ne fait plus rien. En particulier :
+
+* revenir en arrière puis rejouer la réplique ne réaffiche **pas** la notification (un déblocage ne fait pas partie de la partie sauvegardée : il n'est jamais repris) ;
+* un **rejouer de scène** ne débloque jamais rien et n'écrit jamais rien ;
+* les succès débloqués sont conservés avec les variables persistantes (`persistent.ron`) : ils survivent à la suppression des sauvegardes et à une nouvelle partie. L'aperçu de l'éditeur ne les enregistre jamais.
+
+L'interface standard gagne un écran **Succès**, ouvert depuis le menu principal (le bouton n'apparaît que si l'histoire définit des succès) : une ligne de progression (« 3 / 10 ») et une carte par succès, avec son icône, son titre, sa description et la mention « Verrouillé » tant qu'il ne l'est pas.
+
+Pour composer son propre écran, utiliser dans l'éditeur **Interface** une liste générée dont la **Liste** est **Succès**. Dans une ligne, lier un texte à **Succès de la ligne** (titre, description) ou une **Image** à son **icône** ; la condition **le succès de la ligne est débloqué** distingue les succès obtenus ; **progression (3 / 10)** marche partout, et la condition **l'histoire a des succès** cache un bouton quand il n'y en a pas.
+
+Les plateformes (Steam, itch.io, consoles) passent par le trait `AchievementHook` d'`orbit_runtime` (`RuntimeConfig::achievement_hook`) : il reçoit l'identifiant stable du succès quand il est débloqué, et une fois au démarrage pour ceux que le joueur a déjà. Aucune plateforme n'est branchée pour l'instant (Steam est au backlog) ; sans hook, seules les données persistantes sont écrites.

@@ -145,6 +145,12 @@ pub fn builtin_insertables() -> Vec<Insertable> {
             "draft.group.logic",
         ),
         item(
+            "Unlock",
+            "draft.label.unlock",
+            icons::TROPHY,
+            "draft.group.logic",
+        ),
+        item(
             "OpenScreen",
             "draft.label.open_screen",
             icons::BROWSER,
@@ -414,6 +420,14 @@ pub fn drafts_for(
                 }),
                 ok,
             ]
+        }
+        "Unlock" => {
+            let achievement = story
+                .achievements
+                .first()
+                .map(|a| a.id)
+                .ok_or_else(|| DraftError::Message(texts.t("draft.need_achievement")))?;
+            vec![NodeDraft::plain(NodeKind::Unlock { achievement })]
         }
         "StopParticles" => vec![NodeDraft::plain(NodeKind::StopParticles { name: String::new() })],
         "OpenScreen" => vec![NodeDraft::plain(NodeKind::OpenScreen {

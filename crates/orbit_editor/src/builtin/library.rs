@@ -1245,6 +1245,20 @@ fn details(
                                 reveal::describe(ctx, &Location::Character(*c)),
                                 Location::Character(*c),
                             ),
+                            AssetUser::Achievement(a) => {
+                                let title = story
+                                    .achievements
+                                    .iter()
+                                    .find(|x| x.id == *a)
+                                    .and_then(|x| story.text(x.title_id))
+                                    .unwrap_or("?");
+                                ui.label(
+                                    egui::RichText::new(format!("{} {title}", icons::TROPHY))
+                                        .small()
+                                        .color(weak(ui)),
+                                );
+                                continue;
+                            }
                         };
                         if ui.small_button(label).clicked() {
                             actions.push(Action::ShowUser(location));

@@ -179,11 +179,11 @@ fn dialogue_and_choice_tools_cover_the_ir_fields() {
             .cloned()
             .collect()
     };
-    // Say { speaker, text_id }: speaker and the text itself (the string table entry).
+    // Say { speaker, text_id, voice }: speaker, the text itself (the string table entry) and the voice.
     let say = ir_variant_fields(&schema, "Say");
-    assert_eq!(say, ["speaker", "text_id"].map(String::from).into());
+    assert_eq!(say, ["speaker", "text_id", "voice"].map(String::from).into());
     let dialogue = props("add_dialogue");
-    assert!(dialogue.contains("speaker") && dialogue.contains("text"));
+    assert!(dialogue.contains("speaker") && dialogue.contains("text") && dialogue.contains("voice"));
     // Choice { options: [{ text_id, target, condition }] }.
     let option = schema
         .pointer("/$defs/ChoiceOption/properties")

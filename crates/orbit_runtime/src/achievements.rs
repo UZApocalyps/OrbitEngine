@@ -22,7 +22,7 @@ use crate::format::plain_text;
 /// (`persistent.ron`). Steam is on the backlog: its integration is a crate
 /// implementing this trait with `SteamUserStats::set_achievement(api_name)`,
 /// where `api_name` is [`AchievementEvent::id`].
-pub trait AchievementHook: Send + Sync {
+pub trait AchievementHook: Send + Sync + std::fmt::Debug {
     /// An achievement was unlocked.
     fn unlocked(&self, event: &AchievementEvent);
 }

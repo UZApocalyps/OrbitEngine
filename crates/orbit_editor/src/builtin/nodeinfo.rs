@@ -35,6 +35,7 @@ pub fn kind_key(kind: &NodeKind) -> String {
         NodeKind::Camera3d { .. } => "Camera3d".into(),
         NodeKind::HideScene3d { .. } => "HideScene3d".into(),
         NodeKind::Script { .. } => "Script".into(),
+        NodeKind::Unlock { .. } => "Unlock".into(),
         NodeKind::Custom {
             plugin_id, kind, ..
         } => format!("{plugin_id}.{kind}"),
@@ -73,6 +74,7 @@ pub fn kind_label(texts: &Translator, kind: &NodeKind) -> String {
         NodeKind::Camera3d { .. } => "node.kind.camera3d",
         NodeKind::HideScene3d { .. } => "node.kind.hide_scene3d",
         NodeKind::Script { .. } => "node.kind.script",
+        NodeKind::Unlock { .. } => "node.kind.unlock",
     })
 }
 
@@ -107,6 +109,7 @@ pub fn kind_icon(kind: &NodeKind) -> &'static str {
         NodeKind::Camera3d { .. } => icons::VIDEO_CAMERA,
         NodeKind::HideScene3d { .. } => icons::EYE_SLASH,
         NodeKind::Script { .. } => icons::CODE,
+        NodeKind::Unlock { .. } => icons::TROPHY,
     }
 }
 
@@ -145,6 +148,7 @@ pub fn kind_color(kind: &NodeKind) -> egui::Color32 {
         | NodeKind::Particles(_)
         | NodeKind::StopParticles { .. } => Color32::from_rgb(236, 120, 96),
         NodeKind::OpenScreen { .. } | NodeKind::CloseScreen { .. } => Color32::from_rgb(120, 200, 120),
+        NodeKind::Unlock { .. } => Color32::from_rgb(232, 196, 70),
         NodeKind::Custom { .. } => Color32::from_rgb(232, 110, 160),
     }
 }
@@ -240,7 +244,7 @@ pub fn script_summary(texts: &Translator, source: &str, branches: usize) -> Stri
 pub fn summary(texts: &Translator, story: &Story, node: &Node) -> String {
     match &node.kind {
         NodeKind::Label { name } => texts.format("node.summary.label", &[("name", name)]),
-        NodeKind::Say { speaker, text_id } => {
+        NodeKind::Say { speaker, text_id, .. } => {
             let who =
                 speaker.map_or_else(|| texts.get("node.narrator"), |c| character_name(story, c));
             texts.format(
@@ -328,6 +332,12 @@ pub fn summary(texts: &Translator, story: &Story, node: &Node) -> String {
         NodeKind::Particles(e) => format!("{} · {}", e.name, e.preset.name()),
         NodeKind::StopParticles { name } => name.clone(),
         NodeKind::Script { source, branches, .. } => script_summary(texts, source, branches.len()),
+        NodeKind::Unlock { achievement } => story
+            .achievements
+            .iter()
+            .find(|a| a.id == *achievement)
+            .and_then(|a| story.text(a.title_id))
+            .map_or_else(|| "?".to_owned(), |t| truncate(t, 70)),
         NodeKind::Custom {
             plugin_id, kind, ..
         } => format!("{plugin_id}.{kind}"),
@@ -353,6 +363,7 @@ mod tests {
             kind: NodeKind::Say {
                 speaker: None,
                 text_id,
+                voice: None,
             },
         };
         let jump = Node {

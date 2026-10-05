@@ -379,6 +379,36 @@ pub fn coverage(story: &Story, translation: &Translation) -> CoverageReport {
     coverage_of(&story.strings.entries, translation)
 }
 
+/// Problems of the voices of a translation (M7-06): a voice that is not a
+/// `Sound` asset of the story, or for a text no line of the story shows.
+/// The messages are meant for `orbit validate`, the editor and the export.
+pub fn voice_issues(story: &Story, translation: &Translation) -> Vec<String> {
+    let mut out = Vec::new();
+    for (text, asset) in &translation.voices {
+        match story.assets.get(*asset) {
+            None => out.push(format!(
+                "translation {}: the voice of text {text} is the unknown asset {asset}",
+                translation.lang
+            )),
+            Some(e) if e.kind != orbit_core::AssetKind::Sound => out.push(format!(
+                "translation {}: the voice of text {text} (`{}`) is a {}, not a sound",
+                translation.lang, e.path, e.kind
+            )),
+            Some(_) => {}
+        }
+        let shown = story.scenes.iter().flat_map(|s| &s.nodes).any(|n| {
+            matches!(&n.kind, orbit_core::NodeKind::Say { text_id, .. } if text_id == text)
+        });
+        if !shown {
+            out.push(format!(
+                "translation {}: the voice of text {text} belongs to no line of the story",
+                translation.lang
+            ));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

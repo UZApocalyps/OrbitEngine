@@ -109,6 +109,18 @@ pub fn describe_command_error(texts: &Translator, error: &CommandError) -> Strin
             "error.asset_in_use_by_character",
             &[("id", id), ("character", character)],
         ),
+        E::UnknownAchievement(id) => texts.format("error.unknown_achievement", &[("id", id)]),
+        E::AchievementInUse(id, node) => {
+            texts.format("error.achievement_in_use", &[("id", id), ("node", node)])
+        }
+        E::AssetInUseByAchievement(id, achievement) => texts.format(
+            "error.asset_in_use_by_achievement",
+            &[("id", id), ("achievement", achievement)],
+        ),
+        E::StringUsedByAchievement(id, achievement) => texts.format(
+            "error.string_used_by_achievement",
+            &[("id", id), ("achievement", achievement)],
+        ),
         E::EmptyCurveName => texts.get("error.empty_curve_name"),
         E::CurveChain(name) => texts.format("error.curve_chain", &[("name", name)]),
         E::VersionConflict {

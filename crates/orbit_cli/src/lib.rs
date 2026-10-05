@@ -251,15 +251,26 @@ fn validate_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Re
             }
         }
     }
+    // Voices of the translations (M7-06): unknown assets, not sounds, orphans.
+    let mut voice_errors = 0;
+    for lang in orbit_i18n::files::list_languages(&story_path) {
+        let path = orbit_i18n::files::translation_path(&story_path, &lang);
+        if let Ok(Some(t)) = orbit_i18n::files::load(&path) {
+            for problem in orbit_i18n::voice_issues(&story, &t) {
+                let _ = writeln!(err, "error: {problem}");
+                voice_errors += 1;
+            }
+        }
+    }
     print_report(&report, err);
     let _ = writeln!(
         out,
         "{}: {} error(s), {} warning(s)",
         story_path.display(),
-        report.errors.len() + script_errors,
+        report.errors.len() + script_errors + voice_errors,
         report.warnings.len() + rig_warnings + script_warnings
     );
-    Ok(if report.errors.is_empty() && script_errors == 0 { 0 } else { 1 })
+    Ok(if report.errors.is_empty() && script_errors == 0 && voice_errors == 0 { 0 } else { 1 })
 }
 
 // --------------------------------------------------------------- run-text

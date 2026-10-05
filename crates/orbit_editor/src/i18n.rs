@@ -115,6 +115,12 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
         include_str!("../locales/fr/uieditor.ron"),
     ),
     (
+        "achievements",
+        &["ach", "voices"],
+        include_str!("../locales/en/achievements.ron"),
+        include_str!("../locales/fr/achievements.ron"),
+    ),
+    (
         "script",
         &["script"],
         include_str!("../locales/en/script.ron"),

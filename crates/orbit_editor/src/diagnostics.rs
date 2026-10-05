@@ -211,6 +211,11 @@ pub fn describe_error(
             Some(*node),
             texts.format("problem.invalid_stage_node", &[("message", message)]),
         ),
+        E::UnknownAchievement { node, .. } => (Some(*node), t("problem.unknown_achievement")),
+        E::InvalidAchievement { message, .. } => (
+            None,
+            texts.format("problem.invalid_achievement", &[("message", message)]),
+        ),
         other => (None, other.to_string()),
     }
 }
@@ -269,6 +274,7 @@ pub fn describe_warning(
             Some(*node),
             texts.format("problem.unknown_emitter", &[("name", name)]),
         ),
+        W::AchievementNeverUnlocked(_) => (None, texts.get("problem.achievement_never_unlocked")),
     }
 }
 

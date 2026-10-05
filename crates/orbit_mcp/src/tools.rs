@@ -238,6 +238,8 @@ struct AddDialogueArgs {
     after: Option<String>,
     /// Alternative to `after`: explicit index in the scene.
     index: Option<usize>,
+    /// Project-relative path of the line's voice file (see `set_voice`).
+    voice: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -583,6 +585,13 @@ pub enum CommandSpec {
         /// Label id or name to go to when the script fails (default: the next node).
         on_error: Option<String>,
     },
+    /// Unlock an achievement (see `list_achievements`): the first time the
+    /// story passes here in a real playthrough it is unlocked for good and
+    /// announced by a toast; a scene replay or a rollback does nothing.
+    Unlock {
+        /// Achievement id or exact title.
+        achievement: String,
+    },
     /// Parallel keyframe tracks (target x property x keys). Animated values
     /// are relative to the staging, like `effect`. A timeline that does not
     /// `wait` keeps playing while the story goes on until the scene changes.
@@ -719,6 +728,7 @@ pub fn spec_variant(spec: &CommandSpec) -> &'static str {
         CommandSpec::Particles { .. } => "Particles",
         CommandSpec::StopParticles { .. } => "StopParticles",
         CommandSpec::Script { .. } => "Script",
+        CommandSpec::Unlock { .. } => "Unlock",
     }
 }
 
@@ -780,6 +790,7 @@ pub const NODE_KIND_TOOLS: &[(&str, &str)] = &[
     ("Particles", "add_command type=particles"),
     ("StopParticles", "add_command type=stop_particles"),
     ("Script", "add_command type=script"),
+    ("Unlock", "add_command type=unlock"),
 ];
 
 #[derive(Deserialize, JsonSchema)]
@@ -1205,6 +1216,12 @@ fn add_dialogue(cx: &mut ToolCx<'_>, a: AddDialogueArgs) -> Result<String, ToolE
             node: say,
         },
     )?;
+    if let Some(voice) = a.voice.as_deref() {
+        crate::voice_tools::set_voice(
+            cx,
+            crate::voice_tools::SetVoiceArgs::new(say_id.to_string(), voice.to_owned()),
+        )?;
+    }
     Ok(pretty(&json!({
         "dialogue": node_summary(cx.project, say_id),
         "show": show_id.map(|id| node_summary(cx.project, id)),
@@ -1559,6 +1576,9 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
         CommandSpec::Particles { .. } => NodeKind::Particles(build_emitter(story, spec)?),
         CommandSpec::StopParticles { name } => NodeKind::StopParticles {
             name: name.clone().unwrap_or_default(),
+        },
+        CommandSpec::Unlock { achievement } => NodeKind::Unlock {
+            achievement: crate::voice_tools::achievement_arg(story, achievement)?,
         },
         CommandSpec::Script {
             source,
@@ -2877,7 +2897,19 @@ pub fn builtin_tools() -> Vec<ToolDef> {
     tools.extend(scene3d_tool_defs());
     tools.extend(rig_tool_defs());
     tools.extend(script_tool_defs());
+    tools.extend(voice_tool_defs());
     tools
+}
+
+fn voice_tool_defs() -> Vec<ToolDef> {
+    use crate::voice_tools as v;
+    vec![
+        def::<v::NoArgs>("list_achievements", "List the achievements", "List the achievements of the story (id, title, description, hidden, icon, the nodes that unlock them) and how many dialogue lines have a voice. Unlock one from the story with add_command type=unlock.", Kind::Read, v::list_achievements),
+        def::<v::SetAchievementArgs>("set_achievement", "Create or edit an achievement", "Create (omit `achievement`; `title` required) or edit an achievement: title, description, hidden (placeholder until unlocked) and icon (an image asset). Title and description are localizable strings of the source language. Undoable.", Kind::Edit, v::set_achievement),
+        def::<v::AchievementArg>("delete_achievement", "Delete an achievement", "Delete an achievement and its texts. Refused while an unlock node names it.", Kind::Destructive, v::delete_achievement),
+        def::<v::SetVoiceArgs>("set_voice", "Set the voice of a line", "Make a project audio file (declared as a sound if needed) the voice of a dialogue node, or remove it. Played with the line; auto mode waits for its end. A translation can replace it (import_voices with a language folder).", Kind::Edit, v::set_voice),
+        def::<v::ImportVoicesArgs>("import_voices", "Import voices in batch", "Import voice files by naming convention (`<node id or text id>.ogg`, `.wav`, `.mp3`, `.flac`; a language sub-folder such as `fr/` gives that translation's voice) from a folder and/or a CSV (`line,file[,language]`). Declares the sounds, sets the voices in one undo step and stores translation voices in the language files. `dry_run` only reports the matches and the unmatched files.", Kind::Edit, v::import_voices),
+    ]
 }
 
 fn script_tool_defs() -> Vec<ToolDef> {

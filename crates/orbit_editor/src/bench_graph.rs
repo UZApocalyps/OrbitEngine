@@ -52,6 +52,7 @@ pub fn generate_graph_story(blocks: usize) -> Story {
                 kind: NodeKind::Say {
                     speaker: None,
                     text_id,
+                    voice: None,
                 },
             });
         }
@@ -158,6 +159,7 @@ pub fn generate_graph_story(blocks: usize) -> Story {
                 kind: NodeKind::Say {
                     speaker: None,
                     text_id,
+                    voice: None,
                 },
             },
             Node {

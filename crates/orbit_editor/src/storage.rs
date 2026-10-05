@@ -257,6 +257,7 @@ pub fn minimal_story(name: &str, texts: &Translator) -> Story {
         kind: NodeKind::Say {
             speaker: None,
             text_id,
+            voice: None,
         },
     };
     story.scenes.push(Scene {

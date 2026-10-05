@@ -1244,6 +1244,16 @@ fn describe(texts: &orbit_editor_api::Translator, story: &Story, node: &Node) ->
             texts.t("scene.row.script"),
             super::nodeinfo::script_summary(texts, source, branches.len()),
         ),
+        NodeKind::Unlock { achievement } => (
+            texts.t("scene.row.unlock"),
+            story
+                .achievements
+                .iter()
+                .find(|a| a.id == *achievement)
+                .and_then(|a| story.text(a.title_id))
+                .unwrap_or("?")
+                .to_owned(),
+        ),
         NodeKind::Return => (texts.t("scene.row.return"), String::new()),
         NodeKind::End => (texts.t("scene.row.end"), String::new()),
         NodeKind::Custom {
@@ -1369,7 +1379,7 @@ fn draw_row(
 
     let x0 = rect.left() + 26.0;
     match &node.kind {
-        NodeKind::Say { speaker, text_id } => {
+        NodeKind::Say { speaker, text_id, .. } => {
             draw_say(
                 ui,
                 env,

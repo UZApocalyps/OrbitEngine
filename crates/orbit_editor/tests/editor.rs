@@ -225,7 +225,7 @@ fn edit_undo_redo_save_and_validate() {
         let session = core.session.as_mut().unwrap();
         let mut ectx =
             EditorContext::new(Some(&mut session.project), &mut core.state, &core.registry);
-        let Some(NodeKind::Say { speaker, text_id }) =
+        let Some(NodeKind::Say { speaker, text_id, .. }) =
             ectx.story().unwrap().node(say).map(|n| n.kind.clone())
         else {
             panic!("say expected")

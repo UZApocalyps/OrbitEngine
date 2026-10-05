@@ -49,3 +49,18 @@ Pour l'utiliser, ouvrez le personnage, choisissez le type **Rig** pour une expre
 - Revenir en arrière ou charger une sauvegarde relance le clip : rien n'est sauvegardé à son sujet.
 
 Un assistant IA peut lister et lire les rigs, vérifier une pose sans dessiner, générer un maillage depuis une image et affecter un rig à une expression (voir le guide MCP).
+
+
+## Voix
+
+Chaque réplique peut avoir une **voix** : sélectionner la réplique et, dans l'inspecteur, choisir un son du projet sous **Voix** (ou *Ajouter un fichier* pour importer un .ogg ou .wav, *Retirer* pour revenir au silence).
+
+* La voix démarre avec la réplique et s'arrête quand le joueur avance (clic, saut, retour arrière, choix). Elle passe par son propre volume **Voix** (Préférences). Une réplique n'est pas rejouée en voix après un retour arrière ou un chargement : le bouton **Voix** du menu rapide (visible quand la réplique à l'écran a une voix) ou le bouton **Voix** de sa ligne dans l'**Historique** la fait réentendre.
+* **Le mode auto attend la fin de la voix**, puis applique son délai habituel. Le saut ne lance jamais de voix.
+* Une traduction peut avoir ses propres voix : pour la langue choisie, la voix de la traduction remplace celle de la réplique (les répliques sans voix traduite gardent la voix source).
+
+### Importer beaucoup de voix d'un coup
+
+*Importer les voix…* (inspecteur d'une réplique) prend un **dossier** de fichiers audio nommés d'après les répliques : `<id>.ogg`, `.wav`, `.mp3` ou `.flac`, où l'id est celui de la réplique (l'id du nœud de dialogue, ou l'id de son texte ; l'éditeur et les outils `orbit` affichent les deux). Les fichiers d'une traduction vont dans un sous-dossier portant le nom de la langue : `voice/fr/<id>.ogg`. *Depuis un CSV…* fait de même sans renommer les fichiers : une ligne par voix, `réplique,fichier[,langue]` (une ligne d'en-tête est ignorée), le fichier étant un chemin dans le projet. L'import entier est une seule étape d'annulation ; les fichiers hors du projet sont copiés sous `assets/voice/`, les fichiers qui ne correspondent à aucune réplique sont listés et ignorés. Les voix d'une langue sont écrites dans son fichier de traduction (la langue doit déjà exister). L'outil MCP `import_voices` fait pareil (avec `dry_run` pour prévisualiser).
+
+Le validateur signale une voix qui n'est pas un son du projet, et l'export refuse un fichier de voix manquant.

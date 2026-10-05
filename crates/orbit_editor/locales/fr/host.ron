@@ -193,4 +193,7 @@
     "problem.script.module": "{module} : {place}{message}",
     "problem.invalid_stage_node": "Fond en parallaxe ou particules : {message}",
     "problem.unknown_emitter": "Aucun nœud « Particules » ne s'appelle « {name} »",
+    "problem.unknown_achievement": "Ce nœud débloque un succès qui n'existe pas",
+    "problem.invalid_achievement": "Succès : {message}",
+    "problem.achievement_never_unlocked": "Un succès n'est débloqué par aucun nœud « Succès »",
 }

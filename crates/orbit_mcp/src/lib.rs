@@ -24,6 +24,7 @@ pub use orbit_project::sandbox;
 pub mod rig_tools;
 pub mod scene3d_tools;
 pub mod script_tools;
+pub mod voice_tools;
 pub mod schema;
 pub mod server;
 pub mod tools;

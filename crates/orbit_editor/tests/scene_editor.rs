@@ -488,6 +488,7 @@ fn every_node_kind_has_an_inspector_that_draws_and_edits() {
         NodeKind::Say {
             speaker: Some(ana),
             text_id: text,
+            voice: None,
         },
         NodeKind::Choice {
             options: vec![ChoiceOption {

@@ -156,6 +156,8 @@
     "draft.label.timeline": "Timeline",
     "draft.label.open_screen": "Open screen",
     "draft.label.script": "Script (Rhai)",
+    "draft.label.unlock": "Unlock achievement",
+    "draft.need_achievement": "Define an achievement first (Achievements panel).",
     "draft.label.close_screen": "Close screen",
     "draft.label.background_layers": "Parallax background",
     "draft.label.particles": "Particles",

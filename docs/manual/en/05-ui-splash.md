@@ -72,3 +72,20 @@ The stock interface has two more screens, opened from the main menu: **Gallery**
 In the **Interface** editor, select the generated list of the `gallery` (or `replay`) screen. Its **List** can be **Gallery images** or **Replayable scenes**; tick the images or scenes to offer (none ticked = every background of the story / every scene). This choice is stored in the screen, not in the story.
 
 To build your own screens: in a generated list, an **Image** with **Image of the row** shows the row's image; the condition **the row's element is set** tells an unlocked image from a locked one; a button with the action **Replay a scene** (ticked **Scene of the row**) replays the row's scene. "Replay a scene" can also target a fixed scene. A replay can only start from the title.
+
+
+## Achievements
+
+Define achievements in the **Achievements** panel: a **title**, a **description**, an optional **icon** (an image of the project) and a **Hidden until unlocked** flag. A hidden achievement shows a neutral placeholder (title, description and icon) in the list until it is unlocked. Titles and descriptions are ordinary texts of the story: they are translated in the **Translations** panel like any other text.
+
+Unlock one from the story with the **Unlock achievement** step (Logic group), or with the button *Add an unlock node here* of the panel. The first time the story reaches the step in a real playthrough, the achievement is unlocked for good and a **notification** announces it ("Achievement unlocked: First words"). Afterwards the step does nothing. In particular:
+
+* rolling back and playing the line again does **not** show the notification a second time (an unlock is not part of the saved game: it is never taken back);
+* a **scene replay** never unlocks anything and never writes anything;
+* the unlocked achievements are kept with the persistent variables (`persistent.ron`): they survive deleting the saves and starting a new game. The editor preview never records them.
+
+The stock interface gains an **Achievements** screen, opened from the main menu (the button only appears when the story defines achievements): a progress line ("3 / 10") and one card per achievement, with its icon, title, description and a "Locked" mention until unlocked.
+
+To build your own screen, use in the **Interface** editor a generated list whose **List** is **Achievements**. Inside a row, bind a text to **Achievement of the row** (title, description) or an **Image** to its **icon**; the condition **the row's achievement is unlocked** tells the unlocked ones apart; **progress (3 / 10)** works anywhere, and the condition **the story has achievements** hides a button when there are none.
+
+Platforms (Steam, itch.io, consoles) are reached through the `AchievementHook` trait of `orbit_runtime` (`RuntimeConfig::achievement_hook`): it is called with the stable id of the achievement when it is unlocked, and once at start-up for the ones the player already has. No platform is wired yet (Steam is on the backlog); without a hook only the persistent data is written.

@@ -392,7 +392,15 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
         return;
     };
     match kind {
-        NodeKind::Say { speaker, text_id } => say(ui, ctx, id, speaker, text_id),
+        said @ NodeKind::Say {
+            speaker, text_id, ..
+        } => {
+            say(ui, ctx, id, speaker, text_id);
+            super::inspector_voice::voice_row(ui, ctx, id, &said);
+        }
+        NodeKind::Unlock { achievement } => {
+            super::inspector_voice::unlock_node(ui, ctx, id, achievement);
+        }
         NodeKind::Label { name } => label(ui, ctx, id, &name),
         NodeKind::Choice { options } => choice(ui, ctx, id, &options),
         NodeKind::Jump { target } => jump(ui, ctx, id, target, true),

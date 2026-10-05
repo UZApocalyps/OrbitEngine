@@ -17,7 +17,7 @@ mod screen;
 mod slots;
 
 pub use orbit_ui_data::{
-    BindPath, Cond, Issue, LayoutDef, SYSTEM_SCREENS, ScreenAsset, SettingKey, Severity, SlotsMode,
+    AchievementField, BindPath, Cond, Issue, LayoutDef, SYSTEM_SCREENS, ScreenAsset, SettingKey, Severity, SlotsMode,
     SplashContent, SplashDef, TextRef, UI_VERSION, UiAction, UiBundle, WidgetDef, WidgetKind,
     from_ron, migrate, scene_issues, to_ron, validate, validate_with_vars, variable_issues,
 };

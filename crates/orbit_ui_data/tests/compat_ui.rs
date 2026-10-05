@@ -9,11 +9,11 @@ const PREFERENCES_V1: &str =
     include_str!("../../../examples/fixtures/compat/ui_v1/preferences.screen.ron");
 const THEME_V1: &str = include_str!("../../../examples/fixtures/compat/ui_v1/theme.ron");
 
-/// The stock main menu without the buttons M7-03 / M7-04 added.
+/// The stock main menu without the buttons M7-03 / M7-04 / M7-05 added.
 fn stock_menu_before_m7_03() -> ScreenAsset {
     let mut menu = UiBundle::builtin().screen("main_menu").unwrap().clone();
     fn strip(w: &mut orbit_ui_data::WidgetDef) {
-        w.children.retain(|c| c.id != "gallery" && c.id != "replay");
+        w.children.retain(|c| !["gallery", "replay", "achievements"].contains(&c.id.as_str()));
         w.children.iter_mut().for_each(strip);
     }
     strip(&mut menu.root);
@@ -87,7 +87,7 @@ fn a_v1_bundle_and_theme_load() {
     assert_eq!(bundle.theme, stock.theme);
     // The stock bundle gained the gallery and replay screens (M7-03, M7-04)
     // and their main menu buttons.
-    assert_eq!(bundle.screens.len() + 2, stock.screens.len());
+    assert_eq!(bundle.screens.len() + 3, stock.screens.len());
     for old in &bundle.screens {
         assert_eq!(old.ui_version, UI_VERSION);
         match old.id.as_str() {
@@ -206,6 +206,61 @@ fn v5_screens_load_unchanged_as_version_6() {
     }
     assert!(!text.contains("bind:"));
     assert_eq!(from_ron(&text).unwrap(), screen);
+}
+
+const GALLERY_V6: &str = include_str!("../../../examples/fixtures/compat/ui_v6/gallery.screen.ron");
+const REPLAY_V6: &str = include_str!("../../../examples/fixtures/compat/ui_v6/replay.screen.ron");
+
+/// M7-05 (`ui_version` 7): frozen version 6 documents (the stock gallery and
+/// replay screens: gallery and replay sources, `Cond::Item`, row images) load,
+/// are stamped version 7, mean the same and write none of the new variants.
+#[test]
+fn v6_screens_load_unchanged_as_version_7() {
+    for src in [GALLERY_V6, REPLAY_V6] {
+        assert!(src.contains("ui_version: 6"));
+        let screen = from_ron(src).unwrap();
+        assert_eq!(screen.ui_version, UI_VERSION);
+        assert!(UI_VERSION >= 7);
+        let as_v7 = src.replace("ui_version: 6", &format!("ui_version: {UI_VERSION}"));
+        assert_eq!(from_ron(&as_v7).unwrap(), screen);
+        assert!(orbit_ui_data::validate(&screen, None).is_empty());
+        let text = orbit_ui_data::to_ron(&screen).unwrap();
+        for new in ["Achievements", "Achievement(", "Unlocked", "HasAchievements"] {
+            assert!(!text.contains(new), "{new}");
+        }
+        assert_eq!(from_ron(&text).unwrap(), screen);
+    }
+    // The stock screens are those documents (plus the new menu button).
+    let stock = UiBundle::builtin();
+    assert_eq!(from_ron(GALLERY_V6).unwrap(), *stock.screen("gallery").unwrap());
+    assert_eq!(from_ron(REPLAY_V6).unwrap(), *stock.screen("replay").unwrap());
+}
+
+#[test]
+fn version_7_achievement_bindings_round_trip_and_validate() {
+    let src = r#"(ui_version: 7, id: "trophies", root: (kind: Stack(dir: Vertical), children: [
+            (kind: Label(text: Bind(Achievement(Progress)))),
+            (kind: Repeat(source: Achievements, dir: Grid(2)), children: [
+                (kind: Image(bind: Some(Achievement(Icon))), visible: Unlocked),
+                (kind: Label(text: Bind(Achievement(Title)))),
+                (kind: Label(text: Bind(Achievement(Description))), visible: Not(Unlocked)),
+            ]),
+            (kind: Button(text: Literal("x"), action: [Close]), visible: HasAchievements),
+        ]))"#;
+    let screen = from_ron(src).unwrap();
+    let issues = orbit_ui_data::validate(&screen, None);
+    assert!(issues.is_empty(), "{issues:?}");
+    let text = orbit_ui_data::to_ron(&screen).unwrap();
+    assert_eq!(from_ron(&text).unwrap(), screen);
+    // A row field outside a generated list is reported.
+    let outside = r#"(ui_version: 7, id: "x", root: (kind: Label(text: Bind(Achievement(Title)))))"#;
+    let issues = orbit_ui_data::validate(&from_ron(outside).unwrap(), None);
+    assert!(!issues.is_empty());
+    // The stock achievements screen is valid and uses them.
+    let stock = UiBundle::builtin();
+    let s = stock.screen("achievements").unwrap();
+    assert!(orbit_ui_data::validate(s, None).is_empty());
+    assert!(orbit_ui_data::to_ron(s).unwrap().contains("Achievements"));
 }
 
 #[test]

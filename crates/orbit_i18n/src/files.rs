@@ -63,3 +63,24 @@ pub fn write_text(path: &Path, text: &str) -> Result<(), String> {
 pub fn save(path: &Path, t: &Translation) -> Result<(), String> {
     write_text(path, &t.to_ron().map_err(|e| e.to_string())?)
 }
+
+/// Merges `voices` (text id to sound asset, M7-06) into the translation file
+/// of `lang` next to the story. `Ok(false)` when that language has no file
+/// (nothing is created); the tag is matched ignoring case.
+pub fn merge_voices(
+    story_path: &Path,
+    lang: &str,
+    voices: &std::collections::BTreeMap<orbit_core::StringId, orbit_core::AssetId>,
+) -> Result<bool, String> {
+    let tag = list_languages(story_path)
+        .into_iter()
+        .find(|l| l.eq_ignore_ascii_case(lang));
+    let Some(tag) = tag else { return Ok(false) };
+    let path = translation_path(story_path, &tag);
+    let Some(mut t) = load(&path)? else {
+        return Ok(false);
+    };
+    t.voices.extend(voices.iter().map(|(k, v)| (*k, *v)));
+    save(&path, &t)?;
+    Ok(true)
+}

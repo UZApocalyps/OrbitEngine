@@ -7,7 +7,7 @@ use orbit_core::{Condition, Expr, Operand};
 use orbit_editor_api::varwidgets::{self, VarInfo};
 use orbit_editor_api::{Translator, icons};
 use orbit_ui::{
-    Align, Anchor, BindPath, Border, Cond, Dir, Fill, LayoutDef, PanelKind, SettingKey, Size,
+    AchievementField, Align, Anchor, BindPath, Border, Cond, Dir, Fill, LayoutDef, PanelKind, SettingKey, Size,
     StateColors, Style, StyleSounds, TextRef, UiAction, WidgetDef, WidgetKind,
 };
 
@@ -241,6 +241,8 @@ fn cond_editor(ui: &mut Ui, env: &Env, salt: &str, cond: &mut Cond) {
         (Cond::ShowQuit, "show_quit"),
         (Cond::InGame, "in_game"),
         (Cond::Item, "item_set"),
+        (Cond::Unlocked, "unlocked"),
+        (Cond::HasAchievements, "has_achievements"),
     ];
     let vars_index = names.len();
     let mut index = match &base {
@@ -343,6 +345,8 @@ fn bind_tag(bind: &BindPath) -> usize {
         BindPath::Param(_) => 5,
         BindPath::Gallery(_) => 6,
         BindPath::ReplayScenes(_) => 7,
+        BindPath::Achievements => 8,
+        BindPath::Achievement(_) => 9,
     }
 }
 
@@ -357,6 +361,7 @@ fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath, contextu
         options.push((3, env.v("item_index")));
         options.push((4, env.v("item_key")));
         options.push((5, env.v("param")));
+        options.push((9, env.v("achievement")));
     }
     pick(ui, (salt, "kind"), &mut new, &options);
     if new != tag {
@@ -366,11 +371,26 @@ fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath, contextu
             2 => BindPath::Item,
             3 => BindPath::ItemIndex,
             4 => BindPath::ItemKey,
+            9 => BindPath::Achievement(AchievementField::Title),
             _ => BindPath::Param(String::new()),
         };
     }
     match bind {
-        BindPath::Item | BindPath::ItemIndex | BindPath::ItemKey | BindPath::Gallery(_) | BindPath::ReplayScenes(_) => {}
+        BindPath::Item
+        | BindPath::ItemIndex
+        | BindPath::ItemKey
+        | BindPath::Gallery(_)
+        | BindPath::ReplayScenes(_)
+        | BindPath::Achievements => {}
+        BindPath::Achievement(field) => {
+            let options = [
+                (AchievementField::Title, env.v("ach_title")),
+                (AchievementField::Description, env.v("ach_description")),
+                (AchievementField::Icon, env.v("ach_icon")),
+                (AchievementField::Progress, env.v("ach_progress")),
+            ];
+            pick(ui, (salt, "ach_field"), field, &options);
+        }
         BindPath::Param(name) => {
             ui.add(
                 egui::TextEdit::singleline(name)
@@ -902,6 +922,9 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
                 {
                     *bind = from_row.then_some(BindPath::Item);
                 }
+                if let Some(b) = bind {
+                    bind_editor(ui, env, "image_bind", b, true);
+                }
             });
             // A row image shows the element of the row instead of `asset`.
             if bind.is_none() {
@@ -1010,6 +1033,7 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
                     BindPath::Param(_) => 1,
                     BindPath::Gallery(_) => 2,
                     BindPath::ReplayScenes(_) => 3,
+                    BindPath::Achievements => 4,
                     _ => 0,
                 };
                 let mut want = kind;
@@ -1022,6 +1046,7 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
                         (1, env.v("param")),
                         (2, env.v("gallery")),
                         (3, env.v("replay_scenes")),
+                        (4, env.v("achievements")),
                     ],
                 );
                 if want != kind {
@@ -1029,6 +1054,7 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
                         1 => BindPath::Param(String::new()),
                         2 => BindPath::Gallery(Vec::new()),
                         3 => BindPath::ReplayScenes(Vec::new()),
+                        4 => BindPath::Achievements,
                         _ => BindPath::Var(String::new()),
                     };
                 }
