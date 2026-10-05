@@ -145,7 +145,8 @@ fn unlocked_achievements_loaded_from_the_persistent_data_are_not_announced() {
     for _ in 0..4 {
         advance(&mut vm);
     }
-    assert!(unlocks(vm.take_events()).is_empty());
+    // Gold was already unlocked: only the secret is announced.
+    assert_eq!(unlocks(vm.take_events()), vec![f.secret]);
     assert_eq!(vm.unlocked_achievements().len(), 2);
 }
 

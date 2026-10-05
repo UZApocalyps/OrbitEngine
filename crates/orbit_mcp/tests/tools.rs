@@ -178,7 +178,8 @@ fn tools_advertise_schemas_and_hints() {
             "delete_ui_screen",
             "delete_ui_style",
             "delete_ui_splash",
-            "delete_script_module"
+            "delete_script_module",
+            "delete_achievement"
         ]
     );
     let read_only: Vec<&str> = tools

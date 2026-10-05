@@ -308,7 +308,8 @@ impl Game {
             }
             return;
         }
-        if self.auto && self.dialogue.is_complete() {
+        // Auto mode waits for the voice of the line to end (M7-06), then for its delay.
+        if self.auto && self.dialogue.is_complete() && !self.director.voice_active() {
             self.auto_timer += dt;
             if self.auto_timer >= self.auto_wait() {
                 self.auto_timer = 0.0;
@@ -749,6 +750,40 @@ mod tests {
             generation,
             "auto advanced past the line"
         );
+    }
+
+    #[test]
+    fn auto_waits_for_the_voice_to_end_then_applies_its_delay() {
+        use orbit_core::{AssetEntry, AssetId, AssetKind, Node, NodeId, NodeKind, Scene, SceneId};
+        let mut story = Story::new("voice");
+        let voice = AssetId::new();
+        story.assets.assets.push(AssetEntry { id: voice, kind: AssetKind::Sound, path: "v.ogg".into() });
+        let mut nodes = Vec::new();
+        for (t, v) in [("a", Some(voice)), ("b", None)] {
+            let text_id = story.strings.add(t);
+            nodes.push(Node { id: NodeId::new(), kind: NodeKind::Say { speaker: None, text_id, voice: v } });
+        }
+        story.scenes.push(Scene { id: SceneId::new(), name: "s".into(), nodes });
+        let story = Arc::new(story);
+        let theme = Theme::default();
+        let vm = Vm::from_start(story.clone()).unwrap();
+        let settings = PlaySettings { auto_delay: 0.5, text_speed: 1000.0, ..Default::default() };
+        let mut g = Game::new(story, Director::new(vm), &theme, settings);
+        assert_eq!(g.director.take_audio(), vec![crate::director::AudioCommand::PlayVoice { asset: voice }]);
+        assert!(g.director.voice_active());
+        g.toggle_auto();
+        let generation = g.director.generation();
+        g.update(0.2, &theme);
+        for _ in 0..20 {
+            g.update(1.0, &theme);
+        }
+        assert_eq!(g.director.generation(), generation, "the voice is still playing");
+        g.director.voice_finished();
+        let wait = g.auto_wait();
+        g.update(wait + 0.1, &theme);
+        assert_ne!(g.director.generation(), generation, "advanced after the voice and the delay");
+        assert!(g.director.take_audio().is_empty(), "the voice had ended: nothing to stop");
+        assert!(!g.director.voice_active());
     }
 
     #[test]
