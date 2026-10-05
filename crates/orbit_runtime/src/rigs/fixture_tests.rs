@@ -118,12 +118,30 @@ fn robo() -> Rig {
     }
 }
 
+/// Fixture generators run only with `ORBIT_REGENERATE_FIXTURES=1` and refuse
+/// to overwrite an existing file unless it is `force`.
+fn regen_allowed(out: &std::path::Path) -> bool {
+    let mode = std::env::var("ORBIT_REGENERATE_FIXTURES").unwrap_or_default();
+    if mode != "1" && mode != "force" {
+        eprintln!("skipped: set ORBIT_REGENERATE_FIXTURES=1 to regenerate the frozen fixtures");
+        return false;
+    }
+    if out.exists() && mode != "force" {
+        eprintln!("skipped: {} exists; ORBIT_REGENERATE_FIXTURES=force overwrites it", out.display());
+        return false;
+    }
+    true
+}
+
 /// Writes the fixture files from the code above. Run once with
 /// `cargo test -p orbit_runtime generate_rig_fixture -- --ignored`; the files
 /// are committed and the tests below read them.
 #[test]
 #[ignore = "writes the fixture files; run once with --ignored"]
 fn generate_rig_fixture() {
+    if !regen_allowed(&assets_dir().join("robo.rig.ron")) {
+        return;
+    }
     let dir = assets_dir();
     let save = |name: &str, img: image::RgbaImage| img.save(dir.join(name)).unwrap();
     // The poster: a flat silhouette of the whole character.
@@ -154,6 +172,9 @@ fn generate_rig_fixture() {
 #[test]
 #[ignore = "writes the demo rig; run once with --ignored"]
 fn generate_demo_rig() {
+    if !regen_allowed(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/demo/alice_sad.rig.ron")) {
+        return;
+    }
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/demo");
     let (w, h) = image::image_dimensions(dir.join("alice_sad.png")).unwrap();
     let mut attachments = BTreeMap::new();

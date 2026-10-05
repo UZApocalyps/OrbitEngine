@@ -23,6 +23,13 @@ use orbit_editor_api::ai::{AiCommand, AiServerStatus};
 use orbit_project::MANIFEST_FILE;
 use serde_json::{Value, json};
 
+/// Serializes the tests: the experimental-3D preference is process-global and
+/// every editor core resets it from its config on creation.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 // ------------------------------------------------------------------ helpers
 
 struct TempDir(PathBuf);
@@ -307,6 +314,7 @@ fn dialogue_texts(core: &EditorCore) -> Vec<String> {
 
 #[test]
 fn the_server_is_off_until_the_user_starts_it() {
+    let _serial = serial();
     let dir = TempDir::new("off");
     let (core, _ctx) = editor_with_demo(&dir);
     assert!(!core.mcp.is_running());
@@ -318,6 +326,7 @@ fn the_server_is_off_until_the_user_starts_it() {
 
 #[test]
 fn requests_without_a_valid_token_or_from_a_foreign_host_are_refused() {
+    let _serial = serial();
     let dir = TempDir::new("auth");
     let (mut core, _ctx) = editor_with_demo(&dir);
     core.state.ai.port = 0;
@@ -376,6 +385,7 @@ fn requests_without_a_valid_token_or_from_a_foreign_host_are_refused() {
 
 #[test]
 fn an_ai_edit_over_http_is_live_unsaved_undoable_and_journaled() {
+    let _serial = serial();
     let dir = TempDir::new("edit");
     let (mut core, _ctx) = editor_with_demo(&dir);
     core.state.ai.port = 0;
@@ -477,6 +487,7 @@ fn an_ai_edit_over_http_is_live_unsaved_undoable_and_journaled() {
 
 #[test]
 fn the_undo_button_never_touches_the_users_own_edits() {
+    let _serial = serial();
     let dir = TempDir::new("undo-guard");
     let (mut core, _ctx) = editor_with_demo(&dir);
     // The user's own edit is on top of the history.
@@ -495,6 +506,7 @@ fn the_undo_button_never_touches_the_users_own_edits() {
 
 #[test]
 fn a_user_edit_in_between_makes_a_stale_version_an_explicit_conflict() {
+    let _serial = serial();
     let dir = TempDir::new("conflict");
     let (mut core, _ctx) = editor_with_demo(&dir);
     core.state.ai.port = 0;
@@ -577,6 +589,7 @@ fn a_user_edit_in_between_makes_a_stale_version_an_explicit_conflict() {
 
 #[test]
 fn preview_screenshot_export_and_select_without_a_gpu() {
+    let _serial = serial();
     let dir = TempDir::new("nogpu");
     let (mut core, _ctx) = editor_with_demo(&dir);
     core.state.ai.port = 0;
@@ -634,6 +647,7 @@ fn preview_screenshot_export_and_select_without_a_gpu() {
 
 #[test]
 fn export_tools_run_the_real_export() {
+    let _serial = serial();
     let dir = TempDir::new("export_tools");
     let (mut core, _ctx) = editor_with_demo(&dir);
     // The project gets its assets, and a (fake) Linux player template.
@@ -694,6 +708,7 @@ fn export_tools_run_the_real_export() {
 
 #[test]
 fn stopping_the_server_closes_the_port_and_a_busy_port_is_reported() {
+    let _serial = serial();
     let dir = TempDir::new("stop");
     let (mut core, _ctx) = editor_with_demo(&dir);
     core.state.ai.port = 0;
@@ -719,6 +734,7 @@ fn stopping_the_server_closes_the_port_and_a_busy_port_is_reported() {
 
 #[test]
 fn the_panel_commands_start_stop_and_regenerate_the_token() {
+    let _serial = serial();
     let dir = TempDir::new("panel");
     let (mut core, _ctx) = editor_with_demo(&dir);
     core.state.ai.port = 0;
@@ -770,6 +786,7 @@ fn the_panel_commands_start_stop_and_regenerate_the_token() {
 
 #[test]
 fn opening_a_project_takes_the_lock_and_closing_releases_it() {
+    let _serial = serial();
     let dir = TempDir::new("lock");
     let (mut core, _ctx) = editor_with_demo(&dir);
     let lock = dir.path().join("demo-project/.orbit/lock");
@@ -783,6 +800,7 @@ fn opening_a_project_takes_the_lock_and_closing_releases_it() {
 
 #[test]
 fn a_project_held_by_headless_mcp_is_reported_when_the_editor_opens_it() {
+    let _serial = serial();
     let dir = TempDir::new("lock-other");
     let project = demo_project(dir.path());
     // What `orbit mcp` writes while it runs (another process id).
@@ -820,6 +838,7 @@ fn a_project_held_by_headless_mcp_is_reported_when_the_editor_opens_it() {
 
 #[test]
 fn headless_mcp_refuses_a_project_the_editor_holds() {
+    let _serial = serial();
     let dir = TempDir::new("lock-headless");
     let (core, _ctx) = editor_with_demo(&dir);
     assert!(core.mcp.holds_lock());
