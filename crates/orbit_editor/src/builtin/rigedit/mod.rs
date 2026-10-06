@@ -25,6 +25,7 @@ mod model;
 mod panels;
 use orbit_project::rigmesh::weights;
 mod workflow;
+mod layered_import;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -153,6 +154,30 @@ impl EditorPlugin for RigPlugin {
             .icon(icons::USER_SQUARE)
             .category("category.tools")
             .menu("tools", 166),
+        );
+        let state = self.state.clone();
+        reg.action(
+            ActionDef::new("import_layers", "rig.layers.new", move |ctx| {
+                ctx.request(EditorRequest::ShowWorkspace(rig_workspace()));
+                if let Ok(mut st) = state.try_borrow_mut() {
+                    st.request_import_layers(ctx, true);
+                }
+            })
+            .icon(icons::STACK)
+            .category("category.tools")
+            .menu("tools", 167),
+        );
+        let state = self.state.clone();
+        reg.action(
+            ActionDef::new("add_layers", "rig.layers.add", move |ctx| {
+                ctx.request(EditorRequest::ShowWorkspace(rig_workspace()));
+                if let Ok(mut st) = state.try_borrow_mut() {
+                    st.request_import_layers(ctx, false);
+                }
+            })
+            .icon(icons::STACK)
+            .category("category.tools")
+            .menu("tools", 168),
         );
     }
 }
@@ -1400,6 +1425,9 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         }
         if icon_button(ui, icons::IMAGE, &ctx.t("rig.image.add_part")).clicked() {
             st.request_add_part(ctx);
+        }
+        if icon_button(ui, icons::STACK, &ctx.t(if st.doc.is_some() { "rig.layers.add" } else { "rig.layers.new" })).clicked() {
+            st.request_import_layers(ctx, st.doc.is_none());
         }
         let can_bind = st.doc.as_ref().is_some_and(|d| d.rig().bones.len() >= 2);
         if ui

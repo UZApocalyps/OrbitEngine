@@ -60,6 +60,18 @@ An AI assistant can list and read rigs, check a pose without drawing it, generat
 **Building and animating a rig through MCP.** An assistant can do the whole workflow without the editor UI: `rig_create` (from a project picture, imported as an asset if needed: `root` bone at the feet, a slot and a mesh traced from the alpha; or an empty rig), `rig_add_image_part`, `rig_bone_add` / `rig_bone_update` / `rig_bone_reparent` / `rig_bone_delete` (positions relative to the parent or in rig space, or a `head` and `tip` like the click-drag of the bone tool), `rig_bind` (automatic weights of every mesh), `rig_slot_update` (picture shown, tint, draw order), `rig_skin_add` / `rig_skin_duplicate` / `rig_skin_delete`, `rig_ik_set` / `rig_ik_remove`, `rig_clip_create` / `rig_clip_update` / `rig_clip_delete`, `rig_clip_key_set` / `rig_clip_key_delete` (bone rotate, translate and scale, slot picture and tint, deform, draw order; each key has an easing: a preset, a bezier or a named curve of the story), `rig_add_to_project` and `rig_delete`. Every edit is validated (an error refuses it and nothing is written; web budget warnings come back with the answer) and atomic. When the rig is open in the rig editor, the change goes through its document: it refreshes the view and **Ctrl+Z undoes it**; otherwise the file is rewritten. `rig_sample` then shows the result, including how far the mesh moved.
 
 
+### Importing a layered file (PSD, Krita, OpenRaster)
+
+If you draw your character in Photoshop, Krita or any OpenRaster editor (one layer per part: head, arm, eyes...), you do not have to export every layer by hand. In the rig editor, **New rig from layered file…** (or **Import layered file…** to add to the open rig) takes a `.psd`, a `.kra` or an `.ora` file. Every visible raster layer becomes a PNG picture of your project (cropped to its pixels, in `images/<file name>/`), a slot named after the layer and a mesh placed at the exact position it has on the canvas, in the layer stack order. The rig origin is the bottom-center of the canvas, like a rig made from a single picture. Layer opacity becomes the slot tint.
+
+- **Groups.** The editor asks whether to create one bone per layer group (nested like the groups); the layers of a group then follow its bone. Say no and everything follows the `root` bone.
+- **Hidden layers** are imported too, as slots with no active attachment: ideal variants such as "eyes closed" or "mouth open". Show one with an attachment key in a clip, or by choosing its picture in the inspector.
+- **What is not read** (the file still imports, with a warning): text, adjustment, smart object and shape layers, layer masks, blend modes, and ZIP-compressed PSD data. Only RGB files with 8 or 16 bits per channel are read; convert CMYK or grayscale files first.
+- The import is one undo step. The meshes are unweighted: draw bones, then **Bind**.
+- The feature lives in the editor and the MCP server only: exported games do not contain it and do not grow.
+
+Through MCP, `rig_import_layers` does the same (`source`, optional `rig` to add to an existing rig, `groups_as_bones`, `include_hidden`) and returns the warnings in `import_warnings`.
+
 ## Voice acting
 
 Each line of dialogue can have a **voice**: select the line, and in the inspector choose a sound of the project under **Voice** (or *Add file* to import a .ogg or .wav, *Remove* to go back to silence).

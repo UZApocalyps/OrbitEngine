@@ -801,3 +801,98 @@ pub fn rig_add_to_project(cx: &mut ToolCx<'_>, a: DeleteArgs) -> Result<String, 
         "next": "set_expression_rig makes a character expression play a clip of this rig.",
     }))
 }
+
+// -------------------------------------------------------- layered import
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportLayersArgs {
+    /// The layered file, a path in the project: Photoshop `.psd`, Krita
+    /// `.kra` or OpenRaster `.ora`.
+    pub source: String,
+    /// An existing rig to add the layers to (see `rig_list`). Absent: a new
+    /// rig is created (named by `name`, else after the file).
+    pub rig: Option<String>,
+    /// Name of the new rig (ignored with `rig`). Never overwrites.
+    pub name: Option<String>,
+    /// One bone per layer group (named after it, nested like the groups);
+    /// the layers of a group follow its bone. Default false: every layer
+    /// follows the root bone.
+    pub groups_as_bones: Option<bool>,
+    /// Import hidden layers too, as slots with no active attachment
+    /// (alternate parts such as "eyes closed"; show one with
+    /// `rig_slot_update` or an attachment track). Default true.
+    pub include_hidden: Option<bool>,
+    /// Declare a new rig as a project asset right away (default false).
+    pub add_to_project: Option<bool>,
+}
+
+pub fn rig_import_layers(cx: &mut ToolCx<'_>, a: ImportLayersArgs) -> Result<String, ToolError> {
+    let source = cx.sandbox.resolve(&a.source)?;
+    let meta = std::fs::metadata(&source).map_err(|_| ToolError::not_found(format!("no file `{}` in the project", a.source)))?;
+    if !meta.is_file() || meta.len() > 512 * 1024 * 1024 {
+        return Err(ToolError::invalid(format!("`{}` is not a usable layered file", a.source)));
+    }
+    let bytes = std::fs::read(&source).map_err(io_err)?;
+    let doc = orbit_layers::parse(&bytes).map_err(|e| ToolError::invalid(format!("cannot read `{}`: {e}", a.source)))?;
+    drop(bytes);
+    let root = assets_root(cx);
+    let (file, before, mut rig, is_new) = match &a.rig {
+        Some(key) => {
+            let file = resolve(cx, key)?;
+            let before = load(&file, &root)?;
+            let rig = before.clone();
+            (file, Some(before), rig, false)
+        }
+        None => {
+            let stem = a.name.clone().unwrap_or_else(|| source.file_stem().and_then(|s| s.to_str()).unwrap_or("rig").to_owned());
+            let stem = sanitize(&stem);
+            let stem = if stem.is_empty() { "rig".to_owned() } else { stem };
+            let rel = format!("{}/{stem}.rig.ron", orbit_project::rigs::RIG_DIR);
+            let abs = root.join(&rel);
+            if abs.exists() {
+                return Err(ToolError::refused(format!("`{rel}` already exists: pick another `name`, or pass `rig` to add to it")));
+            }
+            (RigFile { asset: None, rel, abs }, None, Rig::default(), true)
+        }
+    };
+    let folder = sanitize(file.rel.rsplit('/').next().unwrap_or("rig").trim_end_matches(".rig.ron"));
+    let dir = root.join("images").join(if folder.is_empty() { "layers" } else { &folder });
+    std::fs::create_dir_all(&dir).map_err(io_err)?;
+    let mut index = 0usize;
+    let opts = orbit_layers::ImportOptions {
+        groups_as_bones: a.groups_as_bones.unwrap_or(false),
+        include_hidden: a.include_hidden.unwrap_or(true),
+    };
+    let report = {
+        let mut save = |name: &str, w: u32, h: u32, rgba: &[u8]| -> Result<String, String> {
+            index += 1;
+            let stem = sanitize(name);
+            let abs = dir.join(format!("{index:02}_{}.png", if stem.is_empty() { "layer" } else { &stem }));
+            std::fs::write(&abs, orbit_layers::encode_png(w, h, rgba)?).map_err(|e| e.to_string())?;
+            let rel = cx.sandbox.relative(&abs).ok_or("layer file is outside the project")?;
+            let imported = import_asset(cx, ImportAssetArgs { source: rel, kind: None, name: None }).map_err(|e| e.to_string())?;
+            let v: Json = serde_json::from_str(&imported).unwrap_or(Json::Null);
+            v["path"].as_str().map(str::to_owned).ok_or_else(|| "the layer picture was not imported".to_owned())
+        };
+        orbit_layers::import_into_rig(&mut rig, &doc, &opts, &mut save).map_err(ToolError::invalid)?
+    };
+    let stored = store(&file, before.as_ref(), &rig, "rig_import_layers")?;
+    let asset = if is_new && a.add_to_project.unwrap_or(false) {
+        Some(orbit_project::ops::add_asset(cx.project, AssetKind::Rig, &file.rel)?)
+    } else {
+        file.asset
+    };
+    let file = RigFile { asset, ..file };
+    respond(
+        &file,
+        &rig,
+        &stored,
+        json!({
+            "canvas": [doc.width, doc.height],
+            "slots": report.slots, "hidden_slots": report.hidden, "bones_created": report.bones,
+            "import_warnings": report.warnings,
+            "hint": "Meshes are unweighted: add bones (rig_bone_add) or use the group bones, then rig_bind.",
+        }),
+    )
+}

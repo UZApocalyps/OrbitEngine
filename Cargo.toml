@@ -19,6 +19,7 @@ orbit_platform = { path = "crates/orbit_platform" }
 orbit_gfx = { path = "crates/orbit_gfx" }
 orbit_plugin_api = { path = "crates/orbit_plugin_api" }
 orbit_mcp = { path = "crates/orbit_mcp" }
+orbit_layers = { path = "crates/orbit_layers" }
 orbit_editor_api = { path = "crates/orbit_editor_api" }
 orbit_pak = { path = "crates/orbit_pak" }
 orbit_export = { path = "crates/orbit_export" }

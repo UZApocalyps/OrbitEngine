@@ -1,0 +1,17 @@
+[package]
+name = "orbit_layers"
+description = "OrbitEngine layered image import (PSD, Krita .kra, OpenRaster .ora) into a 2D rig. Editor / project tool only: not linked by the runtime, player or web build."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_anim.workspace = true
+orbit_project.workspace = true
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+image = { workspace = true }
+
+[lints]
+workspace = true

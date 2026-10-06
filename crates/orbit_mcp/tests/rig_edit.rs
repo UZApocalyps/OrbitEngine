@@ -411,6 +411,51 @@ fn an_open_rig_editor_gets_the_edits_instead_of_the_file() {
     assert_eq!(f.rig("hero").bones.len(), 4);
 }
 
+#[test]
+fn rig_import_layers_builds_a_rig_from_an_ora() {
+    use std::io::Write;
+    let mut f = Fixture::new("layers");
+    let png = |w: u32, h: u32, rgba: [u8; 4]| {
+        let mut out = Vec::new();
+        let img = image::RgbaImage::from_pixel(w, h, image::Rgba(rgba));
+        img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        out
+    };
+    let stack = r#"<image w="40" h="80"><stack>
+<layer name="eyes closed" src="data/c.png" x="10" y="20" visibility="hidden"/>
+<layer name="eyes" src="data/e.png" x="10" y="20"/>
+<layer name="body" src="data/b.png" x="5" y="30"/>
+</stack></image>"#;
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let o = zip::write::SimpleFileOptions::default();
+    for (n, d) in [
+        ("stack.xml", stack.as_bytes().to_vec()),
+        ("data/c.png", png(8, 4, [0, 0, 0, 255])),
+        ("data/e.png", png(8, 4, [255, 255, 255, 255])),
+        ("data/b.png", png(30, 50, [200, 40, 90, 255])),
+    ] {
+        w.start_file(n, o).unwrap();
+        w.write_all(&d).unwrap();
+    }
+    fs::write(f.dir.join("hero.ora"), w.finish().unwrap().into_inner()).unwrap();
+
+    let r = f.ok("rig_import_layers", json!({"source": "hero.ora"}));
+    assert_eq!(r["rig"], "assets/rigs/hero.rig.ron");
+    assert_eq!(r["slots"], json!(["body", "eyes", "eyes closed"]));
+    assert_eq!(r["hidden_slots"], json!(["eyes closed"]));
+    let rig = f.rig("hero");
+    assert_eq!(rig.slots.len(), 3);
+    assert_eq!(rig.bones.len(), 1);
+    assert!(rig.slots[2].attachment.is_none());
+    // Adding to the existing rig keeps names unique.
+    f.ok("rig_import_layers", json!({"source": "hero.ora", "rig": "hero"}));
+    assert_eq!(f.rig("hero").slots.len(), 6);
+    // A new rig never overwrites.
+    assert_eq!(f.err("rig_import_layers", json!({"source": "hero.ora"})).kind, ErrorKind::Refused);
+    fs::write(f.dir.join("junk.psd"), b"nope").unwrap();
+    assert_eq!(f.err("rig_import_layers", json!({"source": "junk.psd", "name": "j"})).kind, ErrorKind::InvalidArguments);
+}
+
 fn same(a: &Path, b: &Path) -> bool {
     fs::canonicalize(a).ok() == fs::canonicalize(b).ok()
 }

@@ -20,6 +20,7 @@ orbit_plugin_api.workspace = true
 orbit_vm.workspace = true
 orbit_script.workspace = true
 orbit_i18n.workspace = true
+orbit_layers.workspace = true
 rmcp = { version = "3.5", default-features = false, features = ["server", "transport-io", "transport-streamable-http-server"] }
 tokio = { version = "1", features = ["rt", "io-std", "sync", "net", "time", "macros"] }
 # Live mode: the HTTP side of the streamable transport (rmcp provides a tower
@@ -38,6 +39,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 image.workspace = true
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true

@@ -26,6 +26,9 @@ pub(super) fn empty_state(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut Sta
         {
             st.request_new_from_image(ctx);
         }
+        if ui.button(format!("{}  {}", icons::STACK, ctx.t("rig.layers.new"))).on_hover_text(ctx.t("rig.layers.hint")).clicked() {
+            st.request_import_layers(ctx, true);
+        }
         ui.label(RichText::new(ctx.t("rig.drop.empty")).small().color(faint(ui)));
         ui.add_space(12.0);
         if ui.button(format!("{}  {}", icons::FILE_PLUS, ctx.t("rig.new"))).clicked() {

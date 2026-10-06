@@ -60,6 +60,18 @@ Un assistant IA peut lister et lire les rigs, vérifier une pose sans dessiner, 
 **Construire et animer un rig par MCP.** Un assistant peut faire tout le parcours sans l'interface de l'éditeur : `rig_create` (depuis une image du projet, importée comme asset si besoin : os `root` aux pieds, un slot et un maillage tracé depuis l'alpha ; ou un rig vide), `rig_add_image_part`, `rig_bone_add` / `rig_bone_update` / `rig_bone_reparent` / `rig_bone_delete` (positions relatives au parent ou dans l'espace du rig, ou une `head` et une `tip` comme le cliquer-glisser de l'outil os), `rig_bind` (auto-poids de tous les maillages), `rig_slot_update` (image affichée, teinte, ordre de dessin), `rig_skin_add` / `rig_skin_duplicate` / `rig_skin_delete`, `rig_ik_set` / `rig_ik_remove`, `rig_clip_create` / `rig_clip_update` / `rig_clip_delete`, `rig_clip_key_set` / `rig_clip_key_delete` (rotation, translation et échelle d'os, image et teinte de slot, déformation, ordre de dessin ; chaque clé a une interpolation : préréglage, bézier ou courbe nommée de l'histoire), `rig_add_to_project` et `rig_delete`. Chaque modification est validée (une erreur la refuse et rien n'est écrit ; les avertissements du budget web reviennent avec la réponse) et atomique. Quand le rig est ouvert dans l'éditeur de rig, le changement passe par son document : la vue se rafraîchit et **Ctrl+Z l'annule** ; sinon le fichier est réécrit. `rig_sample` montre ensuite le résultat, y compris de combien le maillage a bougé.
 
 
+### Importer un fichier à calques (PSD, Krita, OpenRaster)
+
+Si vous dessinez votre personnage dans Photoshop, Krita ou un éditeur OpenRaster (un calque par partie : tête, bras, yeux...), inutile d'exporter chaque calque à la main. Dans l'éditeur de rig, **Nouveau rig depuis un fichier à calques…** (ou **Importer un fichier à calques…** pour ajouter au rig ouvert) prend un fichier `.psd`, `.kra` ou `.ora`. Chaque calque raster visible devient une image PNG de votre projet (rognée à ses pixels, dans `images/<nom du fichier>/`), un slot nommé d'après le calque et un maillage placé à sa position exacte sur le canevas, dans l'ordre de la pile de calques. L'origine du rig est le centre bas du canevas, comme pour un rig fait depuis une seule image. L'opacité du calque devient la teinte du slot.
+
+- **Groupes.** L'éditeur demande s'il faut créer un os par groupe de calques (imbriqués comme les groupes) ; les calques d'un groupe suivent alors son os. Répondez non et tout suit l'os `root`.
+- **Calques masqués** : importés aussi, comme slots sans image active : idéal pour des variantes comme « yeux fermés » ou « bouche ouverte ». Affichez-en une avec une clé d'image dans un clip, ou en choisissant son image dans l'inspecteur.
+- **Ce qui n'est pas lu** (le fichier s'importe quand même, avec un avertissement) : calques de texte, de réglage, d'objet dynamique et de forme, masques de calque, modes de fusion, données PSD compressées en ZIP. Seuls les fichiers RVB à 8 ou 16 bits par canal sont lus ; convertissez d'abord les fichiers CMJN ou en niveaux de gris.
+- L'import est une seule étape d'annulation. Les maillages ne sont pas pondérés : dessinez les os, puis **Lier**.
+- La fonction vit dans l'éditeur et le serveur MCP seulement : les jeux exportés ne la contiennent pas et ne grossissent pas.
+
+Par MCP, `rig_import_layers` fait la même chose (`source`, `rig` optionnel pour ajouter à un rig existant, `groups_as_bones`, `include_hidden`) et renvoie les avertissements dans `import_warnings`.
+
 ## Voix
 
 Chaque réplique peut avoir une **voix** : sélectionner la réplique et, dans l'inspecteur, choisir un son du projet sous **Voix** (ou *Ajouter un fichier* pour importer un .ogg ou .wav, *Retirer* pour revenir au silence).

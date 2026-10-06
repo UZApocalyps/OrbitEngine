@@ -3161,6 +3161,7 @@ dependencies = [
  "orbit_export",
  "orbit_gfx",
  "orbit_i18n",
+ "orbit_layers",
  "orbit_mcp",
  "orbit_platform",
  "orbit_plugin_api",
@@ -3241,6 +3242,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit_layers"
+version = "0.2.0"
+dependencies = [
+ "image",
+ "orbit_anim",
+ "orbit_project",
+ "zip",
+]
+
+[[package]]
 name = "orbit_mcp"
 version = "0.2.0"
 dependencies = [
@@ -3256,6 +3267,7 @@ dependencies = [
  "orbit_core",
  "orbit_dsl",
  "orbit_i18n",
+ "orbit_layers",
  "orbit_plugin_api",
  "orbit_project",
  "orbit_scene",
@@ -3270,6 +3282,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
+ "zip",
 ]
 
 [[package]]
