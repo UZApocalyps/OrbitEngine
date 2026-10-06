@@ -25,6 +25,7 @@ mod model;
 mod paint;
 mod panels;
 mod pixeltools;
+mod posemap;
 use orbit_project::rigmesh::weights;
 mod workflow;
 mod layered_import;
@@ -1180,7 +1181,7 @@ pub(super) fn set_pose_mode(st: &mut State, pose: bool) {
         }
         st.drag = None;
         st.create = None;
-        if pose && matches!(st.tool, Tool::Create | Tool::Mesh | Tool::Cut | Tool::Paint) {
+        if pose && matches!(st.tool, Tool::Create | Tool::Mesh) {
             st.tool = Tool::Rotate;
         }
     }
@@ -1516,7 +1517,7 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             (Tool::Paint, icons::PAINT_BRUSH_BROAD, "rig.tool.paint"),
         ] {
             let mesh_ok = !matches!(tool, Tool::Mesh | Tool::Weights) || meshedit::has_mesh(st);
-            let rest_only = matches!(tool, Tool::Create | Tool::Mesh | Tool::Cut | Tool::Paint);
+            let rest_only = matches!(tool, Tool::Create | Tool::Mesh);
             let enabled = !(st.pose_mode && rest_only) && mesh_ok;
             let on = st.tool == tool;
             let mut text = RichText::new(icon).size(15.0);

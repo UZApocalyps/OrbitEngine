@@ -16,18 +16,21 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::rc::Rc;
 use std::time::SystemTime;
 
 use egui::{Color32, Pos2, Rect, RichText, Ui, vec2};
-use orbit_anim::rig::{Affine, Attachment, Rig, SlotId};
+use orbit_anim::rig::{Affine, Attachment, CpuSkinner, Rig, RigDrawItem, SlotId};
 use orbit_core::AssetKind;
 use orbit_editor_api::{EditorContext, icons};
+use orbit_project::rigmesh::meshgen;
 use orbit_project::rigmesh::pixels::{self, Mask};
 use orbit_project::rigops;
 
 use super::geom::Tool;
 use super::model::{self, DEFAULT_SKIN, OpError};
 use super::paint::{self, Brush, Mode};
+use super::posemap::PicMap;
 use super::workflow::{self, Picture};
 use super::{State, center_of, pointer_rig, to_pos};
 use crate::builtin::ui_util::{accent, faint, weak};
@@ -79,9 +82,14 @@ pub struct PixelState {
     selection: Option<(SlotId, Mask)>,
     mask_rev: u64,
     mask_tex: Option<(u64, egui::TextureHandle)>,
-    /// Lasso / polygon points being drawn (picture pixels).
+    /// Lasso / polygon points being drawn (rig space, as shown: mapped to
+    /// the picture when the outline closes).
     draft: Vec<[f32; 2]>,
     stroke: Option<(String, paint::Stroke)>,
+    /// Last brush point of the stroke (rig space, as shown).
+    stroke_last: Option<[f32; 2]>,
+    /// The posed part of the selected slot (pose mode only).
+    posed: Option<(PoseKey, Option<Posed>)>,
     clone_source: Option<[f32; 2]>,
     /// Pictures made by the editor (cuts, layers, copies): edited in place.
     owned: HashSet<String>,
@@ -113,6 +121,8 @@ impl Default for PixelState {
             mask_tex: None,
             draft: Vec::new(),
             stroke: None,
+            stroke_last: None,
+            posed: None,
             clone_source: None,
             owned: HashSet::new(),
             failed: HashSet::new(),
@@ -159,24 +169,32 @@ fn current(st: &State) -> PixTool {
 
 // ------------------------------------------------------------------ target
 
-/// The picture the tools work on: the selected slot's, in the shown skin.
+/// The picture the tools work on: the selected slot's, in the shown skin
+/// (in pose mode: the picture the pose shows, as deformed).
 pub struct Target {
     pub slot: SlotId,
     pub path: String,
     /// Picture UV (`0..1`) → rig space, setup pose.
     pub map: Affine,
+    /// Rig space ↔ picture pixels as shown (the rest pose, or the pose).
+    pub shown: Rc<PicMap>,
     pub w: u32,
     pub h: u32,
 }
 
 impl Target {
     fn to_px(&self, rig_p: [f32; 2]) -> Option<[f32; 2]> {
-        let uv = self.map.inverse()?.apply(rig_p);
-        Some([uv[0] * self.w as f32, uv[1] * self.h as f32])
+        self.shown.to_px(rig_p)
     }
 
-    fn to_rig(&self, px: [f32; 2]) -> [f32; 2] {
-        self.map.apply([px[0] / self.w.max(1) as f32, px[1] / self.h.max(1) as f32])
+    fn to_rig(&self, px: [f32; 2]) -> Option<[f32; 2]> {
+        self.shown.to_rig(px)
+    }
+
+    /// Picture pixels per rig unit in the setup pose: the brush keeps its
+    /// on-screen size when the part is posed, stretched or squashed.
+    fn rest_scale(&self) -> f32 {
+        PicMap::affine(&self.map, self.w, self.h).px_per_rig([0.0, 0.0]).filter(|s| s.is_finite() && *s > 0.0).unwrap_or(1.0)
     }
 }
 
@@ -197,9 +215,97 @@ fn locate(st: &State) -> Option<(SlotId, String, Affine)> {
     Some((sid, att.image().to_owned(), map))
 }
 
+/// What identifies a displayed pose for the cache of the posed geometry:
+/// rig revision, pose revision, prepared rig, slot, skin.
+type PoseKey = (u64, u64, usize, SlotId, Option<String>);
+
+/// A posed part: rigid (UV → rig) or skinned triangles.
+enum Geom {
+    Region(Affine),
+    Mesh { pos: Vec<[f32; 2]>, uvs: Vec<[f32; 2]>, tris: Vec<[u16; 3]> },
+}
+
+/// The picture a slot shows in the displayed pose, and its map once the
+/// picture size is known (rebuilt only when the pose or the rig changed,
+/// and only while a picture tool is in use).
+pub struct Posed {
+    path: String,
+    geom: Geom,
+    map: Option<(u32, u32, Rc<PicMap>)>,
+}
+
+fn pose_key(st: &State, sid: &SlotId) -> Option<PoseKey> {
+    let doc = st.doc.as_ref()?;
+    let prepared = st.prepared.as_ref()?;
+    Some((doc.revision, st.pose_rev, Rc::as_ptr(prepared) as usize, sid.clone(), st.shown_skin()))
+}
+
+/// Skins the displayed pose (pose overrides, clip at the playhead,
+/// cross-fade, IK) and keeps the slot's part.
+fn build_posed(st: &State, sid: &SlotId) -> Option<Posed> {
+    let prepared = st.prepared.clone()?;
+    let pose = st.rig_pose()?;
+    let si = st.doc.as_ref()?.rig().slots.iter().position(|s| &s.id == sid)?;
+    let world = prepared.world(&pose);
+    let skin = st.shown_skin();
+    let list = prepared.draw_list(&pose, &world, skin.as_deref(), &CpuSkinner);
+    list.items.iter().find_map(|item| match item {
+        RigDrawItem::Region { slot, image, size, transform, .. } if *slot == si => Some(Posed {
+            path: (*image).to_owned(),
+            geom: Geom::Region(meshgen::region_uv_to_rig(transform, *size)),
+            map: None,
+        }),
+        RigDrawItem::Mesh { slot, image, range, uvs, triangles, .. } if *slot == si => Some(Posed {
+            path: (*image).to_owned(),
+            geom: Geom::Mesh { pos: list.positions.get(range.clone())?.to_vec(), uvs: uvs.to_vec(), tris: triangles.to_vec() },
+            map: None,
+        }),
+        _ => None,
+    })
+}
+
+/// The selected slot, the picture shown (as posed in pose mode) and its
+/// setup map.
+fn resolve(st: &mut State) -> Option<(SlotId, String, Affine)> {
+    let (sid, path, map) = locate(st)?;
+    if !st.pose_mode {
+        return Some((sid, path, map));
+    }
+    let key = pose_key(st, &sid)?;
+    if st.px.posed.as_ref().is_none_or(|(k, _)| k != &key) {
+        let posed = build_posed(st, &sid);
+        st.px.posed = Some((key, posed));
+    }
+    let path = st.px.posed.as_ref()?.1.as_ref()?.path.clone();
+    Some((sid, path, map))
+}
+
+/// The target once its pixels are loaded.
+fn finish(st: &mut State, slot: SlotId, path: String, map: Affine) -> Option<Target> {
+    let c = st.doc.as_ref()?.canvas(&path)?;
+    let (w, h) = (c.w, c.h);
+    let shown = if st.pose_mode {
+        let p = st.px.posed.as_mut()?.1.as_mut()?;
+        match &p.map {
+            Some((pw, ph, m)) if (*pw, *ph) == (w, h) => m.clone(),
+            _ => {
+                let m = Rc::new(match &p.geom {
+                    Geom::Region(a) => PicMap::affine(a, w, h),
+                    Geom::Mesh { pos, uvs, tris } => PicMap::mesh(pos, uvs, tris, w, h),
+                });
+                p.map = Some((w, h, m.clone()));
+                m
+            }
+        }
+    } else {
+        Rc::new(PicMap::affine(&map, w, h))
+    };
+    Some(Target { slot, path, map, shown, w, h })
+}
+
 /// The target, its pixels loaded into the document when needed.
 pub fn target(ctx: &mut EditorContext<'_>, st: &mut State) -> Option<Target> {
-    let (slot, path, map) = locate(st)?;
+    let (slot, path, map) = resolve(st)?;
     if st.doc.as_ref()?.canvas(&path).is_none() && !st.px.failed.contains(&path) {
         let root = st.project_root(ctx);
         match workflow::load_picture(&root, &path) {
@@ -210,15 +316,13 @@ pub fn target(ctx: &mut EditorContext<'_>, st: &mut State) -> Option<Target> {
             }
         }
     }
-    let c = st.doc.as_ref()?.canvas(&path)?;
-    Some(Target { slot, path, map, w: c.w, h: c.h })
+    finish(st, slot, path, map)
 }
 
 /// The target when its pixels are already loaded (painting the overlay).
-fn loaded_target(st: &State) -> Option<Target> {
-    let (slot, path, map) = locate(st)?;
-    let c = st.doc.as_ref()?.canvas(&path)?;
-    Some(Target { slot, path, map, w: c.w, h: c.h })
+fn loaded_target(st: &mut State) -> Option<Target> {
+    let (slot, path, map) = resolve(st)?;
+    finish(st, slot, path, map)
 }
 
 // ------------------------------------------------------------------- files
@@ -368,7 +472,12 @@ fn combine(st: &mut State, slot: &SlotId, m: Mask, add: bool, sub: bool) {
 fn close_polygon(st: &mut State, t: &Target, add: bool, sub: bool) {
     let draft = std::mem::take(&mut st.px.draft);
     if draft.len() >= 3 {
-        combine(st, &t.slot, pixels::polygon_mask(t.w, t.h, &draft), add, sub);
+        // Drawn on the part as shown: each point (edges densified to about
+        // a picture pixel on a mesh) lands on the picture.
+        let poly = t.shown.outline_to_px(&draft, 1.0 / t.rest_scale());
+        if poly.len() >= 3 {
+            combine(st, &t.slot, pixels::polygon_mask(t.w, t.h, &poly), add, sub);
+        }
     }
 }
 
@@ -382,6 +491,12 @@ pub fn cut(ctx: &mut EditorContext<'_>, st: &mut State) {
     };
     if sid != t.slot || mask.w != t.w || mask.h != t.h {
         ctx.warn(ctx.t("rig.cut.no_selection"));
+        return;
+    }
+    // The pose may show another picture than the setup pose (a clip swaps
+    // it): the cut works on the setup picture only.
+    if locate(st).is_none_or(|(_, p, _)| p != t.path) {
+        ctx.warn(ctx.t("rig.cut.pose_other_picture"));
         return;
     }
     let root = st.project_root(ctx);
@@ -620,6 +735,7 @@ pub fn poll_external(ctx: &mut EditorContext<'_>, st: &mut State) {
 
 /// Ends the stroke in progress (button released): one undo step.
 pub fn finish_stroke(st: &mut State) {
+    st.px.stroke_last = None;
     if let Some((path, stroke)) = st.px.stroke.take()
         && let Some(doc) = st.doc.as_mut()
     {
@@ -628,15 +744,17 @@ pub fn finish_stroke(st: &mut State) {
     }
 }
 
-fn begin_stroke(ctx: &mut EditorContext<'_>, st: &mut State, t: &Target, tool: PixTool, p: [f32; 2]) {
+/// Starts a stroke at `rig` (rig space, as shown).
+fn begin_stroke(ctx: &mut EditorContext<'_>, st: &mut State, t: &Target, tool: PixTool, rig: [f32; 2]) {
     let mode = match tool {
         PixTool::Eraser => Mode::Erase,
-        PixTool::Clone => match st.px.clone_source {
-            Some(src) => Mode::Clone { offset: [src[0] - p[0], src[1] - p[1]] },
-            None => {
+        PixTool::Clone => match (st.px.clone_source, t.shown.to_px_extrapolated(rig)) {
+            (Some(src), Some(p)) => Mode::Clone { offset: [src[0] - p[0], src[1] - p[1]] },
+            (None, _) => {
                 ctx.warn(ctx.t("rig.paint.clone_source"));
                 return;
             }
+            (Some(_), None) => return,
         },
         _ => Mode::Paint,
     };
@@ -651,14 +769,36 @@ fn begin_stroke(ctx: &mut EditorContext<'_>, st: &mut State, t: &Target, tool: P
     };
     let Some(doc) = st.doc.as_mut() else { return };
     let Some(c) = doc.canvas(&path) else { return };
-    let mut stroke = paint::Stroke::new(c.w, c.h, c.rgba.clone(), mode, st.px.brush);
-    doc.paint_live(&path, |c| stroke.to(&mut c.rgba, p));
+    let stroke = paint::Stroke::new(c.w, c.h, c.rgba.clone(), mode, st.px.brush);
     st.px.stroke = Some((path, stroke));
+    continue_stroke(st, t, rig);
 }
 
-fn continue_stroke(st: &mut State, p: [f32; 2]) {
+/// Paints from the last point of the stroke to `rig` (rig space, as
+/// shown): the segment is sampled on screen, each dab lands where the part
+/// shows it, its size follows the local stretch of the part (the brush
+/// keeps its size on screen). Off a posed mesh, nothing is painted.
+fn continue_stroke(st: &mut State, t: &Target, rig: [f32; 2]) {
+    let from = st.px.stroke_last.unwrap_or(rig);
+    st.px.stroke_last = Some(rig);
     let (Some((path, stroke)), Some(doc)) = (st.px.stroke.as_mut(), st.doc.as_mut()) else { return };
-    doc.paint_live(path, |c| stroke.to(&mut c.rgba, p));
+    let rest = t.rest_scale();
+    let size = stroke.brush.size;
+    let spacing = ((size / rest) * 0.15).max(0.5 / rest);
+    let len = ((rig[0] - from[0]).powi(2) + (rig[1] - from[1]).powi(2)).sqrt();
+    let steps = ((len / spacing).ceil().max(1.0) as usize).min(100_000);
+    let shown = &t.shown;
+    doc.paint_live(path, |c| {
+        let mut changed = false;
+        for s in 1..=steps {
+            let k = s as f32 / steps as f32;
+            let q = [from[0] + (rig[0] - from[0]) * k, from[1] + (rig[1] - from[1]) * k];
+            if let (Some(p), Some(scale)) = (shown.to_px(q), shown.px_per_rig(q)) {
+                changed |= stroke.dab_sized(&mut c.rgba, p, size * scale / rest);
+            }
+        }
+        changed
+    });
 }
 
 fn fill_at(ctx: &mut EditorContext<'_>, st: &mut State, t: &Target, p: [f32; 2]) {
@@ -691,9 +831,11 @@ fn pick(st: &mut State, t: &Target, p: [f32; 2]) {
     }
 }
 
-/// Viewport input of the cut and paint tools (rest pose only).
+/// Viewport input of the cut and paint tools, in the rest pose or on the
+/// posed rig (pose mode, clip preview): the pointer is mapped through the
+/// shown deformation to the picture. The pose itself is never changed.
 pub fn interact(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, response: &egui::Response, rect: Rect) {
-    if st.pose_mode || ui.input(|i| i.key_down(egui::Key::Space)) {
+    if ui.input(|i| i.key_down(egui::Key::Space)) {
         return;
     }
     let Some(t) = target(ctx, st) else { return };
@@ -701,19 +843,21 @@ pub fn interact(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, response: 
     let (shift, cmd, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.command, i.modifiers.alt));
     let pointer = response.interact_pointer_pos().or_else(|| ui.input(|i| i.pointer.latest_pos()));
     let Some(pos) = pointer else { return };
-    let Some(p) = t.to_px(pointer_rig(st, rect, pos)) else { return };
+    let rig = pointer_rig(st, rect, pos);
+    let p = t.to_px(rig);
+    let center = center_of(rect);
     let tool = current(st);
     match tool {
         PixTool::Lasso => {
             if response.drag_started_by(primary) {
                 let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(pos);
-                st.px.draft = t.to_px(pointer_rig(st, rect, origin)).into_iter().collect();
+                st.px.draft = vec![pointer_rig(st, rect, origin)];
             }
             if response.dragged_by(primary)
                 && let Some(last) = st.px.draft.last()
-                && ((last[0] - p[0]).powi(2) + (last[1] - p[1]).powi(2)) >= 0.5
+                && to_pos(st.view.to_screen(center, *last)).distance(pos) >= 1.0
             {
-                st.px.draft.push(p);
+                st.px.draft.push(rig);
             }
             if response.drag_stopped_by(primary) {
                 close_polygon(st, &t, shift, cmd);
@@ -723,19 +867,18 @@ pub fn interact(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, response: 
             if response.double_clicked_by(primary) {
                 close_polygon(st, &t, shift, cmd);
             } else if response.clicked_by(primary) {
-                let near_first = st.px.draft.first().is_some_and(|f| {
-                    let a = to_pos(st.view.to_screen(center_of(rect), t.to_rig(*f)));
-                    a.distance(pos) < 8.0
-                });
+                let near_first =
+                    st.px.draft.first().is_some_and(|f| to_pos(st.view.to_screen(center, *f)).distance(pos) < 8.0);
                 if near_first && st.px.draft.len() >= 3 {
                     close_polygon(st, &t, shift, cmd);
                 } else {
-                    st.px.draft.push(p);
+                    st.px.draft.push(rig);
                 }
             }
         }
         PixTool::Wand => {
             if response.clicked_by(primary)
+                && let Some(p) = p
                 && p[0] >= 0.0
                 && p[1] >= 0.0
                 && let Some(c) = st.doc.as_ref().and_then(|d| d.canvas(&t.path))
@@ -748,8 +891,10 @@ pub fn interact(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, response: 
             if alt {
                 if response.clicked_by(primary) {
                     if tool == PixTool::Clone {
-                        st.px.clone_source = Some(p);
-                    } else {
+                        if let Some(src) = t.shown.to_px_extrapolated(rig) {
+                            st.px.clone_source = Some(src);
+                        }
+                    } else if let Some(p) = p {
                         pick(st, &t, p);
                     }
                 }
@@ -757,24 +902,27 @@ pub fn interact(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, response: 
             }
             if response.drag_started_by(primary) {
                 let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(pos);
-                let start = t.to_px(pointer_rig(st, rect, origin)).unwrap_or(p);
-                begin_stroke(ctx, st, &t, tool, start);
+                begin_stroke(ctx, st, &t, tool, pointer_rig(st, rect, origin));
             }
             if response.dragged_by(primary) {
-                continue_stroke(st, p);
+                continue_stroke(st, &t, rig);
             }
             if response.clicked_by(primary) {
-                begin_stroke(ctx, st, &t, tool, p);
+                begin_stroke(ctx, st, &t, tool, rig);
                 finish_stroke(st);
             }
         }
         PixTool::Fill => {
-            if response.clicked_by(primary) {
+            if response.clicked_by(primary)
+                && let Some(p) = p
+            {
                 fill_at(ctx, st, &t, p);
             }
         }
         PixTool::Picker => {
-            if response.clicked_by(primary) {
+            if response.clicked_by(primary)
+                && let Some(p) = p
+            {
                 pick(st, &t, p);
             }
         }
@@ -838,15 +986,28 @@ fn mask_image(m: &Mask, tint: Color32) -> egui::ColorImage {
     egui::ColorImage::from_rgba_unmultiplied([m.w as usize, m.h as usize], &bytes)
 }
 
-/// Selection, outline being drawn, picture frame and brush cursor.
+/// Selection, outline being drawn, picture frame and brush cursor, drawn on
+/// the part as shown (posed in pose mode).
 pub fn paint_overlay(ui: &Ui, st: &mut State, painter: &egui::Painter, rect: Rect) {
     let Some(t) = loaded_target(st) else { return };
     let center = center_of(rect);
-    let screen = |px: [f32; 2]| to_pos(st.view.to_screen(center, t.to_rig(px)));
+    let view = st.view;
+    let on_screen = |rig: [f32; 2]| to_pos(view.to_screen(center, rig));
+    let screen = |px: [f32; 2]| t.to_rig(px).map(on_screen);
     let (w, h) = (t.w as f32, t.h as f32);
-    let corners = [screen([0.0, 0.0]), screen([w, 0.0]), screen([w, h]), screen([0.0, h])];
-    painter.add(egui::Shape::closed_line(corners.to_vec(), egui::Stroke::new(1.0, faint(ui))));
-    // Selection.
+    let frame = egui::Stroke::new(1.0, faint(ui));
+    match &*t.shown {
+        PicMap::Affine(m) => {
+            let corners: Vec<Pos2> = [[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]].iter().map(|p| on_screen(m.apply(*p))).collect();
+            painter.add(egui::Shape::closed_line(corners, frame));
+        }
+        PicMap::Mesh(m) => {
+            for e in m.outline() {
+                painter.line_segment([on_screen(e[0]), on_screen(e[1])], frame);
+            }
+        }
+    }
+    // Selection: the mask as a texture on the shown part.
     if let Some((sid, m)) = &st.px.selection
         && sid == &t.slot
         && m.w == t.w
@@ -859,16 +1020,27 @@ pub fn paint_overlay(ui: &Ui, st: &mut State, painter: &egui::Painter, rect: Rec
         }
         if let Some((_, tex)) = &st.px.mask_tex {
             let mut mesh = egui::Mesh::with_texture(tex.id());
-            for (p, uv) in corners.iter().zip([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]) {
-                mesh.vertices.push(egui::epaint::Vertex { pos: *p, uv: Pos2::new(uv[0], uv[1]), color: Color32::WHITE });
+            let vertex = |pos: Pos2, uv: [f32; 2]| egui::epaint::Vertex { pos, uv: Pos2::new(uv[0], uv[1]), color: Color32::WHITE };
+            match &*t.shown {
+                PicMap::Affine(a) => {
+                    for uv in [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]] {
+                        mesh.vertices.push(vertex(on_screen(a.apply([uv[0] * w, uv[1] * h])), uv));
+                    }
+                    mesh.indices.extend([0, 1, 2, 0, 2, 3]);
+                }
+                PicMap::Mesh(tm) => {
+                    for (p, px) in tm.pos.iter().zip(&tm.px) {
+                        mesh.vertices.push(vertex(on_screen(*p), [px[0] / w.max(1.0), px[1] / h.max(1.0)]));
+                    }
+                    mesh.indices.extend(tm.tris.iter().flat_map(|t| t.map(u32::from)));
+                }
             }
-            mesh.indices.extend([0, 1, 2, 0, 2, 3]);
             painter.add(egui::Shape::mesh(mesh));
         }
     }
-    // Outline being drawn.
+    // Outline being drawn (rig space, as shown).
     if !st.px.draft.is_empty() {
-        let mut pts: Vec<Pos2> = st.px.draft.iter().map(|p| screen(*p)).collect();
+        let mut pts: Vec<Pos2> = st.px.draft.iter().map(|p| on_screen(*p)).collect();
         if st.tool == Tool::Cut
             && st.px.cut_tool == PixTool::Polygon
             && let Some(hover) = ui.input(|i| i.pointer.hover_pos())
@@ -876,29 +1048,29 @@ pub fn paint_overlay(ui: &Ui, st: &mut State, painter: &egui::Painter, rect: Rec
             pts.push(hover);
         }
         painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(1.5, accent(ui))));
-        for p in st.px.draft.iter().take(1) {
-            painter.circle_stroke(screen(*p), 4.0, egui::Stroke::new(1.0, accent(ui)));
+        if let Some(first) = pts.first() {
+            painter.circle_stroke(*first, 4.0, egui::Stroke::new(1.0, accent(ui)));
         }
     }
-    // Clone source.
+    // Clone source (where the part shows it).
     if st.tool == Tool::Paint
         && st.px.paint_tool == PixTool::Clone
         && let Some(src) = st.px.clone_source
+        && let Some(c) = screen(src)
     {
-        let c = screen(src);
         let s = egui::Stroke::new(1.0, accent(ui));
         painter.line_segment([c - vec2(6.0, 0.0), c + vec2(6.0, 0.0)], s);
         painter.line_segment([c - vec2(0.0, 6.0), c + vec2(0.0, 6.0)], s);
     }
-    // Brush cursor.
+    // Brush cursor: the brush size on screen (it keeps that size on a
+    // posed, stretched part; the dabs follow the local stretch).
     if st.tool == Tool::Paint
         && matches!(st.px.paint_tool, PixTool::Brush | PixTool::Eraser | PixTool::Clone)
         && let Some(hover) = ui.input(|i| i.pointer.hover_pos())
         && rect.contains(hover)
     {
-        let a = screen([0.0, 0.0]);
-        let b = screen([1.0, 0.0]);
-        let r = (st.px.brush.size * 0.5 * a.distance(b)).max(1.0);
+        let per_rig = on_screen([0.0, 0.0]).distance(on_screen([1.0, 0.0]));
+        let r = (st.px.brush.size * 0.5 / t.rest_scale() * per_rig).max(1.0);
         painter.circle_stroke(hover, r, egui::Stroke::new(1.5, Color32::from_black_alpha(160)));
         painter.circle_stroke(hover, r, egui::Stroke::new(0.8, Color32::WHITE));
     }
@@ -1142,5 +1314,108 @@ mod tests {
         assert_eq!(st.px.selection.as_ref().unwrap().0.as_str(), "s2");
         combine(&mut st, &SlotId::new("s2"), m(3), false, true);
         assert!(!st.px.has_selection());
+    }
+
+    const W: u32 = 40;
+    const H: u32 = 20;
+
+    /// A bone and a part showing an opaque `W`×`H` picture (a region, or a
+    /// mesh following the bone), selected; its pixels are in the document.
+    fn posable(mesh: bool) -> (State, orbit_anim::rig::BoneId) {
+        let mut st = state();
+        let rgba: Vec<u8> = (0..W * H).flat_map(|i| [(i % W * 6) as u8, (i / W * 12) as u8, 90, 255]).collect();
+        let pic = Picture { path: "p.png".into(), width: W, height: H, rgba: rgba.clone() };
+        let doc = st.doc.as_mut().unwrap();
+        let bone = doc.add_bone(None, [0.0, 0.0], [50.0, 0.0]).unwrap();
+        let slot = if mesh {
+            workflow::add_part(doc, &bone, &pic, [30.0, 12.0]).unwrap()
+        } else {
+            let slot = doc.add_slot(&bone).unwrap();
+            doc.attach_image(&slot, DEFAULT_SKIN, "p.png", pic.size()).unwrap();
+            slot
+        };
+        doc.set_canvas("p.png", W, H, rgba);
+        st.selected_slot = Some(slot);
+        st.sync();
+        (st, bone)
+    }
+
+    fn pose_bone(st: &mut State, bone: &orbit_anim::rig::BoneId, deg: f32) {
+        super::super::set_pose_mode(st, true);
+        st.set_local(bone, orbit_anim::rig::Xform { rotation: deg, ..orbit_anim::rig::Xform::IDENTITY });
+    }
+
+    /// Paints a short stroke at picture pixels `a` → `b`, seen where the
+    /// part shows them now; returns the pixels.
+    fn stroke_at(st: &mut State, a: [f32; 2], b: [f32; 2]) -> Vec<u8> {
+        let t = loaded_target(st).unwrap();
+        let c = st.doc.as_ref().unwrap().canvas("p.png").unwrap().clone();
+        let brush = Brush { size: 5.0, hardness: 1.0, opacity: 1.0, color: [255, 0, 255, 255] };
+        st.px.stroke = Some(("p.png".into(), paint::Stroke::new(c.w, c.h, c.rgba.clone(), Mode::Paint, brush)));
+        st.px.stroke_last = None;
+        continue_stroke(st, &t, t.to_rig(a).unwrap());
+        continue_stroke(st, &t, t.to_rig(b).unwrap());
+        let out = st.doc.as_ref().unwrap().canvas("p.png").unwrap().rgba.clone();
+        // Back to the original pixels for the next stroke.
+        st.px.stroke = None;
+        st.px.stroke_last = None;
+        st.doc.as_mut().unwrap().paint_live("p.png", |p| {
+            p.rgba.copy_from_slice(&c.rgba);
+            true
+        });
+        out
+    }
+
+    #[test]
+    fn a_stroke_on_the_posed_part_paints_the_same_pixels_as_at_rest() {
+        for mesh in [false, true] {
+            let (mut st, bone) = posable(mesh);
+            let before = st.doc.as_ref().unwrap().canvas("p.png").unwrap().rgba.clone();
+            let rest = stroke_at(&mut st, [10.5, 9.5], [26.5, 9.5]);
+            let rig = st.doc.as_ref().unwrap().rig().clone();
+            pose_bone(&mut st, &bone, 73.0);
+            let shown_rest = loaded_target(&mut st).unwrap();
+            assert!(matches!(&*shown_rest.shown, PicMap::Affine(_)) != mesh, "mesh {mesh}: the posed map follows the part");
+            let posed = stroke_at(&mut st, [10.5, 9.5], [26.5, 9.5]);
+            let px = |v: &[u8], x: u32, y: u32| v[((y * W + x) * 4) as usize..][..4].to_vec();
+            assert_eq!(px(&rest, 18, 9), vec![255, 0, 255, 255], "mesh {mesh}");
+            assert_eq!(px(&rest, 18, 2), px(&before, 18, 2), "mesh {mesh}");
+            let differ = rest.chunks(4).zip(posed.chunks(4)).filter(|(a, b)| a != b).count();
+            // Rigid (or rigidly skinned) part: the same pixels, to the
+            // rounding of a dab edge.
+            assert!(differ <= 4, "mesh {mesh}: {differ} pixels differ");
+            // The tools never touch the pose or the rig.
+            assert_eq!(st.doc.as_ref().unwrap().rig(), &rig);
+            assert_eq!(st.pose.len(), 1);
+        }
+    }
+
+    #[test]
+    fn a_selection_drawn_on_the_posed_part_cuts_the_same_pixels() {
+        for mesh in [false, true] {
+            let (mut st, bone) = posable(mesh);
+            let corners = [[8.0, 4.0], [24.0, 4.0], [24.0, 14.0], [8.0, 14.0]];
+            let select = |st: &mut State| {
+                let t = loaded_target(st).unwrap();
+                st.px.draft = corners.iter().map(|p| t.to_rig(*p).unwrap()).collect();
+                close_polygon(st, &t, false, false);
+                st.px.selection.clone().unwrap().1
+            };
+            let rest = select(&mut st);
+            st.px.set_selection(None);
+            pose_bone(&mut st, &bone, -128.0);
+            let posed = select(&mut st);
+            assert_eq!(rest.count(), 16 * 10);
+            assert_eq!(rest.bits, posed.bits);
+            let doc = st.doc.as_ref().unwrap();
+            let c = doc.canvas("p.png").unwrap();
+            let src = Picture { path: "p.png".into(), width: c.w, height: c.h, rgba: c.rgba.clone() };
+            let sid = st.selected_slot.clone().unwrap();
+            let spec = rigops::CutSpec { slot: sid.as_str(), new_image: "cut.png", ..Default::default() };
+            let a = rigops::cut_part(&mut doc.rig().clone(), &src, &rest, &spec).unwrap();
+            let b = rigops::cut_part(&mut doc.rig().clone(), &src, &posed, &spec).unwrap();
+            assert_eq!((a.part.width, a.part.height, a.offset), (b.part.width, b.part.height, b.offset));
+            assert_eq!(a.part.rgba, b.part.rgba);
+        }
     }
 }

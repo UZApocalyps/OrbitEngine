@@ -101,6 +101,7 @@ impl Stroke {
 
     /// Paints from the last point to `p` (picture pixels). Returns whether a
     /// pixel changed.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn to(&mut self, rgba: &mut [u8], p: [f32; 2]) -> bool {
         let from = self.last.unwrap_or(p);
         self.last = Some(p);
@@ -115,8 +116,18 @@ impl Stroke {
         changed
     }
 
+    /// One dab of diameter `size` picture pixels at `c` (pose mode: the size
+    /// follows the local scale of the deformation). Returns whether a pixel
+    /// changed.
+    pub fn dab_sized(&mut self, rgba: &mut [u8], c: [f32; 2], size: f32) -> bool {
+        self.dab_r(rgba, c, (size * 0.5).max(0.5))
+    }
+
     fn dab(&mut self, rgba: &mut [u8], c: [f32; 2]) -> bool {
-        let r = (self.brush.size * 0.5).max(0.5);
+        self.dab_r(rgba, c, (self.brush.size * 0.5).max(0.5))
+    }
+
+    fn dab_r(&mut self, rgba: &mut [u8], c: [f32; 2], r: f32) -> bool {
         let x0 = (c[0] - r).floor().max(0.0) as u32;
         let y0 = (c[1] - r).floor().max(0.0) as u32;
         let x1 = ((c[0] + r).ceil().max(0.0) as u32).min(self.w);
