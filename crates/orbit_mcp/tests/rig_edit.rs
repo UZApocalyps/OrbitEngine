@@ -107,7 +107,7 @@ fn the_edit_tools_are_advertised() {
         "rig_create", "rig_add_image_part", "rig_delete", "rig_bone_add", "rig_bone_update", "rig_bone_delete",
         "rig_bone_reparent", "rig_bind", "rig_slot_update", "rig_skin_add", "rig_skin_duplicate", "rig_skin_delete",
         "rig_ik_set", "rig_ik_remove", "rig_clip_create", "rig_clip_update", "rig_clip_delete", "rig_clip_key_set",
-        "rig_clip_key_delete", "rig_add_to_project", "rig_cut",
+        "rig_clip_key_delete", "rig_add_to_project", "rig_cut", "rig_duplicate", "rig_copy_clips", "rig_recenter",
     ] {
         let t = tools.iter().find(|t| t.name == n).unwrap_or_else(|| panic!("missing {n}"));
         assert!(!t.read_only, "{n}");
@@ -503,4 +503,33 @@ fn rig_cut_splits_a_picture_into_a_new_part() {
 
 fn same(a: &Path, b: &Path) -> bool {
     fs::canonicalize(a).ok() == fs::canonicalize(b).ok()
+}
+
+#[test]
+fn rig_duplicate_copy_clips_and_recenter() {
+    let mut f = Fixture::new("dupcopy");
+    hero(&mut f);
+    let d = f.ok("rig_duplicate", json!({"rig": "hero", "name": "twin", "copy_pictures": true}));
+    assert_eq!(d["rig"], "assets/rigs/twin.rig.ron");
+    assert_eq!(d["pictures"].as_array().unwrap().len(), 1);
+    let twin = f.rig("twin");
+    assert_eq!(twin.bones.len(), 3);
+    assert!(twin.skins[0].attachments.values().all(|a| a.image().starts_with("images/twin/")));
+    assert_eq!(f.err("rig_duplicate", json!({"rig": "hero", "name": "twin"})).kind, ErrorKind::Refused);
+    // Copy the clip to a rig with no clip: nothing unmatched, and a second copy is numbered.
+    f.ok("rig_clip_delete", json!({"rig": "twin", "name": "nod"}));
+    let c = f.ok("rig_copy_clips", json!({"rig": "twin", "source": "hero", "rescale": true}));
+    assert_eq!(c["tracks_copied"], 1);
+    assert_eq!(c["unmatched_bones"], json!([]));
+    assert!(f.rig("twin").clips.contains_key("nod"));
+    let c = f.ok("rig_copy_clips", json!({"rig": "twin", "source": "hero", "clips": ["nod"]}));
+    assert_eq!(c["copied"][0]["to"], "nod2");
+    assert_eq!(f.err("rig_copy_clips", json!({"rig": "twin", "source": "hero", "clips": ["zzz"]})).kind, ErrorKind::NotFound);
+    // Recenter: a rig with a part far to the right is centered back on its drawing.
+    f.ok("rig_add_image_part", json!({"rig": "twin", "image": "incoming/hero.png", "name": "far", "center": [200.0, -30.0]}));
+    let r = f.ok("rig_recenter", json!({"rig": "twin"}));
+    let shift = r["shift"].as_array().unwrap();
+    assert!(shift[0].as_f64().unwrap() < 0.0, "{r}");
+    let again = f.ok("rig_recenter", json!({"rig": "twin"}));
+    assert_eq!(again["shift"], json!([0.0, 0.0]));
 }

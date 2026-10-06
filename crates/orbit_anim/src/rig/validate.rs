@@ -47,6 +47,8 @@ pub enum RigIssueKind {
     IkNotAChain(usize),
     WebTooManyBones(usize),
     WebTooManyVertices(usize),
+    /// The origin is far from the drawing's bottom-center (`dx`: its center X, `dy`: its bottom Y).
+    OriginFarFromDrawing { dx: f32, dy: f32 },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -88,6 +90,10 @@ impl core::fmt::Display for RigIssue {
             IkNotAChain(i) => write!(f, "ik {i}: the second bone must be a child of the first"),
             WebTooManyBones(n) => write!(f, "{n} bones exceed the web budget of {WEB_MAX_BONES}"),
             WebTooManyVertices(n) => write!(f, "{n} vertices exceed the web budget of {WEB_MAX_VERTICES}"),
+            OriginFarFromDrawing { dx, dy } => write!(
+                f,
+                "the origin is far from the drawing's bottom-center (center at x {dx:.0}, bottom at y {dy:.0}): the character will be misplaced on stage"
+            ),
         }
     }
 }
@@ -212,6 +218,12 @@ impl Rig {
         }
         if max_vertices > WEB_MAX_VERTICES {
             warn(RigIssueKind::WebTooManyVertices(max_vertices));
+        }
+        if let Some(b) = self.rest_bounds(None, false) {
+            let ([dx, dy], far) = super::bounds::origin_offset(&b);
+            if far {
+                warn(RigIssueKind::OriginFarFromDrawing { dx, dy });
+            }
         }
         out.extend(warnings);
         out

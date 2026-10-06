@@ -9,6 +9,7 @@
 //! let list = rig.draw_list(&pose, &world, None, &CpuSkinner);
 //! ```
 
+mod bounds;
 mod eval;
 mod format;
 mod math;
@@ -19,6 +20,7 @@ pub use eval::{
     CpuSkinner, PreparedMesh, PreparedRig, RigDrawItem, RigDrawList, RigPose, SkinJob, Skinner, SlotPose,
     WorldPose,
 };
+pub use bounds::{Bounds, ORIGIN_TOLERANCE_X, ORIGIN_TOLERANCE_Y, origin_offset};
 pub use format::{LoadedRig, RigLoadError, load_rig, migrate_rig_text, rig_text_version, save_rig};
 pub use math::{Affine, Xform};
 pub use model::{

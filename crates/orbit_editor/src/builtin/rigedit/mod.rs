@@ -29,6 +29,7 @@ mod posemap;
 use orbit_project::rigmesh::weights;
 mod workflow;
 mod layered_import;
+mod rigtools;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -182,6 +183,42 @@ impl EditorPlugin for RigPlugin {
             .category("category.tools")
             .menu("tools", 168),
         );
+        let state = self.state.clone();
+        reg.action(
+            ActionDef::new("duplicate_rig", "rig.dup.menu", move |ctx| {
+                ctx.request(EditorRequest::ShowWorkspace(rig_workspace()));
+                if let Ok(mut st) = state.try_borrow_mut() {
+                    st.request_duplicate(ctx);
+                }
+            })
+            .icon(icons::COPY)
+            .category("category.tools")
+            .menu("tools", 169),
+        );
+        let state = self.state.clone();
+        reg.action(
+            ActionDef::new("copy_clips", "rig.copy.menu", move |ctx| {
+                ctx.request(EditorRequest::ShowWorkspace(rig_workspace()));
+                if let Ok(mut st) = state.try_borrow_mut() {
+                    st.request_copy_clips();
+                }
+            })
+            .icon(icons::FILM_STRIP)
+            .category("category.tools")
+            .menu("tools", 170),
+        );
+        let state = self.state.clone();
+        reg.action(
+            ActionDef::new("recenter", "rig.center.menu", move |ctx| {
+                ctx.request(EditorRequest::ShowWorkspace(rig_workspace()));
+                if let Ok(mut st) = state.try_borrow_mut() {
+                    st.request_recenter();
+                }
+            })
+            .icon(icons::CROSSHAIR)
+            .category("category.tools")
+            .menu("tools", 171),
+        );
     }
 }
 
@@ -255,6 +292,9 @@ pub(super) struct State {
     pub bound_bones: Option<Vec<BoneId>>,
     /// Cut and paint tools.
     pub(super) px: pixeltools::PixelState,
+    /// Duplicate / copy clips / recenter dialogs.
+    dialog: Option<rigtools::Dialog>,
+    origin: rigtools::OriginCheck,
 }
 
 impl State {
@@ -287,6 +327,8 @@ impl State {
             anim: clippanel::AnimState::default(),
             bound_bones: None,
             px: pixeltools::PixelState::default(),
+            dialog: None,
+            origin: rigtools::OriginCheck::default(),
         }
     }
 
@@ -361,7 +403,7 @@ impl State {
     }
 
     /// The manifest path of the open rig when it lies under `assets/`.
-    fn project_rel(&self, ctx: &EditorContext<'_>) -> Option<String> {
+    pub(super) fn project_rel(&self, ctx: &EditorContext<'_>) -> Option<String> {
         let root = ctx.project_info()?.root.clone();
         crate::assets::asset_rel_path(&root, self.doc.as_ref()?.path.as_ref()?)
     }
@@ -1050,6 +1092,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
         painter.text(rect.left_top() + vec2(8.0, 8.0), Align2::LEFT_TOP, e, FontId::proportional(12.0), danger(ui));
     }
     paint_slot_outline(ui, st, &painter, rect);
+    rigtools::paint_origin(ui, st, &painter, rect);
     if pixeltools::is_pixel_tool(st.tool) {
         pixeltools::paint_overlay(ui, st, &painter, rect);
     }
@@ -1077,6 +1120,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
     );
     paint_drop_hint(ui, ctx, rect, true);
     pixeltools::new_layer_dialog(ui, ctx, st);
+    rigtools::dialogs(ui, ctx, st);
     confirm_dialog(ui, ctx, st);
 }
 
@@ -1462,6 +1506,22 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         if icon_button(ui, icons::STACK, &ctx.t(if st.doc.is_some() { "rig.layers.add" } else { "rig.layers.new" })).clicked() {
             st.request_import_layers(ctx, st.doc.is_none());
         }
+        ui.menu_button(RichText::new(icons::WRENCH).size(15.0), |ui| {
+            if ui.button(format!("{}  {}", icons::COPY, ctx.t("rig.dup.menu"))).on_hover_text(ctx.t("rig.dup.hint")).clicked() {
+                st.request_duplicate(ctx);
+                ui.close();
+            }
+            if ui.button(format!("{}  {}", icons::FILM_STRIP, ctx.t("rig.copy.menu"))).on_hover_text(ctx.t("rig.copy.hint")).clicked() {
+                st.request_copy_clips();
+                ui.close();
+            }
+            if ui.button(format!("{}  {}", icons::CROSSHAIR, ctx.t("rig.center.menu"))).on_hover_text(ctx.t("rig.center.hint")).clicked() {
+                st.request_recenter();
+                ui.close();
+            }
+        })
+        .response
+        .on_hover_text(ctx.t("rig.tools_menu"));
         let can_bind = st.doc.as_ref().is_some_and(|d| d.rig().bones.len() >= 2);
         if ui
             .add_enabled(can_bind, egui::Button::new(RichText::new(icons::LINK).size(15.0)).frame(false))

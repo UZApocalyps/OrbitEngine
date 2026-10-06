@@ -1261,3 +1261,7 @@ pub fn ease_by_name(name: &str) -> Option<Curve> {
 #[cfg(test)]
 #[path = "rigops_cut_tests.rs"]
 mod cut_tests;
+
+#[path = "rigops_copy.rs"]
+mod copy;
+pub use copy::*;

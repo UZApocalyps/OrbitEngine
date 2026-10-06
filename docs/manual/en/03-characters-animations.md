@@ -106,6 +106,18 @@ If you draw your character in Photoshop, Krita or any OpenRaster editor (one lay
 
 Through MCP, `rig_import_layers` does the same (`source`, optional `rig` to add to an existing rig, `groups_as_bones`, `include_hidden`) and returns the warnings in `import_warnings`.
 
+### Duplicating a rig, copying clips, recentering
+
+Three tools of the rig editor (the wrench menu of the toolbar, or the **Tools** menu) save a lot of work when you make several characters from one skeleton. Each one is a single undo step, lives in the editor and the MCP server only, and adds nothing to exported games.
+
+- **Duplicate rig…** copies the open rig under a new name into `assets/rigs/`, declares it as a project asset and opens it. Tick **Copy the pictures too** to give the copy its own pictures in `images/<name>/`; unticked, both rigs share the same pictures (repaint one and the other changes too). An existing file is never overwritten. MCP: `rig_duplicate`.
+- **Copy clips from another rig…** brings clips of another rig into this one. Pick the source rig (one of the project, or **Browse…**) and tick the clips. Tracks are matched to bones and slots **by name**; **Match by position in the bone tree** is for rigs whose bones are named differently (the same child index from the root; slots follow their bone). **Rescale translations to the bone lengths** multiplies translation keys by the ratio of the matched bones' lengths (off by default). Slot picture keys follow the picture's id or file name. Deform (vertex offset) keys are dropped unless both meshes have exactly the same number of vertices. A clip whose name already exists is copied with a number (`walk2`): nothing is overwritten. When something could not be matched (bones, slots, pictures, deform tracks), a report lists it. MCP: `rig_copy_clips`.
+- **Recenter on origin…** fixes characters that land in the wrong place on stage. The rig origin `(0, 0)` is where the character's bottom-center is placed; the editor now shows it in the viewport as a target (amber when it is far from the drawing). The tool measures the real bounds of the visible pictures in the rest pose (the shown skin, or all skins), then shifts the root bones and meshes so the drawing's bottom-center sits exactly on the origin. Clips stay valid because they are relative to the rest pose. MCP: `rig_recenter`.
+
+When the origin is far from the visible drawing (more than 25% of its width sideways, or more than 10% of its height away from the bottom edge), a warning appears in the rig's **Problems** list and in the project's Problems panel.
+
+In the slot list, a greyed slot with an eye-off icon draws nothing in the shown skin (no active picture): hover it to read why. Choose its picture in the inspector, or switch the skin.
+
 ## Voice acting
 
 Each line of dialogue can have a **voice**: select the line, and in the inspector choose a sound of the project under **Voice** (or *Add file* to import a .ogg or .wav, *Remove* to go back to silence).

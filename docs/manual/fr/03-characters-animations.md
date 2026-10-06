@@ -106,6 +106,18 @@ Si vous dessinez votre personnage dans Photoshop, Krita ou un éditeur OpenRaste
 
 Par MCP, `rig_import_layers` fait la même chose (`source`, `rig` optionnel pour ajouter à un rig existant, `groups_as_bones`, `include_hidden`) et renvoie les avertissements dans `import_warnings`.
 
+### Dupliquer un rig, copier des clips, recentrer
+
+Trois outils de l'éditeur de rig (le menu clé à molette de la barre d'outils, ou le menu **Outils**) font gagner beaucoup de temps quand on fabrique plusieurs personnages à partir d'un même squelette. Chacun est une seule étape d'annulation, vit dans l'éditeur et le serveur MCP uniquement, et n'ajoute rien aux jeux exportés.
+
+- **Dupliquer le rig…** copie le rig ouvert sous un nouveau nom dans `assets/rigs/`, le déclare comme asset du projet et l'ouvre. Cochez **Copier aussi les images** pour donner à la copie ses propres images dans `images/<nom>/` ; décoché, les deux rigs partagent les mêmes images (repeindre l'une change l'autre). Un fichier existant n'est jamais écrasé. MCP : `rig_duplicate`.
+- **Copier des clips d'un autre rig…** amène des clips d'un autre rig dans celui-ci. Choisissez le rig source (un du projet, ou **Parcourir…**) et cochez les clips. Les pistes sont associées aux os et aux slots **par nom** ; **Associer par position dans l'arbre des os** sert aux rigs dont les os ont des noms différents (le même rang d'enfant depuis la racine ; les slots suivent leur os). **Adapter les translations aux longueurs d'os** multiplie les clés de translation par le rapport des longueurs des os associés (désactivé par défaut). Les clés d'image de slot suivent l'identifiant ou le nom de fichier de l'image. Les clés de déformation (décalage de sommets) sont abandonnées sauf si les deux maillages ont exactement le même nombre de sommets. Un clip dont le nom existe déjà est copié avec un numéro (`walk2`) : rien n'est écrasé. Quand quelque chose n'a pas pu être associé (os, slots, images, pistes de déformation), un rapport le liste. MCP : `rig_copy_clips`.
+- **Recentrer sur l'origine…** corrige les personnages qui atterrissent au mauvais endroit sur la scène. L'origine du rig `(0, 0)` est l'endroit où le bas-centre du personnage est posé ; l'éditeur la montre maintenant dans la vue comme une cible (ambre quand elle est loin du dessin). L'outil mesure les vraies limites des images visibles en pose de repos (le skin affiché, ou tous les skins), puis décale les os racine et les maillages pour que le bas-centre du dessin tombe exactement sur l'origine. Les clips restent valides car ils sont relatifs à la pose de repos. MCP : `rig_recenter`.
+
+Quand l'origine est loin du dessin visible (à plus de 25 % de sa largeur sur le côté, ou à plus de 10 % de sa hauteur du bord bas), un avertissement apparaît dans la liste **Problèmes** du rig et dans le panneau Problèmes du projet.
+
+Dans la liste des slots, un slot grisé avec une icône d'œil barré ne dessine rien dans le skin affiché (aucune image active) : survolez-le pour lire pourquoi. Choisissez son image dans l'inspecteur, ou changez de skin.
+
 ## Voix
 
 Chaque réplique peut avoir une **voix** : sélectionner la réplique et, dans l'inspecteur, choisir un son du projet sous **Voix** (ou *Ajouter un fichier* pour importer un .ogg ou .wav, *Retirer* pour revenir au silence).

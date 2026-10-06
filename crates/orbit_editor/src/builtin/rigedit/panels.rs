@@ -276,7 +276,19 @@ fn slots_list(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, action: 
     for (i, s) in rig.slots.iter().enumerate().rev() {
         let selected = st.selected_slot.as_ref() == Some(&s.id);
         let (rect, resp) = list_row(ui, 22.0, selected);
-        let resp = resp.interact(egui::Sense::click_and_drag()).on_hover_text(ctx.t("rig.slot_drag_hint"));
+        // Greyed: nothing is drawn by this slot in the shown skin.
+        let hidden = !s.attachment.as_ref().is_some_and(|a| {
+            rig.skins
+                .iter()
+                .filter(|k| k.name == st.skin || k.name == DEFAULT_SKIN)
+                .any(|k| k.attachments.contains_key(a))
+        });
+        let tip = if hidden {
+            format!("{}\n{}", ctx.t("rig.slot_hidden"), ctx.t("rig.slot_drag_hint"))
+        } else {
+            ctx.t("rig.slot_drag_hint")
+        };
+        let resp = resp.interact(egui::Sense::click_and_drag()).on_hover_text(tip);
         if resp.drag_started() {
             ui.data_mut(|d| d.insert_temp(drag_key, s.id.clone()));
         }
@@ -293,14 +305,14 @@ fn slots_list(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, action: 
             faint(ui),
         );
         let bone = bone_name(doc, &s.bone);
-        let mut label = format!("{}  {}", icons::IMAGE, s.name);
+        let mut label = format!("{}  {}", if hidden { icons::EYE_SLASH } else { icons::IMAGE }, s.name);
         label.push_str(&format!("   ({bone})"));
         ui.painter().text(
             egui::pos2(rect.left() + 6.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             label,
             egui::FontId::proportional(13.0),
-            if s.attachment.is_some() { ui.visuals().text_color() } else { faint(ui) },
+            if hidden { faint(ui) } else { ui.visuals().text_color() },
         );
         if resp.clicked() {
             *action = Some(Action::SelectSlot(s.id.clone()));
