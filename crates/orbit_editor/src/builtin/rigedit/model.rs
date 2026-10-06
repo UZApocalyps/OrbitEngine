@@ -3,9 +3,11 @@
 //! interface editors) and save / load of a `.rig.ron`. No egui, no GPU: unit
 //! tested headlessly.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use orbit_project::rigmesh::pixels;
 
 use orbit_anim::rig::{
     Affine, Attachment, AttachmentId, Bone, BoneId, IkConstraint, MeshAttachment, RegionAttachment, Rig, RigIssue, RigIssueKind,
@@ -286,19 +288,67 @@ pub struct RigDoc {
     pub path: Option<PathBuf>,
     /// Bumped on every change (edit, undo, redo): consumers redraw.
     pub revision: u64,
-    undo: Vec<Rig>,
-    redo: Vec<Rig>,
+    undo: Vec<Entry>,
+    redo: Vec<Entry>,
     in_gesture: bool,
+    /// Pictures being edited in the editor (paint, cut), by project path.
+    canvases: BTreeMap<String, Canvas>,
+    /// Bumped on every pixel change (the viewport re-uploads the textures).
+    pub pixel_rev: u64,
+}
+
+/// A picture held in memory by the document: painted, cut or filled pixels
+/// not necessarily written yet.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Canvas {
+    pub w: u32,
+    pub h: u32,
+    pub rgba: Vec<u8>,
+    /// Bumped on every change of these pixels.
+    pub rev: u64,
+    /// Differs from the file (written on save).
+    pub unsaved: bool,
+}
+
+/// The pixels a step changed in one picture: the rectangle before and after.
+#[derive(Clone, Debug, PartialEq)]
+struct Patch {
+    path: String,
+    rect: [u32; 4],
+    before: Vec<u8>,
+    after: Vec<u8>,
+}
+
+/// One undo step: the rig before it, and the pixels it changed.
+#[derive(Clone, Debug)]
+struct Entry {
+    rig: Rig,
+    patches: Vec<Patch>,
+}
+
+impl Entry {
+    fn rig(rig: Rig) -> Self {
+        Self { rig, patches: Vec::new() }
+    }
 }
 
 impl RigDoc {
     pub fn new() -> Self {
-        let rig = Rig::default();
-        Self { saved: rig.clone(), rig, path: None, revision: 1, undo: Vec::new(), redo: Vec::new(), in_gesture: false }
+        Self::from_rig(Rig::default(), None)
     }
 
     pub fn from_rig(rig: Rig, path: Option<PathBuf>) -> Self {
-        Self { saved: rig.clone(), rig, path, revision: 1, undo: Vec::new(), redo: Vec::new(), in_gesture: false }
+        Self {
+            saved: rig.clone(),
+            rig,
+            path,
+            revision: 1,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            in_gesture: false,
+            canvases: BTreeMap::new(),
+            pixel_rev: 1,
+        }
     }
 
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -325,7 +375,7 @@ impl RigDoc {
     }
 
     pub fn dirty(&self) -> bool {
-        self.rig != self.saved
+        self.rig != self.saved || self.canvases.values().any(|c| c.unsaved)
     }
 
     pub fn can_undo(&self) -> bool {
@@ -339,7 +389,11 @@ impl RigDoc {
     pub fn undo(&mut self) -> bool {
         self.in_gesture = false;
         let Some(prev) = self.undo.pop() else { return false };
-        self.redo.push(std::mem::replace(&mut self.rig, prev));
+        for p in prev.patches.iter().rev() {
+            self.apply_patch(p, false);
+        }
+        let rig = std::mem::replace(&mut self.rig, prev.rig);
+        self.redo.push(Entry { rig, patches: prev.patches });
         self.revision += 1;
         true
     }
@@ -347,9 +401,102 @@ impl RigDoc {
     pub fn redo(&mut self) -> bool {
         self.in_gesture = false;
         let Some(next) = self.redo.pop() else { return false };
-        self.undo.push(std::mem::replace(&mut self.rig, next));
+        for p in &next.patches {
+            self.apply_patch(p, true);
+        }
+        let rig = std::mem::replace(&mut self.rig, next.rig);
+        self.undo.push(Entry { rig, patches: next.patches });
         self.revision += 1;
         true
+    }
+
+    fn apply_patch(&mut self, p: &Patch, after: bool) {
+        if let Some(c) = self.canvases.get_mut(&p.path) {
+            let r = p.rect;
+            if r[2] <= c.w && r[3] <= c.h {
+                pixels::paste_rect(c.w, &mut c.rgba, r, if after { &p.after } else { &p.before });
+                c.rev += 1;
+                c.unsaved = true;
+                self.pixel_rev += 1;
+            }
+        }
+    }
+
+    // ---- pictures in memory
+
+    pub fn canvas(&self, path: &str) -> Option<&Canvas> {
+        self.canvases.get(path)
+    }
+
+    pub fn canvases(&self) -> impl Iterator<Item = (&String, &Canvas)> {
+        self.canvases.iter()
+    }
+
+    /// Holds `rgba` as the picture `path` (loaded from its file or just
+    /// written: not an edit, no undo step).
+    pub fn set_canvas(&mut self, path: &str, w: u32, h: u32, rgba: Vec<u8>) {
+        let rev = self.canvases.get(path).map_or(1, |c| c.rev + 1);
+        self.canvases.insert(path.to_owned(), Canvas { w, h, rgba, rev, unsaved: false });
+        self.pixel_rev += 1;
+    }
+
+    /// Changes the pixels of `path` in place during a stroke (shown at once,
+    /// recorded by [`RigDoc::commit_pixels`] at the end of the stroke).
+    pub fn paint_live(&mut self, path: &str, f: impl FnOnce(&mut Canvas) -> bool) {
+        if let Some(c) = self.canvases.get_mut(path)
+            && f(c)
+        {
+            c.rev += 1;
+            c.unsaved = true;
+            self.pixel_rev += 1;
+        }
+    }
+
+    /// Records what changed in `path` since `before` (its pixels at the start
+    /// of the stroke) as one undo step, or as part of the open gesture.
+    /// Returns whether anything changed.
+    pub fn commit_pixels(&mut self, path: &str, before: &[u8]) -> bool {
+        let Some(c) = self.canvases.get(path) else { return false };
+        let Some(rect) = pixels::diff_rect(c.w, c.h, before, &c.rgba) else { return false };
+        let patch = Patch {
+            path: path.to_owned(),
+            rect,
+            before: pixels::copy_rect(c.w, before, rect),
+            after: pixels::copy_rect(c.w, &c.rgba, rect),
+        };
+        if self.in_gesture && let Some(top) = self.undo.last_mut() {
+            top.patches.push(patch);
+            self.redo.clear();
+        } else {
+            self.push_undo(Entry { rig: self.rig.clone(), patches: vec![patch] });
+        }
+        if let Some(c) = self.canvases.get_mut(path) {
+            c.unsaved = true;
+        }
+        true
+    }
+
+    /// Replaces the pixels of `path` (same size) as an undoable edit.
+    pub fn replace_pixels(&mut self, path: &str, rgba: Vec<u8>) -> bool {
+        let Some(c) = self.canvases.get_mut(path) else { return false };
+        if rgba.len() != c.rgba.len() {
+            return false;
+        }
+        let before = std::mem::replace(&mut c.rgba, rgba);
+        c.rev += 1;
+        self.pixel_rev += 1;
+        self.commit_pixels(path, &before)
+    }
+
+    /// Pictures changed in memory and not written yet.
+    pub fn unsaved_canvases(&self) -> Vec<String> {
+        self.canvases.iter().filter(|(_, c)| c.unsaved).map(|(p, _)| p.clone()).collect()
+    }
+
+    pub fn mark_canvas_saved(&mut self, path: &str) {
+        if let Some(c) = self.canvases.get_mut(path) {
+            c.unsaved = false;
+        }
     }
 
     /// Starts a continuous edit (a drag): everything until
@@ -358,7 +505,7 @@ impl RigDoc {
         if self.in_gesture {
             return;
         }
-        self.push_undo(self.rig.clone());
+        self.push_undo(Entry::rig(self.rig.clone()));
         self.in_gesture = true;
     }
 
@@ -372,12 +519,12 @@ impl RigDoc {
             return;
         }
         self.in_gesture = false;
-        if self.undo.last() == Some(&self.rig) {
+        if self.undo.last().is_some_and(|e| e.patches.is_empty() && e.rig == self.rig) {
             self.undo.pop();
         }
     }
 
-    fn push_undo(&mut self, snapshot: Rig) {
+    fn push_undo(&mut self, snapshot: Entry) {
         self.undo.push(snapshot);
         if self.undo.len() > MAX_UNDO {
             self.undo.remove(0);
@@ -397,7 +544,7 @@ impl RigDoc {
             Ok(r) => {
                 if self.rig != before {
                     if !self.in_gesture {
-                        self.push_undo(before);
+                        self.push_undo(Entry::rig(before));
                     }
                     self.revision += 1;
                 }
@@ -418,7 +565,7 @@ impl RigDoc {
         self.in_gesture = false;
         if rig != self.rig {
             let before = std::mem::replace(&mut self.rig, rig);
-            self.push_undo(before);
+            self.push_undo(Entry::rig(before));
             self.revision += 1;
         }
     }
@@ -586,6 +733,17 @@ impl RigDoc {
             let j = (i as i64 + i64::from(delta)).clamp(0, rig.slots.len() as i64 - 1) as usize;
             let s = rig.slots.remove(i);
             rig.slots.insert(j, s);
+            Ok(())
+        })
+    }
+
+    /// Puts a slot at `index` of the draw order (0 = behind everything,
+    /// clamped): what dragging it in the slot list does. One undo step.
+    pub fn move_slot_to(&mut self, id: &SlotId, index: usize) -> Result<(), OpError> {
+        self.mutate(|rig| {
+            let i = rig.slots.iter().position(|s| &s.id == id).ok_or(OpError::Unknown)?;
+            let s = rig.slots.remove(i);
+            rig.slots.insert(index.min(rig.slots.len()), s);
             Ok(())
         })
     }
@@ -992,7 +1150,66 @@ mod tests {
         assert_eq!(order, vec![c.clone(), a.clone(), b.clone()]);
         doc.move_slot(&c, 1).unwrap();
         let order: Vec<_> = doc.rig().slots.iter().map(|s| s.id.clone()).collect();
-        assert_eq!(order, vec![a, c, b]);
+        assert_eq!(order, vec![a.clone(), c.clone(), b.clone()]);
+        // Dragging in the list: an absolute place, clamped, one undo step.
+        doc.move_slot_to(&a, 99).unwrap();
+        let order: Vec<_> = doc.rig().slots.iter().map(|s| s.id.clone()).collect();
+        assert_eq!(order, vec![c.clone(), b.clone(), a.clone()]);
+        doc.move_slot_to(&a, 0).unwrap();
+        assert_eq!(doc.rig().slots[0].id, a);
+        doc.undo();
+        assert_eq!(doc.rig().slots[2].id, a);
+    }
+
+    #[test]
+    fn pixel_edits_undo_with_the_rig_in_one_step() {
+        let (mut doc, root, _) = two_bones();
+        let red = [255u8, 0, 0, 255];
+        doc.set_canvas("p.png", 4, 4, [0u8; 64].to_vec());
+        assert!(doc.unsaved_canvases().is_empty());
+        // A stroke: live changes, committed once.
+        let before = doc.canvas("p.png").unwrap().rgba.clone();
+        let rev = doc.pixel_rev;
+        doc.paint_live("p.png", |c| {
+            c.rgba[20..24].copy_from_slice(&red);
+            true
+        });
+        doc.paint_live("p.png", |c| {
+            c.rgba[24..28].copy_from_slice(&red);
+            true
+        });
+        assert!(doc.pixel_rev > rev);
+        assert!(doc.commit_pixels("p.png", &before));
+        assert!(doc.dirty());
+        let painted = doc.canvas("p.png").unwrap().rgba.clone();
+        // A gesture mixing a rig edit and pixels (a cut) is one step.
+        doc.begin_gesture();
+        let s = doc.add_slot(&root).unwrap();
+        let mut filled = painted.clone();
+        filled[0..4].copy_from_slice(&red);
+        assert!(doc.replace_pixels("p.png", filled.clone()));
+        doc.end_gesture();
+        assert_eq!(doc.canvas("p.png").unwrap().rgba, filled);
+        doc.undo();
+        assert!(model_slot_gone(&doc, &s));
+        assert_eq!(doc.canvas("p.png").unwrap().rgba, painted);
+        doc.undo();
+        assert_eq!(doc.canvas("p.png").unwrap().rgba, before);
+        doc.redo();
+        doc.redo();
+        assert_eq!(doc.canvas("p.png").unwrap().rgba, filled);
+        assert!(slot(doc.rig(), &s).is_some());
+        // Nothing changed: no step.
+        let steps = doc.undo.len();
+        let same = doc.canvas("p.png").unwrap().rgba.clone();
+        assert!(!doc.commit_pixels("p.png", &same));
+        assert_eq!(doc.undo.len(), steps);
+        doc.mark_canvas_saved("p.png");
+        assert!(doc.unsaved_canvases().is_empty());
+    }
+
+    fn model_slot_gone(doc: &RigDoc, s: &SlotId) -> bool {
+        slot(doc.rig(), s).is_none()
     }
 
     #[test]

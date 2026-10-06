@@ -96,6 +96,20 @@ enum Action {
     SelectSlot(SlotId),
     DeleteSlot(SlotId),
     MoveSlot(SlotId, i32),
+    /// Dragged in the list: new draw order index (0 = behind).
+    MoveSlotTo(SlotId, usize),
+}
+
+/// Where a slot dragged in the list lands: `rows` are the rows top to bottom
+/// (front first), `from` the dragged row, `y` the pointer. Returns the new
+/// draw order index (0 = behind), `None` when it does not move.
+pub(super) fn drop_index(rows: &[(f32, f32)], from: usize, y: f32) -> Option<usize> {
+    let count = rows.len();
+    let mut gap = rows.iter().filter(|(top, bottom)| (top + bottom) * 0.5 < y).count();
+    if gap > from {
+        gap -= 1;
+    }
+    (gap != from && from < count).then(|| count - 1 - gap)
 }
 
 pub(super) fn hierarchy(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<State>>) {
@@ -253,10 +267,31 @@ fn slots_list(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, action: 
         ui.label(RichText::new(ctx.t("rig.no_slots")).color(weak(ui)));
     }
     let count = rig.slots.len();
+    // A slot being dragged to another place of the draw order.
+    let drag_key = ui.make_persistent_id("rig_slot_drag");
+    let dragging: Option<SlotId> = ui.data(|d| d.get_temp(drag_key));
+    let mut rows: Vec<(f32, f32)> = Vec::with_capacity(count);
+    let mut from = None;
     // Front (last) first: the top of the list is what is drawn on top.
     for (i, s) in rig.slots.iter().enumerate().rev() {
         let selected = st.selected_slot.as_ref() == Some(&s.id);
         let (rect, resp) = list_row(ui, 22.0, selected);
+        let resp = resp.interact(egui::Sense::click_and_drag()).on_hover_text(ctx.t("rig.slot_drag_hint"));
+        if resp.drag_started() {
+            ui.data_mut(|d| d.insert_temp(drag_key, s.id.clone()));
+        }
+        if dragging.as_ref() == Some(&s.id) {
+            from = Some(rows.len());
+        }
+        rows.push((rect.top(), rect.bottom()));
+        // Draw order number: 1 is drawn first (behind everything).
+        ui.painter().text(
+            egui::pos2(rect.right() - 8.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            format!("{}", i + 1),
+            egui::FontId::monospace(11.0),
+            faint(ui),
+        );
         let bone = bone_name(doc, &s.bone);
         let mut label = format!("{}  {}", icons::IMAGE, s.name);
         label.push_str(&format!("   ({bone})"));
@@ -284,6 +319,25 @@ fn slots_list(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, action: 
                 ui.close();
             }
         });
+    }
+    let Some(id) = dragging else { return };
+    let (pointer, released) = ui.input(|i| (i.pointer.interact_pos(), !i.pointer.any_down()));
+    if let (Some(p), Some(from)) = (pointer, from) {
+        let gap = rows.iter().filter(|(t, b)| (t + b) * 0.5 < p.y).count();
+        let y = match rows.get(gap) {
+            Some((top, _)) => *top,
+            None => rows.last().map_or(p.y, |(_, b)| *b),
+        };
+        let x = ui.min_rect().x_range();
+        ui.painter().hline(x, y, egui::Stroke::new(2.0, accent(ui)));
+        if released {
+            if let Some(index) = drop_index(&rows, from, p.y) {
+                *action = Some(Action::MoveSlotTo(id, index));
+            }
+        }
+    }
+    if released {
+        ui.data_mut(|d| d.remove::<SlotId>(drag_key));
     }
 }
 
@@ -323,6 +377,11 @@ fn apply(ctx: &mut EditorContext<'_>, st: &mut State, a: Action) {
         Action::MoveSlot(id, d) => {
             if let Some(doc) = st.doc.as_mut() {
                 report(ctx, doc.move_slot(&id, d));
+            }
+        }
+        Action::MoveSlotTo(id, index) => {
+            if let Some(doc) = st.doc.as_mut() {
+                report(ctx, doc.move_slot_to(&id, index));
             }
         }
     }
@@ -726,5 +785,25 @@ fn diagnostics_section(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State)
             ui.label(RichText::new(icons::WARNING).color(warning(ui)));
             ui.label(ctx.tf("rig.diag.image_missing", &[("path", &m)]));
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::drop_index;
+
+    #[test]
+    fn dragging_a_slot_in_the_list_gives_its_draw_order_index() {
+        // Three rows top to bottom (front first): draw indices 2, 1, 0.
+        let rows = [(0.0, 20.0), (20.0, 40.0), (40.0, 60.0)];
+        // The front one dropped below the last row: behind everything.
+        assert_eq!(drop_index(&rows, 0, 70.0), Some(0));
+        // The back one dropped above the first row: in front.
+        assert_eq!(drop_index(&rows, 2, -5.0), Some(2));
+        // The middle one dropped between the first two: no move.
+        assert_eq!(drop_index(&rows, 1, 15.0), None);
+        assert_eq!(drop_index(&rows, 1, 25.0), None);
+        // The front one dropped between the last two: [middle, front, back].
+        assert_eq!(drop_index(&rows, 0, 45.0), Some(1));
     }
 }

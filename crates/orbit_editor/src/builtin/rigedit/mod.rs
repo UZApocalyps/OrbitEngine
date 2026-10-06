@@ -22,7 +22,9 @@ mod clippanel;
 mod clips;
 use orbit_project::rigmesh::meshgen;
 mod model;
+mod paint;
 mod panels;
+mod pixeltools;
 use orbit_project::rigmesh::weights;
 mod workflow;
 mod layered_import;
@@ -196,6 +198,7 @@ pub(super) enum Pending {
 #[derive(PartialEq)]
 struct Sent {
     revision: u64,
+    pixel_rev: u64,
     pose_rev: u64,
     view: [u32; 3],
     size: [u32; 2],
@@ -249,6 +252,8 @@ pub(super) struct State {
     /// Bones of the last "Bind to bones" (a bone added since asks to bind
     /// again in the step bar).
     pub bound_bones: Option<Vec<BoneId>>,
+    /// Cut and paint tools.
+    pub(super) px: pixeltools::PixelState,
 }
 
 impl State {
@@ -280,6 +285,7 @@ impl State {
             mesh: meshedit::MeshEdit::default(),
             anim: clippanel::AnimState::default(),
             bound_bones: None,
+            px: pixeltools::PixelState::default(),
         }
     }
 
@@ -291,6 +297,8 @@ impl State {
             .find(|s| s.name == model::DEFAULT_SKIN)
             .or(doc.rig().skins.first())
             .map_or_else(|| model::DEFAULT_SKIN.to_owned(), |s| s.name.clone());
+        let edited = self.doc.as_ref().map(|d| d.canvases().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
+        self.px.reset(edited);
         self.doc = Some(doc);
         self.selected = None;
         self.selected_slot = None;
@@ -337,6 +345,11 @@ impl State {
             }
         };
         let Some(path) = target else { return };
+        // Painted / cut pictures first: the rig names them.
+        if !pixeltools::save_canvases(ctx, self) {
+            return;
+        }
+        let Some(doc) = self.doc.as_mut() else { return };
         match doc.save_as(&path) {
             Ok(()) => {
                 ctx.info(ctx.tf("rig.saved", &[("path", &path.display())]));
@@ -464,10 +477,12 @@ impl State {
     }
 
     pub fn begin_frame(&mut self, ui: &Ui) {
-        if !ui.input(|i| i.pointer.any_down())
-            && let Some(doc) = self.doc.as_mut()
-        {
-            doc.end_gesture();
+        if !ui.input(|i| i.pointer.any_down()) {
+            // A paint stroke ends with its pixels in the same undo step.
+            pixeltools::finish_stroke(self);
+            if let Some(doc) = self.doc.as_mut() {
+                doc.end_gesture();
+            }
         }
         self.sync();
     }
@@ -948,7 +963,9 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
         return;
     }
     toolbar(ui, ctx, st);
+    pixeltools::options(ui, ctx, st);
     step_bar(ui, ctx, st);
+    pixeltools::poll_external(ctx, st);
     ui.separator();
     let avail = ui.available_size();
     let (rect, response) =
@@ -977,6 +994,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
     if let (Some(doc), Some(prepared), Some(pose)) = (&st.doc, st.prepared.clone(), st.rig_pose()) {
         let key = Sent {
             revision: doc.revision,
+            pixel_rev: doc.pixel_rev,
             pose_rev: st.pose_rev,
             view: [st.view.zoom.to_bits(), st.view.pan[0].to_bits(), st.view.pan[1].to_bits()],
             size: size_px,
@@ -993,7 +1011,10 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
                 zoom: st.view.zoom * ppp,
                 pan: [st.view.pan[0] * ppp, st.view.pan[1] * ppp],
                 root: st.project_root(ctx),
+                pixels: Vec::new(),
+                forget: std::mem::take(&mut st.px.forget),
             };
+            let request = RigRequest { pixels: pixeltools::uploads(st), ..request };
             st.link.borrow_mut().request = Some(request);
             st.sent = Some(key);
             if !texture_ready {
@@ -1028,6 +1049,9 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
         painter.text(rect.left_top() + vec2(8.0, 8.0), Align2::LEFT_TOP, e, FontId::proportional(12.0), danger(ui));
     }
     paint_slot_outline(ui, st, &painter, rect);
+    if pixeltools::is_pixel_tool(st.tool) {
+        pixeltools::paint_overlay(ui, st, &painter, rect);
+    }
     meshedit::paint(ui, st, &painter, rect);
     paint_bones(ui, st, &painter, rect);
     paint_handles(ui, st, &painter, rect);
@@ -1051,6 +1075,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
         faint(ui),
     );
     paint_drop_hint(ui, ctx, rect, true);
+    pixeltools::new_layer_dialog(ui, ctx, st);
     confirm_dialog(ui, ctx, st);
 }
 
@@ -1089,6 +1114,9 @@ fn keys(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, rect: Rect) {
         return;
     }
     st.undo_redo_keys(ui);
+    if pixeltools::is_pixel_tool(st.tool) {
+        pixeltools::keys(ui, st);
+    }
     let (m, p) = ui.input(|i| {
         let plain = !i.modifiers.command && !i.modifiers.alt;
         (plain && i.key_pressed(egui::Key::M), plain && i.key_pressed(egui::Key::P))
@@ -1152,7 +1180,7 @@ pub(super) fn set_pose_mode(st: &mut State, pose: bool) {
         }
         st.drag = None;
         st.create = None;
-        if pose && matches!(st.tool, Tool::Create | Tool::Mesh) {
+        if pose && matches!(st.tool, Tool::Create | Tool::Mesh | Tool::Cut | Tool::Paint) {
             st.tool = Tool::Rotate;
         }
     }
@@ -1161,6 +1189,10 @@ pub(super) fn set_pose_mode(st: &mut State, pose: bool) {
 fn interact(ui: &Ui, ctx: &mut EditorContext<'_>, st: &mut State, response: &egui::Response, rect: Rect) {
     if matches!(st.tool, Tool::Mesh | Tool::Weights) {
         meshedit::interact(ui, ctx, st, response, rect);
+        return;
+    }
+    if pixeltools::is_pixel_tool(st.tool) {
+        pixeltools::interact(ui, ctx, st, response, rect);
         return;
     }
     let Some(doc) = st.doc.as_ref() else { return };
@@ -1373,7 +1405,7 @@ fn paint_handles(ui: &Ui, st: &State, painter: &egui::Painter, rect: Rect) {
     let (hs, ts) = (to_pos(st.view.to_screen(center, h)), to_pos(st.view.to_screen(center, t)));
     let c = accent(ui);
     match st.tool {
-        Tool::Create | Tool::Mesh | Tool::Weights => {}
+        Tool::Create | Tool::Mesh | Tool::Weights | Tool::Cut | Tool::Paint => {}
         Tool::Move => {
             painter.circle_stroke(hs, geom::GRAB_RADIUS, Stroke::new(2.0, c));
             painter.circle_filled(hs, 3.0, c);
@@ -1480,9 +1512,12 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             (Tool::Scale, icons::ARROWS_OUT_SIMPLE, "rig.tool.scale"),
             (Tool::Mesh, icons::POLYGON, "rig.tool.mesh"),
             (Tool::Weights, icons::PAINT_BRUSH, "rig.tool.weights"),
+            (Tool::Cut, icons::SCISSORS, "rig.tool.cut"),
+            (Tool::Paint, icons::PAINT_BRUSH_BROAD, "rig.tool.paint"),
         ] {
             let mesh_ok = !matches!(tool, Tool::Mesh | Tool::Weights) || meshedit::has_mesh(st);
-            let enabled = !(st.pose_mode && matches!(tool, Tool::Create | Tool::Mesh)) && mesh_ok;
+            let rest_only = matches!(tool, Tool::Create | Tool::Mesh | Tool::Cut | Tool::Paint);
+            let enabled = !(st.pose_mode && rest_only) && mesh_ok;
             let on = st.tool == tool;
             let mut text = RichText::new(icon).size(15.0);
             if on {

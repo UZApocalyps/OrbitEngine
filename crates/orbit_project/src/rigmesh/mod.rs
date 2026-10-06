@@ -6,6 +6,7 @@
 use orbit_anim::rig::{Affine, BoneId, Rig, Xform};
 
 pub mod meshgen;
+pub mod pixels;
 pub mod weights;
 pub mod workflow;
 

@@ -19,7 +19,7 @@ use orbit_anim::rig::{
 use orbit_anim::{Angle, Curve, Key, Loop, Rgba, Step, Track, Vec2};
 
 use crate::rigmesh::workflow::{self, Picture};
-use crate::rigmesh::{meshgen, weights};
+use crate::rigmesh::{meshgen, pixels, weights};
 
 /// Name of the fallback skin.
 pub const DEFAULT_SKIN: &str = "default";
@@ -538,6 +538,172 @@ pub fn rig_from_picture(pic: &Picture) -> OpResult<(Rig, BoneId, SlotId)> {
     )?;
     let (slot, _) = add_image_part(&mut rig, pic, None, None, Some(workflow::standing_center(pic)), None)?;
     Ok((rig, root, slot))
+}
+
+// ------------------------------------------------------------ cut to part
+
+/// UV (`0..1` of its picture) → rig space (setup pose) of an attachment shown
+/// by `slot`: a mesh's own map, a region's quad.
+pub fn picture_map(rig: &Rig, slot: &Slot, att: &Attachment) -> Option<Affine> {
+    match att {
+        Attachment::Mesh(m) => meshgen::uv_map(m)?.inverse(),
+        Attachment::Region(r) => region_to_rig(rig, slot, &r.xform, r.size),
+    }
+}
+
+/// The skin showing the slot's attachment: `skin` when given, else the
+/// default skin when it has it, else the first that has it.
+fn skin_of(rig: &Rig, att: &AttachmentId, skin: Option<&str>) -> OpResult<usize> {
+    if let Some(name) = skin {
+        let si = find_skin(rig, name)?;
+        return if rig.skins[si].attachments.contains_key(att) {
+            Ok(si)
+        } else {
+            not_found(format!("skin `{name}` has no picture for this slot"))
+        };
+    }
+    rig.skins
+        .iter()
+        .position(|k| k.name == DEFAULT_SKIN && k.attachments.contains_key(att))
+        .or_else(|| rig.skins.iter().position(|k| k.attachments.contains_key(att)))
+        .map_or_else(|| not_found("the slot shows no picture"), Ok)
+}
+
+/// What [`cut_part`] does besides the selection.
+#[derive(Clone, Debug, Default)]
+pub struct CutSpec<'a> {
+    /// The slot whose picture is cut (id or name).
+    pub slot: &'a str,
+    /// Skin of the picture (default: the default skin, else the first).
+    pub skin: Option<&'a str>,
+    /// Project path of the new picture (the caller writes the file).
+    pub new_image: &'a str,
+    /// Name of the new slot (default: `<slot>_cut`, made unique).
+    pub name: Option<&'a str>,
+    /// Bone the new part follows (id or name; default: the slot's bone).
+    pub bone: Option<&'a str>,
+    /// Drawn just behind the source part instead of just in front.
+    pub below: bool,
+    /// Fill the hole in the source picture from its surroundings; else the
+    /// source keeps its pixels ("original underneath").
+    pub fill_hole: bool,
+}
+
+/// What [`cut_part`] made.
+#[derive(Clone, Debug)]
+pub struct CutResult {
+    pub slot: SlotId,
+    pub attachment: AttachmentId,
+    /// The new picture (cropped to the selection), to write at `new_image`.
+    pub part: Picture,
+    /// Top-left of the new picture in the source picture (pixels).
+    pub offset: [u32; 2],
+    /// New pixels of the source picture when the hole was filled.
+    pub source: Option<Vec<u8>>,
+    /// Meshes of the source picture traced again (their alpha changed).
+    pub remeshed: usize,
+}
+
+/// "Cut to new part": the `mask` pixels of the picture `src` (shown by
+/// `spec.slot`) become a new slot with its own picture and alpha-traced mesh
+/// at exactly the same place, drawn just in front of (or behind) the source,
+/// rigid on `spec.bone`. With `fill_hole` the source picture's hole is
+/// inpainted; when that changes its silhouette, its meshes are traced again
+/// (weights rebound when they had some; their deform keys, which no longer
+/// match, are dropped). Pure: the caller writes the pictures.
+pub fn cut_part(rig: &mut Rig, src: &Picture, mask: &pixels::Mask, spec: &CutSpec<'_>) -> OpResult<CutResult> {
+    let si = find_slot(rig, spec.slot)?;
+    let slot = rig.slots[si].clone();
+    let Some(att_id) = slot.attachment.clone() else { return refused(format!("slot `{}` shows no picture", slot.name)) };
+    let ki = skin_of(rig, &att_id, spec.skin)?;
+    let att = rig.skins[ki].attachments[&att_id].clone();
+    if att.image() != src.path {
+        return invalid(format!("slot `{}` shows `{}`, not `{}`", slot.name, att.image(), src.path));
+    }
+    if mask.w != src.width || mask.h != src.height {
+        return invalid(format!("the selection is {}x{}, the picture {}x{}", mask.w, mask.h, src.width, src.height));
+    }
+    let Some(map) = picture_map(rig, &slot, &att) else { return refused("the slot's mesh is degenerate") };
+    let Some(crop) = pixels::extract(src.width, src.height, &src.rgba, mask) else {
+        return refused("the selection holds no visible pixel");
+    };
+    let bone = match spec.bone {
+        Some(b) => rig.bones[find_bone(rig, b)?].id.clone(),
+        None => slot.bone.clone(),
+    };
+    let name = match spec.name {
+        Some(n) => {
+            let n = clean_name("slot", n)?;
+            if rig.slots.iter().any(|s| s.name == n) {
+                return refused(format!("a slot is already named `{n}`"));
+            }
+            n
+        }
+        None => unique_name(&format!("{}_cut", slot.name), rig.slots.iter().map(|s| s.name.as_str())),
+    };
+    // Crop UV → source UV, then the source's own placement.
+    let (sw, sh) = (src.width.max(1) as f32, src.height.max(1) as f32);
+    let crop_to_src = Affine {
+        a: crop.w as f32 / sw,
+        b: 0.0,
+        c: 0.0,
+        d: crop.h as f32 / sh,
+        tx: crop.x as f32 / sw,
+        ty: crop.y as f32 / sh,
+    };
+    let part = Picture { path: spec.new_image.to_owned(), width: crop.w, height: crop.h, rgba: crop.rgba };
+    let mesh = workflow::mesh_with_map(&part, &map.mul(&crop_to_src));
+
+    // The source picture.
+    let mut source = None;
+    let mut remeshed = 0;
+    if spec.fill_hole {
+        let mut filled = src.rgba.clone();
+        pixels::inpaint(src.width, src.height, &mut filled, mask);
+        let threshold = meshgen::MeshParams::default().alpha_threshold;
+        if pixels::alpha_shape_changed(&src.rgba, &filled, threshold) {
+            let after = Picture { rgba: filled.clone(), ..src.clone() };
+            remeshed = retrace_picture(rig, &after);
+        }
+        source = Some(filled);
+    }
+
+    let slot_id = SlotId::new(fresh_id("s", |s| rig.slots.iter().any(|x| x.id.as_str() == s)));
+    let new_att = AttachmentId::new(fresh_id("a", |s| rig.skins.iter().any(|k| k.attachments.keys().any(|x| x.as_str() == s))));
+    rig.skins[ki].attachments.insert(new_att.clone(), Attachment::Mesh(mesh));
+    let at = if spec.below { si } else { si + 1 };
+    rig.slots.insert(
+        at,
+        Slot { id: slot_id.clone(), name, bone, attachment: Some(new_att.clone()), color: slot.color },
+    );
+    Ok(CutResult { slot: slot_id, attachment: new_att, part, offset: [crop.x, crop.y], source, remeshed })
+}
+
+/// Traces again every mesh showing `pic.path` from its new pixels, at the
+/// same place (weights rebound when the mesh had some; deform keys of those
+/// meshes dropped). Returns how many meshes changed.
+pub fn retrace_picture(rig: &mut Rig, pic: &Picture) -> usize {
+    let snapshot = rig.clone();
+    let mut changed: Vec<AttachmentId> = Vec::new();
+    for skin in &mut rig.skins {
+        for (id, att) in skin.attachments.iter_mut() {
+            let Attachment::Mesh(m) = att else { continue };
+            if m.image != pic.path {
+                continue;
+            }
+            let Some(map) = meshgen::uv_map(m).and_then(|u| u.inverse()) else { continue };
+            let mut fresh = workflow::mesh_with_map(pic, &map);
+            if !m.weights.is_empty() {
+                fresh.weights = weights::bind_mesh(&snapshot, &fresh, 3.0);
+            }
+            *m = fresh;
+            changed.push(id.clone());
+        }
+    }
+    for clip in rig.clips.values_mut() {
+        clip.tracks.retain(|t| !matches!(t, RigTrack::Deform { attachment, .. } if changed.contains(attachment)));
+    }
+    changed.len()
 }
 
 /// "Bind to bones": automatic weights for every mesh of every skin from the
@@ -1091,3 +1257,7 @@ pub fn ease_by_name(name: &str) -> Option<Curve> {
     let norm: String = name.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_ascii_lowercase();
     orbit_anim::Ease::ALL.iter().find(|e| e.name().to_ascii_lowercase() == norm).map(|e| Curve::Preset(*e))
 }
+
+#[cfg(test)]
+#[path = "rigops_cut_tests.rs"]
+mod cut_tests;

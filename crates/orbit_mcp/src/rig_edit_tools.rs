@@ -10,7 +10,7 @@
 //! rotations are degrees clockwise on screen.
 
 
-use orbit_anim::rig::Rig;
+use orbit_anim::rig::{Attachment, Rig};
 use orbit_anim::{Curve, Loop};
 use orbit_core::AssetKind;
 use orbit_project::rigops::{self, BoneSpec, KeyTarget, KeyValue, OpError, OpErrorKind, SlotPatch, TrackKind};
@@ -893,6 +893,147 @@ pub fn rig_import_layers(cx: &mut ToolCx<'_>, a: ImportLayersArgs) -> Result<Str
             "slots": report.slots, "hidden_slots": report.hidden, "bones_created": report.bones,
             "import_warnings": report.warnings,
             "hint": "Meshes are unweighted: add bones (rig_bone_add) or use the group bones, then rig_bind.",
+        }),
+    )
+}
+
+// ---------------------------------------------------------------- cut
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CutArgs {
+    /// The rig (see `rig_list`).
+    pub rig: String,
+    /// The slot whose picture is cut (id or name).
+    pub slot: String,
+    /// Closed polygon `[[x, y], ...]` (at least 3 points) in the picture's
+    /// pixel coordinates (origin top-left, Y down): the pixels whose center
+    /// is inside (even-odd rule) are cut.
+    pub polygon: Vec<[f32; 2]>,
+    /// Name of the new slot (default `<slot>_cut`); also names the new picture.
+    pub name: Option<String>,
+    /// Bone the new part follows (id or name; default: the source slot's bone).
+    pub bone: Option<String>,
+    /// Draw the new part just behind the source instead of just in front.
+    pub below: Option<bool>,
+    /// Fill the hole in the source picture from its surroundings (default
+    /// true). The filled source is written as a NEW picture (the original
+    /// file is kept) and the rig points to it. `false`: the original stays
+    /// underneath, unchanged.
+    pub fill_hole: Option<bool>,
+    /// Skin of the picture (default: the default skin).
+    pub skin: Option<String>,
+}
+
+fn encode_png(w: u32, h: u32, rgba: &[u8]) -> Result<Vec<u8>, ToolError> {
+    use image::ImageEncoder;
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(rgba, w, h, image::ExtendedColorType::Rgba8)
+        .map_err(|e| ToolError::invalid(format!("cannot encode PNG: {e}")))?;
+    Ok(png)
+}
+
+/// `<dir>/<stem>.png` next to `beside`, not existing yet on disk.
+fn free_picture_path(root: &std::path::Path, beside: &str, stem: &str, taken: &[&str]) -> String {
+    let dir = beside.rsplit_once('/').map_or("", |(d, _)| d);
+    let base = if dir.is_empty() { stem.to_owned() } else { format!("{dir}/{stem}") };
+    let mut n = 1;
+    loop {
+        let rel = if n == 1 { format!("{base}.png") } else { format!("{base}_{n}.png") };
+        if !root.join(&rel).exists() && !taken.contains(&rel.as_str()) {
+            return rel;
+        }
+        n += 1;
+    }
+}
+
+pub fn rig_cut(cx: &mut ToolCx<'_>, a: CutArgs) -> Result<String, ToolError> {
+    let root = assets_root(cx);
+    let file = resolve(cx, &a.rig)?;
+    let current = load(&file, &root)?;
+    let si = rigops::find_slot(&current, &a.slot).map_err(op_err)?;
+    let slot = current.slots[si].clone();
+    let att_id =
+        slot.attachment.clone().ok_or_else(|| ToolError::refused(format!("slot `{}` shows no picture", slot.name)))?;
+    let image = current
+        .skins
+        .iter()
+        .filter(|k| a.skin.as_deref().is_none_or(|s| s == k.name))
+        .find_map(|k| k.attachments.get(&att_id))
+        .map(|att| att.image().to_owned())
+        .ok_or_else(|| ToolError::not_found("the slot shows no picture in that skin"))?;
+    if a.polygon.len() < 3 {
+        return Err(ToolError::invalid("`polygon` needs at least 3 points"));
+    }
+    let bytes = std::fs::read(root.join(&image))
+        .map_err(|e| ToolError::not_found(format!("cannot read picture `{image}`: {e}")))?;
+    let img = orbit_assets::decode_image(&bytes).map_err(|e| ToolError::invalid(format!("cannot decode `{image}`: {e}")))?;
+    let src = Picture { path: image.clone(), width: img.width, height: img.height, rgba: img.rgba };
+    let mask = orbit_project::rigmesh::pixels::polygon_mask(src.width, src.height, &a.polygon);
+    let fill = a.fill_hole.unwrap_or(true);
+    let src_stem = src.stem();
+    let part_stem = sanitize(a.name.as_deref().unwrap_or(&format!("{src_stem}_cut")));
+    let part_path = free_picture_path(&root, &image, if part_stem.is_empty() { "part" } else { &part_stem }, &[]);
+    let filled_path = free_picture_path(&root, &image, &format!("{src_stem}_filled"), &[&part_path]);
+    let mut written: Vec<String> = Vec::new();
+    let result = edit(cx, &a.rig, "rig_cut", |rig| {
+        let spec = rigops::CutSpec {
+            slot: &a.slot,
+            skin: a.skin.as_deref(),
+            new_image: &part_path,
+            name: a.name.as_deref(),
+            bone: a.bone.as_deref(),
+            below: a.below.unwrap_or(false),
+            fill_hole: fill,
+        };
+        let r = rigops::cut_part(rig, &src, &mask, &spec).map_err(op_err)?;
+        let mut write = |rel: &str, w: u32, h: u32, rgba: &[u8]| -> Result<(), ToolError> {
+            let abs = root.join(rel);
+            if let Some(dir) = abs.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| io_err(format!("{}: {e}", abs.display())))?;
+            }
+            std::fs::write(&abs, encode_png(w, h, rgba)?).map_err(|e| io_err(format!("{}: {e}", abs.display())))?;
+            written.push(rel.to_owned());
+            Ok(())
+        };
+        write(&part_path, r.part.width, r.part.height, &r.part.rgba)?;
+        if let Some(px) = &r.source {
+            write(&filled_path, src.width, src.height, px)?;
+            for k in &mut rig.skins {
+                for att in k.attachments.values_mut() {
+                    match att {
+                        Attachment::Mesh(m) if m.image == image => m.image = filled_path.clone(),
+                        Attachment::Region(g) if g.image == image => g.image = filled_path.clone(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok(r)
+    });
+    let (file, rig, r, stored) = match result {
+        Ok(v) => v,
+        Err(e) => {
+            for rel in &written {
+                let _ = std::fs::remove_file(root.join(rel));
+            }
+            return Err(e);
+        }
+    };
+    for rel in &written {
+        orbit_project::ops::add_asset(cx.project, AssetKind::Image, rel)?;
+    }
+    let source_image = if r.source.is_some() { filled_path } else { image };
+    respond(
+        &file,
+        &rig,
+        &stored,
+        json!({
+            "slot": r.slot.to_string(), "attachment": r.attachment.to_string(),
+            "image": part_path, "size": [r.part.width, r.part.height], "offset": r.offset,
+            "source_image": source_image, "source_remeshed": r.remeshed,
+            "hint": "The new part is rigid on its bone; rig_bind weights it with the others. Hide or swap it in a clip with a slot_attachment key.",
         }),
     )
 }

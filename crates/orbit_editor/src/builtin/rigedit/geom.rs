@@ -116,6 +116,10 @@ pub enum Tool {
     Mesh,
     /// Paints the selected bone's weights on the selected slot's mesh (M5B-05).
     Weights,
+    /// Cuts the selected slot's picture into new parts (lasso, polygon, wand).
+    Cut,
+    /// Paints on the selected slot's picture.
+    Paint,
 }
 
 /// Which handle of the selected bone (head at `head_s`, tip at `tip_s`, screen
@@ -127,7 +131,7 @@ pub fn handle_at(tool: Tool, head_s: [f32; 2], tip_s: [f32; 2], p: [f32; 2]) -> 
         Tool::Move => (dist(head_s) <= GRAB_RADIUS).then_some(Handle::Move),
         Tool::Rotate => ((dist(head_s) - RING_RADIUS).abs() <= GRAB_RADIUS * 0.7).then_some(Handle::Rotate),
         Tool::Scale => (dist(tip_s) <= GRAB_RADIUS).then_some(Handle::Scale),
-        Tool::Create | Tool::Mesh | Tool::Weights => None,
+        Tool::Create | Tool::Mesh | Tool::Weights | Tool::Cut | Tool::Paint => None,
     }
 }
 
