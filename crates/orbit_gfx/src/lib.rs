@@ -385,7 +385,11 @@ impl Gfx {
         let Some(surface) = &self.surface else {
             return Ok(None); // suspended
         };
-        let (texture, suboptimal) = match surface.get_current_texture() {
+        let acquired = {
+            orbit_profile::scope!("gpu wait: surface acquire");
+            surface.get_current_texture()
+        };
+        let (texture, suboptimal) = match acquired {
             Cst::Success(f) => (f, false),
             Cst::Suboptimal(f) => (f, true),
             Cst::Outdated => {
@@ -421,7 +425,10 @@ impl Gfx {
             suboptimal,
             ..
         } = frame;
-        self.queue.present(texture);
+        {
+            orbit_profile::scope!("gpu wait: present");
+            self.queue.present(texture);
+        }
         if suboptimal {
             self.configure_surface();
         }

@@ -100,6 +100,7 @@ impl EditorApp {
                 .clone()
                 .or_else(crate::config::default_config_dir)
         };
+        crate::hitches::init(config_dir.as_deref());
         let mut options = CoreOptions {
             config_dir,
             theme: args.theme,
@@ -174,6 +175,11 @@ impl EditorApp {
             .map(|s| Instant::now() + Duration::from_secs_f32(s.max(0.0)));
         let title = core.window_title();
         window.set_title(&title);
+        // 3D shaders compile on a worker, not when the first viewport opens.
+        let mut scene3d = crate::scene3d_host::Scene3dHost::default();
+        if orbit_core::experimental::enabled_3d() {
+            scene3d.prewarm(preview.gfx());
+        }
         let edit_at = args
             .edit_text
             .is_some()
@@ -181,7 +187,7 @@ impl EditorApp {
         Self {
             window,
             preview,
-            scene3d: Default::default(),
+            scene3d,
             rig: Default::default(),
             rig_thumbs: Default::default(),
             egui_ctx,
@@ -324,6 +330,7 @@ impl EditorApp {
         buffer.slice(..).map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
+        orbit_profile::scope!("gpu wait: buffer map");
         self.preview
             .gfx()
             .device()
@@ -441,13 +448,25 @@ impl App for EditorApp {
             orbit_profile::scope!("preview");
             self.preview.update(&mut self.core, &mut self.renderer, now)
         };
-        if self.scene3d.update(&self.core.shared.scene3d, self.preview.gfx(), &mut self.renderer) {
+        let redraw = {
+            orbit_profile::scope!("3d viewports");
+            self.scene3d.update(&self.core.shared.scene3d, self.preview.gfx(), &mut self.renderer)
+        };
+        if redraw {
             self.host.push(HostRequest::RequestRedraw);
         }
-        if self.rig.update(&self.core.shared.rig, self.preview.runtime_mut().renderer_mut(), &mut self.renderer) {
+        let redraw = {
+            orbit_profile::scope!("rig viewport");
+            self.rig.update(&self.core.shared.rig, self.preview.runtime_mut().renderer_mut(), &mut self.renderer)
+        };
+        if redraw {
             self.host.push(HostRequest::RequestRedraw);
         }
-        if self.rig_thumbs.update(&self.core.shared.rig_thumbs, self.preview.runtime_mut().renderer_mut(), &mut self.renderer) {
+        let redraw = {
+            orbit_profile::scope!("rig thumbnails");
+            self.rig_thumbs.update(&self.core.shared.rig_thumbs, self.preview.runtime_mut().renderer_mut(), &mut self.renderer)
+        };
+        if redraw {
             self.host.push(HostRequest::RequestRedraw);
         }
         self.preview_wake = wake.at;
@@ -494,17 +513,26 @@ impl App for EditorApp {
         let device = self.preview.gfx().device().clone();
         let queue = self.preview.gfx().queue().clone();
         // Texture uploads must happen even when the frame ends up skipped.
-        for (id, deltas) in &textures_delta.set {
-            for delta in deltas {
-                self.renderer.update_texture(&device, &queue, *id, delta);
+        if !textures_delta.set.is_empty() {
+            orbit_profile::scope!("egui texture upload");
+            for (id, deltas) in &textures_delta.set {
+                for delta in deltas {
+                    self.renderer.update_texture(&device, &queue, *id, delta);
+                }
             }
         }
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("editor encoder"),
         });
-        let extra = self
-            .renderer
-            .update_buffers(&device, &queue, &mut encoder, &jobs, &screen);
+        let extra = {
+            orbit_profile::scope!("egui buffers");
+            self.renderer
+                .update_buffers(&device, &queue, &mut encoder, &jobs, &screen)
+        };
+        let submit = |extra: Vec<wgpu::CommandBuffer>, encoder: wgpu::CommandEncoder| {
+            orbit_profile::scope!("gpu wait: queue submit");
+            queue.submit(extra.into_iter().chain(Some(encoder.finish())));
+        };
         let mut presented = false;
         match self.preview.gfx_mut().begin_frame() {
             Ok(Some(frame)) => {
@@ -530,13 +558,13 @@ impl App for EditorApp {
                         .forget_lifetime();
                     self.renderer.render(&mut pass, &jobs, &screen);
                 }
-                queue.submit(extra.into_iter().chain(Some(encoder.finish())));
+                submit(extra, encoder);
                 self.preview.gfx_mut().end_frame(frame);
                 presented = true;
                 self.skipped = 0;
             }
             Ok(None) => {
-                queue.submit(extra.into_iter().chain(Some(encoder.finish())));
+                submit(extra, encoder);
                 self.skipped += 1;
                 if self.skipped <= MAX_SKIPPED_RETRIES {
                     self.retry_wake = Some(now + Duration::from_millis(50));
@@ -544,7 +572,7 @@ impl App for EditorApp {
             }
             Err(e) => {
                 log::error!("cannot acquire a frame: {e}");
-                queue.submit(extra.into_iter().chain(Some(encoder.finish())));
+                submit(extra, encoder);
             }
         }
         for id in &textures_delta.free {
@@ -553,6 +581,7 @@ impl App for EditorApp {
         textures_delta.clear();
         drop(paint_span);
         orbit_profile::finish_frame();
+        crate::hitches::report_new();
 
         if self.args.autoscroll.is_some() {
             self.frame_ms.push(now.elapsed().as_secs_f32() * 1000.0);

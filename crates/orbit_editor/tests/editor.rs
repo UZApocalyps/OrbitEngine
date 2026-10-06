@@ -372,6 +372,8 @@ fn crash_then_relaunch_offers_recovery() {
         core.after_frame(&ctx); // autosave happens here
         assert!(core.is_modified());
         let edited = core.story().unwrap().clone();
+        // The snapshot is written by the background writer.
+        orbit_editor::writer::flush();
         // The snapshot is next to the project, the project file is untouched.
         assert!(project.join(".orbit/recovery/story.recovery.ron").is_file());
         let on_disk = std::fs::read_to_string(project.join("story.orbit")).unwrap();
@@ -397,6 +399,7 @@ fn crash_then_relaunch_offers_recovery() {
     core2.dialog = None;
     core2.resolve_recovery(false);
     assert!(!core2.is_modified());
+    orbit_editor::writer::flush();
     assert!(!project.join(".orbit/recovery/story.recovery.ron").exists());
 }
 
@@ -411,8 +414,10 @@ fn a_clean_exit_leaves_no_recovery_file() {
     core.open_project(&project);
     core.run_action_now("orbit.explorer.add_say", &ctx);
     core.after_frame(&ctx);
+    orbit_editor::writer::flush();
     assert!(project.join(".orbit/recovery/story.recovery.ron").is_file());
     core.run_action_now("orbit.core.save", &ctx);
+    orbit_editor::writer::flush();
     assert!(!project.join(".orbit/recovery/story.recovery.ron").exists());
     core.shutdown();
 }

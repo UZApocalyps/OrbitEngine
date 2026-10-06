@@ -21,6 +21,12 @@
     "profiler.max": "Pire (ms)",
     "profiler.calls": "Appels",
     "profiler.gpu_passes": "Passes GPU (ms)",
+    "profiler.hitches_title": "Saccades",
+    "profiler.hitches_threshold": "Images de plus de",
+    "profiler.hitches_copy": "Copier les saccades (pour un rapport de bug)",
+    "profiler.hitches_log_file": "Aussi écrites dans {path}",
+    "profiler.hitches_empty": "Aucune saccade : toutes les images sont restées sous le seuil.",
+    "profiler.hitches_unaccounted": "hors des sections mesurées",
 
     // ---- problems
     "problems.title": "Problèmes",

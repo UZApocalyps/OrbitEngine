@@ -781,7 +781,11 @@ impl EditorCore {
             return false;
         }
         match session.autosave(Instant::now()) {
-            Ok(()) => true,
+            Ok(()) => {
+                // The editor is about to exit: wait for the disk.
+                crate::writer::flush();
+                true
+            }
             Err(e) => {
                 log::error!("recovery snapshot failed: {e}");
                 false
@@ -797,6 +801,8 @@ impl EditorCore {
         if let Some(session) = self.session.take() {
             session.close();
         }
+        // Everything queued on the background writer reaches the disk.
+        crate::writer::flush();
     }
 
     /// The user answered a [`Dialog::ConfirmUnsaved`].
@@ -1057,14 +1063,22 @@ impl EditorCore {
         let Some(session) = self.session.as_ref() else {
             return;
         };
-        if let Err(e) = orbit_project::graph_layout::save_layout(
-            &session.location.storage(),
-            &session.location.story_file,
-            &self.state.graph.layout,
-        ) {
-            let message = self.state.tf("project.layout_not_saved", &[("error", &e)]);
-            self.state.console.push(Level::Warn, message);
-        }
+        // Written on the background writer (latest wins per sidecar file).
+        let storage = session.location.storage();
+        let story_file = session.location.story_file.clone();
+        let layout = self.state.graph.layout.clone();
+        let key = session
+            .location
+            .root
+            .join(orbit_project::graph_layout::layout_file(&story_file));
+        // Translated here; the error is filled in by the writer (and reaches
+        // the console through the log).
+        let failed = self.state.tf("project.layout_not_saved", &[("error", &"{error}")]);
+        crate::writer::submit(Some(key), move || {
+            if let Err(e) = orbit_project::graph_layout::save_layout(&storage, &story_file, &layout) {
+                log::warn!("{}", failed.replace("{error}", &e));
+            }
+        });
     }
 
     /// Keeps the validation findings up to date: inline for small stories,

@@ -427,7 +427,10 @@ impl Renderer2d {
                 depth_or_array_layers: 1,
             },
         );
-        self.gfx.queue().submit(Some(encoder.finish()));
+        {
+            orbit_profile::scope!("gpu wait: queue submit");
+            self.gfx.queue().submit(Some(encoder.finish()));
+        }
         readback
             .buffer
             .slice(..)
@@ -565,7 +568,10 @@ impl Renderer2d {
                 self.sprites.draw(&mut pass, format, &self.textures, &clip, start..batches);
             }
         }
-        self.gfx.queue().submit(Some(encoder.finish()));
+        {
+            orbit_profile::scope!("gpu wait: queue submit");
+            self.gfx.queue().submit(Some(encoder.finish()));
+        }
     }
 
     /// Number of meshes drawn by the last scene (diagnostics).
@@ -665,7 +671,10 @@ impl Renderer2d {
             occlusion_query_set: None,
             multiview_mask: None,
         }));
-        self.gfx.queue().submit(Some(encoder.finish()));
+        {
+            orbit_profile::scope!("gpu wait: queue submit");
+            self.gfx.queue().submit(Some(encoder.finish()));
+        }
     }
 
     /// Draws `scene` onto the surface, letterboxed.
@@ -820,7 +829,10 @@ impl Renderer2d {
                 pass.draw(0..3, 0..1);
             }
         }
-        self.gfx.queue().submit(Some(encoder.finish()));
+        {
+            orbit_profile::scope!("gpu wait: queue submit");
+            self.gfx.queue().submit(Some(encoder.finish()));
+        }
         Ok(())
     }
 }

@@ -1102,6 +1102,31 @@ impl Renderer3d {
         Ok(())
     }
 
+    /// Creates every pipeline the renderer may need (material variants,
+    /// sky, shadows, post-processing) now instead of on first use. Shader
+    /// compilation can take hundreds of milliseconds on some drivers: hosts
+    /// call this on a worker thread (wgpu devices are `Send + Sync`), then
+    /// hand the renderer to the render thread.
+    pub fn prewarm(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        for bits in 0..16u8 {
+            self.ensure_pipeline(
+                device,
+                PipelineKey {
+                    unlit: bits & 1 != 0,
+                    blend: bits & 2 != 0,
+                    double_sided: bits & 4 != 0,
+                    hdr: bits & 8 != 0,
+                },
+            );
+        }
+        self.ensure_sky_pipeline(device, false);
+        self.ensure_sky_pipeline(device, true);
+        self.ensure_shadow_pipeline(device);
+        if self.post.is_none() {
+            self.post = Some(post::PostPipelines::new(device, queue));
+        }
+    }
+
     fn ensure_shadow_pipeline(&mut self, device: &wgpu::Device) {
         if self.shadow_pipeline.is_some() {
             return;

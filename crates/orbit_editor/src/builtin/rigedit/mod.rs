@@ -242,6 +242,8 @@ struct Sent {
     view: [u32; 3],
     size: [u32; 2],
     skin: String,
+    /// The host's count of pictures loaded in the background.
+    images_loaded: u64,
 }
 
 /// A handle drag in progress.
@@ -1092,6 +1094,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
             view: [st.view.zoom.to_bits(), st.view.pan[0].to_bits(), st.view.pan[1].to_bits()],
             size: size_px,
             skin: st.skin.clone(),
+            images_loaded: st.link.borrow().images_loaded,
         };
         let texture_ready = st.link.borrow().texture.is_some();
         if st.sent.as_ref() != Some(&key) || !texture_ready {

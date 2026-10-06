@@ -21,6 +21,12 @@
     "profiler.max": "Worst (ms)",
     "profiler.calls": "Calls",
     "profiler.gpu_passes": "GPU passes (ms)",
+    "profiler.hitches_title": "Hitches",
+    "profiler.hitches_threshold": "Frames longer than",
+    "profiler.hitches_copy": "Copy the hitches (for a bug report)",
+    "profiler.hitches_log_file": "Also written to {path}",
+    "profiler.hitches_empty": "No hitch so far: every frame was under the threshold.",
+    "profiler.hitches_unaccounted": "not covered by a span",
 
     // ---- problems
     "problems.title": "Problems",
