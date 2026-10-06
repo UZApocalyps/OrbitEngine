@@ -164,43 +164,53 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                 });
             }
 
-            // ---- icon
-            let mut icon_change: Option<Option<orbit_core::AssetId>> = None;
-            let mut add_icon = false;
-            fields::field(ui, &ui.t("ach.field.icon"), |ui| {
-                match a.icon {
-                    Some(icon) => {
-                        if let Some(new) = asset_picker(ui, ("ach_icon", id), &story, AssetKind::Image, icon) {
-                            icon_change = Some(Some(new));
+            // ---- icon, and the icon shown while locked
+            for locked in [false, true] {
+                let current = if locked { a.locked_icon } else { a.icon };
+                let mut change: Option<Option<orbit_core::AssetId>> = None;
+                let mut add = false;
+                let label = if locked { ui.t("ach.field.locked_icon") } else { ui.t("ach.field.icon") };
+                fields::field(ui, &label, |ui| {
+                    match current {
+                        Some(icon) => {
+                            let key = if locked { "ach_locked_icon" } else { "ach_icon" };
+                            if let Some(new) = asset_picker(ui, (key, id), &story, AssetKind::Image, icon) {
+                                change = Some(Some(new));
+                            }
+                        }
+                        None => {
+                            let none = if locked { "ach.field.no_locked_icon" } else { "ach.field.no_icon" };
+                            ui.label(RichText::new(ui.t(none)).color(weak(ui)));
                         }
                     }
-                    None => {
-                        ui.label(RichText::new(ui.t("ach.field.no_icon")).color(weak(ui)));
-                    }
-                }
-                ui.horizontal(|ui| {
-                    if ui
-                        .small_button(format!("{}  {}", icons::FILE_PLUS, ui.t("inspector.asset.add_file")))
-                        .clicked()
-                    {
-                        add_icon = true;
-                    }
-                    if a.icon.is_some()
-                        && ui
-                            .small_button(format!("{}  {}", icons::X, ui.t("ach.field.remove_icon")))
+                    ui.horizontal(|ui| {
+                        if ui
+                            .small_button(format!("{}  {}", icons::FILE_PLUS, ui.t("inspector.asset.add_file")))
                             .clicked()
-                    {
-                        icon_change = Some(None);
-                    }
+                        {
+                            add = true;
+                        }
+                        if current.is_some()
+                            && ui
+                                .small_button(format!("{}  {}", icons::X, ui.t("ach.field.remove_icon")))
+                                .clicked()
+                        {
+                            change = Some(None);
+                        }
+                    });
                 });
-            });
-            if add_icon && let Some(new) = edit::import_asset_dialog(ctx, AssetKind::Image) {
-                icon_change = Some(Some(new));
-            }
-            if let Some(icon) = icon_change {
-                ctx.ops_or_toast(|p| {
-                    project_achievements::update_achievement(p, id, None, None, None, Some(icon))
-                });
+                if add && let Some(new) = edit::import_asset_dialog(ctx, AssetKind::Image) {
+                    change = Some(Some(new));
+                }
+                if let Some(icon) = change {
+                    ctx.ops_or_toast(|p| {
+                        if locked {
+                            project_achievements::set_achievement_locked_icon(p, id, icon)
+                        } else {
+                            project_achievements::update_achievement(p, id, None, None, None, Some(icon))
+                        }
+                    });
+                }
             }
 
             // ---- where it is unlocked

@@ -107,7 +107,7 @@ Pour composer ses propres écrans : dans une liste générée, une **Image** ave
 
 ## Succès
 
-Les succès se définissent dans le panneau **Succès** : un **titre**, une **description**, une **icône** facultative (une image du projet) et la case **Caché tant qu'il n'est pas débloqué**. Un succès caché montre un texte neutre (titre, description et icône) dans la liste tant qu'il n'est pas débloqué. Titres et descriptions sont des textes ordinaires de l'histoire : ils se traduisent dans le panneau **Traductions** comme les autres.
+Les succès se définissent dans le panneau **Succès** : un **titre**, une **description**, une **icône** facultative (une image du projet), une **icône verrouillée** facultative (affichée à la place de l'icône tant que le succès n'est pas débloqué ; sans elle, l'icône est utilisée) et la case **Caché tant qu'il n'est pas débloqué**. Un succès caché montre un texte neutre (titre, description et icône) dans la liste tant qu'il n'est pas débloqué. Titres et descriptions sont des textes ordinaires de l'histoire : ils se traduisent dans le panneau **Traductions** comme les autres.
 
 On en débloque un depuis l'histoire avec l'étape **Débloquer un succès** (groupe Logique), ou avec le bouton *Ajouter un nœud de déblocage ici* du panneau. La première fois que l'histoire atteint l'étape dans une vraie partie, le succès est débloqué pour de bon et une **notification** l'annonce (« Succès débloqué : Premiers mots »). Ensuite l'étape ne fait plus rien. En particulier :
 

@@ -66,6 +66,7 @@ pub fn list_achievements(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolE
                 "description": story.text(a.description_id),
                 "hidden": a.hidden,
                 "icon": a.icon.and_then(|i| story.asset_path(i)),
+                "locked_icon": a.locked_icon.and_then(|i| story.asset_path(i)),
                 "unlocked_by": ach::unlock_nodes(story, a.id).iter().map(ToString::to_string).collect::<Vec<_>>(),
             })
         })
@@ -96,12 +97,20 @@ pub struct SetAchievementArgs {
     hidden: Option<bool>,
     /// Icon: an image asset (path, name or id); an empty text removes it.
     icon: Option<String>,
+    /// Icon shown while locked: an image asset (path, name or id); an empty
+    /// text removes it (the normal icon is then used).
+    locked_icon: Option<String>,
 }
 
 /// `set_achievement`: create or edit.
 pub fn set_achievement(cx: &mut ToolCx<'_>, a: SetAchievementArgs) -> Result<String, ToolError> {
     let story = cx.project.story();
     let icon = match a.icon.as_deref().map(str::trim) {
+        None => None,
+        Some("") => Some(None),
+        Some(key) => Some(Some(find_asset(story, key, Some(AssetKind::Image))?)),
+    };
+    let locked_icon = match a.locked_icon.as_deref().map(str::trim) {
         None => None,
         Some("") => Some(None),
         Some(key) => Some(Some(find_asset(story, key, Some(AssetKind::Image))?)),
@@ -133,6 +142,9 @@ pub fn set_achievement(cx: &mut ToolCx<'_>, a: SetAchievementArgs) -> Result<Str
             )?
         }
     };
+    if let Some(locked_icon) = locked_icon {
+        ach::set_achievement_locked_icon(cx.project, id, locked_icon)?;
+    }
     list_one(cx, id)
 }
 
@@ -149,6 +161,7 @@ fn list_one(cx: &ToolCx<'_>, id: AchievementId) -> Result<String, ToolError> {
         "description": story.text(a.description_id),
         "hidden": a.hidden,
         "icon": a.icon.and_then(|i| story.asset_path(i)),
+        "locked_icon": a.locked_icon.and_then(|i| story.asset_path(i)),
     }))
 }
 

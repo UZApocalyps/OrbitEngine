@@ -15,6 +15,8 @@
     "ach.field.hidden.tip": "While locked, the screen shows a placeholder instead of the title, description and icon.",
     "ach.field.icon": "Icon",
     "ach.field.no_icon": "No icon (a default medal is shown).",
+    "ach.field.locked_icon": "Locked icon",
+    "ach.field.no_locked_icon": "No locked icon (the icon above is used).",
     "ach.field.remove_icon": "Remove",
     "ach.unlocked_by": "Unlocked by",
     "ach.never_unlocked": "No node unlocks this achievement yet.",

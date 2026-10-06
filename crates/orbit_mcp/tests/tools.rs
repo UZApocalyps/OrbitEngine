@@ -349,6 +349,26 @@ fn dsl_text_reads_and_applies_and_rejects_bad_text() {
 }
 
 #[test]
+fn achievement_locked_icon_is_set_listed_and_undoable() {
+    let mut f = Fixture::new("locked_icon");
+    f.write_asset_source("incoming/a.png");
+    f.write_asset_source("incoming/b.png");
+    f.ok("import_asset", json!({"source": "incoming/a.png"}));
+    f.ok("import_asset", json!({"source": "incoming/b.png"}));
+    let made = f.ok("set_achievement", json!({"title": "First", "icon": "a", "locked_icon": "b"}));
+    assert!(made["icon"].is_string() && made["locked_icon"].is_string());
+    assert_ne!(made["icon"], made["locked_icon"]);
+    let list = f.ok("list_achievements", json!({}));
+    assert_eq!(list["achievements"][0]["locked_icon"], made["locked_icon"]);
+    f.err("set_achievement", json!({"achievement": "First", "locked_icon": "missing"}));
+    let cleared = f.ok("set_achievement", json!({"achievement": "First", "locked_icon": ""}));
+    assert!(cleared["locked_icon"].is_null() && cleared["icon"].is_string());
+    f.ok("undo", json!({}));
+    let list = f.ok("list_achievements", json!({}));
+    assert!(list["achievements"][0]["locked_icon"].is_string());
+}
+
+#[test]
 fn every_tool_call_is_one_undo_entry() {
     let mut f = Fixture::new("undo");
     f.ok("create_character", json!({"name": "Alice"}));

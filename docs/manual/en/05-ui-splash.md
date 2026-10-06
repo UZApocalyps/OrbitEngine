@@ -107,7 +107,7 @@ To build your own screens: in a generated list, an **Image** with **Image of the
 
 ## Achievements
 
-Define achievements in the **Achievements** panel: a **title**, a **description**, an optional **icon** (an image of the project) and a **Hidden until unlocked** flag. A hidden achievement shows a neutral placeholder (title, description and icon) in the list until it is unlocked. Titles and descriptions are ordinary texts of the story: they are translated in the **Translations** panel like any other text.
+Define achievements in the **Achievements** panel: a **title**, a **description**, an optional **icon** (an image of the project), an optional **Locked icon** (shown instead of the icon until the achievement is unlocked; without one, the icon is used) and a **Hidden until unlocked** flag. A hidden achievement shows a neutral placeholder (title, description and icon) in the list until it is unlocked. Titles and descriptions are ordinary texts of the story: they are translated in the **Translations** panel like any other text.
 
 Unlock one from the story with the **Unlock achievement** step (Logic group), or with the button *Add an unlock node here* of the panel. The first time the story reaches the step in a real playthrough, the achievement is unlocked for good and a **notification** announces it ("Achievement unlocked: First words"). Afterwards the step does nothing. In particular:
 
