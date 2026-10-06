@@ -57,6 +57,8 @@ To use it, open the character, choose the type **Rig** for an expression, then p
 
 An AI assistant can list and read rigs, check a pose without drawing it, generate a mesh from a picture and assign a rig to an expression (see the MCP guide).
 
+**Building and animating a rig through MCP.** An assistant can do the whole workflow without the editor UI: `rig_create` (from a project picture, imported as an asset if needed: `root` bone at the feet, a slot and a mesh traced from the alpha; or an empty rig), `rig_add_image_part`, `rig_bone_add` / `rig_bone_update` / `rig_bone_reparent` / `rig_bone_delete` (positions relative to the parent or in rig space, or a `head` and `tip` like the click-drag of the bone tool), `rig_bind` (automatic weights of every mesh), `rig_slot_update` (picture shown, tint, draw order), `rig_skin_add` / `rig_skin_duplicate` / `rig_skin_delete`, `rig_ik_set` / `rig_ik_remove`, `rig_clip_create` / `rig_clip_update` / `rig_clip_delete`, `rig_clip_key_set` / `rig_clip_key_delete` (bone rotate, translate and scale, slot picture and tint, deform, draw order; each key has an easing: a preset, a bezier or a named curve of the story), `rig_add_to_project` and `rig_delete`. Every edit is validated (an error refuses it and nothing is written; web budget warnings come back with the answer) and atomic. When the rig is open in the rig editor, the change goes through its document: it refreshes the view and **Ctrl+Z undoes it**; otherwise the file is rewritten. `rig_sample` then shows the result, including how far the mesh moved.
+
 
 ## Voice acting
 

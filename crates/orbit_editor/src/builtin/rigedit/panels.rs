@@ -521,7 +521,7 @@ fn slot_section(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             Some(Attachment::Mesh(m)) => super::meshgen::uv_map(m).and_then(|u| u.inverse()).map(|inv| inv.apply([0.5, 0.5])),
             _ => None,
         };
-        let pic = mesh_center.and_then(|c| super::workflow::Picture::load(&root, &path).ok().map(|p| (p, c)));
+        let pic = mesh_center.and_then(|c| super::workflow::load_picture(&root, &path).ok().map(|p| (p, c)));
         if let Some(doc) = st.doc.as_mut() {
             doc.begin_gesture();
             if report(ctx, doc.attach_image(&sid, &skin_name, &path, size)).is_some()

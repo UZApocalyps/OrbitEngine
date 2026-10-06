@@ -23,20 +23,20 @@ use crate::convert::{find_asset, find_character};
 use crate::error::ToolError;
 use crate::tools::ToolCx;
 
-fn out(value: Json) -> Result<String, ToolError> {
+pub(crate) fn out(value: Json) -> Result<String, ToolError> {
     Ok(serde_json::to_string_pretty(&value).unwrap_or_default())
 }
 
-fn io_err(e: impl std::fmt::Display) -> ToolError {
+pub(crate) fn io_err(e: impl std::fmt::Display) -> ToolError {
     ToolError::new(crate::ErrorKind::Io, e.to_string())
 }
 
 // ------------------------------------------------------------------ files
 
-struct RigFile {
-    asset: Option<AssetId>,
-    rel: String,
-    abs: PathBuf,
+pub(crate) struct RigFile {
+    pub(crate) asset: Option<AssetId>,
+    pub(crate) rel: String,
+    pub(crate) abs: PathBuf,
 }
 
 fn file_stem(path: &str) -> &str {
@@ -46,13 +46,13 @@ fn file_stem(path: &str) -> &str {
         .unwrap_or(file)
 }
 
-fn assets_root(cx: &ToolCx<'_>) -> PathBuf {
+pub(crate) fn assets_root(cx: &ToolCx<'_>) -> PathBuf {
     orbit_project::find_assets_root(cx.sandbox.root(), cx.project.story())
 }
 
 /// A rig by asset id, manifest path, file name or name; also a `.rig.ron`
 /// file of the rigs folder that no asset declares yet.
-fn resolve(cx: &ToolCx<'_>, key: &str) -> Result<RigFile, ToolError> {
+pub(crate) fn resolve(cx: &ToolCx<'_>, key: &str) -> Result<RigFile, ToolError> {
     let story = cx.project.story();
     let root = assets_root(cx);
     let found = find_asset(story, key, Some(AssetKind::Rig)).or_else(|first| {
@@ -91,12 +91,82 @@ fn resolve(cx: &ToolCx<'_>, key: &str) -> Result<RigFile, ToolError> {
     Ok(RigFile { asset, rel, abs })
 }
 
-fn load(file: &RigFile, root: &std::path::Path) -> Result<Rig, ToolError> {
+/// The rig editor of the live editor, seen by the tools: when it has a rig
+/// open, edits go through its document (undo works, the view refreshes) and
+/// reads see its unsaved state. Installed by the editor on its own thread
+/// (tools run there), see [`set_live_rig`].
+pub trait LiveRig {
+    /// The rig open at `abs` in the editor, with its unsaved changes.
+    fn current(&self, abs: &std::path::Path) -> Option<Rig>;
+    /// Replaces the open rig at `abs` by `rig` as one undo step, and saves
+    /// it. `Ok(false)`: no rig is open there (the caller writes the file).
+    fn apply(&self, abs: &std::path::Path, rig: &Rig, label: &str) -> Result<bool, String>;
+}
+
+thread_local! {
+    static LIVE: std::cell::RefCell<Option<std::rc::Rc<dyn LiveRig>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Installs (or removes) the live rig editor bridge of this thread.
+pub fn set_live_rig(bridge: Option<std::rc::Rc<dyn LiveRig>>) {
+    LIVE.with(|l| *l.borrow_mut() = bridge);
+}
+
+fn live_rig() -> Option<std::rc::Rc<dyn LiveRig>> {
+    LIVE.with(|l| l.borrow().clone())
+}
+
+/// What [`store`] did.
+pub(crate) struct Stored {
+    /// The change went through the open rig editor (undoable there).
+    pub(crate) live: bool,
+    /// Warnings of the result (web budget...), already worded.
+    pub(crate) warnings: Vec<String>,
+}
+
+/// Validates and writes a rig: the result must not have errors the rig did
+/// not have before, otherwise nothing is written. Goes through the live rig
+/// editor when it has this file open, else rewrites the file atomically.
+pub(crate) fn store(file: &RigFile, before: Option<&Rig>, rig: &Rig, label: &str) -> Result<Stored, ToolError> {
+    let message = |s: &Severity, rig: &Rig| -> Vec<String> {
+        rig.validate().into_iter().filter(|i| &i.severity == s).map(|i| i.to_string()).collect()
+    };
+    let old: Vec<String> = before.map(|b| message(&Severity::Error, b)).unwrap_or_default();
+    let errors: Vec<String> = message(&Severity::Error, rig).into_iter().filter(|e| !old.contains(e)).collect();
+    if !errors.is_empty() {
+        return Err(ToolError::refused(format!(
+            "the result would leave errors in the rig, nothing written: {}",
+            errors.join("; ")
+        )));
+    }
+    let warnings = message(&Severity::Warning, rig);
+    let text = save_rig(rig).map_err(ToolError::invalid)?;
+    let applied = match live_rig() {
+        Some(l) => l.apply(&file.abs, rig, label).map_err(io_err)?,
+        None => false,
+    };
+    if !applied {
+        if let Some(dir) = file.abs.parent() {
+            std::fs::create_dir_all(dir).map_err(io_err)?;
+        }
+        let tmp = file.abs.with_extension("ron.tmp");
+        std::fs::write(&tmp, text).map_err(io_err)?;
+        std::fs::rename(&tmp, &file.abs).map_err(io_err)?;
+    }
+    Ok(Stored { live: applied, warnings })
+}
+
+pub(crate) fn load(file: &RigFile, root: &std::path::Path) -> Result<Rig, ToolError> {
+    if let Some(live) = live_rig()
+        && let Some(rig) = live.current(&file.abs)
+    {
+        return Ok(rig);
+    }
     read_rig(root, &file.rel)
         .map_err(|e| ToolError::invalid(format!("`{}` cannot be used as a rig: {e}", file.rel)))
 }
 
-fn issues_json(rig: &Rig) -> Vec<Json> {
+pub(crate) fn issues_json(rig: &Rig) -> Vec<Json> {
     let mut issues: Vec<(Severity, String)> = rig
         .validate()
         .into_iter()
@@ -111,7 +181,7 @@ fn issues_json(rig: &Rig) -> Vec<Json> {
         .collect()
 }
 
-fn loop_str(m: LoopMode) -> &'static str {
+pub(crate) fn loop_str(m: LoopMode) -> &'static str {
     match m {
         LoopMode::Loop => "loop",
         LoopMode::Once => "once",
@@ -175,6 +245,9 @@ pub struct SampleArgs {
     /// What happens past the end of the clip: loop (default), once or
     /// ping_pong (the same as the expression's loop_mode).
     pub loop_mode: Option<LoopArg>,
+    /// Also list the skinned vertices of every mesh (default false: only the
+    /// per-mesh summary, with the largest displacement from the setup pose).
+    pub vertices: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -346,7 +419,7 @@ fn clip_time(duration: f32, mode: LoopMode, elapsed: f32) -> f32 {
     }
 }
 
-fn prepare(rig: Rig) -> Result<PreparedRig, ToolError> {
+pub(crate) fn prepare(rig: Rig) -> Result<PreparedRig, ToolError> {
     PreparedRig::new(rig).map_err(|issues| {
         ToolError::invalid(format!(
             "the rig cannot be evaluated: {}",
@@ -413,10 +486,36 @@ pub fn rig_sample(cx: &mut ToolCx<'_>, a: SampleArgs) -> Result<String, ToolErro
             })
         })
         .collect();
+    // Skinned meshes (bones only; clip deforms are not applied here).
+    let bind = prepared.world(&prepared.setup_pose());
+    let mut meshes: Vec<Json> = Vec::new();
+    for (si, slot) in rig.slots.iter().enumerate() {
+        let Some(att) = pose.slots.get(si).and_then(|p| p.attachment.as_ref()) else { continue };
+        let Some((_, Attachment::Mesh(m))) = prepared.attachment(None, att) else { continue };
+        let Some(bone) = prepared.bone_index(slot.bone.as_str()) else { continue };
+        let moved = weights::skin_positions(rig, m, bone, &world.bones, &bind.bones);
+        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+        let mut max_disp = 0.0_f32;
+        for (p, v) in moved.iter().zip(&m.vertices) {
+            lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+            hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+            max_disp = max_disp.max((p[0] - v[0]).hypot(p[1] - v[1]));
+        }
+        let mut item = json!({
+            "slot": slot.name, "attachment": att.to_string(), "vertex_count": moved.len(),
+            "weighted": !m.weights.is_empty(),
+            "bounds": {"min": [round(lo[0]), round(lo[1])], "max": [round(hi[0]), round(hi[1])]},
+            "max_displacement": round(max_disp),
+        });
+        if a.vertices.unwrap_or(false) {
+            item["vertices"] = json!(moved.iter().map(|p| [round(p[0]), round(p[1])]).collect::<Vec<_>>());
+        }
+        meshes.push(item);
+    }
     out(json!({
         "clip": name, "duration": clip.duration, "loop_mode": loop_str(mode),
         "elapsed": elapsed, "clip_time": round(local),
-        "bones": bones, "slots": slots,
+        "bones": bones, "slots": slots, "meshes": meshes,
         "draw_order": pose.draw_order.iter().filter_map(|i| rig.slots.get(*i)).map(|s| s.name.clone()).collect::<Vec<_>>(),
     }))
 }
@@ -426,7 +525,8 @@ pub fn rig_sample(cx: &mut ToolCx<'_>, a: SampleArgs) -> Result<String, ToolErro
 pub fn rig_mesh_auto(cx: &mut ToolCx<'_>, a: MeshAutoArgs) -> Result<String, ToolError> {
     let root = assets_root(cx);
     let file = resolve(cx, &a.rig)?;
-    let mut rig = load(&file, &root)?;
+    let before = load(&file, &root)?;
+    let mut rig = before.clone();
 
     let skin_idx = match &a.skin {
         Some(n) => rig
@@ -523,32 +623,17 @@ pub fn rig_mesh_auto(cx: &mut ToolCx<'_>, a: MeshAutoArgs) -> Result<String, Too
         .attachments
         .insert(att_key, Attachment::Mesh(mesh));
 
-    let errors: Vec<String> = rig
-        .validate()
-        .into_iter()
-        .filter(|i| i.severity == Severity::Error)
-        .map(|i| i.to_string())
-        .collect();
-    if !errors.is_empty() {
-        return Err(ToolError::refused(format!(
-            "the result would leave errors in the rig, nothing written: {}",
-            errors.join("; ")
-        )));
-    }
-    let warnings: Vec<String> = match PreparedRig::new(rig.clone()) {
-        Ok(p) => p.warnings.iter().map(ToString::to_string).collect(),
-        Err(_) => Vec::new(),
-    };
-    let text = save_rig(&rig).map_err(ToolError::invalid)?;
-    let tmp = file.abs.with_extension("ron.tmp");
-    std::fs::write(&tmp, text).map_err(io_err)?;
-    std::fs::rename(&tmp, &file.abs).map_err(io_err)?;
+    let stored = store(&file, Some(&before), &rig, "rig_mesh_auto")?;
     out(json!({
         "rig": file.rel, "skin": rig.skins[skin_idx].name, "attachment": a.attachment,
         "image": image, "vertices": nv, "triangles": nt, "weighted": weighted,
         "skipped_outline_edges": g.skipped,
-        "warnings": warnings,
-        "note": "The rig file was rewritten (not covered by undo).",
+        "warnings": stored.warnings,
+        "note": if stored.live {
+            "Applied in the open rig editor (Ctrl+Z undoes it)."
+        } else {
+            "The rig file was rewritten (not covered by undo)."
+        },
     }))
 }
 

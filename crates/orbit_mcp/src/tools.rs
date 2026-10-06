@@ -929,7 +929,7 @@ struct DeleteCurveArgs {
 
 #[derive(Deserialize, JsonSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
-enum AssetKindArg {
+pub(crate) enum AssetKindArg {
     Image,
     Music,
     Sound,
@@ -956,13 +956,13 @@ struct ListAssetsArgs {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct ImportAssetArgs {
+pub(crate) struct ImportAssetArgs {
     /// Path of a file **inside the project folder** (relative to it). It is copied under `assets/` and registered in the manifest.
-    source: String,
+    pub(crate) source: String,
     /// Asset kind. Needed for audio files (music or sound); inferred for images.
-    kind: Option<AssetKindArg>,
+    pub(crate) kind: Option<AssetKindArg>,
     /// File name to use under `assets/` (default: the source file name).
-    name: Option<String>,
+    pub(crate) name: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -2315,7 +2315,7 @@ fn sanitize_file_name(name: &str) -> String {
     cleaned.trim_matches('.').to_owned()
 }
 
-fn import_asset(cx: &mut ToolCx<'_>, a: ImportAssetArgs) -> Result<String, ToolError> {
+pub(crate) fn import_asset(cx: &mut ToolCx<'_>, a: ImportAssetArgs) -> Result<String, ToolError> {
     let source = cx.sandbox.resolve(&a.source)?;
     let meta = fs::metadata(&source)
         .map_err(|_| ToolError::not_found(format!("no file `{}` in the project", a.source)))?;
@@ -2926,6 +2926,7 @@ fn script_tool_defs() -> Vec<ToolDef> {
 }
 
 fn rig_tool_defs() -> Vec<ToolDef> {
+    use crate::rig_edit_tools as e;
     use crate::rig_tools as r;
     vec![
         def::<r::NoArgs>("rig_list", "List the 2D rigs", "List the project's 2D skeletal rigs (assets of kind rig, plus .rig.ron files in assets/rigs that no asset declares): id, path, bones, slots, skins, clips with their duration, pictures drawn (and the ones missing from the project), IK count, issues and the character expressions that play each rig.", Kind::Read, r::rig_list),
@@ -2933,6 +2934,26 @@ fn rig_tool_defs() -> Vec<ToolDef> {
         def::<r::SampleArgs>("rig_sample", "Sample a rig pose", "Evaluate a rig clip at a time and return the pose without rendering: local and world transform of every bone (world matrix [a,b,c,d,tx,ty], rotation in degrees clockwise on screen, Y down), the attachment and colour of every slot, and the draw order. The time is wrapped with loop_mode (loop, once, ping_pong) exactly like the runtime does.", Kind::Read, r::rig_sample),
         def::<r::MeshAutoArgs>("rig_mesh_auto", "Generate a rig mesh", "Replace a region or mesh attachment of a rig skin with a mesh generated from a project picture: alpha outline, simplification, interior vertices and triangulation, then automatic bone weights. Optional tolerance, spacing, alpha_threshold, padding, falloff. The result is validated: errors refuse the call and nothing is written; web-budget warnings are returned. The rig file is rewritten (not covered by undo).", Kind::Edit, r::rig_mesh_auto),
         def::<r::SetRigArgs>("set_expression_rig", "Set an expression's rig clip", "Make a character expression play a clip of a rig (skeletal animation; the expression's image stays the poster), or, without `rig`, go back to the still image. The rig must be an asset of kind rig (an undeclared .rig.ron of the project is declared first); the clip and the skin must exist in the rig. Undoable.", Kind::Edit, r::set_expression_rig),
+        def::<e::CreateArgs>("rig_create", "Create a 2D rig", "Create a rig file `assets/rigs/<name>.rig.ron`. With `image` (a project picture, imported as an asset if needed): a `root` bone at the character's feet (bottom-center, pointing up), a slot named after the file and a mesh traced from the picture's alpha, standing on the origin. Without: an empty rig (add bones with rig_bone_add). Never overwrites. Next: rig_bone_add for the skeleton, rig_add_image_part for more pictures, rig_bind, rig_clip_create + rig_clip_key_set, rig_add_to_project, set_expression_rig. The result is validated; warnings (web budget) are returned.", Kind::Edit, e::rig_create),
+        def::<e::AddPartArgs>("rig_add_image_part", "Add a picture to a rig", "Add a picture (arm, head, hat...) to a rig as a new slot drawn in front, with an alpha-traced mesh, attached to a bone. Layers exported from one canvas (same pixel size) line up with the existing picture. The mesh is unweighted until rig_bind. Validated, atomic; goes through the open rig editor when it has the rig (undoable).", Kind::Edit, e::rig_add_image_part),
+        def::<e::DeleteArgs>("rig_delete", "Delete a rig", "Delete a rig file and its asset declaration. Refused while a character expression still plays it. Not undoable.", Kind::Destructive, e::rig_delete),
+        def::<e::BoneAddArgs>("rig_bone_add", "Add a bone", "Add a bone to a rig under `parent` (none: root). Give x / y / rotation relative to the parent (or `space: world`), or `head` and `tip` in rig space (what click-drag draws: the rotation and the length follow). Rig units are pixels, origin at the feet, Y down, rotation in degrees clockwise (-90 = up). Returns the bone id and the rig summary. Validated, atomic; goes through the open rig editor when it has the rig (undoable).", Kind::Edit, e::rig_bone_add),
+        def::<e::BoneUpdateArgs>("rig_bone_update", "Update a bone", "Change a bone's name, parent (kept in place in the world), setup pose (x, y, rotation, scale; relative to the parent or `space: world`; or `head` / `tip`) and length. Clips animate relative to the setup pose, so they follow. Validated, atomic.", Kind::Edit, e::rig_bone_update),
+        def::<e::BoneArg>("rig_bone_delete", "Delete a bone", "Delete a bone and its descendants, the slots riding on them, and what refers to them (IK, clip tracks, mesh weights). The result lists what went. Validated, atomic.", Kind::Edit, e::rig_bone_delete),
+        def::<e::ReparentArgs>("rig_bone_reparent", "Reparent a bone", "Move a bone (with its descendants) under another bone, or make it a root, keeping its place in the world. Moving it under itself or a descendant is refused.", Kind::Edit, e::rig_bone_reparent),
+        def::<e::BindArgs>("rig_bind", "Bind meshes to bones", "Automatic skin weights for every mesh of every skin from the current bones (distance to bone segments, smoothed, at most 4 bones per vertex). Call it after the bones are placed and again after adding bones.", Kind::Edit, e::rig_bind),
+        def::<e::SlotUpdateArgs>("rig_slot_update", "Update a slot", "Change a slot: name, the attachment shown in the setup pose (`\"\"` for none), tint colour, the bone it follows, and its place in the draw order (0 = behind).", Kind::Edit, e::rig_slot_update),
+        def::<e::SkinArgs>("rig_skin_add", "Add a skin", "Add an empty skin (outfit) to a rig; slots fall back on the default skin's pictures.", Kind::Edit, e::rig_skin_add),
+        def::<e::SkinArgs>("rig_skin_duplicate", "Duplicate a skin", "Copy a skin (all its attachments) under a new name, to swap pictures of the copy.", Kind::Edit, e::rig_skin_duplicate),
+        def::<e::SkinArgs>("rig_skin_delete", "Delete a skin", "Delete a skin. The `default` skin and the last skin cannot be deleted; refused while an expression uses the skin.", Kind::Edit, e::rig_skin_delete),
+        def::<e::IkSetArgs>("rig_ik_set", "Set an IK constraint", "Create the IK constraint on a chain (1 bone aims at the target, 2 bones [parent, child] reach it) or update the one that has the same chain: target, bend direction, mix 0..1.", Kind::Edit, e::rig_ik_set),
+        def::<e::IkRemoveArgs>("rig_ik_remove", "Remove an IK constraint", "Remove an IK constraint, by its index (see rig_read) or its chain of bones.", Kind::Edit, e::rig_ik_remove),
+        def::<e::ClipCreateArgs>("rig_clip_create", "Create a rig clip", "Create an empty animation clip (duration in seconds, looping once / forever / ping_pong / times). Add keys with rig_clip_key_set.", Kind::Edit, e::rig_clip_create),
+        def::<e::ClipUpdateArgs>("rig_clip_update", "Update a rig clip", "Change a clip's duration and / or looping. Shortening below the last key is refused.", Kind::Edit, e::rig_clip_update),
+        def::<e::ClipArg>("rig_clip_delete", "Delete a rig clip", "Delete a clip; refused while an expression plays it.", Kind::Edit, e::rig_clip_delete),
+        def::<e::KeySetArgs>("rig_clip_key_set", "Set a clip key", "Set (create or replace) a key of a clip at a time. `track` says what is animated and the shape of `value`: bone_rotate (degrees, added to the setup rotation), bone_translate [dx, dy] (added), bone_scale [sx, sy] (multiplies), slot_attachment (attachment id or null; stepped), slot_color ([r,g,b,a] 0..1 or \"#rrggbb\"), deform ([[dx, dy], ...] one per mesh vertex), draw_order ([slots] behind to front; stepped). `ease` shapes the segment to the next key: a preset name (OutQuad, InOutSine, OutBack, OutBounce, Step...), `{\"bezier\": [x1,y1,x2,y2]}` or the name of a story curve. Time must be within the clip's duration. Check the result with rig_sample.", Kind::Edit, e::rig_clip_key_set),
+        def::<e::KeyDeleteArgs>("rig_clip_key_delete", "Delete a clip key", "Delete the key at a time of a clip track (an emptied track is removed).", Kind::Edit, e::rig_clip_key_delete),
+        def::<e::DeleteArgs>("rig_add_to_project", "Declare a rig as an asset", "Declare a rig file as an asset of kind rig in the project (undoable), so expressions can play it (set_expression_rig does it too when needed). Returns the asset id and the rig's issues.", Kind::Edit, e::rig_add_to_project),
     ]
 }
 

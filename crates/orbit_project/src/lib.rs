@@ -18,6 +18,7 @@ pub mod graph_ops;
 pub mod lock;
 pub mod ops;
 pub mod rigmesh;
+pub mod rigops;
 pub mod rigs;
 pub mod scripts;
 pub mod achievements;

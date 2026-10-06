@@ -7,6 +7,7 @@ use orbit_anim::rig::{Affine, BoneId, Rig, Xform};
 
 pub mod meshgen;
 pub mod weights;
+pub mod workflow;
 
 /// World matrices of `locals` (one per bone, bone order = parents first).
 pub(crate) fn world_matrices(rig: &Rig, locals: &[Xform]) -> Vec<Affine> {

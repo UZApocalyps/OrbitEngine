@@ -13,41 +13,18 @@
 
 use std::path::Path;
 
-use orbit_anim::rig::{Attachment, BoneId, MeshAttachment, Rig, SlotId, Xform};
+use orbit_anim::rig::{Attachment, BoneId, Rig, SlotId};
+pub use orbit_project::rigmesh::workflow::{Picture, mesh_for_picture, part_center, standing_center};
+use orbit_project::rigmesh::workflow::{meshes, root_length};
 
-use super::meshgen::{self, MeshParams};
 use super::model::{self, DEFAULT_SKIN, OpError, RigDoc};
 use super::weights;
 
-/// A decoded picture and its path as the rig stores it.
-#[derive(Clone)]
-pub struct Picture {
-    /// Project path (relative to the assets root, `/`) or absolute path.
-    pub path: String,
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-}
-
-impl Picture {
-    /// Reads and decodes `path` under `root` (an absolute `path` ignores
-    /// `root`).
-    pub fn load(root: &Path, path: &str) -> Result<Self, String> {
-        let bytes = std::fs::read(root.join(path)).map_err(|e| e.to_string())?;
-        let img = orbit_assets::decode_image(&bytes)?;
-        Ok(Self { path: path.to_owned(), width: img.width, height: img.height, rgba: img.rgba })
-    }
-
-    fn size(&self) -> [f32; 2] {
-        [self.width.max(1) as f32, self.height.max(1) as f32]
-    }
-
-    /// File name without extension: the slot's name.
-    fn stem(&self) -> String {
-        let name = self.path.rsplit(['/', '\\']).next().unwrap_or(&self.path);
-        let stem = name.split('.').next().unwrap_or(name).trim();
-        if stem.is_empty() { "picture".to_owned() } else { stem.to_owned() }
-    }
+/// Reads and decodes `path` under `root` (an absolute `path` ignores `root`).
+pub fn load_picture(root: &Path, path: &str) -> Result<Picture, String> {
+    let bytes = std::fs::read(root.join(path)).map_err(|e| e.to_string())?;
+    let img = orbit_assets::decode_image(&bytes)?;
+    Ok(Picture { path: path.to_owned(), width: img.width, height: img.height, rgba: img.rgba })
 }
 
 /// Where the next step of the workflow is (shown in the viewport).
@@ -70,14 +47,6 @@ impl Step {
     }
 }
 
-/// Every mesh of the rig (any skin).
-fn meshes(rig: &Rig) -> impl Iterator<Item = &MeshAttachment> {
-    rig.skins.iter().flat_map(|s| s.attachments.values()).filter_map(|a| match a {
-        Attachment::Mesh(m) => Some(m),
-        Attachment::Region(_) => None,
-    })
-}
-
 /// The step the rig is at. `bound_bones`: the bones of the last bind made in
 /// this session (a bone added since asks to bind again).
 pub fn step(rig: &Rig, bound_bones: Option<&[BoneId]>) -> Step {
@@ -91,35 +60,6 @@ pub fn step(rig: &Rig, bound_bones: Option<&[BoneId]>) -> Step {
     let unbound = meshes(rig).any(|m| m.weights.is_empty());
     let changed = bound_bones.is_some_and(|b| b.len() != rig.bones.len() || rig.bones.iter().zip(b).any(|(x, y)| &x.id != y));
     if unbound || changed { Step::Bind } else { Step::Pose }
-}
-
-/// Rig-space center of a picture placed "standing on the origin": the rig
-/// origin is the bottom-center of the character (what the game expects).
-pub fn standing_center(pic: &Picture) -> [f32; 2] {
-    [0.0, -pic.size()[1] * 0.5]
-}
-
-/// The mesh of `pic` traced from its alpha, at its pixel size, centered on
-/// `center` (rig space). Falls back to the picture's rectangle when the
-/// tracing fails.
-pub fn mesh_for_picture(pic: &Picture, center: [f32; 2]) -> MeshAttachment {
-    let size = pic.size();
-    let placement = Xform::translate(center[0], center[1]).matrix();
-    let uv_to_rig = meshgen::region_uv_to_rig(&placement, size);
-    let params = MeshParams::for_character(pic.width, pic.height);
-    match meshgen::generate(pic.width, pic.height, &pic.rgba, &params) {
-        Ok(g) => meshgen::to_attachment(&pic.path, &g, pic.width, pic.height, &uv_to_rig),
-        Err(_) => {
-            let uvs = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-            MeshAttachment {
-                image: pic.path.clone(),
-                vertices: uvs.iter().map(|uv| uv_to_rig.apply(*uv)).collect(),
-                uvs,
-                triangles: vec![[0, 1, 2], [0, 2, 3]],
-                weights: Vec::new(),
-            }
-        }
-    }
 }
 
 /// Adds `pic` as a new slot on `bone`, drawn in front of the others, as a
@@ -153,28 +93,10 @@ pub fn rig_from_picture(pic: &Picture) -> Result<(RigDoc, BoneId, SlotId), OpErr
 
 /// The `root` bone of a rig made from `pic`.
 pub fn add_root(doc: &mut RigDoc, pic: &Picture) -> Result<BoneId, OpError> {
-    let len = (pic.size()[1] * 0.08).clamp(10.0, 80.0);
+    let len = root_length(pic);
     let root = doc.add_bone(None, [0.0, 0.0], [0.0, -len])?;
     doc.rename_bone(&root, "root")?;
     Ok(root)
-}
-
-/// Where a new part goes: aligned on the first picture when it has the same
-/// pixel size (layers exported from one canvas), else centered on `fallback`.
-pub fn part_center(rig: &Rig, pic: &Picture, fallback: [f32; 2]) -> [f32; 2] {
-    let same = meshes(rig).find(|m| {
-        meshgen::uv_map(m)
-            .and_then(|u| u.inverse())
-            .is_some_and(|inv| {
-                let a = inv.apply([0.0, 0.0]);
-                let b = inv.apply([1.0, 1.0]);
-                ((b[0] - a[0]).abs() - pic.size()[0]).abs() < 0.5 && ((b[1] - a[1]).abs() - pic.size()[1]).abs() < 0.5
-            })
-    });
-    match same.and_then(|m| meshgen::uv_map(m)?.inverse()) {
-        Some(inv) => inv.apply([0.5, 0.5]),
-        None => fallback,
-    }
 }
 
 /// "Bind to bones": automatic weights for every mesh of every skin from the
@@ -360,7 +282,7 @@ mod tests {
             .unwrap()
             .save(dir.join("assets/images/bar.png"))
             .unwrap();
-        let pic = Picture::load(&dir, "assets/images/bar.png").unwrap();
+        let pic = load_picture(&dir, "assets/images/bar.png").unwrap();
         assert_eq!((pic.width, pic.height), (40, 120));
         let (mut doc, root, _) = rig_from_picture(&pic).unwrap();
         let body = doc.add_bone(Some(&root), [0.0, 0.0], [0.0, -60.0]).unwrap();

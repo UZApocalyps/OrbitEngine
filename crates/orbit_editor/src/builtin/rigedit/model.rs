@@ -412,6 +412,17 @@ impl RigDoc {
         self.mutate(f)
     }
 
+    /// Replaces the whole rig by `rig` (an edit made outside the editor, such
+    /// as an MCP tool) as one undo step. No change: no step.
+    pub fn replace(&mut self, rig: Rig) {
+        self.in_gesture = false;
+        if rig != self.rig {
+            let before = std::mem::replace(&mut self.rig, rig);
+            self.push_undo(before);
+            self.revision += 1;
+        }
+    }
+
     // ---- bones
 
     /// Adds a bone from a head to a tip given in rig space (what a

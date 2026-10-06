@@ -178,6 +178,7 @@ fn tools_advertise_schemas_and_hints() {
             "delete_ui_screen",
             "delete_ui_style",
             "delete_ui_splash",
+            "rig_delete",
             "delete_script_module",
             "delete_achievement"
         ]

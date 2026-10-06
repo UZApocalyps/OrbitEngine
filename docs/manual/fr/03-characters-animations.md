@@ -57,6 +57,8 @@ Pour l'utiliser, ouvrez le personnage, choisissez le type **Rig** pour une expre
 
 Un assistant IA peut lister et lire les rigs, vérifier une pose sans dessiner, générer un maillage depuis une image et affecter un rig à une expression (voir le guide MCP).
 
+**Construire et animer un rig par MCP.** Un assistant peut faire tout le parcours sans l'interface de l'éditeur : `rig_create` (depuis une image du projet, importée comme asset si besoin : os `root` aux pieds, un slot et un maillage tracé depuis l'alpha ; ou un rig vide), `rig_add_image_part`, `rig_bone_add` / `rig_bone_update` / `rig_bone_reparent` / `rig_bone_delete` (positions relatives au parent ou dans l'espace du rig, ou une `head` et une `tip` comme le cliquer-glisser de l'outil os), `rig_bind` (auto-poids de tous les maillages), `rig_slot_update` (image affichée, teinte, ordre de dessin), `rig_skin_add` / `rig_skin_duplicate` / `rig_skin_delete`, `rig_ik_set` / `rig_ik_remove`, `rig_clip_create` / `rig_clip_update` / `rig_clip_delete`, `rig_clip_key_set` / `rig_clip_key_delete` (rotation, translation et échelle d'os, image et teinte de slot, déformation, ordre de dessin ; chaque clé a une interpolation : préréglage, bézier ou courbe nommée de l'histoire), `rig_add_to_project` et `rig_delete`. Chaque modification est validée (une erreur la refuse et rien n'est écrit ; les avertissements du budget web reviennent avec la réponse) et atomique. Quand le rig est ouvert dans l'éditeur de rig, le changement passe par son document : la vue se rafraîchit et **Ctrl+Z l'annule** ; sinon le fichier est réécrit. `rig_sample` montre ensuite le résultat, y compris de combien le maillage a bougé.
+
 
 ## Voix
 

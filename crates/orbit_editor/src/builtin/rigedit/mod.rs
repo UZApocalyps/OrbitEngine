@@ -51,7 +51,42 @@ pub struct RigPlugin {
 
 impl RigPlugin {
     pub fn new(link: SharedLink) -> Self {
-        Self { state: Rc::new(RefCell::new(State::new(link))) }
+        let state = Rc::new(RefCell::new(State::new(link)));
+        // The MCP rig tools edit the open rig through its document (undo,
+        // refresh); they run on this thread.
+        orbit_mcp::rig_tools::set_live_rig(Some(Rc::new(LiveBridge { state: state.clone() })));
+        Self { state }
+    }
+}
+
+/// What the MCP rig tools see of the rig editor.
+struct LiveBridge {
+    state: Rc<RefCell<State>>,
+}
+
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+impl orbit_mcp::rig_tools::LiveRig for LiveBridge {
+    fn current(&self, abs: &std::path::Path) -> Option<orbit_anim::rig::Rig> {
+        let st = self.state.try_borrow().ok()?;
+        let doc = st.doc.as_ref()?;
+        same_file(doc.path.as_deref()?, abs).then(|| doc.rig().clone())
+    }
+
+    fn apply(&self, abs: &std::path::Path, rig: &orbit_anim::rig::Rig, _label: &str) -> Result<bool, String> {
+        let Ok(mut st) = self.state.try_borrow_mut() else { return Ok(false) };
+        let Some(doc) = st.doc.as_mut() else { return Ok(false) };
+        if !doc.path.as_deref().is_some_and(|p| same_file(p, abs)) {
+            return Ok(false);
+        }
+        doc.replace(rig.clone());
+        doc.save()?;
+        Ok(true)
     }
 }
 
@@ -617,7 +652,7 @@ impl State {
     fn load_picture(&mut self, ctx: &mut EditorContext<'_>, abs: &std::path::Path) -> Option<workflow::Picture> {
         let path = self.resolve_picture(ctx, abs)?;
         let root = self.project_root(ctx);
-        match workflow::Picture::load(&root, &path) {
+        match workflow::load_picture(&root, &path) {
             Ok(p) => {
                 self.image_sizes.insert(path, [p.width as f32, p.height as f32]);
                 Some(p)
