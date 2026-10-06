@@ -923,6 +923,14 @@ pub struct CutArgs {
     pub fill_hole: Option<bool>,
     /// Skin of the picture (default: the default skin).
     pub skin: Option<String>,
+    /// When the filled picture is also used by another rig, another slot, the
+    /// story or the UI: write the filled source as a copy named
+    /// `<rig>_<slot>.png` and point only this slot to it (default true). With
+    /// `false` the call is refused unless `allow_shared` is true.
+    pub copy_if_shared: Option<bool>,
+    /// With `copy_if_shared: false`: fill the shared picture file itself, so
+    /// every user of it changes (default false).
+    pub allow_shared: Option<bool>,
 }
 
 fn encode_png(w: u32, h: u32, rgba: &[u8]) -> Result<Vec<u8>, ToolError> {
@@ -975,7 +983,38 @@ pub fn rig_cut(cx: &mut ToolCx<'_>, a: CutArgs) -> Result<String, ToolError> {
     let src_stem = src.stem();
     let part_stem = sanitize(a.name.as_deref().unwrap_or(&format!("{src_stem}_cut")));
     let part_path = free_picture_path(&root, &image, if part_stem.is_empty() { "part" } else { &part_stem }, &[]);
-    let filled_path = free_picture_path(&root, &image, &format!("{src_stem}_filled"), &[&part_path]);
+    // Filling edits the source picture: when other things draw it too, the
+    // fill goes to a copy for this slot only (default), or to the shared file
+    // when the caller says so; never silently to every user.
+    let others = if fill {
+        let index = orbit_project::picture_users::PictureUsers::build(&root, cx.project.story(), None);
+        index.others(&image, &file.rel, &slot.name)
+    } else {
+        Vec::new()
+    };
+    let (mut slot_only, mut in_place) = (false, false);
+    if !others.is_empty() {
+        if a.copy_if_shared.unwrap_or(true) {
+            slot_only = true;
+        } else if a.allow_shared == Some(true) {
+            in_place = true;
+        } else {
+            let list: Vec<String> = others.iter().map(ToString::to_string).collect();
+            return Err(ToolError::refused(format!(
+                "`{image}` is also used by: {}. Use copy_if_shared (default) to fill a copy for this slot, or allow_shared: true to change the shared picture.",
+                list.join(", ")
+            )));
+        }
+    }
+    let filled_path = if slot_only {
+        let rig_stem = file.rel.rsplit('/').next().unwrap_or("rig").trim_end_matches(".ron").trim_end_matches(".rig");
+        let stem = format!("{}_{}", sanitize(rig_stem), sanitize(&slot.name));
+        free_picture_path(&root, &image, &stem, &[&part_path])
+    } else if in_place {
+        image.clone()
+    } else {
+        free_picture_path(&root, &image, &format!("{src_stem}_filled"), &[&part_path])
+    };
     let mut written: Vec<String> = Vec::new();
     let result = edit(cx, &a.rig, "rig_cut", |rig| {
         let spec = rigops::CutSpec {
@@ -999,13 +1038,24 @@ pub fn rig_cut(cx: &mut ToolCx<'_>, a: CutArgs) -> Result<String, ToolError> {
         };
         write(&part_path, r.part.width, r.part.height, &r.part.rgba)?;
         if let Some(px) = &r.source {
-            write(&filled_path, src.width, src.height, px)?;
-            for k in &mut rig.skins {
-                for att in k.attachments.values_mut() {
-                    match att {
-                        Attachment::Mesh(m) if m.image == image => m.image = filled_path.clone(),
-                        Attachment::Region(g) if g.image == image => g.image = filled_path.clone(),
-                        _ => {}
+            if in_place {
+                // The shared file itself: not a new picture, nothing to repoint.
+                let abs = root.join(&image);
+                std::fs::write(&abs, encode_png(src.width, src.height, px)?)
+                    .map_err(|e| io_err(format!("{}: {e}", abs.display())))?;
+            } else {
+                write(&filled_path, src.width, src.height, px)?;
+            }
+            if slot_only {
+                orbit_project::picture_users::repoint_slot(rig, &a.slot, &image, &filled_path);
+            } else if !in_place {
+                for k in &mut rig.skins {
+                    for att in k.attachments.values_mut() {
+                        match att {
+                            Attachment::Mesh(m) if m.image == image => m.image = filled_path.clone(),
+                            Attachment::Region(g) if g.image == image => g.image = filled_path.clone(),
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -1049,7 +1099,7 @@ pub struct DuplicateArgs {
     /// existing file is never overwritten.
     pub name: String,
     /// Also copy the pictures into `images/<name>/` so the copy owns them
-    /// (default false: both rigs share the same pictures).
+    /// (default true; false: both rigs share the same pictures, and painting one changes the other).
     pub copy_pictures: Option<bool>,
 }
 
@@ -1057,7 +1107,7 @@ pub fn rig_duplicate(cx: &mut ToolCx<'_>, a: DuplicateArgs) -> Result<String, To
     let root = assets_root(cx);
     let file = resolve(cx, &a.rig)?;
     let rig = load(&file, &root)?;
-    let done = rigops::duplicate_files(&root, &rig, &a.name, a.copy_pictures.unwrap_or(false)).map_err(op_err)?;
+    let done = rigops::duplicate_files(&root, &rig, &a.name, a.copy_pictures.unwrap_or(true)).map_err(op_err)?;
     let id = orbit_project::ops::add_asset(cx.project, AssetKind::Rig, &done.rig)?;
     for (_, new) in &done.pictures {
         orbit_project::ops::add_asset(cx.project, AssetKind::Image, new)?;

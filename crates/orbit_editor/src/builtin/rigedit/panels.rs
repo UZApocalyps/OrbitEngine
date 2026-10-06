@@ -587,6 +587,7 @@ fn slot_section(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             detach = true;
         }
     });
+    super::shared::badge(ui, ctx, st, &sid, current_image.as_deref());
     let root = st.project_root(ctx);
     if let Some(path) = picked {
         let size = image_size(st, &root, &path);

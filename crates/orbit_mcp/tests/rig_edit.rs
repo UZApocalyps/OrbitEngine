@@ -501,6 +501,35 @@ fn rig_cut_splits_a_picture_into_a_new_part() {
     assert!(!f.dir.join("assets/images/hero_cut_2.png").exists());
 }
 
+#[test]
+fn rig_cut_never_fills_a_picture_another_rig_shows() {
+    let mut f = Fixture::new("cutshared");
+    hero(&mut f);
+    // `copy_pictures: false`: both rigs show the same file.
+    f.ok("rig_duplicate", json!({"rig": "hero", "name": "twin", "copy_pictures": false}));
+    let original = fs::read(f.dir.join("assets/images/hero.png")).unwrap();
+    let poly = json!([[4, 0], [16, 0], [16, 20], [4, 20]]);
+    // Refused unless the caller picks the copy or allow_shared.
+    let e = f.err("rig_cut", json!({"rig": "hero", "slot": "hero", "polygon": poly, "copy_if_shared": false}));
+    assert_eq!(e.kind, ErrorKind::Refused);
+    assert!(e.message.contains("twin.rig.ron"), "{}", e.message);
+    // Default: a copy named after the rig and the slot, only this slot moves.
+    let c = f.ok("rig_cut", json!({"rig": "hero", "slot": "hero", "polygon": poly, "name": "fringe", "bone": "head"}));
+    assert_eq!(c["source_image"], "assets/images/hero_hero.png");
+    assert_eq!(fs::read(f.dir.join("assets/images/hero.png")).unwrap(), original);
+    let twin = f.rig("twin");
+    assert!(twin.skins[0].attachments.values().all(|a| a.image() == "assets/images/hero.png"));
+    // allow_shared: the shared file itself is filled (twin and a third rig
+    // show it).
+    f.ok("rig_duplicate", json!({"rig": "twin", "name": "third", "copy_pictures": false}));
+    let c = f.ok(
+        "rig_cut",
+        json!({"rig": "twin", "slot": "hero", "polygon": poly, "name": "bangs", "bone": "head", "copy_if_shared": false, "allow_shared": true}),
+    );
+    assert_eq!(c["source_image"], "assets/images/hero.png");
+    assert_ne!(fs::read(f.dir.join("assets/images/hero.png")).unwrap(), original);
+}
+
 fn same(a: &Path, b: &Path) -> bool {
     fs::canonicalize(a).ok() == fs::canonicalize(b).ok()
 }

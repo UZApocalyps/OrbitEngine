@@ -31,6 +31,7 @@ use super::geom::Tool;
 use super::model::{self, DEFAULT_SKIN, OpError};
 use super::paint::{self, Brush, Mode};
 use super::posemap::PicMap;
+use super::shared::Decision;
 use super::workflow::{self, Picture};
 use super::{State, center_of, pointer_rig, to_pos};
 use crate::builtin::ui_util::{accent, faint, weak};
@@ -92,7 +93,7 @@ pub struct PixelState {
     posed: Option<(PoseKey, Option<Posed>)>,
     clone_source: Option<[f32; 2]>,
     /// Pictures made by the editor (cuts, layers, copies): edited in place.
-    owned: HashSet<String>,
+    pub(super) owned: HashSet<String>,
     /// Pictures that could not be read (not retried every frame).
     failed: HashSet<String>,
     /// Pictures open in another application, and their file's last state.
@@ -103,6 +104,8 @@ pub struct PixelState {
     /// Edited pictures dropped with the previous rig (the host reloads them).
     pub forget: Vec<String>,
     pub new_layer: Option<NewLayer>,
+    /// Shared pictures: users index, remembered choices, the dialog.
+    pub shared: super::shared::SharedState,
 }
 
 impl Default for PixelState {
@@ -131,6 +134,7 @@ impl Default for PixelState {
             sent: HashMap::new(),
             forget: Vec::new(),
             new_layer: None,
+            shared: Default::default(),
         }
     }
 }
@@ -341,7 +345,7 @@ pub fn write_png(abs: &Path, w: u32, h: u32, rgba: &[u8]) -> Result<(), String> 
 }
 
 /// File-name friendly version of `name`.
-fn sanitize(name: &str) -> String {
+pub(super) fn sanitize(name: &str) -> String {
     let s: String = name.chars().map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_') { c } else { '_' }).collect();
     let s = s.trim_matches('_').to_owned();
     if s.is_empty() { "part".to_owned() } else { s }
@@ -363,7 +367,7 @@ fn stem_of(path: &str) -> String {
 }
 
 /// Declares a picture the editor wrote as an image asset of the project.
-fn register(ctx: &mut EditorContext<'_>, rel: &str) {
+pub(super) fn register(ctx: &mut EditorContext<'_>, rel: &str) {
     if ctx.has_project() && !Path::new(rel).is_absolute() {
         ctx.ops_or_toast(|p| orbit_project::ops::add_asset(p, AssetKind::Image, rel));
     }
@@ -385,7 +389,15 @@ pub(super) fn repoint(rig: &mut Rig, from: &str, to: &str) {
 /// The picture to change for an edit of `path`: itself when the editor made
 /// it (or "paint over the original" is on), else a copy written now that
 /// the rig shows from now on (part of the open undo step).
-fn editable(ctx: &mut EditorContext<'_>, st: &mut State, path: &str) -> Option<String> {
+pub(super) fn editable(ctx: &mut EditorContext<'_>, st: &mut State, path: &str, slot: &SlotId) -> Option<String> {
+    // A picture other things show: a copy for this slot, the shared file or
+    // a question first (copy-on-write, see `shared`).
+    match super::shared::decide(ctx, st, path, slot) {
+        Decision::Ask => return None,
+        Decision::Copy => return super::shared::make_copy(ctx, st, path, slot),
+        Decision::InPlace => return Some(path.to_owned()),
+        Decision::Edit => {}
+    }
     if st.px.overwrite || st.px.owned.contains(path) {
         return Some(path.to_owned());
     }
@@ -504,19 +516,35 @@ pub fn cut(ctx: &mut EditorContext<'_>, st: &mut State) {
     }
     let root = st.project_root(ctx);
     let Some(doc) = st.doc.as_ref() else { return };
-    let bone = st.selected.as_ref().filter(|b| model::bone(doc.rig(), b).is_some()).map(|b| b.as_str().to_owned());
-    let skin = doc.rig().skins.iter().any(|k| k.name == st.skin).then(|| st.skin.clone());
     let slot_name = model::slot(doc.rig(), &sid).map(|s| s.name.clone()).unwrap_or_default();
     let new_path = free_path(&root, &t.path, &format!("{}_cut", sanitize(&slot_name)));
-    let Some(c) = doc.canvas(&t.path) else { return };
-    let src = Picture { path: t.path.clone(), width: c.w, height: c.h, rgba: c.rgba.clone() };
     let (below, fill) = (st.px.below, st.px.fill_hole);
     // Filling the hole edits the source picture: the first edit of a picture
     // the editor did not make goes to a copy (see `editable`), written by
-    // the job too.
-    let copy = (fill && !(st.px.overwrite || st.px.owned.contains(&t.path)))
-        .then(|| free_path(&root, &t.path, &format!("{}_edit", stem_of(&t.path))))
-        .filter(|copy| *copy != new_path);
+    // the job too. On a picture other things show, the copy is for this slot
+    // only (see `shared`); when the user chose to edit the shared file it is
+    // filled in place.
+    let mut slot_only = None;
+    let copy = if fill {
+        match super::shared::decide(ctx, st, &t.path, &t.slot) {
+            Decision::Ask => return,
+            Decision::Copy => {
+                slot_only = Some(t.slot.clone());
+                Some(super::shared::copy_path(ctx, st, &t.path, &slot_name))
+            }
+            Decision::InPlace => None,
+            Decision::Edit => (!(st.px.overwrite || st.px.owned.contains(&t.path)))
+                .then(|| free_path(&root, &t.path, &format!("{}_edit", stem_of(&t.path)))),
+        }
+        .filter(|copy| *copy != new_path)
+    } else {
+        None
+    };
+    let Some(doc) = st.doc.as_ref() else { return };
+    let bone = st.selected.as_ref().filter(|b| model::bone(doc.rig(), b).is_some()).map(|b| b.as_str().to_owned());
+    let skin = doc.rig().skins.iter().any(|k| k.name == st.skin).then(|| st.skin.clone());
+    let Some(c) = doc.canvas(&t.path) else { return };
+    let src = Picture { path: t.path.clone(), width: c.w, height: c.h, rgba: c.rgba.clone() };
     let mut rig = doc.rig().clone();
     let sid = sid.as_str().to_owned();
     let mut files = vec![root.join(&new_path)];
@@ -541,7 +569,7 @@ pub fn cut(ctx: &mut EditorContext<'_>, st: &mut State) {
             write_png(&root.join(copy), src.width, src.height, &src.rgba)
                 .map_err(|e| TaskError::Failed(format!("{copy}: {e}")))?;
         }
-        Ok(super::jobs::Out::Cut(Box::new(CutOut { rig, src, copy, new_path, r })))
+        Ok(super::jobs::Out::Cut(Box::new(CutOut { rig, src, copy, slot_only, new_path, r })))
     });
 }
 
@@ -553,6 +581,8 @@ pub struct CutOut {
     src: Picture,
     /// The copy of the source written for the filled hole, if any.
     copy: Option<String>,
+    /// The copy is for this slot only (the picture is shared).
+    slot_only: Option<SlotId>,
     new_path: String,
     r: rigops::CutResult,
 }
@@ -560,7 +590,7 @@ pub struct CutOut {
 /// Applies a finished cut as one undo step (the copy of the source, the new
 /// slot, its picture, the filled hole).
 pub fn apply_cut(ctx: &mut EditorContext<'_>, st: &mut State, out: CutOut) {
-    let CutOut { mut rig, src, copy, new_path, r } = out;
+    let CutOut { mut rig, src, copy, slot_only, new_path, r } = out;
     let src_path = match &copy {
         Some(copy) => {
             register(ctx, copy);
@@ -568,7 +598,12 @@ pub fn apply_cut(ctx: &mut EditorContext<'_>, st: &mut State, out: CutOut) {
             if let Some(s) = st.image_sizes.get(&src.path).copied() {
                 st.image_sizes.insert(copy.clone(), s);
             }
-            repoint(&mut rig, &src.path, copy);
+            match &slot_only {
+                Some(slot) => {
+                    orbit_project::picture_users::repoint_slot(&mut rig, slot.as_str(), &src.path, copy);
+                }
+                None => repoint(&mut rig, &src.path, copy),
+            }
             ctx.info(ctx.tf("rig.paint.copied", &[("path", copy)]));
             copy.clone()
         }
@@ -690,7 +725,17 @@ fn open_default(abs: &Path) -> std::io::Result<std::process::Child> {
 /// "Edit in external app": writes pending pixels, opens the file with the
 /// configured program (else the system's default) and follows the file.
 pub fn open_external(ctx: &mut EditorContext<'_>, st: &mut State) {
-    let Some(t) = target(ctx, st) else { return };
+    let Some(mut t) = target(ctx, st) else { return };
+    // A shared picture is edited as a copy for this slot, unless the user
+    // chose to edit the shared file.
+    match super::shared::decide(ctx, st, &t.path, &t.slot) {
+        Decision::Ask => return,
+        Decision::Copy => match super::shared::make_unique(ctx, st, &t.path, &t.slot) {
+            Some(copy) => t.path = copy,
+            None => return,
+        },
+        Decision::InPlace | Decision::Edit => {}
+    }
     if !save_canvases(ctx, st) {
         return;
     }
@@ -795,7 +840,7 @@ fn begin_stroke(ctx: &mut EditorContext<'_>, st: &mut State, t: &Target, tool: P
     finish_stroke(st);
     let Some(doc) = st.doc.as_mut() else { return };
     doc.begin_gesture();
-    let Some(path) = editable(ctx, st, &t.path) else {
+    let Some(path) = editable(ctx, st, &t.path, &t.slot) else {
         if let Some(d) = st.doc.as_mut() {
             d.end_gesture();
         }
@@ -841,7 +886,7 @@ fn fill_at(ctx: &mut EditorContext<'_>, st: &mut State, t: &Target, p: [f32; 2])
     }
     let Some(doc) = st.doc.as_mut() else { return };
     doc.begin_gesture();
-    if let Some(path) = editable(ctx, st, &t.path)
+    if let Some(path) = editable(ctx, st, &t.path, &t.slot)
         && let Some(doc) = st.doc.as_mut()
         && let Some(c) = doc.canvas(&path)
     {

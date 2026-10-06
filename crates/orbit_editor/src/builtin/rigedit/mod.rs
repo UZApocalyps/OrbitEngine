@@ -31,6 +31,7 @@ mod workflow;
 mod layered_import;
 mod jobs;
 mod rigtools;
+mod shared;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -1171,6 +1172,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
     jobs::overlay(ui, st, rect);
     paint_drop_hint(ui, ctx, rect, true);
     pixeltools::new_layer_dialog(ui, ctx, st);
+    shared::dialog(ui, ctx, st);
     rigtools::dialogs(ui, ctx, st);
     confirm_dialog(ui, ctx, st);
 }
