@@ -183,6 +183,7 @@ fn unsaved_interface_edits_count_as_modified_and_ask_before_switching_project() 
     core.dialog = None;
     // Discarding goes through and forgets the flag.
     core.resolve_unsaved(Pending::Open(project), UnsavedChoice::Discard);
+    core.wait_for_background_work();
     assert!(!core.registry.ui_link.dirty.get());
     assert!(!core.is_modified());
 }

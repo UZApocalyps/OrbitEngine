@@ -949,6 +949,25 @@ impl EditorCore {
             .requests
             .push(EditorRequest::RunAction(id.to_owned()));
         self.pump(ctx);
+        // "Now": a save or an open it started has landed when this returns
+        // (MCP and headless callers).
+        self.wait_for_background_work();
+    }
+
+    /// Blocks until the background save / project open (if any) is done and
+    /// applied. For headless callers and shutdown, never the frame loop.
+    pub fn wait_for_background_work(&mut self) {
+        self.poll_save(true);
+        if let Some((path, job)) = self.opening.take() {
+            match job.wait() {
+                Ok(loaded) => self.install_project(loaded),
+                Err(TaskError::Failed(e)) => {
+                    self.state.push_toast(Level::Error, e);
+                    self.forget(&path);
+                }
+                Err(_) => {}
+            }
+        }
     }
 
     pub fn set_theme(&mut self, mode: ThemeMode, ctx: &Context) {

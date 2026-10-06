@@ -486,6 +486,7 @@ fn opening_another_project_with_changes_asks_first() {
     );
     assert_eq!(core.state.project.as_ref().unwrap().name, "Demo");
     core.resolve_unsaved(Pending::Open(b.clone()), UnsavedChoice::Discard);
+    core.wait_for_background_work();
     assert_eq!(core.state.project.as_ref().unwrap().name, "Autre");
     // The discarded project's snapshot is gone.
     assert!(!a.join(".orbit/recovery/story.recovery.ron").exists());
@@ -666,6 +667,7 @@ fn keyboard_shortcuts_drive_the_registry_actions() {
     // Ctrl+S saves.
     assert!(core.is_modified());
     press(&mut core, &ctx, Key::S, ctrl(false), 15.0);
+    core.wait_for_background_work();
     assert!(!core.is_modified(), "Ctrl+S");
 
     // Ctrl+K and Ctrl+Shift+P toggle the palette.

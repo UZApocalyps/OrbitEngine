@@ -249,6 +249,9 @@ fn from_issue(i: &RigIssue) -> Diag {
         WebTooManyBones(n) => {
             d(s, "rig.diag.web_bones", vec![("count", n.to_string()), ("max", WEB_MAX_BONES.to_string())])
         }
+        OriginFarFromDrawing { dx, dy } => {
+            d(s, "rig.diag.origin_far", vec![("dx", format!("{dx:.0}")), ("dy", format!("{dy:.0}"))])
+        }
         WebTooManyVertices(n) => d(
             s,
             "rig.diag.web_vertices",

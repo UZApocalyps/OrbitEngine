@@ -36,6 +36,8 @@ pub enum Out {
     LayersParsed { doc: Box<orbit_layers::LayeredDoc>, path: PathBuf, new_rig: bool },
     /// Layered import done: pictures written, rig built.
     Layers(Box<LayersOut>),
+    /// "Duplicate rig": files copied.
+    Duplicated(Box<orbit_project::rigops::Duplicated>),
 }
 
 pub struct RigJob {
@@ -127,6 +129,7 @@ pub fn poll(ctx: &mut EditorContext<'_>, st: &mut State) {
         Out::NewDoc { doc, root, slot, path, size } => st.finish_new_from_image(ctx, *doc, root, slot, path, size),
         Out::LayersParsed { doc, path, new_rig } => st.import_parsed_layers(ctx, *doc, &path, new_rig),
         Out::Layers(out) => st.finish_import_layers(ctx, *out),
+        Out::Duplicated(done) => st.finish_duplicate(ctx, *done),
     }
 }
 

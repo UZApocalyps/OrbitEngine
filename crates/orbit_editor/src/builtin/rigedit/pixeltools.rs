@@ -1536,8 +1536,10 @@ mod tests {
         let spawn = spawn.elapsed();
         assert!(st.job.is_some(), "the cut runs as a job");
         // While it runs, other heavy rig actions wait.
+        let id = st.job.as_ref().unwrap().handle.id();
         retrace(&mut ctx, &mut st);
-        assert!(ctx.state().toasts.iter().any(|t| t.message.contains(&st.job.as_ref().unwrap().title)));
+        assert_eq!(st.job.as_ref().unwrap().handle.id(), id, "the retrace waits");
+        assert!(ctx.state().toasts.iter().any(|t| t.level == orbit_editor_api::Level::Warn));
         let (wait, apply) = run_frames(&mut ctx, &mut st);
         eprintln!("rig cut 1024²: UI thread before {old:?}; now {spawn:?} to start, frames ≤ {wait:?} while it runs, {apply:?} to apply");
         // The UI thread never waits for the cut: a frame while it runs is

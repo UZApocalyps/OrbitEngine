@@ -1037,3 +1037,93 @@ pub fn rig_cut(cx: &mut ToolCx<'_>, a: CutArgs) -> Result<String, ToolError> {
         }),
     )
 }
+
+// ------------------------------------------- duplicate, copy clips, recenter
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DuplicateArgs {
+    /// The rig to copy (see `rig_list`).
+    pub rig: String,
+    /// Name of the copy: the file is `assets/rigs/<name>.rig.ron`. An
+    /// existing file is never overwritten.
+    pub name: String,
+    /// Also copy the pictures into `images/<name>/` so the copy owns them
+    /// (default false: both rigs share the same pictures).
+    pub copy_pictures: Option<bool>,
+}
+
+pub fn rig_duplicate(cx: &mut ToolCx<'_>, a: DuplicateArgs) -> Result<String, ToolError> {
+    let root = assets_root(cx);
+    let file = resolve(cx, &a.rig)?;
+    let rig = load(&file, &root)?;
+    let done = rigops::duplicate_files(&root, &rig, &a.name, a.copy_pictures.unwrap_or(false)).map_err(op_err)?;
+    let id = orbit_project::ops::add_asset(cx.project, AssetKind::Rig, &done.rig)?;
+    for (_, new) in &done.pictures {
+        orbit_project::ops::add_asset(cx.project, AssetKind::Image, new)?;
+    }
+    out(json!({
+        "rig": done.rig, "id": id.to_string(), "copied_from": file.rel,
+        "pictures": done.pictures.iter().map(|(o, n)| json!({"from": o, "to": n})).collect::<Vec<_>>(),
+        "summary": summary(&rig),
+    }))
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CopyClipsArgs {
+    /// The rig receiving the clips (see `rig_list`).
+    pub rig: String,
+    /// The rig the clips come from.
+    pub source: String,
+    /// Clips to copy (default: all of the source's). A name already used in
+    /// `rig` gets a number (`walk2`): nothing is overwritten.
+    pub clips: Option<Vec<String>>,
+    /// Match bones and slots by their position in the hierarchy (same child
+    /// index from the root) instead of by name (default false).
+    pub by_hierarchy: Option<bool>,
+    /// Rescale translation keys by the ratio of the matched bones' lengths
+    /// (default false).
+    pub rescale: Option<bool>,
+}
+
+pub fn rig_copy_clips(cx: &mut ToolCx<'_>, a: CopyClipsArgs) -> Result<String, ToolError> {
+    let root = assets_root(cx);
+    let src_file = resolve(cx, &a.source)?;
+    let src = load(&src_file, &root)?;
+    let spec = rigops::CopyClipsSpec {
+        clips: a.clips.clone().unwrap_or_default(),
+        by_hierarchy: a.by_hierarchy.unwrap_or(false),
+        rescale: a.rescale.unwrap_or(false),
+    };
+    let (file, rig, r, stored) = edit(cx, &a.rig, "rig_copy_clips", |rig| rigops::copy_clips(rig, &src, &spec).map_err(op_err))?;
+    respond(
+        &file,
+        &rig,
+        &stored,
+        json!({
+            "copied": r.copied.iter().map(|(from, to)| json!({"from": from, "to": to})).collect::<Vec<_>>(),
+            "tracks_copied": r.tracks_copied, "tracks_dropped": r.tracks_dropped,
+            "unmatched_bones": r.unmatched_bones, "unmatched_slots": r.unmatched_slots,
+            "unmatched_attachments": r.unmatched_attachments, "dropped_deform": r.dropped_deform,
+        }),
+    )
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecenterArgs {
+    /// The rig (see `rig_list`).
+    pub rig: String,
+    /// Skin the drawing is measured on (default: the default skin).
+    pub skin: Option<String>,
+    /// Measure the pictures of every skin together (default false).
+    pub all_skins: Option<bool>,
+}
+
+pub fn rig_recenter(cx: &mut ToolCx<'_>, a: RecenterArgs) -> Result<String, ToolError> {
+    let (file, rig, r, stored) = edit(cx, &a.rig, "rig_recenter", |rig| {
+        rigops::recenter(rig, a.skin.as_deref(), a.all_skins.unwrap_or(false)).map_err(op_err)
+    })?;
+    respond(&file, &rig, &stored, json!({"bounds_before": r.bounds, "shift": r.shift}))
+}

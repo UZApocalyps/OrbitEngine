@@ -18,7 +18,7 @@ const RIG: &str = r#"(
     rig_version: 1,
     bones: [(id: "root", name: "root")],
     slots: [(id: "s", name: "body", bone: "root", attachment: Some("body"))],
-    skins: [(name: "default", attachments: {"body": Region((image: "assets/body.png", size: (10.0, 20.0)))})],
+    skins: [(name: "default", attachments: {"body": Region((image: "assets/body.png", size: (10.0, 20.0), xform: (x: 0.0, y: -10.0, rotation: 0.0, sx: 1.0, sy: 1.0)))})],
     clips: {"idle": (duration: 1.0, looping: Forever, tracks: [])},
 )"#;
 

@@ -316,7 +316,7 @@ fn validation_reports_structure_errors() {
     assert!(k.contains(&RigIssueKind::TriangleOutOfRange { attachment: "strip".into(), triangle: 1 }));
     assert!(k.contains(&RigIssueKind::MeshLengths { attachment: "strip".into() }));
     assert!(k.contains(&RigIssueKind::IkNotAChain(0)));
-    assert!(arm_rig().validate().is_empty());
+    assert!(arm_rig().validate().iter().all(|i| matches!(i.kind, RigIssueKind::OriginFarFromDrawing { .. })));
 }
 
 #[test]
@@ -337,13 +337,13 @@ fn weights_are_normalized_with_a_warning() {
     assert!(issues.iter().any(|i| matches!(i.kind, RigIssueKind::WeightsNotNormalized { vertex: 1, .. })));
     assert!(issues.iter().any(|i| matches!(i.kind, RigIssueKind::TooManyInfluences { vertex: 2, .. })));
     let prepared = PreparedRig::new(r.clone()).unwrap();
-    assert_eq!(prepared.warnings.len(), 2);
+    assert_eq!(prepared.warnings.iter().filter(|w| !matches!(w.kind, RigIssueKind::OriginFarFromDrawing { .. })).count(), 2);
     // Prepared weights are normalized: setup pose still skins to identity.
     let pose = prepared.setup_pose();
     let list = prepared.draw_list(&pose, &prepared.world(&pose), None, &CpuSkinner);
     assert!(close(list.positions[1], [110.0, 100.0]));
     assert_eq!(r.normalize_weights(), 2);
-    assert!(r.validate().is_empty());
+    assert!(r.validate().iter().all(|i| matches!(i.kind, RigIssueKind::OriginFarFromDrawing { .. })));
     let Attachment::Mesh(m) = &r.skins[0].attachments[&AttachmentId::new("strip")] else { panic!() };
     assert_eq!(m.weights[2].len(), 4);
     let sum: f32 = m.weights[2].iter().map(|w| w.1).sum();
