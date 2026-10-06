@@ -22,6 +22,7 @@
     "action.toggle_theme": "Basculer le thème clair / sombre",
     "action.experimental_3d": "Fonctionnalités 3D expérimentales",
     "action.reset_layout": "Réinitialiser la disposition",
+    "action.show_hitches": "Afficher les saccades",
     "action.language": "Langue : {language}",
     "action.show_panel": "Afficher : {panel}",
 

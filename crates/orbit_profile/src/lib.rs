@@ -38,6 +38,9 @@ pub struct ScopeRecord {
     /// Start, in milliseconds since the frame started.
     pub start_ms: f64,
     pub duration_ms: f64,
+    /// Recorded on the thread that drives the frames (the one calling
+    /// [`begin_frame`]); `false` for worker threads.
+    pub frame_thread: bool,
 }
 
 /// One finished frame.
@@ -129,6 +132,101 @@ pub fn aggregate_gpu(frames: &[FrameRecord]) -> Vec<(&'static str, f64)> {
         .collect()
 }
 
+/// Spans whose name starts with this are waits on the GPU or the driver
+/// (surface acquire, queue submit, buffer mapping, present): a hitch lists
+/// them separately.
+pub const WAIT_PREFIX: &str = "gpu wait:";
+
+/// Hitches kept (see [`hitches`]).
+pub const MAX_HITCHES: usize = 20;
+
+/// Default hitch threshold, in milliseconds.
+pub const DEFAULT_HITCH_MS: f64 = 100.0;
+
+/// A frame that took longer than the hitch threshold, with what it spent
+/// its time on (spans of the frame thread only).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hitch {
+    /// Frame number (as in [`FrameRecord::index`]).
+    pub frame: u64,
+    /// Wall time of the frame.
+    pub cpu_ms: f64,
+    /// Unix time of the end of the frame, milliseconds.
+    pub at_unix_ms: u64,
+    /// Most expensive spans: (name, smallest depth, all calls added up),
+    /// the longest first.
+    pub top: Vec<(&'static str, u16, f64)>,
+    /// Spans named [`WAIT_PREFIX`]`...`, added up per name.
+    pub waits: Vec<(&'static str, f64)>,
+}
+
+impl Hitch {
+    /// Builds the hitch record of `frame` (whatever its duration).
+    pub fn of(frame: &FrameRecord, at_unix_ms: u64) -> Self {
+        let mut top: Vec<(&'static str, u16, f64)> = Vec::new();
+        let mut waits: Vec<(&'static str, f64)> = Vec::new();
+        for s in frame.scopes.iter().filter(|s| s.frame_thread) {
+            if s.name.starts_with(WAIT_PREFIX) {
+                match waits.iter_mut().find(|(n, _)| *n == s.name) {
+                    Some(w) => w.1 += s.duration_ms,
+                    None => waits.push((s.name, s.duration_ms)),
+                }
+            }
+            match top.iter_mut().find(|(n, ..)| *n == s.name) {
+                Some(t) => {
+                    t.1 = t.1.min(s.depth);
+                    t.2 += s.duration_ms;
+                }
+                None => top.push((s.name, s.depth, s.duration_ms)),
+            }
+        }
+        top.sort_by(|a, b| b.2.total_cmp(&a.2));
+        top.truncate(10);
+        waits.sort_by(|a, b| b.1.total_cmp(&a.1));
+        Self {
+            frame: frame.index,
+            cpu_ms: frame.cpu_ms,
+            at_unix_ms,
+            top,
+            waits,
+        }
+    }
+
+    /// Time of the frame not covered by any outermost span (work that has
+    /// no span yet).
+    pub fn unaccounted_ms(&self) -> f64 {
+        let covered: f64 = self.top.iter().filter(|t| t.1 == 0).map(|t| t.2).sum();
+        (self.cpu_ms - covered).max(0.0)
+    }
+
+    /// One line: `hitch: frame 12 took 312.4 ms; spans: editor ui 290.1, ...`
+    /// (nested spans are prefixed with one `>` per level).
+    pub fn summary(&self) -> String {
+        let spans: Vec<String> = self
+            .top
+            .iter()
+            .take(8)
+            .map(|(n, d, ms)| format!("{}{n} {ms:.1}", ">".repeat((*d).min(4) as usize)))
+            .collect();
+        let mut line = format!(
+            "hitch: frame {} took {:.1} ms; spans: {}",
+            self.frame,
+            self.cpu_ms,
+            if spans.is_empty() { "none".to_owned() } else { spans.join(", ") }
+        );
+        if !self.waits.is_empty() {
+            let waits: Vec<String> = self
+                .waits
+                .iter()
+                .map(|(n, ms)| format!("{} {ms:.1}", n.trim_start_matches(WAIT_PREFIX).trim()))
+                .collect();
+            line.push_str(&format!("; gpu waits: {}", waits.join(", ")));
+        }
+        line.push_str(&format!("; unaccounted {:.1} ms", self.unaccounted_ms()));
+        line
+    }
+}
+
 /// Opens a span named `$name` (a `&'static str`) until the end of the
 /// enclosing block. Free when the profiler is not compiled in.
 #[macro_export]
@@ -149,15 +247,22 @@ mod imp {
     use std::sync::{Mutex, MutexGuard};
     use std::time::Instant;
 
-    use super::{FrameRecord, HISTORY, MAX_SCOPES_PER_FRAME, ScopeRecord};
+    use std::sync::atomic::AtomicU64;
+
+    use super::{FrameRecord, HISTORY, Hitch, MAX_HITCHES, MAX_SCOPES_PER_FRAME, ScopeRecord};
 
     static ENABLED: AtomicBool = AtomicBool::new(true);
+    /// Hitch threshold, `f64` bits (100.0).
+    static HITCH_MS: AtomicU64 = AtomicU64::new(0x4059_0000_0000_0000);
 
     struct State {
         frame_start: Option<Instant>,
         next_index: u64,
         current: Vec<ScopeRecord>,
         frames: VecDeque<FrameRecord>,
+        hitches: VecDeque<Hitch>,
+        /// Hitches not yet returned by `take_new_hitches`.
+        new_hitches: usize,
     }
 
     static STATE: Mutex<State> = Mutex::new(State {
@@ -165,10 +270,13 @@ mod imp {
         next_index: 0,
         current: Vec::new(),
         frames: VecDeque::new(),
+        hitches: VecDeque::new(),
+        new_hitches: 0,
     });
 
     thread_local! {
         static DEPTH: Cell<u16> = const { Cell::new(0) };
+        static FRAME_THREAD: Cell<bool> = const { Cell::new(false) };
     }
 
     fn state() -> MutexGuard<'static, State> {
@@ -234,17 +342,39 @@ mod imp {
                 depth: self.depth,
                 start_ms,
                 duration_ms: (end - start).as_secs_f64() * 1000.0,
+                frame_thread: FRAME_THREAD.with(Cell::get),
             });
         }
     }
 
     pub fn begin_frame() {
+        FRAME_THREAD.with(|f| f.set(true));
         if is_enabled() {
             state().frame_start = Some(Instant::now());
         }
     }
 
+    pub fn set_hitch_threshold_ms(ms: f64) {
+        HITCH_MS.store(ms.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn hitch_threshold_ms() -> f64 {
+        f64::from_bits(HITCH_MS.load(Ordering::Relaxed))
+    }
+
+    pub fn hitches() -> Vec<Hitch> {
+        state().hitches.iter().cloned().collect()
+    }
+
+    pub fn take_new_hitches() -> Vec<Hitch> {
+        let mut s = state();
+        let n = std::mem::take(&mut s.new_hitches).min(s.hitches.len());
+        let skip = s.hitches.len() - n;
+        s.hitches.iter().skip(skip).cloned().collect()
+    }
+
     pub fn finish_frame() {
+        FRAME_THREAD.with(|f| f.set(true));
         if !is_enabled() {
             return;
         }
@@ -260,12 +390,23 @@ mod imp {
         if s.frames.len() >= HISTORY {
             s.frames.pop_front();
         }
-        s.frames.push_back(FrameRecord {
+        let frame = FrameRecord {
             index,
             cpu_ms,
             scopes,
             gpu: Vec::new(),
-        });
+        };
+        if cpu_ms > hitch_threshold_ms() {
+            let at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            if s.hitches.len() >= MAX_HITCHES {
+                s.hitches.pop_front();
+            }
+            s.hitches.push_back(Hitch::of(&frame, at));
+            s.new_hitches = (s.new_hitches + 1).min(MAX_HITCHES);
+        }
+        s.frames.push_back(frame);
         s.frame_start = Some(now);
     }
 
@@ -312,6 +453,8 @@ mod imp {
         s.current.clear();
         s.frame_start = None;
         s.next_index = 0;
+        s.hitches.clear();
+        s.new_hitches = 0;
     }
 }
 
@@ -320,7 +463,25 @@ mod imp {
     any(feature = "enabled", debug_assertions)
 )))]
 mod imp {
-    use super::FrameRecord;
+    use super::{FrameRecord, Hitch};
+
+    #[inline(always)]
+    pub fn set_hitch_threshold_ms(_ms: f64) {}
+
+    #[inline(always)]
+    pub fn hitch_threshold_ms() -> f64 {
+        super::DEFAULT_HITCH_MS
+    }
+
+    #[inline(always)]
+    pub fn hitches() -> Vec<Hitch> {
+        Vec::new()
+    }
+
+    #[inline(always)]
+    pub fn take_new_hitches() -> Vec<Hitch> {
+        Vec::new()
+    }
 
     #[inline(always)]
     pub fn set_enabled(_on: bool) {}
@@ -426,6 +587,26 @@ pub fn gpu_passes(last: usize) -> Vec<(&'static str, f64)> {
     aggregate_gpu(&frames(last))
 }
 
+/// Frames longer than `ms` are recorded as hitches (100 ms by default).
+pub fn set_hitch_threshold_ms(ms: f64) {
+    imp::set_hitch_threshold_ms(ms);
+}
+
+/// The hitch threshold, in milliseconds.
+pub fn hitch_threshold_ms() -> f64 {
+    imp::hitch_threshold_ms()
+}
+
+/// The last [`MAX_HITCHES`] hitches, oldest first.
+pub fn hitches() -> Vec<Hitch> {
+    imp::hitches()
+}
+
+/// Hitches recorded since the previous call (to log each one once).
+pub fn take_new_hitches() -> Vec<Hitch> {
+    imp::take_new_hitches()
+}
+
 /// Forgets the history.
 pub fn clear() {
     imp::clear();
@@ -446,6 +627,7 @@ mod tests {
                     depth: 0,
                     start_ms: 0.0,
                     duration_ms,
+                    frame_thread: true,
                 })
                 .collect(),
             gpu: gpu.to_vec(),
@@ -518,6 +700,27 @@ mod tests {
         finish_frame();
         set_enabled(true);
         assert!(frames(1)[0].scopes.iter().all(|s| s.name != "paused"));
+        // A slow frame is a hitch, with its spans and GPU waits.
+        set_hitch_threshold_ms(5.0);
+        let _ = take_new_hitches();
+        begin_frame();
+        {
+            scope!("slow");
+            {
+                scope!("gpu wait: surface acquire");
+                std::thread::sleep(std::time::Duration::from_millis(8));
+            }
+        }
+        finish_frame();
+        set_hitch_threshold_ms(DEFAULT_HITCH_MS);
+        let new = take_new_hitches();
+        assert_eq!(new.len(), 1);
+        assert!(take_new_hitches().is_empty());
+        let h = &new[0];
+        assert_eq!(h.top[0].0, "slow");
+        assert_eq!(h.waits[0].0, "gpu wait: surface acquire");
+        assert!(h.summary().contains("surface acquire"));
+        assert_eq!(hitches().last(), Some(h));
         for _ in 0..HISTORY + 5 {
             finish_frame();
         }

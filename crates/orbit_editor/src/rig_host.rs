@@ -62,6 +62,9 @@ pub struct RigLink {
     /// Images the last render could not load (project paths).
     pub missing: Vec<String>,
     pub renders: u64,
+    /// Bumped when pictures finished loading in the background: the picture
+    /// is out of date, the plugin asks again.
+    pub images_loaded: u64,
 }
 
 pub type SharedLink = Rc<RefCell<RigLink>>;
@@ -74,6 +77,12 @@ pub struct RigHost {
     /// Textures made for edited pixels (not shared by name: released when
     /// replaced).
     edited: std::collections::HashSet<TextureId>,
+    loader: ImageLoader,
+    /// Pictures being read again after their edits were dropped.
+    reload: std::collections::HashSet<(PathBuf, String)>,
+    /// Last look for pictures that could not be loaded (their files may
+    /// appear later): at most once a second, not a `stat` per frame.
+    last_retry: Option<std::time::Instant>,
 }
 
 impl RigHost {
@@ -118,11 +127,43 @@ impl RigHost {
     ) -> bool {
         let mut link = link.borrow_mut();
         link.available = true;
+        let mut changed = false;
+        let loaded = self.loader.take();
+        if !loaded.is_empty() {
+            for (key, img) in loaded {
+                if self.reload.remove(&key) {
+                    // Dropped edits: the file's current pixels in a texture
+                    // of our own (the one shared by name may hold what the
+                    // file had before a save).
+                    match img {
+                        Some(img) => {
+                            let up = PixelUpload { name: key.1.clone(), width: img.width, height: img.height, rgba: img.rgba };
+                            self.upload(renderer, &key.0, &up);
+                        }
+                        None => {
+                            if let Some(Some(id)) = self.images.remove(&key)
+                                && self.edited.remove(&id)
+                            {
+                                renderer.release_texture(id);
+                            }
+                        }
+                    }
+                    continue;
+                }
+                let tex = upload_image(renderer, &key, img);
+                if let Some(Some(old)) = self.images.insert(key, tex)
+                    && self.edited.remove(&old)
+                {
+                    renderer.release_texture(old);
+                }
+            }
+            link.images_loaded += 1;
+            changed = true;
+        }
         let Some(req) = link.request.take() else {
-            return false;
+            return changed || self.loader.busy();
         };
         let [w, h] = [req.size[0].clamp(16, 4096), req.size[1].clamp(16, 4096)];
-        let mut changed = false;
         if self.target.is_none_or(|(_, s)| s != [w, h]) {
             if let Some((old, _)) = self.target.take() {
                 renderer.release_texture(old);
@@ -156,27 +197,23 @@ impl RigHost {
 
         // Dropped edits: the file's current pixels again (read now: the
         // texture shared by name may hold what the file had before a save).
+        // The edited texture stays on screen until the file's pixels are
+        // decoded (in the background) and replace it.
         for name in &req.forget {
-            let fresh = std::fs::read(req.root.join(name)).ok().and_then(|b| orbit_assets::decode_image(&b).ok());
-            match fresh {
-                Some(img) => self.upload(
-                    renderer,
-                    &req.root,
-                    &PixelUpload { name: name.clone(), width: img.width, height: img.height, rgba: img.rgba },
-                ),
-                None => {
-                    if let Some(Some(id)) = self.images.remove(&(req.root.clone(), name.clone()))
-                        && self.edited.remove(&id)
-                    {
-                        renderer.release_texture(id);
-                    }
-                }
-            }
+            let key = (req.root.clone(), name.clone());
+            self.loader.request(&key);
+            self.reload.insert(key);
         }
         for up in &req.pixels {
             self.upload(renderer, &req.root, up);
         }
-        // Load every picture the rig can show (any skin).
+        // Load every picture the rig can show (any skin), in the background.
+        let retry = self
+            .last_retry
+            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
+        if retry {
+            self.last_retry = Some(std::time::Instant::now());
+        }
         let mut missing = Vec::new();
         for skin in &req.rig.rig().skins {
             for att in skin.attachments.values() {
@@ -184,14 +221,15 @@ impl RigHost {
                 let key = (req.root.clone(), name.to_owned());
                 // A picture that could not be loaded is retried once its
                 // file exists (imported or copied after the first draw).
-                if self.images.get(&key).is_some_and(Option::is_none) && req.root.join(name).is_file() {
+                if retry && self.images.get(&key).is_some_and(Option::is_none) && req.root.join(name).is_file() {
                     self.images.remove(&key);
                 }
                 if !self.images.contains_key(&key) {
-                    let tex = load_image(renderer, &req.root, name);
-                    self.images.insert(key.clone(), tex);
-                }
-                if self.images[&key].is_none() && !missing.iter().any(|m: &String| m == name) {
+                    self.loader.request(&key);
+                } else if self.images[&key].is_none()
+                    && !self.loader.is_loading(&key)
+                    && !missing.iter().any(|m: &String| m == name)
+                {
                     missing.push(name.to_owned());
                 }
             }
@@ -222,7 +260,7 @@ impl RigHost {
             }
             Err(e) => link.error = Some(e.to_string()),
         }
-        changed
+        changed || self.loader.busy()
     }
 }
 
@@ -309,6 +347,7 @@ pub struct ThumbHost {
     targets: HashMap<ThumbKey, TextureId>,
     registered: HashMap<ThumbKey, egui::TextureId>,
     images: HashMap<(PathBuf, String), Option<TextureId>>,
+    loader: ImageLoader,
 }
 
 impl ThumbHost {
@@ -323,11 +362,16 @@ impl ThumbHost {
         let mut link = link.borrow_mut();
         link.available = true;
         let requests = std::mem::take(&mut link.requests);
+        let mut changed = false;
+        for (key, img) in self.loader.take() {
+            let tex = upload_image(renderer, &key, img);
+            self.images.insert(key, tex);
+            changed = true;
+        }
         if requests.is_empty() {
-            return false;
+            return changed;
         }
         let [w, h] = THUMB_PX;
-        let mut changed = false;
         if self.targets.len() >= MAX_THUMBS {
             for (_, id) in self.targets.drain() {
                 renderer.release_texture(id);
@@ -353,8 +397,7 @@ impl ThumbHost {
                 for att in skin.attachments.values() {
                     let key = (req.root.clone(), att.image().to_owned());
                     if !self.images.contains_key(&key) {
-                        let tex = load_image(renderer, &req.root, att.image());
-                        self.images.insert(key, tex);
+                        self.loader.request(&key);
                     }
                 }
             }
@@ -378,16 +421,94 @@ impl ThumbHost {
             let _ = renderer.render_to_target(target, &scene);
             *renderer.camera_mut() = saved;
         }
-        changed
+        changed || self.loader.busy()
     }
 }
 
-fn load_image(renderer: &mut Renderer2d, root: &std::path::Path, name: &str) -> Option<TextureId> {
-    let path = root.join(name);
-    let bytes = std::fs::read(&path).ok()?;
-    let img = orbit_assets::decode_image(&bytes).ok()?;
+/// A picture key: project root and project path.
+type ImageKey = (PathBuf, String);
+
+/// Decodes rig pictures on a worker thread: reading and decoding a 2048 px
+/// PNG takes from tens of milliseconds (release) to over a second (debug),
+/// which froze the first frame of the rig editor and of the characters
+/// panel. Until a picture arrives the rig is drawn without it.
+#[derive(Default)]
+pub struct ImageLoader {
+    tx: Option<std::sync::mpsc::Sender<ImageKey>>,
+    rx: Option<std::sync::mpsc::Receiver<(ImageKey, Option<orbit_assets::ImageData>)>>,
+    in_flight: std::collections::HashSet<ImageKey>,
+}
+
+impl ImageLoader {
+    /// Queues `name` (relative to `root`) unless it is already on its way.
+    pub fn request(&mut self, key: &ImageKey) {
+        if self.in_flight.contains(key) {
+            return;
+        }
+        if self.tx.is_none() {
+            let (req_tx, req_rx) = std::sync::mpsc::channel::<ImageKey>();
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            let spawned = std::thread::Builder::new()
+                .name("orbit-rig-images".into())
+                .spawn(move || {
+                    while let Ok(key) = req_rx.recv() {
+                        let image = {
+                            orbit_profile::scope!("rig picture decode");
+                            std::fs::read(key.0.join(&key.1))
+                                .ok()
+                                .and_then(|b| orbit_assets::decode_image(&b).ok())
+                        };
+                        if done_tx.send((key, image)).is_err() {
+                            break;
+                        }
+                    }
+                });
+            if spawned.is_err() {
+                return;
+            }
+            self.tx = Some(req_tx);
+            self.rx = Some(done_rx);
+        }
+        if let Some(tx) = &self.tx
+            && tx.send(key.clone()).is_ok()
+        {
+            self.in_flight.insert(key.clone());
+        }
+    }
+
+    /// Pictures decoded since the last call (`None`: unreadable).
+    pub fn take(&mut self) -> Vec<(ImageKey, Option<orbit_assets::ImageData>)> {
+        let Some(rx) = &self.rx else {
+            return Vec::new();
+        };
+        let done: Vec<_> = rx.try_iter().collect();
+        for (key, _) in &done {
+            self.in_flight.remove(key);
+        }
+        done
+    }
+
+    pub fn is_loading(&self, key: &ImageKey) -> bool {
+        self.in_flight.contains(key)
+    }
+
+    pub fn busy(&self) -> bool {
+        !self.in_flight.is_empty()
+    }
+}
+
+/// Uploads a decoded picture (the GPU copy is cheap next to the decode).
+fn upload_image(renderer: &mut Renderer2d, key: &ImageKey, img: Option<orbit_assets::ImageData>) -> Option<TextureId> {
+    let img = img?;
+    orbit_profile::scope!("rig picture upload");
     renderer
-        .create_texture(&format!("rig:{}", path.display()), img.width, img.height, &img.rgba, TextureOptions::COLOR)
+        .create_texture(
+            &format!("rig:{}", key.0.join(&key.1).display()),
+            img.width,
+            img.height,
+            &img.rgba,
+            TextureOptions::COLOR,
+        )
         .ok()
 }
 

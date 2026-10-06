@@ -115,6 +115,7 @@ mod tests {
                 depth: 0,
                 start_ms: 0.0,
                 duration_ms: cpu / 2.0,
+                frame_thread: true,
             }],
             gpu,
         };

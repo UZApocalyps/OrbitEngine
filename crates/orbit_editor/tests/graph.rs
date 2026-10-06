@@ -500,6 +500,8 @@ fn positions_persist_in_the_layout_sidecar_and_reload() {
         GraphEvent::Moved(others[0], (123.0, -45.5)),
     );
     frames(&mut core, &ctx, 2);
+    // Written by the background writer.
+    orbit_editor::writer::flush();
     assert!(sidecar.exists(), "a move writes the sidecar");
     let text = std::fs::read_to_string(&sidecar).unwrap();
     assert!(text.contains(&others[0].key()), "{text}");

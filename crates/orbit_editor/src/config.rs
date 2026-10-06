@@ -8,7 +8,6 @@ use egui_dock::DockState;
 use orbit_editor_api::{Lang, RecentProject, ThemeMode};
 use serde::{Deserialize, Serialize};
 
-use crate::storage::write_atomic;
 
 /// Most recent projects remembered.
 pub const MAX_RECENT: usize = 10;
@@ -98,6 +97,8 @@ impl ConfigStore {
         let Some(dir) = &self.dir else {
             return UserConfig::default();
         };
+        // A save may still be on its way to the disk.
+        crate::writer::flush();
         let path = dir.join(CONFIG_FILE);
         let Ok(text) = std::fs::read_to_string(&path) else {
             return UserConfig::default();
@@ -125,19 +126,23 @@ impl ConfigStore {
         }
     }
 
+    /// Writes the config on the background writer (latest wins: a burst of
+    /// layout changes costs one write; see [`crate::writer`]).
     pub fn save(&self, config: &UserConfig) {
         let Some(dir) = &self.dir else {
             return;
         };
         let cfg = ron::ser::PrettyConfig::new().indentor("  ".to_owned());
         match ron::ser::to_string_pretty(config, cfg) {
-            Ok(text) => {
-                if let Err(e) = write_atomic(&dir.join(CONFIG_FILE), text.as_bytes()) {
-                    log::warn!("cannot save the editor config: {e}");
-                }
-            }
+            Ok(text) => crate::writer::write(dir.join(CONFIG_FILE), text.into_bytes(), "the editor config"),
             Err(e) => log::warn!("cannot serialize the editor config: {e}"),
         }
+    }
+
+    /// Like [`ConfigStore::save`], waiting for the file to be written.
+    pub fn save_now(&self, config: &UserConfig) {
+        self.save(config);
+        crate::writer::flush();
     }
 }
 

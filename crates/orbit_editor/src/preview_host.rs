@@ -1033,6 +1033,7 @@ impl PreviewHost {
         loop {
             match self.runtime.renderer().poll_readback(readback) {
                 ReadbackStatus::Pending => {
+                    orbit_profile::scope!("gpu wait: buffer map");
                     self.gfx()
                         .device()
                         .poll(wgpu::PollType::wait_indefinitely())

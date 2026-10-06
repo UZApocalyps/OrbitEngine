@@ -4,7 +4,8 @@
 
 use egui::{Color32, Grid, RichText, Sense, Stroke, Ui, pos2, vec2};
 use orbit_editor_api::{
-    DockSlot, EditorContext, EditorPlugin, EditorRegistry, PanelDef, Plugin, PluginManifest, icons,
+    ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, PanelDef,
+    Plugin, PluginManifest, icons,
 };
 
 use super::ids;
@@ -33,7 +34,85 @@ impl EditorPlugin for ProfilerPlugin {
             panel,
         )
         .opens_in(DockSlot::Bottom));
+        reg.panel(PanelDef::new(
+            "hitches",
+            "profiler.hitches_title",
+            icons::GAUGE,
+            DockSlot::Hidden,
+            hitches_panel,
+        )
+        .opens_in(DockSlot::Bottom));
+        reg.action(
+            ActionDef::new("show_hitches", "action.show_hitches", |c| {
+                c.request(EditorRequest::ShowPanel(super::panels::HITCHES.to_owned()));
+            })
+            .icon(icons::GAUGE)
+            .category("category.view")
+            .menu("view", 128),
+        );
     }
+}
+
+/// The last hitches (frames over the threshold), newest first, with their
+/// breakdown, ready to be copied into a bug report.
+fn hitches_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
+    if !orbit_profile::COMPILED {
+        dim(ui, ctx.t("profiler.compiled_out"), false);
+        return;
+    }
+    let hitches = orbit_profile::hitches();
+    ui.horizontal(|ui| {
+        let mut ms = orbit_profile::hitch_threshold_ms();
+        ui.label(ctx.t("profiler.hitches_threshold"));
+        if ui
+            .add(egui::DragValue::new(&mut ms).range(20.0..=2000.0).speed(5.0).suffix(" ms"))
+            .changed()
+        {
+            orbit_profile::set_hitch_threshold_ms(ms);
+        }
+        if !hitches.is_empty()
+            && icon_button(ui, icons::COPY, &ctx.t("profiler.hitches_copy")).clicked()
+        {
+            let text: Vec<String> = hitches.iter().rev().map(|h| h.summary()).collect();
+            ui.ctx().copy_text(text.join("\n"));
+        }
+    });
+    if let Some(path) = crate::hitches::log_path() {
+        dim(ui, ctx.tf("profiler.hitches_log_file", &[("path", &path.display())]), true);
+    }
+    if hitches.is_empty() {
+        dim(ui, ctx.t("profiler.hitches_empty"), true);
+        return;
+    }
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for h in hitches.iter().rev() {
+                let secs = h.at_unix_ms / 1000;
+                let clock = format!("{:02}:{:02}:{:02}", secs / 3600 % 24, secs / 60 % 60, secs % 60);
+                egui::CollapsingHeader::new(
+                    RichText::new(format!("{clock} UTC  ·  {:.0} ms  ·  #{}", h.cpu_ms, h.frame)).strong(),
+                )
+                .id_salt(("orbit_hitch", h.frame, h.at_unix_ms))
+                .show(ui, |ui| {
+                    Grid::new(("orbit_hitch_grid", h.frame)).striped(true).num_columns(2).show(ui, |ui| {
+                        for (name, depth, ms) in &h.top {
+                            ui.label(format!("{}{name}", "  ".repeat((*depth).min(6) as usize)));
+                            ui.label(format!("{ms:.1}"));
+                            ui.end_row();
+                        }
+                        for (name, ms) in &h.waits {
+                            ui.label(RichText::new(*name).italics());
+                            ui.label(format!("{ms:.1}"));
+                            ui.end_row();
+                        }
+                        dim(ui, ctx.t("profiler.hitches_unaccounted"), true);
+                        ui.label(format!("{:.1}", h.unaccounted_ms()));
+                        ui.end_row();
+                    });
+                });
+            }
+        });
 }
 
 fn dim(ui: &mut Ui, text: String, fainter: bool) {

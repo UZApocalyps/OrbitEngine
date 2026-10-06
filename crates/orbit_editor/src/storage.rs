@@ -332,24 +332,48 @@ impl Recovery {
         write_atomic(&self.dir.join(RECOVERY_META), meta.as_bytes()).map_err(|e| e.to_string())
     }
 
+    /// [`Recovery::write`] on the background writer: the serialization of
+    /// the story and the writes leave the UI thread (`story` is a copy).
+    /// A newer snapshot or a [`Recovery::clear`] replaces a queued one.
+    pub fn write_in_background(&self, story: Story, meta: RecoveryMeta) {
+        let this = self.clone();
+        crate::writer::submit(Some(self.dir.clone()), move || {
+            orbit_profile::scope!("recovery snapshot write");
+            if let Err(e) = this.write(&story, &meta) {
+                log::warn!("recovery snapshot failed: {e}");
+            }
+        });
+    }
+
     /// The pending snapshot, if a previous session left one.
     pub fn pending(&self) -> Option<RecoveryMeta> {
+        crate::writer::flush();
         let meta = fs::read_to_string(self.dir.join(RECOVERY_META)).ok()?;
         let meta: RecoveryMeta = ron::from_str(&meta).ok()?;
         self.dir.join(RECOVERY_STORY).is_file().then_some(meta)
     }
 
     pub fn load(&self) -> Result<Story, String> {
+        crate::writer::flush();
         let text = fs::read_to_string(self.dir.join(RECOVERY_STORY)).map_err(|e| e.to_string())?;
         Story::from_ron_unchecked(&text).map_err(|e| e.to_string())
     }
 
+    /// Removes the snapshot, on the background writer (after, or instead
+    /// of, a queued snapshot write).
     pub fn clear(&self) {
-        for name in [RECOVERY_META, RECOVERY_STORY] {
-            let _ = fs::remove_file(self.dir.join(name));
-        }
-        // Only succeeds when empty; harmless otherwise.
-        let _ = fs::remove_dir(&self.dir);
+        let dir = self.dir.clone();
+        crate::writer::submit(Some(self.dir.clone()), move || {
+            // Usually nothing to remove: no disk access beyond a lookup.
+            if !dir.exists() {
+                return;
+            }
+            for name in [RECOVERY_META, RECOVERY_STORY] {
+                let _ = fs::remove_file(dir.join(name));
+            }
+            // Only succeeds when empty; harmless otherwise.
+            let _ = fs::remove_dir(&dir);
+        });
     }
 }
 

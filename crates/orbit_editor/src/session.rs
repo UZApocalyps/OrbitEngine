@@ -212,7 +212,9 @@ impl Session {
             story_file: self.location.story_file.clone(),
             saved_at_ms: orbit_platform::unix_time_ms(),
         };
-        self.recovery.write(self.project.story(), &meta)?;
+        // A copy of the story: serialized and written off the UI thread.
+        self.recovery
+            .write_in_background(self.project.story().clone(), meta);
         self.autosaved_revision = self.project.revision();
         Ok(())
     }

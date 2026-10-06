@@ -504,10 +504,14 @@ pub(super) fn image_size(st: &mut State, root: &std::path::Path, path: &str) -> 
     if let Some(s) = st.image_sizes.get(path) {
         return *s;
     }
-    let size = std::fs::read(root.join(path))
+    // The header only: decoding a whole 2048 px picture on the UI thread
+    // just for its size froze the first frame of the rig inspector.
+    orbit_profile::scope!("rig picture size");
+    let size = image::ImageReader::open(root.join(path))
         .ok()
-        .and_then(|b| orbit_assets::decode_image(&b).ok())
-        .map_or([64.0, 64.0], |i| [i.width as f32, i.height as f32]);
+        .and_then(|r| r.with_guessed_format().ok())
+        .and_then(|r| r.into_dimensions().ok())
+        .map_or([64.0, 64.0], |(w, h)| [w as f32, h as f32]);
     st.image_sizes.insert(path.to_owned(), size);
     size
 }

@@ -65,11 +65,54 @@ pub type SharedLink = Rc<RefCell<Viewport3dLink>>;
 #[derive(Default)]
 pub struct Scene3dHost {
     renderer: Option<Renderer3d>,
+    /// The renderer being built (shaders compiled) on a worker thread.
+    pending: Option<std::sync::mpsc::Receiver<Renderer3d>>,
     targets: [Option<RenderTarget3d>; SLOTS],
     uploaded: [Option<u64>; SLOTS],
 }
 
 impl Scene3dHost {
+    /// Builds the 3D renderer and all its pipelines on a worker thread, so
+    /// that opening the first 3D viewport does not compile shaders on the
+    /// UI thread.
+    pub fn prewarm(&mut self, gfx: &Gfx) {
+        if self.renderer.is_some() || self.pending.is_some() {
+            return;
+        }
+        let (device, queue) = (gfx.device().clone(), gfx.queue().clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("orbit-3d-prewarm".into())
+            .spawn(move || {
+                orbit_profile::scope!("3d renderer prewarm");
+                let mut renderer = Renderer3d::new(&device, &queue);
+                renderer.prewarm(&device, &queue);
+                let _ = tx.send(renderer);
+            });
+        if spawned.is_ok() {
+            self.pending = Some(rx);
+        }
+    }
+
+    /// `false` while the prewarmed renderer is still being built.
+    fn renderer_ready(&mut self) -> bool {
+        let Some(rx) = &self.pending else {
+            return true;
+        };
+        match rx.try_recv() {
+            Ok(renderer) => {
+                self.renderer = Some(renderer);
+                self.pending = None;
+                true
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending = None;
+                true
+            }
+        }
+    }
+
     /// Renders the pending requests. Returns true when a texture id or size
     /// changed, so the UI needs another frame to pick it up.
     pub fn update(
@@ -80,6 +123,11 @@ impl Scene3dHost {
     ) -> bool {
         let mut link = link.borrow_mut();
         link.available = true;
+        if link.slots.iter().any(|s| s.request.is_some()) && !self.renderer_ready() {
+            // Shaders still compiling on the worker: keep the requests and
+            // come back next frame.
+            return true;
+        }
         let mut changed = false;
         for slot in 0..SLOTS {
             let Some(req) = link.slots[slot].request.take() else {

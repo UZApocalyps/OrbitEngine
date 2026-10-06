@@ -144,6 +144,7 @@ pub mod panels {
     pub const RIG_HIERARCHY: &str = "orbit.rig.hierarchy";
     pub const RIG_INSPECTOR: &str = "orbit.rig.inspector";
     pub const PROFILER: &str = "orbit.profiler.profiler";
+    pub const HITCHES: &str = "orbit.profiler.hitches";
     pub const RIG_CLIPS: &str = "orbit.rig.clips";
     pub const RIG_TIMELINE: &str = "orbit.rig.timeline";
 }
