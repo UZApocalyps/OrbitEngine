@@ -195,7 +195,7 @@ impl Cx<'_> {
             if story.strings.get(a.description_id).is_none() {
                 bad(format!("unknown description string {}", a.description_id));
             }
-            if let Some(icon) = a.icon {
+            for icon in [a.icon, a.locked_icon].into_iter().flatten() {
                 match story.assets.get(icon) {
                     None => bad(format!("unknown icon asset {icon}")),
                     Some(e) if e.kind != AssetKind::Image => {

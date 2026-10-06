@@ -7,7 +7,7 @@ use orbit_core::{Story, validate};
 use orbit_i18n::Translation;
 use orbit_pak::{GameInfo, GamePack};
 use orbit_project::{ExportProfile, asset_users};
-use orbit_ui_data::{Severity, SplashContent, Theme, UiBundle, describe_chars, language_missing_chars};
+use orbit_ui_data::{Severity, Theme, UiBundle, describe_chars, language_missing_chars};
 
 use crate::error::{ExportError, Result};
 use crate::project::ExportProject;
@@ -118,14 +118,15 @@ fn load_icon(
 }
 
 /// The project's data-driven UI (`ui/` folder: theme, screens, splashes),
-/// checked and serialized as the RON text of a [`UiBundle`]. The images of
-/// the splashes join `assets`. `None` when the project has no `ui/` folder.
+/// checked and serialized as the RON text of a [`UiBundle`], with every
+/// project file it references (images of every style state, nine-slices,
+/// fixed images, the continue indicator, splash images, fonts, sounds: see
+/// [`UiBundle::asset_paths`]). `None` when the project has no `ui/` folder.
 fn load_ui(
     project: &ExportProject,
-    assets: &mut Vec<AssetFile>,
     warnings: &mut Vec<String>,
     theme_out: &mut Option<Theme>,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<Option<(Vec<u8>, Vec<String>)>> {
     let dir = project.root.join("ui");
     if !dir.is_dir() {
         return Ok(None);
@@ -143,23 +144,23 @@ fn load_ui(
     if !errors.is_empty() {
         return Err(ExportError::Ui(errors));
     }
-    for splash in &bundle.splashes {
-        if let SplashContent::Image(path) = &splash.content {
-            let source = project.root.join(path);
-            if !source.is_file() {
-                warnings.push(format!(
-                    "the splash image `{path}` is missing: the splash will be empty"
-                ));
-            } else if !assets.iter().any(|a| &a.path == path) {
-                assets.push(AssetFile {
-                    path: path.clone(),
-                    source,
-                });
-            }
+    let splash_images = bundle.splash_image_paths();
+    let mut files = Vec::new();
+    for path in bundle.asset_paths() {
+        if project.root.join(&path).is_file() {
+            files.push(path);
+        } else if splash_images.contains(&path) {
+            warnings.push(format!(
+                "the splash image `{path}` is missing: the splash will be empty"
+            ));
+        } else {
+            warnings.push(format!(
+                "the UI references `{path}`, which does not exist: it will not show in the game"
+            ));
         }
     }
     let text = bundle.to_ron().map_err(|e| ExportError::Ui(vec![e]))?;
-    Ok(Some(text.into_bytes()))
+    Ok(Some((text.into_bytes(), files)))
 }
 
 /// The font that draws every text without a project font (the engine's
@@ -387,6 +388,15 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
         .flat_map(|t| t.voices.values().copied())
         .collect();
 
+    // The UI comes before the assets: the files it references are used
+    // assets (they ship even when no node of the story uses them).
+    let mut theme = None;
+    let (ui, ui_files) = match load_ui(project, &mut warnings, &mut theme)? {
+        Some((bytes, files)) => (Some(bytes), files),
+        None => (None, Vec::new()),
+    };
+    let ui_used: HashSet<&str> = ui_files.iter().map(String::as_str).collect();
+
     // Used and unused assets.
     let mut assets = Vec::new();
     let mut unreferenced = Vec::new();
@@ -395,7 +405,10 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
     let declared: HashSet<String> = story.assets.assets.iter().map(|a| a.path.clone()).collect();
     for entry in &story.assets.assets {
         let source = project.root.join(&entry.path);
-        if asset_users(&story, entry.id).is_empty() && !translated_voices.contains(&entry.id) {
+        if asset_users(&story, entry.id).is_empty()
+            && !translated_voices.contains(&entry.id)
+            && !ui_used.contains(entry.path.as_str())
+        {
             unreferenced.push(entry.path.clone());
             continue;
         }
@@ -405,6 +418,16 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
             assets.push(AssetFile {
                 path: entry.path.clone(),
                 source,
+            });
+        }
+    }
+    // The files of the UI (they exist: a missing one is a warning of
+    // `load_ui`), declared in the story or not.
+    for path in &ui_files {
+        if seen.insert(path.clone()) {
+            assets.push(AssetFile {
+                path: path.clone(),
+                source: project.root.join(path),
             });
         }
     }
@@ -462,6 +485,8 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
             unreferenced.join(", ")
         ));
     }
+    let mut declared = declared;
+    declared.extend(ui_files.iter().cloned());
     if let Some(message) = untracked_files(&project.root, &declared) {
         warnings.push(message);
     }
@@ -487,8 +512,6 @@ pub fn compile(project: &ExportProject, profile: &ExportProfile) -> Result<Compi
         }
     }
     let icon = load_icon(project, profile, &mut warnings)?;
-    let mut theme = None;
-    let ui = load_ui(project, &mut assets, &mut warnings, &mut theme)?;
     warnings.extend(language_font_warnings(
         &project.root,
         theme.as_ref(),
@@ -603,6 +626,48 @@ mod tests {
             compile(&project, &profile),
             Err(ExportError::Ui(_))
         ));
+    }
+
+    #[test]
+    fn every_file_the_ui_references_is_exported_and_a_missing_one_is_a_warning() {
+        let dir = TempDir::new("compile_ui_files");
+        let project = demo_project(dir.path());
+        let profile = project.profile(None).unwrap();
+        let ui = dir.path().join("ui");
+        std::fs::create_dir_all(&ui).unwrap();
+        std::fs::write(
+            ui.join("theme.ron"),
+            "(fonts: {\"f\": (asset: \"assets/ui/f.ttf\", family: \"F\")}, \
+              sounds: (confirm: Some(\"assets/ui/ok.ogg\")), \
+              styles: {\"b\": (fills: (hover: Some(Image(image: \"assets/ui/hover.png\"))), \
+                               fill: Some(NineSlice(image: \"assets/ui/gone.png\", insets: (1.0, 1.0, 1.0, 1.0))))})",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("assets/ui")).unwrap();
+        for file in ["f.ttf", "ok.ogg", "hover.png"] {
+            std::fs::write(dir.path().join("assets/ui").join(file), b"x").unwrap();
+        }
+        let compiled = compile(&project, &profile).unwrap();
+        for path in ["assets/ui/f.ttf", "assets/ui/ok.ogg", "assets/ui/hover.png"] {
+            assert!(compiled.assets.iter().any(|a| a.path == path), "{path} not exported");
+        }
+        assert!(
+            compiled
+                .warnings
+                .iter()
+                .any(|w| w.contains("assets/ui/gone.png") && w.contains("does not exist")),
+            "{:?}",
+            compiled.warnings
+        );
+        // Files the UI ships are not reported as left out.
+        assert!(
+            !compiled
+                .warnings
+                .iter()
+                .any(|w| w.contains("not declared") && w.contains("assets/ui/hover.png")),
+            "{:?}",
+            compiled.warnings
+        );
     }
 
     // Fixture: exact title, asset count and unreferenced list come from test_minimal.ron.

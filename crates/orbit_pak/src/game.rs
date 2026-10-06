@@ -51,7 +51,15 @@ const MAGIC: &[u8; 8] = b"ORBITGAM";
 /// game is encoded in the layout of versions 3 to 5, byte for byte as before
 /// (`orbit_core::with_legacy_v15_layout`), so older players keep reading it.
 /// Versions 1 to 5 are read with that layout.
-pub const PACK_VERSION: u32 = 6;
+///
+/// Version 7 adds the locked icon of an achievement
+/// (`Achievement::locked_icon`). It is written only for a game that sets
+/// one; any other game keeps the layout of version 6 (or older) byte for
+/// byte (`orbit_core::with_legacy_v16_layout`). Versions 1 to 6 are read
+/// with that layout.
+pub const PACK_VERSION: u32 = 7;
+/// Version written for a game using schema v16 content (and nothing newer).
+pub const PACK_VERSION_V16: u32 = 6;
 /// Version written for a game with a rigged expression (and nothing newer).
 pub const PACK_VERSION_RIGGED: u32 = 5;
 /// Version written for a game without pak-level 3D content.
@@ -164,8 +172,11 @@ impl GamePack {
 
     fn encode(&self, version: u32) -> Result<Vec<u8>, PackError> {
         let v16 = self.uses_v16();
-        let version = if v16 {
+        let v17 = orbit_core::uses_v17(&self.story.achievements);
+        let version = if v17 {
             PACK_VERSION
+        } else if v16 {
+            PACK_VERSION_V16
         } else if self.uses_rigs() {
             PACK_VERSION_RIGGED
         } else {
@@ -175,8 +186,10 @@ impl GamePack {
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(&version.to_le_bytes());
         let encode = || postcard::to_stdvec(self).map_err(|e| PackError::Corrupt(e.to_string()));
-        let body = if v16 {
+        let body = if v17 {
             encode()?
+        } else if v16 {
+            orbit_core::with_legacy_v16_layout(encode)?
         } else {
             orbit_core::with_legacy_v15_layout(encode)?
         };
@@ -237,6 +250,8 @@ impl GamePack {
         };
         if version <= 5 {
             orbit_core::with_legacy_v15_layout(decode)
+        } else if version == 6 {
+            orbit_core::with_legacy_v16_layout(decode)
         } else {
             decode()
         }
@@ -834,6 +849,7 @@ mod tests {
             description_id,
             hidden: true,
             icon: None,
+            locked_icon: None,
         });
         pack.story.scenes[0].nodes.insert(
             0,
@@ -851,6 +867,26 @@ mod tests {
         let back = GamePack::from_bytes(&pack.to_bytes().unwrap()).unwrap();
         assert_eq!(back.translations[0].voices.get(&title_id), Some(&voice));
         assert_eq!(back, pack);
+
+        // A locked icon needs version 7; without one the bytes of version
+        // 6 are unchanged (older players keep reading the game).
+        let mut pack = fixture_pack();
+        pack.story.achievements.push(Achievement {
+            id: achievement,
+            title_id,
+            description_id,
+            hidden: false,
+            icon: Some(voice),
+            locked_icon: None,
+        });
+        let v6 = pack.to_bytes().unwrap();
+        assert_eq!(GamePack::version_of(&v6), Some(6));
+        assert_eq!(GamePack::from_bytes(&v6).unwrap(), pack);
+        pack.story.achievements[0].locked_icon = Some(AssetId::new());
+        let v7 = pack.to_bytes().unwrap();
+        assert_eq!(GamePack::version_of(&v7), Some(7));
+        assert!(v7.len() > v6.len());
+        assert_eq!(GamePack::from_bytes(&v7).unwrap(), pack);
     }
 
     #[test]
@@ -864,10 +900,10 @@ mod tests {
             GamePack::from_bytes(&bytes[..20]),
             Err(PackError::Corrupt(_))
         ));
-        bytes[8] = 7;
+        bytes[8] = 8;
         assert_eq!(
             GamePack::from_bytes(&bytes).unwrap_err(),
-            PackError::UnsupportedVersion { found: 7 }
+            PackError::UnsupportedVersion { found: 8 }
         );
     }
 }

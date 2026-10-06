@@ -40,6 +40,7 @@ fn fixture() -> Fixture {
             description_id,
             hidden,
             icon: None,
+            locked_icon: None,
         });
     }
     let voice = AssetId::new();

@@ -2198,7 +2198,13 @@ impl Shell {
         let title = plain_text(self.loc.text(def.title_id));
         let source_title = self.story.text(def.title_id).unwrap_or_default().to_owned();
         let text = format!("{}: {title}", self.texts.get("ui.achievements.toast"));
-        self.toast(text);
+        let icon = def
+            .icon
+            .and_then(|icon| self.story.assets.get(icon))
+            .and_then(|entry| self.ui_images.get(&entry.path).copied());
+        let seq = self.last_toast.as_ref().map_or(0, |(s, _)| s + 1);
+        self.last_toast = Some((seq, orbit_ui::a11y::plain(&text)));
+        self.toasts.push_with_icon(text, icon);
         self.persistent.unlocked_achievements.insert(id);
         self.flush_persistent();
         if let Some(hook) = &self.achievement_hook {

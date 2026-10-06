@@ -38,6 +38,7 @@ script = ["dep:orbit_script"]
 
 [dev-dependencies]
 pollster.workspace = true
+orbit_export.workspace = true
 
 [lints]
 workspace = true

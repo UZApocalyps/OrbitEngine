@@ -3392,6 +3392,7 @@ dependencies = [
  "orbit_assets",
  "orbit_audio",
  "orbit_core",
+ "orbit_export",
  "orbit_i18n",
  "orbit_pak",
  "orbit_platform",

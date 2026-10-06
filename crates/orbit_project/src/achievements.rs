@@ -42,6 +42,7 @@ pub fn add_achievement(
                 description_id,
                 hidden,
                 icon,
+                locked_icon: None,
             }),
             index: Some(index),
         })
@@ -110,6 +111,34 @@ pub fn update_achievement(
             achievement: Some(Achievement {
                 hidden: hidden.unwrap_or(current.hidden),
                 icon: icon.unwrap_or(current.icon),
+                ..current
+            }),
+            index,
+        })
+    })
+}
+
+/// Sets (`Some`) or removes (`None`) the icon shown while achievement
+/// `id` is locked (`Achievement::locked_icon`; without one the icon is used).
+pub fn set_achievement_locked_icon(
+    project: &mut Project,
+    id: AchievementId,
+    locked_icon: Option<AssetId>,
+) -> Result<(), ProjectError> {
+    let current = project
+        .story()
+        .achievements
+        .iter()
+        .find(|a| a.id == id)
+        .cloned()
+        .ok_or(crate::CommandError::UnknownAchievement(id))?;
+    check_icon(project, locked_icon)?;
+    let index = project.story().achievements.iter().position(|a| a.id == id);
+    project.transaction_labeled("Modifier un succès", |tx| {
+        tx.execute(Command::SetAchievement {
+            id,
+            achievement: Some(Achievement {
+                locked_icon,
                 ..current
             }),
             index,

@@ -64,6 +64,22 @@ impl SplashAssets {
         }
     }
 
+    /// Starts loading splash images by path (as soon as the UI bundle is
+    /// known, so they are ready when their splash comes).
+    pub fn request_images(&mut self, loader: &AssetLoader, paths: &[String]) {
+        for path in paths {
+            self.images
+                .entry(path.clone())
+                .or_insert_with(|| Slot::Loading(loader.load_image(path)));
+        }
+    }
+
+    /// Whether the splash image path was requested.
+    #[cfg(test)]
+    pub fn has_image(&self, path: &str) -> bool {
+        self.images.contains_key(path)
+    }
+
     fn logo(&mut self, renderer: &mut Renderer2d) -> Option<TextureId> {
         *self.logo.get_or_insert_with(|| {
             let img = decode_image(LOGO)

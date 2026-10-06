@@ -10,6 +10,8 @@ const MAX_TOASTS: usize = 3;
 
 struct Toast {
     text: String,
+    /// A picture left of the text (an achievement icon).
+    icon: Option<orbit_render2d::TextureId>,
     age: f32,
 }
 
@@ -37,11 +39,22 @@ impl ToastStack {
     }
 
     pub fn push(&mut self, text: impl Into<String>) {
+        self.push_with_icon(text, None);
+    }
+
+    /// A toast with a picture left of its text (the icon of an unlocked
+    /// achievement); None is a plain toast.
+    pub fn push_with_icon(
+        &mut self,
+        text: impl Into<String>,
+        icon: Option<orbit_render2d::TextureId>,
+    ) {
         if self.toasts.len() == MAX_TOASTS {
             self.toasts.remove(0);
         }
         self.toasts.push(Toast {
             text: text.into(),
+            icon,
             age: 0.0,
         });
         self.rebuild();
@@ -101,6 +114,14 @@ impl ToastStack {
                 column,
                 Node::panel(PanelKind::Normal, Dir::Stack).pad(40.0, 14.0),
             );
+            let panel = match t.icon {
+                Some(icon) => {
+                    let row = ui.add(panel, Node::hbox().gap(16.0).align(Align::Start, Align::Center));
+                    ui.add(row, Node::image(Some(icon)).fixed(64.0, 64.0));
+                    row
+                }
+                None => panel,
+            };
             ui.add(
                 panel,
                 Node::label(t.text.clone()).text_align(TextAlign::Center),

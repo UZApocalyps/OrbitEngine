@@ -69,9 +69,9 @@ pub(crate) fn rows(
                 } else {
                     texts.get("ui.achievements.hidden_description")
                 },
-                icon: a
-                    .icon
-                    .filter(|_| shown)
+                // Locked: the locked icon when there is one (even while
+                // hidden: it is meant to be seen), else the icon unless hidden.
+                icon: if done { a.icon } else { a.locked_icon.or(a.icon.filter(|_| shown)) }
                     .and_then(|icon| story.assets.get(icon))
                     .map(|e| e.path.clone())
                     .unwrap_or_default(),
@@ -81,15 +81,19 @@ pub(crate) fn rows(
         .collect()
 }
 
-/// Manifest paths of the icons of the achievements (the host loads them as
+/// Manifest paths of the icons (unlocked and locked) of the achievements (the host loads them as
 /// textures for the achievements screen).
 pub fn achievement_icon_paths(story: &Story) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for a in &story.achievements {
-        if let Some(entry) = a.icon.and_then(|icon| story.assets.get(icon))
-            && !out.contains(&entry.path)
+        for entry in [a.icon, a.locked_icon]
+            .into_iter()
+            .flatten()
+            .filter_map(|icon| story.assets.get(icon))
         {
-            out.push(entry.path.clone());
+            if !out.contains(&entry.path) {
+                out.push(entry.path.clone());
+            }
         }
     }
     out

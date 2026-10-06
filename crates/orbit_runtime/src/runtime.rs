@@ -779,6 +779,24 @@ impl Runtime {
                     } else {
                         start_loading(&self.assets_loader, &loaded.story, &self.store)
                     };
+                    // Everything the interface draws is loaded before the
+                    // first screen shows, lazy mode or not, declared in the
+                    // story or not (an exported game ships it by path).
+                    let ui = resolve_ui_bundle(&self.config, loaded.ui.clone());
+                    let (images, fonts) =
+                        ui_eager_files(&self.config.theme, ui.as_ref(), &loaded.story);
+                    let extra = crate::loading::start_loading_files(
+                        &self.assets_loader,
+                        &images,
+                        &fonts,
+                        &self.store,
+                        &loading.pending,
+                    );
+                    loading.pending.extend(extra);
+                    if let Some(bundle) = &ui {
+                        self.splash_assets
+                            .request_images(&self.assets_loader, &bundle.splash_image_paths());
+                    }
                     loading.assets_total = loading.pending.len();
                     loading.info = loaded.info.clone();
                     loading.packed_translations = loaded.translations.clone();
@@ -883,20 +901,7 @@ impl Runtime {
     /// else the one of the game pack. A bundle with errors is dropped (the
     /// stock screens stay).
     fn resolve_ui(&self, pack_ui: Option<UiBundle>) -> Option<UiBundle> {
-        if let Some(bundle) = &self.config.ui_bundle {
-            return crate::loading::check_ui_bundle(bundle.clone());
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(dir) = &self.config.ui_dir {
-            return match UiBundle::load_dir(std::path::Path::new(dir)) {
-                Ok(bundle) => crate::loading::check_ui_bundle(bundle),
-                Err(err) => {
-                    log::warn!("cannot read the UI folder: {err}");
-                    None
-                }
-            };
-        }
-        pack_ui
+        resolve_ui_bundle(&self.config, pack_ui)
     }
 
     /// The shell of a loaded story: `translations` are RON texts (files next
@@ -982,6 +987,7 @@ impl Runtime {
             images.extend(bundle_images(bundle, &self.store));
         }
         images.extend(gallery_images(&story, &self.store));
+        images.extend(achievement_images(&story, &self.store));
         shell.set_ui_images(images);
         shell
     }
@@ -1612,6 +1618,57 @@ pub(crate) fn bundle_images(
         .collect()
 }
 
+/// The UI bundle `config` asks for: given by the config, else read from
+/// `ui_dir`, else the one of the game pack (see [`Runtime::resolve_ui`]).
+fn resolve_ui_bundle(config: &RuntimeConfig, pack_ui: Option<UiBundle>) -> Option<UiBundle> {
+    if let Some(bundle) = &config.ui_bundle {
+        return crate::loading::check_ui_bundle(bundle.clone());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(dir) = &config.ui_dir {
+        return match UiBundle::load_dir(std::path::Path::new(dir)) {
+            Ok(bundle) => crate::loading::check_ui_bundle(bundle),
+            Err(err) => {
+                log::warn!("cannot read the UI folder: {err}");
+                None
+            }
+        };
+    }
+    pack_ui
+}
+
+/// `(images, fonts)` the interface draws with, loaded before the first
+/// screen: the images of the theme in use (the bundle's, else `theme`) and
+/// of the bundle's screens, the theme's fonts, the achievement icons and
+/// the gallery images.
+pub(crate) fn ui_eager_files(
+    theme: &orbit_ui::Theme,
+    bundle: Option<&UiBundle>,
+    story: &Story,
+) -> (Vec<String>, Vec<String>) {
+    let theme = bundle.and_then(|b| b.theme.as_ref()).unwrap_or(theme);
+    let mut images = theme.image_paths();
+    if let Some(bundle) = bundle {
+        images.extend(bundle.image_paths());
+    }
+    images.extend(crate::achievements::achievement_icon_paths(story));
+    images.extend(crate::shell::gallery_paths(story));
+    images.sort();
+    images.dedup();
+    (images, theme.font_paths())
+}
+
+/// Textures of the achievement icons that are loaded, by path.
+pub(crate) fn achievement_images(
+    story: &Story,
+    store: &AssetStore,
+) -> std::collections::HashMap<String, TextureId> {
+    crate::achievements::achievement_icon_paths(story)
+        .into_iter()
+        .filter_map(|path| store.texture(&path).map(|t| (path, t)))
+        .collect()
+}
+
 /// Textures of the gallery images (M7-03) that are loaded, by path.
 pub(crate) fn gallery_images(
     story: &Story,
@@ -2224,6 +2281,9 @@ impl App for Runtime {
         self.safe_area = area;
     }
 }
+
+#[cfg(test)]
+mod ui_export_tests;
 
 #[cfg(test)]
 mod tests {

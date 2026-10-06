@@ -80,6 +80,35 @@ impl Theme {
         out
     }
 
+    /// Every font file the theme names ([`Theme::fonts`]), each once, sorted.
+    pub fn font_paths(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.fonts.values().map(|f| f.asset.clone()).collect();
+        out.retain(|p| !p.trim().is_empty());
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Every sound file the theme plays (UI sounds and the sounds of the
+    /// styles), each once, sorted.
+    pub fn sound_paths(&self) -> Vec<String> {
+        let s = &self.sounds;
+        let mut out: Vec<String> = [&s.hover, &s.confirm, &s.cancel, &s.slide]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
+        for style in self.styles.values() {
+            if let Some(sounds) = &style.sounds {
+                out.extend(sounds.hover.iter().chain(&sounds.confirm).cloned());
+            }
+        }
+        out.retain(|p| !p.trim().is_empty());
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// Points every reference of the theme to the style `old` (parents of
     /// other styles, the dialogue box, choice and quick menu sections) to
     /// `new` (`None`: back to the default look).

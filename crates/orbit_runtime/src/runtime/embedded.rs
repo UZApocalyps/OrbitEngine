@@ -416,7 +416,18 @@ impl Runtime {
             self.assets_loader = AssetLoader::new(assets_root);
             self.store.clear(&mut self.ctx.renderer);
         }
-        let pending = start_loading(&self.assets_loader, &story, &self.store);
+        let mut pending = start_loading(&self.assets_loader, &story, &self.store);
+        // The files the UI draws with, declared in the story or not.
+        let ui = super::resolve_ui_bundle(&self.config, None);
+        let (images, fonts) = super::ui_eager_files(&self.config.theme, ui.as_ref(), &story);
+        let extra = crate::loading::start_loading_files(
+            &self.assets_loader,
+            &images,
+            &fonts,
+            &self.store,
+            &pending,
+        );
+        pending.extend(extra);
         let play = self.emb_mut().awaiting.take().and_then(|a| a.play);
         let done = pending.iter().all(PendingAsset::is_done);
         self.emb_mut().awaiting = Some(Awaiting {
@@ -468,6 +479,7 @@ impl Runtime {
         images.extend(super::bundle_images(&bundle, &self.store));
         if let Some(story) = self.shell_mut().map(|s| s.story().clone()) {
             images.extend(super::gallery_images(&story, &self.store));
+            images.extend(super::achievement_images(&story, &self.store));
         }
         if let Some(shell) = self.shell_mut() {
             shell.set_ui_images(images);

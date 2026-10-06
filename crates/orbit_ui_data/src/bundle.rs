@@ -238,6 +238,37 @@ impl UiBundle {
         out
     }
 
+    /// Every project file the UI references: the images (see
+    /// [`UiBundle::image_paths`]), the splash images, the theme's fonts and
+    /// sounds; each once, sorted. What an export packs and a player loads
+    /// before the first screen shows.
+    pub fn asset_paths(&self) -> Vec<String> {
+        let mut out = self.image_paths();
+        out.extend(self.splash_image_paths());
+        if let Some(theme) = &self.theme {
+            out.extend(theme.font_paths());
+            out.extend(theme.sound_paths());
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// The images of the image splashes, each once, sorted.
+    pub fn splash_image_paths(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .splashes
+            .iter()
+            .filter_map(|s| match &s.content {
+                SplashContent::Image(path) if !path.trim().is_empty() => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
     pub fn validate(&self) -> Vec<Issue> {
         let mut out = Vec::new();
         let theme = self.theme.as_ref();

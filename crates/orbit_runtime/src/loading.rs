@@ -395,6 +395,39 @@ pub fn start_loading_only(
     pending
 }
 
+/// Starts loading files by path, whether the story manifest declares them
+/// or not: the images (`images`) and fonts (`fonts`) the UI draws with.
+/// Paths already in `store` or in `pending` are skipped.
+pub fn start_loading_files(
+    loader: &orbit_assets::AssetLoader,
+    images: &[String],
+    fonts: &[String],
+    store: &AssetStore,
+    pending: &[PendingAsset],
+) -> Vec<PendingAsset> {
+    let mut seen: HashSet<&str> = pending.iter().map(PendingAsset::path).collect();
+    let mut out = Vec::new();
+    let all = images
+        .iter()
+        .map(|p| (p, false))
+        .chain(fonts.iter().map(|p| (p, true)));
+    for (path, font) in all {
+        if path.trim().is_empty() || store.contains(path) || !seen.insert(path.as_str()) {
+            continue;
+        }
+        let handle = if font {
+            Handle::Font(loader.load_bytes(path))
+        } else {
+            Handle::Image(loader.load_image(path))
+        };
+        out.push(PendingAsset {
+            path: path.clone(),
+            handle,
+        });
+    }
+    out
+}
+
 /// Moves finished assets into the store. A missing or undecodable asset is not
 /// fatal: images become a magenta placeholder, sounds are skipped; each failure
 /// is logged and returned.

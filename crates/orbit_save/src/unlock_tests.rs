@@ -128,6 +128,7 @@ fn trophy_story() -> (Story, orbit_core::AchievementId, SceneId) {
         description_id,
         hidden: false,
         icon: None,
+        locked_icon: None,
     });
     let a = story.strings.add("a");
     let b = story.strings.add("b");

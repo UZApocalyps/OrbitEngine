@@ -65,7 +65,7 @@ pub fn asset_users(story: &Story, id: AssetId) -> Vec<AssetUser> {
     let achievements = story
         .achievements
         .iter()
-        .filter(|a| a.icon == Some(id))
+        .filter(|a| a.icon == Some(id) || a.locked_icon == Some(id))
         .map(|a| AssetUser::Achievement(a.id));
     nodes.chain(characters).chain(achievements).collect()
 }
