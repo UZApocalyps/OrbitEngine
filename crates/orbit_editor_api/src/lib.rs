@@ -20,6 +20,7 @@ pub mod i18n;
 mod preview;
 mod registry;
 mod scene_view;
+pub mod tasks;
 pub mod varwidgets;
 
 pub use context::{
@@ -41,6 +42,7 @@ pub use registry::{
     RegisteredAction, RegisteredPanel, shortcut_text,
 };
 pub use scene_view::{SceneViewActor, SceneViewState};
+pub use tasks::{Progress, TaskError, TaskHandle, TaskInfo, Tasks};
 
 /// Glyph constants of the Phosphor icon font (`icons::FLOPPY_DISK`...).
 pub use egui_phosphor::regular as icons;

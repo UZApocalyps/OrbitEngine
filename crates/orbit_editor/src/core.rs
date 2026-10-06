@@ -14,7 +14,7 @@ use egui_dock::DockState;
 use orbit_core::Story;
 use orbit_editor_api::{
     EditorContext, EditorPlugin, EditorRegistry, EditorRequest, EditorState, Lang, Level,
-    ProjectInfo, Selection, ThemeMode,
+    ProjectInfo, Selection, TaskError, TaskHandle, ThemeMode,
 };
 use orbit_plugin_api::ProjectEvent;
 use orbit_project::{ChangeKind, load_story};
@@ -146,6 +146,10 @@ pub struct EditorCore {
     assets_root: PathBuf,
     /// The story file changed on disk and no dialog could say so yet.
     story_changed_on_disk: bool,
+    /// The save running in the background: project generation, job.
+    saving: Option<(u64, TaskHandle<crate::session::SaveSnapshot>)>,
+    /// The project being opened in the background: its path, the job.
+    opening: Option<(PathBuf, TaskHandle<LoadedProject>)>,
     /// Bumped when files of the asset folders changed (the preview reloads).
     pub asset_epoch: u64,
     /// The live MCP server and its command queue (M4).
@@ -232,6 +236,8 @@ impl EditorCore {
             watcher: None,
             assets_root: PathBuf::new(),
             story_changed_on_disk: false,
+            saving: None,
+            opening: None,
             asset_epoch: 0,
             mcp: crate::live::LiveService::default(),
         };
@@ -329,17 +335,88 @@ impl EditorCore {
                 return;
             }
         };
-        let story = match load_story(&location.storage(), &location.story_file) {
-            Ok(story) => story,
+        match LoadedProject::load(location) {
+            Ok(loaded) => self.install_project(loaded),
             Err(e) => {
-                self.state.push_toast(Level::Error, e.to_string());
+                self.state.push_toast(Level::Error, e);
+                self.forget(path);
+            }
+        }
+    }
+
+    /// Opens a project from the interface (menu, recent list, welcome, file
+    /// drop): read, parsed and validated by a background job (status bar and
+    /// an overlay say so; the editor stays usable), then installed at once.
+    /// Asks first when the current project has unsaved edits.
+    pub fn open_project_in_background(&mut self, path: &Path) {
+        if self.is_modified() {
+            self.dialog = Some(Dialog::ConfirmUnsaved {
+                then: Pending::Open(path.to_owned()),
+            });
+        } else {
+            self.start_open(path);
+        }
+    }
+
+    fn start_open(&mut self, path: &Path) {
+        if self.opening.is_some() {
+            return;
+        }
+        let location = match ProjectLocation::resolve(path, &self.state.i18n) {
+            Ok(location) => location,
+            Err(e) => {
+                self.state.push_toast(Level::Error, e);
                 self.forget(path);
                 return;
             }
         };
+        let title = self.state.t("status.task_open");
+        let job = self
+            .state
+            .spawn_task(title, Some("project"), move |p| {
+                let loaded = LoadedProject::load(location).map_err(TaskError::Failed)?;
+                p.check()?;
+                Ok(loaded)
+            });
+        self.opening = Some((path.to_owned(), job));
+    }
+
+    /// Installs the project opened in the background once it is loaded.
+    fn poll_open(&mut self) {
+        let Some((_, job)) = self.opening.as_mut() else {
+            return;
+        };
+        let Some(outcome) = job.poll() else {
+            return;
+        };
+        let Some((path, _)) = self.opening.take() else {
+            return;
+        };
+        match outcome {
+            Ok(loaded) => self.install_project(loaded),
+            Err(TaskError::Cancelled) => {}
+            Err(TaskError::Failed(e)) => {
+                self.state.push_toast(Level::Error, e);
+                self.forget(&path);
+            }
+            Err(e) => self.state.push_toast(Level::Error, format!("{e:?}")),
+        }
+    }
+
+    /// A project is being opened in the background (the overlay).
+    pub fn opening(&self) -> Option<&Path> {
+        self.opening.as_ref().map(|(p, _)| p.as_path())
+    }
+
+    fn install_project(&mut self, loaded: LoadedProject) {
+        let LoadedProject {
+            location,
+            story,
+            layout,
+            layout_warning,
+            report,
+        } = loaded;
         self.close_now();
-        let (layout, layout_warning) =
-            orbit_project::graph_layout::load_layout(&location.storage(), &location.story_file);
 
         let recovery_dir = location.recovery_dir(self.store.dir());
         let remembered = match &location.manifest {
@@ -378,7 +455,7 @@ impl EditorCore {
         self.registry
             .project
             .dispatch(&ProjectEvent::Opened { title: &title });
-        self.report_opened();
+        self.report_opened(&report);
         if self
             .session
             .as_ref()
@@ -394,7 +471,7 @@ impl EditorCore {
     }
 
     /// Console summary: counts, validation problems, missing plugins.
-    fn report_opened(&mut self) {
+    fn report_opened(&mut self, report: &orbit_core::ValidationReport) {
         let Some(story) = self.story() else { return };
         let texts = &self.state.i18n;
         let nodes: usize = story.scenes.iter().map(|s| s.nodes.len()).sum();
@@ -412,7 +489,6 @@ impl EditorCore {
                 ],
             ),
         )];
-        let report = orbit_core::validate(story);
         for e in report.errors.iter().take(20) {
             lines.push((
                 Level::Error,
@@ -438,6 +514,8 @@ impl EditorCore {
 
     /// Saves the open project (atomically). `true` on success.
     pub fn save(&mut self) -> bool {
+        // A background save must land first: it must never overwrite this one.
+        self.poll_save(true);
         let Some(session) = self.session.as_mut() else {
             return false;
         };
@@ -462,6 +540,85 @@ impl EditorCore {
                 let message = self.state.tf("project.save_failed", &[("error", &e)]);
                 self.state.push_toast(Level::Error, message);
                 false
+            }
+        }
+    }
+
+    /// "Save" from the menu or Ctrl+S: the story is copied on the UI thread,
+    /// then serialized and written by a background job (status bar), so the
+    /// editor never stalls on a big story. The result lands in `poll_save`.
+    pub fn save_in_background(&mut self) {
+        if self.saving.is_some() {
+            let message = self.state.t("project.save_busy");
+            self.state.push_toast(Level::Info, message);
+            return;
+        }
+        if self.session.is_none() {
+            return;
+        }
+        self.registry.project.dispatch(&ProjectEvent::BeforeSave);
+        if self.registry.ui_link.dirty.get() {
+            let message = self.state.t("uied.save_failed_short");
+            self.state.push_toast(Level::Error, message);
+            return;
+        }
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let snapshot = session.save_snapshot();
+        let title = self.state.t("status.task_save");
+        let job = self.state.spawn_task(title, Some("project"), move |_| {
+            snapshot.write().map_err(TaskError::Failed)?;
+            Ok(snapshot)
+        });
+        self.saving = Some((self.project_generation, job));
+    }
+
+    /// Records the background save once written (`wait`: block until it is,
+    /// before a synchronous save or a close).
+    fn poll_save(&mut self, wait: bool) {
+        let Some((generation, job)) = self.saving.as_mut() else {
+            return;
+        };
+        let generation = *generation;
+        let outcome = if wait {
+            match self.saving.take() {
+                Some((_, job)) => job.wait(),
+                None => return,
+            }
+        } else {
+            match job.poll() {
+                Some(outcome) => {
+                    self.saving = None;
+                    outcome
+                }
+                None => return,
+            }
+        };
+        match outcome {
+            Ok(snapshot) => {
+                // Another project opened meanwhile: the old one was written.
+                if generation != self.project_generation {
+                    return;
+                }
+                let Some(session) = self.session.as_mut() else {
+                    return;
+                };
+                session.saved_snapshot(snapshot);
+                if let Some(watcher) = &self.watcher {
+                    watcher.accept_story_now();
+                }
+                let name = session.name.clone();
+                let message = self.state.tf("project.saved", &[("name", &name)]);
+                self.state.push_toast(Level::Info, message);
+            }
+            Err(TaskError::Failed(e)) => {
+                let message = self.state.tf("project.save_failed", &[("error", &e)]);
+                self.state.push_toast(Level::Error, message);
+            }
+            Err(e) => {
+                let message = self.state.tf("project.save_failed", &[("error", &format!("{e:?}"))]);
+                self.state.push_toast(Level::Error, message);
             }
         }
     }
@@ -633,6 +790,7 @@ impl EditorCore {
     }
 
     pub fn shutdown(&mut self) {
+        self.poll_save(true);
         crate::live::shutdown(self);
         self.flush_layout();
         self.persist();
@@ -668,7 +826,7 @@ impl EditorCore {
                 if let Some(session) = &self.session {
                     session.discard_recovery();
                 }
-                self.open_now(&path);
+                self.start_open(&path);
             }
             Pending::Close => {
                 if let Some(session) = &self.session {
@@ -704,7 +862,7 @@ impl EditorCore {
     fn handle_request(&mut self, request: EditorRequest, ctx: &Context) {
         match request {
             EditorRequest::RunAction(id) => self.run_action(&id),
-            EditorRequest::OpenProject(path) => self.open_project(&path),
+            EditorRequest::OpenProject(path) => self.open_project_in_background(&path),
             EditorRequest::PickOpenProject => {
                 self.mcp.set_busy(Some("the \"open project\" file dialog is open".into()));
                 let picked = rfd::FileDialog::new()
@@ -712,7 +870,7 @@ impl EditorCore {
                     .pick_folder();
                 self.mcp.set_busy(None);
                 if let Some(path) = picked {
-                    self.open_project(&path);
+                    self.open_project_in_background(&path);
                 }
             }
             EditorRequest::PickOpenStory => {
@@ -723,7 +881,7 @@ impl EditorCore {
                     .pick_file();
                 self.mcp.set_busy(None);
                 if let Some(path) = picked {
-                    self.open_project(&path);
+                    self.open_project_in_background(&path);
                 }
             }
             EditorRequest::NewProjectDialog => {
@@ -737,7 +895,7 @@ impl EditorCore {
                 }));
             }
             EditorRequest::Save => {
-                self.save();
+                self.save_in_background();
             }
             EditorRequest::ConvertStory => self.convert_story(),
             EditorRequest::CloseProject => self.close_project(),
@@ -839,6 +997,8 @@ impl EditorCore {
     /// autosave, layout persistence.
     pub fn after_frame(&mut self, ctx: &Context) {
         self.process_changes();
+        self.poll_save(false);
+        self.poll_open();
         self.poll_watcher(ctx);
         if self.refresh_diagnostics() {
             // Findings arrived after the UI of this frame was drawn.
@@ -976,7 +1136,8 @@ impl EditorCore {
                 } => self.on_assets_changed(ctx, &added, &modified, &removed),
             }
         }
-        if self.story_changed_on_disk && self.dialog.is_none() {
+        // Our own save may be writing the file: look once it is done.
+        if self.story_changed_on_disk && self.dialog.is_none() && self.saving.is_none() {
             self.story_changed_on_disk = false;
             self.check_external_story();
             ctx.request_repaint();
@@ -1102,7 +1263,7 @@ impl EditorCore {
                     if one.is_dir()
                         || one.extension().is_some_and(|e| e == "orbit" || e == "ron") =>
                 {
-                    self.open_project(one);
+                    self.open_project_in_background(one);
                 }
                 _ => {
                     let message = self.state.t("project.open_before_drop");
@@ -1253,4 +1414,31 @@ pub enum UnsavedChoice {
     Save,
     Discard,
     Cancel,
+}
+
+/// A project read from disk, parsed and validated (the slow part of opening
+/// one), ready to install. Built off the UI thread by `start_open`.
+pub struct LoadedProject {
+    location: ProjectLocation,
+    story: Story,
+    layout: orbit_project::graph_layout::GraphLayout,
+    layout_warning: Option<String>,
+    report: orbit_core::ValidationReport,
+}
+
+impl LoadedProject {
+    fn load(location: ProjectLocation) -> Result<Self, String> {
+        let story =
+            load_story(&location.storage(), &location.story_file).map_err(|e| e.to_string())?;
+        let (layout, layout_warning) =
+            orbit_project::graph_layout::load_layout(&location.storage(), &location.story_file);
+        let report = orbit_core::validate(&story);
+        Ok(Self {
+            location,
+            story,
+            layout,
+            layout_warning,
+            report,
+        })
+    }
 }

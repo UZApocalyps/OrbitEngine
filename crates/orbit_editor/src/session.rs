@@ -12,6 +12,22 @@ use crate::storage::{ProjectLocation, Recovery, RecoveryMeta};
 /// Default delay between two autosaves while the project is modified.
 pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(30);
 
+/// A story to save, owned: written off the UI thread (see
+/// [`Session::save_snapshot`]).
+pub struct SaveSnapshot {
+    storage: crate::storage::FsStorage,
+    file: String,
+    pub story: Story,
+    pub revision: u64,
+}
+
+impl SaveSnapshot {
+    /// Serializes and writes the story (atomically).
+    pub fn write(&self) -> Result<(), String> {
+        save_story(&self.storage, &self.file, &self.story).map_err(|e| e.to_string())
+    }
+}
+
 pub struct Session {
     pub project: Project,
     pub location: ProjectLocation,
@@ -119,17 +135,35 @@ impl Session {
 
     /// Writes the story to its file (atomically) and forgets recovery files.
     pub fn save(&mut self) -> Result<(), String> {
-        save_story(
-            &self.location.storage(),
-            &self.location.story_file,
-            self.project.story(),
-        )
-        .map_err(|e| e.to_string())?;
-        self.saved = self.project.story().clone();
-        self.checked_revision = self.project.revision();
-        self.modified = false;
-        self.recovery.clear();
+        let snapshot = self.save_snapshot();
+        snapshot.write()?;
+        self.saved_snapshot(snapshot);
         Ok(())
+    }
+
+    /// What a save writes, taken on the UI thread (a copy of the story): the
+    /// serialization and the write can then run in the background
+    /// ([`SaveSnapshot::write`]), and [`Session::saved_snapshot`] records it.
+    pub fn save_snapshot(&self) -> SaveSnapshot {
+        SaveSnapshot {
+            storage: self.location.storage(),
+            file: self.location.story_file.clone(),
+            story: self.project.story().clone(),
+            revision: self.project.revision(),
+        }
+    }
+
+    /// `snapshot` was written: it is what is on disk now. Edits made while it
+    /// was written keep the project modified.
+    pub fn saved_snapshot(&mut self, snapshot: SaveSnapshot) {
+        self.saved = snapshot.story;
+        if self.project.revision() == snapshot.revision {
+            self.checked_revision = snapshot.revision;
+            self.modified = false;
+            self.recovery.clear();
+        } else {
+            self.checked_revision = u64::MAX; // compare again
+        }
     }
 
     // ------------------------------------------------------------ recovery

@@ -6,9 +6,11 @@
 
 use std::path::PathBuf;
 
-use orbit_editor_api::EditorContext;
-use orbit_layers::{ImportOptions, LayeredDoc};
+use orbit_anim::rig::Rig;
+use orbit_editor_api::{EditorContext, Progress, TaskError};
+use orbit_layers::{ImportOptions, ImportReport, LayeredDoc};
 
+use super::jobs;
 use super::model::RigDoc;
 use super::{State, Tool};
 
@@ -20,17 +22,22 @@ fn file_part(name: &str) -> String {
 }
 
 /// Writes the layers that will be imported (trimmed, in import order) as PNG
-/// files under `dir` and declares them as project images in one go. Returns
-/// the asset paths, one per kept layer.
+/// files under `dir` (in the background: `written` follows, for the clean up
+/// of a dropped result). Returns the files, one per kept layer.
 fn write_layers(
-    ctx: &mut EditorContext<'_>,
     doc: &LayeredDoc,
     opts: &ImportOptions,
     dir: &std::path::Path,
-) -> Result<Vec<String>, String> {
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    p: &Progress,
+    written: &jobs::Files,
+) -> Result<Vec<PathBuf>, TaskError> {
+    let fail = |e: String| TaskError::Failed(e);
+    std::fs::create_dir_all(dir).map_err(|e| fail(e.to_string()))?;
     let mut files: Vec<PathBuf> = Vec::new();
-    for l in &doc.layers {
+    let n = doc.layers.len().max(1) as f32;
+    for (i, l) in doc.layers.iter().enumerate() {
+        p.check()?;
+        p.set_fraction(0.8 * i as f32 / n);
         if !opts.include_hidden && !doc.is_visible(l) {
             continue;
         }
@@ -39,14 +46,28 @@ fn write_layers(
             continue;
         }
         let abs = dir.join(format!("{:02}_{}.png", files.len() + 1, file_part(&l.name)));
-        std::fs::write(&abs, orbit_layers::encode_png(l.width, l.height, &l.rgba)?).map_err(|e| e.to_string())?;
+        let png = orbit_layers::encode_png(l.width, l.height, &l.rgba).map_err(fail)?;
+        if let Ok(mut w) = written.lock() {
+            w.push(abs.clone());
+        }
+        std::fs::write(&abs, png).map_err(|e| fail(e.to_string()))?;
         files.push(abs);
     }
-    let report = crate::builtin::import_paths(ctx, &files);
-    if report.imported.len() != files.len() {
-        return Err(report.failed.first().map_or_else(|| "import failed".to_owned(), |(_, e)| format!("{e:?}")));
-    }
-    Ok(report.imported.into_iter().map(|i| i.path).collect())
+    Ok(files)
+}
+
+/// A layered import computed by a job: the rig built on placeholder picture
+/// paths (the files written), to point at the project images once declared.
+pub struct LayersOut {
+    rig: Rig,
+    report: ImportReport,
+    files: Vec<PathBuf>,
+    new_rig: bool,
+}
+
+/// Placeholder picture path of a written layer file, until it is declared.
+fn placeholder(file: &std::path::Path) -> String {
+    format!("\u{1}{}", file.display())
 }
 
 impl State {
@@ -75,15 +96,32 @@ impl State {
         }
     }
 
+    /// Reads and parses the file in the background, then
+    /// [`State::import_parsed_layers`].
     pub fn import_layers(&mut self, ctx: &mut EditorContext<'_>, path: &std::path::Path, new_rig: bool) {
+        if jobs::busy(ctx, self) {
+            return;
+        }
+        let path = path.to_owned();
+        jobs::start(ctx, self, "rig.task.layers", jobs::files(Vec::new()), move |p| {
+            let fail = |e: String| TaskError::Failed(format!("{}: {e}", path.display()));
+            let bytes = std::fs::read(&path).map_err(|e| fail(e.to_string()))?;
+            p.check()?;
+            let doc = orbit_layers::parse(&bytes).map_err(fail)?;
+            Ok(jobs::Out::LayersParsed { doc: Box::new(doc), path, new_rig })
+        });
+    }
+
+    /// The file is parsed: asks how to import the groups, then writes the
+    /// layer pictures and builds the rig in the background.
+    pub(super) fn import_parsed_layers(
+        &mut self,
+        ctx: &mut EditorContext<'_>,
+        doc: LayeredDoc,
+        path: &std::path::Path,
+        new_rig: bool,
+    ) {
         let shown = path.display().to_string();
-        let doc = match std::fs::read(path).map_err(|e| e.to_string()).and_then(|b| orbit_layers::parse(&b)) {
-            Ok(d) => d,
-            Err(e) => {
-                ctx.error(ctx.tf("rig.layers.err.read", &[("path", &shown), ("error", &e)]));
-                return;
-            }
-        };
         let mut opts = ImportOptions::default();
         if !doc.groups.is_empty() {
             let answer = rfd::MessageDialog::new()
@@ -95,26 +133,39 @@ impl State {
         }
         let stem = path.file_stem().and_then(|s| s.to_str()).map(file_part).unwrap_or_else(|| "layers".to_owned());
         let dir = self.project_root(ctx).join("images").join(&stem);
-        let assets = match write_layers(ctx, &doc, &opts, &dir) {
-            Ok(a) => a,
-            Err(e) => {
-                ctx.error(ctx.tf("rig.layers.err.write", &[("error", &e)]));
-                return;
-            }
-        };
-        let mut next = assets.into_iter();
-        let mut save = |_: &str, _: u32, _: u32, _: &[u8]| next.next().ok_or_else(|| "missing layer picture".to_owned());
         let mut rig = match (&self.doc, new_rig) {
             (Some(d), false) => d.rig().clone(),
-            _ => orbit_anim::rig::Rig::default(),
+            _ => Rig::default(),
         };
-        let report = match orbit_layers::import_into_rig(&mut rig, &doc, &opts, &mut save) {
-            Ok(r) => r,
-            Err(e) => {
-                ctx.error(ctx.tf("rig.layers.err.import", &[("path", &shown), ("error", &e)]));
-                return;
-            }
-        };
+        let written = jobs::files(Vec::new());
+        let files_of_job = written.clone();
+        jobs::start(ctx, self, "rig.task.layers", written, move |p| {
+            let files = write_layers(&doc, &opts, &dir, p, &files_of_job)?;
+            p.check()?;
+            p.set_fraction(0.85);
+            let mut next = files.iter();
+            let mut save = |_: &str, _: u32, _: u32, _: &[u8]| {
+                next.next().map(|f| placeholder(f)).ok_or_else(|| "missing layer picture".to_owned())
+            };
+            let report = orbit_layers::import_into_rig(&mut rig, &doc, &opts, &mut save)
+                .map_err(|e| TaskError::Failed(format!("{shown}: {e}")))?;
+            Ok(jobs::Out::Layers(Box::new(LayersOut { rig, report, files, new_rig })))
+        });
+    }
+
+    /// Declares the written pictures as project images and applies the rig
+    /// (a new document, or one undo step on the open one).
+    pub(super) fn finish_import_layers(&mut self, ctx: &mut EditorContext<'_>, out: LayersOut) {
+        let LayersOut { mut rig, report, files, new_rig } = out;
+        let imported = crate::builtin::import_paths(ctx, &files);
+        if imported.imported.len() != files.len() {
+            let e = imported.failed.first().map_or_else(|| "import failed".to_owned(), |(_, e)| format!("{e:?}"));
+            ctx.error(ctx.tf("rig.layers.err.write", &[("error", &e)]));
+            return;
+        }
+        for (file, asset) in files.iter().zip(imported.imported) {
+            super::pixeltools::repoint(&mut rig, &placeholder(file), &asset.path);
+        }
         let root = rig.bones.iter().find(|b| b.parent.is_none()).map(|b| b.id.clone());
         let last_slot = rig.slots.last().map(|s| s.id.clone());
         if new_rig || self.doc.is_none() {

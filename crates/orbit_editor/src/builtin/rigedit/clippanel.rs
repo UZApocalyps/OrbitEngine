@@ -386,6 +386,7 @@ pub(super) fn clips_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<R
     let mut guard = state.borrow_mut();
     let st = &mut *guard;
     st.begin_frame(ui);
+    super::jobs::poll(ctx, st);
     refresh_curves(ctx, st);
     tick(ui, st);
     validate(st);
@@ -572,6 +573,7 @@ pub(super) fn timeline_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &R
     let mut guard = state.borrow_mut();
     let st = &mut *guard;
     st.begin_frame(ui);
+    super::jobs::poll(ctx, st);
     refresh_curves(ctx, st);
     tick(ui, st);
     validate(st);

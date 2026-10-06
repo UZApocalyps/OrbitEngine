@@ -29,6 +29,7 @@ mod posemap;
 use orbit_project::rigmesh::weights;
 mod workflow;
 mod layered_import;
+mod jobs;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -39,7 +40,7 @@ use egui::{Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, vec
 use orbit_anim::rig::{Affine, Attachment, BoneId, PreparedRig, RigPose, SlotId, Xform};
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, PanelDef, Plugin,
-    PluginManifest, icons,
+    PluginManifest, TaskError, icons,
 };
 
 use self::geom::{Handle, Tool, View};
@@ -255,6 +256,10 @@ pub(super) struct State {
     pub bound_bones: Option<Vec<BoneId>>,
     /// Cut and paint tools.
     pub(super) px: pixeltools::PixelState,
+    /// The heavy rig operation running in the background, if any.
+    pub(super) job: Option<jobs::RigJob>,
+    /// Bumped by every new document (a job result never lands on another).
+    pub(super) doc_serial: u64,
 }
 
 impl State {
@@ -287,6 +292,8 @@ impl State {
             anim: clippanel::AnimState::default(),
             bound_bones: None,
             px: pixeltools::PixelState::default(),
+            job: None,
+            doc_serial: 0,
         }
     }
 
@@ -300,6 +307,7 @@ impl State {
             .map_or_else(|| model::DEFAULT_SKIN.to_owned(), |s| s.name.clone());
         let edited = self.doc.as_ref().map(|d| d.canvases().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
         self.px.reset(edited);
+        self.doc_serial += 1;
         self.doc = Some(doc);
         self.selected = None;
         self.selected_slot = None;
@@ -726,19 +734,41 @@ impl State {
 
     /// Step 1: a rig with a root bone and the picture as a mesh, framed,
     /// the bone tool ready to draw over it.
+    /// The picture is decoded, traced and triangulated in the background.
     pub fn new_from_image(&mut self, ctx: &mut EditorContext<'_>, abs: &std::path::Path) {
-        let Some(pic) = self.load_picture(ctx, abs) else { return };
-        match workflow::rig_from_picture(&pic) {
-            Ok((doc, root, slot)) => {
-                self.set_doc(doc);
-                self.selected = Some(root);
-                self.selected_slot = Some(slot);
-                self.tool = Tool::Create;
-                self.sync();
-                ctx.info(ctx.t("rig.image.created"));
-            }
-            Err(e) => ctx.warn(ctx.t(e.key())),
+        if jobs::busy(ctx, self) {
+            return;
         }
+        let Some(path) = self.resolve_picture(ctx, abs) else { return };
+        let root = self.project_root(ctx);
+        jobs::start(ctx, self, "rig.task.new_image", jobs::files(Vec::new()), move |p| {
+            let pic = workflow::load_picture(&root, &path).map_err(|e| TaskError::Failed(format!("{path}: {e}")))?;
+            p.check()?;
+            p.set_fraction(0.3);
+            let size = [pic.width as f32, pic.height as f32];
+            // A message key: translated on the UI thread (`jobs::poll`).
+            let (doc, root, slot) =
+                workflow::rig_from_picture(&pic).map_err(|e| TaskError::Failed(e.key().to_owned()))?;
+            Ok(jobs::Out::NewDoc { doc: Box::new(doc), root, slot, path, size })
+        });
+    }
+
+    pub(super) fn finish_new_from_image(
+        &mut self,
+        ctx: &mut EditorContext<'_>,
+        doc: RigDoc,
+        root: BoneId,
+        slot: SlotId,
+        path: String,
+        size: [f32; 2],
+    ) {
+        self.image_sizes.insert(path, size);
+        self.set_doc(doc);
+        self.selected = Some(root);
+        self.selected_slot = Some(slot);
+        self.tool = Tool::Create;
+        self.sync();
+        ctx.info(ctx.t("rig.image.created"));
     }
 
     /// "Add image part…": another picture as its own slot.
@@ -792,14 +822,32 @@ impl State {
 
     /// Step 3: automatic weights for every mesh from the bones, then pose
     /// mode with the rotate tool so the next drag bends the picture.
+    /// The weights are computed in the background on a copy of the rig.
     pub fn bind_to_bones(&mut self, ctx: &mut EditorContext<'_>) {
+        if jobs::busy(ctx, self) {
+            return;
+        }
         let falloff = self.mesh.falloff;
-        let Some(doc) = self.doc.as_mut() else { return };
+        let Some(doc) = self.doc.as_ref() else { return };
         if doc.rig().bones.len() < 2 {
             ctx.warn(ctx.t("rig.bind.need_bones"));
             return;
         }
-        match workflow::bind(doc, falloff) {
+        let mut rig = doc.rig().clone();
+        jobs::start(ctx, self, "rig.task.bind", jobs::files(Vec::new()), move |_| {
+            let n = workflow::bind_rig(&mut rig, falloff);
+            Ok(jobs::Out::Bound { rig, n })
+        });
+    }
+
+    /// Applies a finished "Bind to bones" (one undo step).
+    pub(super) fn finish_bind(&mut self, ctx: &mut EditorContext<'_>, rig: orbit_anim::rig::Rig, n: usize) {
+        let Some(doc) = self.doc.as_mut() else { return };
+        let applied = doc.edit(|current| {
+            *current = rig;
+            Ok(n)
+        });
+        match applied {
             Ok(0) => ctx.warn(ctx.t("rig.bind.no_mesh")),
             Ok(n) => {
                 self.bound_bones = Some(doc.rig().bones.iter().map(|b| b.id.clone()).collect());
@@ -954,10 +1002,12 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
     let mut guard = state.borrow_mut();
     let st = &mut *guard;
     st.begin_frame(ui);
+    jobs::poll(ctx, st);
     clippanel::tick(ui, st);
     if st.doc.is_none() {
         let full = ui.available_rect_before_wrap();
         panels::empty_state(ui, ctx, st);
+        jobs::overlay(ui, st, full);
         paint_drop_hint(ui, ctx, full, false);
         handle_drops(ui, ctx, st, full);
         confirm_dialog(ui, ctx, st);
@@ -1075,6 +1125,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
         FontId::proportional(11.0),
         faint(ui),
     );
+    jobs::overlay(ui, st, rect);
     paint_drop_hint(ui, ctx, rect, true);
     pixeltools::new_layer_dialog(ui, ctx, st);
     confirm_dialog(ui, ctx, st);

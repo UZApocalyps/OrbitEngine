@@ -58,6 +58,9 @@ impl EditorCore {
         self.handle_shortcuts(&ctx);
         self.handle_dropped_files(&ctx);
         self.pump(&ctx);
+        if let Some(path) = self.opening().map(|p| p.display().to_string()) {
+            opening_overlay(&ctx, &self.state.tf("status.opening", &[("path", &path)]));
+        }
 
         let palette_outcome;
         let mut dialog_outcome = DialogOutcome::None;
@@ -423,6 +426,7 @@ fn status_bar(
                             .color(theme.text_faint()),
                     );
                     ui.separator();
+                    task_indicator(ui, ectx, theme);
                     if frame_counter {
                         let frames = ectx.state().debug_frames.unwrap_or(0);
                         ui.label(
@@ -487,6 +491,73 @@ fn status_bar(
             });
         });
     open_problems
+}
+
+/// A project opening in the background: a card in the middle of the window,
+/// not modal (it takes no input; the status bar has the cancel button).
+fn opening_overlay(ctx: &egui::Context, text: &str) {
+    egui::Area::new(egui::Id::new("orbit_opening_overlay"))
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .order(egui::Order::Foreground)
+        .interactable(false)
+        .show(ctx, |ui| {
+            Frame::popup(ui.style()).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(egui::Spinner::new().size(18.0));
+                    ui.label(text);
+                });
+            });
+        });
+}
+
+/// The background jobs (laid out right to left): a spinner or a progress bar,
+/// the label and a cancel button for the oldest one, "+N" for the others
+/// (listed in the tooltip). Nothing, and no repaint, while no job runs.
+fn task_indicator(ui: &mut Ui, ectx: &EditorContext<'_>, theme: &Theme) {
+    let tasks = &ectx.state().tasks;
+    let running = tasks.running();
+    let Some(first) = running.first() else { return };
+    // Progress is read from the jobs: redraw a few times per second only
+    // while one runs (their end wakes the loop at once).
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(100));
+    if running.len() > 1 {
+        let others: Vec<String> = running[1..].iter().map(|t| t.title.clone()).collect();
+        ui.label(
+            RichText::new(format!("+{}", running.len() - 1))
+                .small()
+                .color(theme.text_weak()),
+        )
+        .on_hover_text(others.join("\n"));
+    }
+    let cancel = ui
+        .add_enabled(
+            !first.cancelling,
+            egui::Button::new(RichText::new(icons::X_CIRCLE).small()).frame(false),
+        )
+        .on_hover_text(ectx.t("status.task_cancel"));
+    if cancel.clicked() {
+        tasks.cancel(first.id);
+    }
+    let text = match (&first.label, first.cancelling) {
+        (_, true) => ectx.tf("status.task_cancelling", &[("task", &first.title)]),
+        (label, false) if label.is_empty() => first.title.clone(),
+        (label, false) => format!("{} — {label}", first.title),
+    };
+    ui.label(RichText::new(text).small().color(theme.text_weak()));
+    match first.fraction {
+        Some(f) => {
+            ui.add(
+                egui::ProgressBar::new(f)
+                    .desired_width(90.0)
+                    .desired_height(8.0),
+            );
+        }
+        None => {
+            ui.add(egui::Spinner::new().size(12.0));
+        }
+    }
+    ui.separator();
 }
 
 /// The error / warning counters of the live validation; `true` when clicked.

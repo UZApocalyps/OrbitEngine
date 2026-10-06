@@ -104,6 +104,16 @@ all = { level = "warn", priority = -1 }
 [profile.dev.package."*"]
 opt-level = 1
 
+# The editor's compute-heavy pure code (rig trace / triangulation / weights /
+# inpaint, layered file decoding) is 5-10x slower at opt-level 0, which made
+# debug builds of the editor crawl on real pictures. Optimized in dev too;
+# `"*"` above only covers dependencies, not workspace members.
+[profile.dev.package.orbit_project]
+opt-level = 2
+
+[profile.dev.package.orbit_layers]
+opt-level = 2
+
 [profile.release]
 lto = "thin"
 opt-level = 3

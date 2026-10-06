@@ -116,6 +116,7 @@ pub(super) fn hierarchy(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<Ref
     let mut guard = state.borrow_mut();
     let st = &mut *guard;
     st.begin_frame(ui);
+    super::jobs::poll(ctx, st);
     if st.doc.is_none() {
         empty_state(ui, ctx, st);
         return;
@@ -393,6 +394,7 @@ pub(super) fn inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<Ref
     let mut guard = state.borrow_mut();
     let st = &mut *guard;
     st.begin_frame(ui);
+    super::jobs::poll(ctx, st);
     if st.doc.is_none() {
         empty_state(ui, ctx, st);
         return;

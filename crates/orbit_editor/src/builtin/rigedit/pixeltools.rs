@@ -22,7 +22,7 @@ use std::time::SystemTime;
 use egui::{Color32, Pos2, Rect, RichText, Ui, vec2};
 use orbit_anim::rig::{Affine, Attachment, CpuSkinner, Rig, RigDrawItem, SlotId};
 use orbit_core::AssetKind;
-use orbit_editor_api::{EditorContext, icons};
+use orbit_editor_api::{EditorContext, TaskError, icons};
 use orbit_project::rigmesh::meshgen;
 use orbit_project::rigmesh::pixels::{self, Mask};
 use orbit_project::rigops;
@@ -370,7 +370,7 @@ fn register(ctx: &mut EditorContext<'_>, rel: &str) {
 }
 
 /// Every attachment showing `from` shows `to` instead.
-fn repoint(rig: &mut Rig, from: &str, to: &str) {
+pub(super) fn repoint(rig: &mut Rig, from: &str, to: &str) {
     for k in &mut rig.skins {
         for att in k.attachments.values_mut() {
             match att {
@@ -484,6 +484,9 @@ fn close_polygon(st: &mut State, t: &Target, add: bool, sub: bool) {
 /// "Cut to new part": one undo step (the new slot, its picture, the filled
 /// hole). The new part follows the selected bone (else the source's bone).
 pub fn cut(ctx: &mut EditorContext<'_>, st: &mut State) {
+    if super::jobs::busy(ctx, st) {
+        return;
+    }
     let Some(t) = target(ctx, st) else { return };
     let Some((sid, mask)) = st.px.selection.clone() else {
         ctx.warn(ctx.t("rig.cut.no_selection"));
@@ -501,60 +504,85 @@ pub fn cut(ctx: &mut EditorContext<'_>, st: &mut State) {
     }
     let root = st.project_root(ctx);
     let Some(doc) = st.doc.as_ref() else { return };
-    let bone = st.selected.clone().filter(|b| model::bone(doc.rig(), b).is_some());
+    let bone = st.selected.as_ref().filter(|b| model::bone(doc.rig(), b).is_some()).map(|b| b.as_str().to_owned());
     let skin = doc.rig().skins.iter().any(|k| k.name == st.skin).then(|| st.skin.clone());
     let slot_name = model::slot(doc.rig(), &sid).map(|s| s.name.clone()).unwrap_or_default();
     let new_path = free_path(&root, &t.path, &format!("{}_cut", sanitize(&slot_name)));
     let Some(c) = doc.canvas(&t.path) else { return };
     let src = Picture { path: t.path.clone(), width: c.w, height: c.h, rgba: c.rgba.clone() };
     let (below, fill) = (st.px.below, st.px.fill_hole);
-    let spec = |fill_hole: bool| rigops::CutSpec {
-        slot: sid.as_str(),
-        skin: skin.as_deref(),
-        new_image: &new_path,
-        name: None,
-        bone: bone.as_ref().map(|b| b.as_str()),
-        below,
-        fill_hole,
+    // Filling the hole edits the source picture: the first edit of a picture
+    // the editor did not make goes to a copy (see `editable`), written by
+    // the job too.
+    let copy = (fill && !(st.px.overwrite || st.px.owned.contains(&t.path)))
+        .then(|| free_path(&root, &t.path, &format!("{}_edit", stem_of(&t.path))))
+        .filter(|copy| *copy != new_path);
+    let mut rig = doc.rig().clone();
+    let sid = sid.as_str().to_owned();
+    let mut files = vec![root.join(&new_path)];
+    files.extend(copy.iter().map(|c| root.join(c)));
+    super::jobs::start(ctx, st, "rig.task.cut", super::jobs::files(files), move |p| {
+        let spec = rigops::CutSpec {
+            slot: sid.as_str(),
+            skin: skin.as_deref(),
+            new_image: &new_path,
+            name: None,
+            bone: bone.as_deref(),
+            below,
+            fill_hole: fill,
+        };
+        // Works on a copy of the rig: a refused cut changes nothing.
+        let r = rigops::cut_part(&mut rig, &src, &mask, &spec).map_err(|e| TaskError::Failed(e.message))?;
+        p.check()?;
+        p.set_fraction(0.8);
+        write_png(&root.join(&new_path), r.part.width, r.part.height, &r.part.rgba)
+            .map_err(|e| TaskError::Failed(format!("{new_path}: {e}")))?;
+        if let Some(copy) = &copy {
+            write_png(&root.join(copy), src.width, src.height, &src.rgba)
+                .map_err(|e| TaskError::Failed(format!("{copy}: {e}")))?;
+        }
+        Ok(super::jobs::Out::Cut(Box::new(CutOut { rig, src, copy, new_path, r })))
+    });
+}
+
+/// A cut computed (and its pictures written) by a job.
+pub struct CutOut {
+    /// The rig after the cut (its source still shows the original picture).
+    rig: Rig,
+    /// The source picture before the cut.
+    src: Picture,
+    /// The copy of the source written for the filled hole, if any.
+    copy: Option<String>,
+    new_path: String,
+    r: rigops::CutResult,
+}
+
+/// Applies a finished cut as one undo step (the copy of the source, the new
+/// slot, its picture, the filled hole).
+pub fn apply_cut(ctx: &mut EditorContext<'_>, st: &mut State, out: CutOut) {
+    let CutOut { mut rig, src, copy, new_path, r } = out;
+    let src_path = match &copy {
+        Some(copy) => {
+            register(ctx, copy);
+            st.px.owned.insert(copy.clone());
+            if let Some(s) = st.image_sizes.get(&src.path).copied() {
+                st.image_sizes.insert(copy.clone(), s);
+            }
+            repoint(&mut rig, &src.path, copy);
+            ctx.info(ctx.tf("rig.paint.copied", &[("path", copy)]));
+            copy.clone()
+        }
+        None => src.path.clone(),
     };
-    // Dry run first (no fill): a refused cut changes nothing, not even the copy.
-    if let Err(e) = rigops::cut_part(&mut doc.rig().clone(), &src, &mask, &spec(false)) {
-        ctx.warn(e.message);
-        return;
-    }
     let Some(doc) = st.doc.as_mut() else { return };
     doc.begin_gesture();
-    let src_path = if fill { editable(ctx, st, &t.path) } else { Some(t.path.clone()) };
-    let Some(src_path) = src_path else {
-        if let Some(d) = st.doc.as_mut() {
-            d.end_gesture();
-        }
-        return;
-    };
-    let src = Picture { path: src_path.clone(), ..src };
-    let spec = spec(fill);
-    let Some(doc) = st.doc.as_mut() else { return };
-    let mut failure = None;
-    let result = doc.edit(|rig| {
-        rigops::cut_part(rig, &src, &mask, &spec).map_err(|e| {
-            failure = Some(e.message);
-            OpError::Unknown
-        })
-    });
-    let r = match result {
-        Ok(r) => r,
-        Err(_) => {
-            doc.end_gesture();
-            ctx.warn(failure.unwrap_or_else(|| ctx.t("rig.err.unknown")));
-            return;
-        }
-    };
-    if let Err(e) = write_png(&root.join(&new_path), r.part.width, r.part.height, &r.part.rgba) {
-        doc.end_gesture();
-        doc.undo();
-        ctx.error(ctx.tf("rig.pixels.write_failed", &[("path", &new_path), ("error", &e)]));
-        return;
+    if let Some(copy) = &copy {
+        doc.set_canvas(copy, src.width, src.height, src.rgba);
     }
+    let _ = doc.edit(|current| {
+        *current = rig;
+        Ok(())
+    });
     doc.set_canvas(&new_path, r.part.width, r.part.height, r.part.rgba.clone());
     if let Some(filled) = r.source {
         doc.replace_pixels(&src_path, filled);
@@ -572,15 +600,21 @@ pub fn cut(ctx: &mut EditorContext<'_>, st: &mut State) {
     }
 }
 
-/// "Re-trace mesh": the meshes of the target's picture follow its alpha again.
+/// "Re-trace mesh": the meshes of the target's picture follow its alpha
+/// again (in the background).
 pub fn retrace(ctx: &mut EditorContext<'_>, st: &mut State) {
+    if super::jobs::busy(ctx, st) {
+        return;
+    }
     let Some(t) = target(ctx, st) else { return };
-    let Some(doc) = st.doc.as_mut() else { return };
+    let Some(doc) = st.doc.as_ref() else { return };
     let Some(c) = doc.canvas(&t.path) else { return };
     let pic = Picture { path: t.path.clone(), width: c.w, height: c.h, rgba: c.rgba.clone() };
-    if let Ok(n) = doc.edit(|rig| Ok(rigops::retrace_picture(rig, &pic))) {
-        ctx.info(ctx.tn("rig.paint.retraced", n, &[]));
-    }
+    let mut rig = doc.rig().clone();
+    super::jobs::start(ctx, st, "rig.task.retrace", super::jobs::files(Vec::new()), move |_| {
+        let n = rigops::retrace_picture(&mut rig, &pic);
+        Ok(super::jobs::Out::Retraced { rig, n })
+    });
 }
 
 /// "New layer…": a blank picture of the form's size, as a slot just in front
@@ -1417,5 +1451,131 @@ mod tests {
             assert_eq!((a.part.width, a.part.height, a.offset), (b.part.width, b.part.height, b.offset));
             assert_eq!(a.part.rgba, b.part.rgba);
         }
+    }
+
+    // ---- background cut (jobs)
+
+    /// A rig saved in `dir` with one big opaque mesh part `p.png` (`n`×`n`,
+    /// alpha with a hole pattern so the trace has work), a selection of its
+    /// left half.
+    fn big_part(dir: &Path, n: u32) -> State {
+        let mut st = state();
+        let rgba: Vec<u8> = (0..n * n)
+            .flat_map(|i| {
+                let (x, y) = (i % n, i / n);
+                let a = if (x / 37 + y / 41) % 5 == 0 { 0 } else { 255 };
+                [(x % 251) as u8, (y % 241) as u8, 90, a]
+            })
+            .collect();
+        let pic = Picture { path: "p.png".into(), width: n, height: n, rgba: rgba.clone() };
+        let doc = st.doc.as_mut().unwrap();
+        doc.path = Some(dir.join("a.rig.ron"));
+        let bone = doc.add_bone(None, [0.0, 0.0], [50.0, 0.0]).unwrap();
+        let slot = workflow::add_part(doc, &bone, &pic, [0.0, 0.0]).unwrap();
+        doc.set_canvas("p.png", n, n, rgba);
+        st.selected_slot = Some(slot.clone());
+        st.sync();
+        let mut m = Mask::new(n, n);
+        for y in n / 8..n - n / 8 {
+            for x in n / 8..n / 2 {
+                m.set(x, y, true);
+            }
+        }
+        combine(&mut st, &slot, m, false, false);
+        st
+    }
+
+    fn temp(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("orbit_rig_job_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Polls the job like the panels do each frame; returns the longest
+    /// frame spent waiting (not applying) and the applying frame.
+    fn run_frames(ctx: &mut EditorContext<'_>, st: &mut State) -> (std::time::Duration, std::time::Duration) {
+        let start = std::time::Instant::now();
+        let mut worst_wait = std::time::Duration::ZERO;
+        loop {
+            let frame = std::time::Instant::now();
+            super::super::jobs::poll(ctx, st);
+            let took = frame.elapsed();
+            if st.job.is_none() {
+                return (worst_wait, took);
+            }
+            worst_wait = worst_wait.max(took);
+            assert!(start.elapsed() < std::time::Duration::from_secs(120), "the job never ended");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn a_cut_runs_in_the_background_and_lands_as_one_undo_step() {
+        let dir = temp("cut");
+        let mut st = big_part(&dir, 1024);
+        let registry = orbit_editor_api::EditorRegistry::new();
+        let mut es = orbit_editor_api::EditorState::default();
+        let mut ctx = EditorContext::new(None, &mut es, &registry);
+        let rig_before = st.doc.as_ref().unwrap().rig().clone();
+
+        // What the UI thread used to do: a dry run, then the cut.
+        let t = loaded_target(&mut st).unwrap();
+        let (sid, mask) = st.px.selection.clone().unwrap();
+        let c = st.doc.as_ref().unwrap().canvas(&t.path).unwrap().clone();
+        let src = Picture { path: t.path.clone(), width: c.w, height: c.h, rgba: c.rgba };
+        let dry = rigops::CutSpec { slot: sid.as_str(), new_image: "x.png", ..Default::default() };
+        let spec = rigops::CutSpec { slot: sid.as_str(), new_image: "x.png", fill_hole: true, ..Default::default() };
+        let old = std::time::Instant::now();
+        rigops::cut_part(&mut rig_before.clone(), &src, &mask, &dry).unwrap();
+        rigops::cut_part(&mut rig_before.clone(), &src, &mask, &spec).unwrap();
+        let old = old.elapsed();
+
+        let spawn = std::time::Instant::now();
+        cut(&mut ctx, &mut st);
+        let spawn = spawn.elapsed();
+        assert!(st.job.is_some(), "the cut runs as a job");
+        // While it runs, other heavy rig actions wait.
+        retrace(&mut ctx, &mut st);
+        assert!(ctx.state().toasts.iter().any(|t| t.message.contains(&st.job.as_ref().unwrap().title)));
+        let (wait, apply) = run_frames(&mut ctx, &mut st);
+        eprintln!("rig cut 1024²: UI thread before {old:?}; now {spawn:?} to start, frames ≤ {wait:?} while it runs, {apply:?} to apply");
+        // The UI thread never waits for the cut: a frame while it runs is
+        // only a poll.
+        assert!(wait < std::time::Duration::from_millis(16), "{wait:?}");
+
+        let doc = st.doc.as_mut().unwrap();
+        assert_eq!(doc.rig().slots.len(), rig_before.slots.len() + 1, "one new slot");
+        let written: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".png"))
+            .collect();
+        assert!(written.iter().any(|n| n.contains("_cut")), "the job wrote the part: {written:?}");
+        // One undo step brings the rig back.
+        assert!(doc.undo());
+        assert_eq!(doc.rig(), &rig_before);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cut_result_on_a_changed_rig_is_refused_and_its_files_removed() {
+        let dir = temp("stale");
+        let mut st = big_part(&dir, 256);
+        let registry = orbit_editor_api::EditorRegistry::new();
+        let mut es = orbit_editor_api::EditorState::default();
+        let mut ctx = EditorContext::new(None, &mut es, &registry);
+        cut(&mut ctx, &mut st);
+        let files = st.job.as_ref().unwrap().files.lock().unwrap().clone();
+        assert!(!files.is_empty());
+        // The user edits the rig while the cut runs.
+        let doc = st.doc.as_mut().unwrap();
+        doc.add_bone(None, [0.0, 0.0], [0.0, 30.0]).unwrap();
+        let edited = doc.rig().clone();
+        run_frames(&mut ctx, &mut st);
+        assert_eq!(st.doc.as_ref().unwrap().rig(), &edited, "nothing applied over the edit");
+        assert!(files.iter().all(|f| !f.exists()), "the part written by the job is removed");
+        assert!(ctx.state().toasts.iter().any(|t| t.level == orbit_editor_api::Level::Warn));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

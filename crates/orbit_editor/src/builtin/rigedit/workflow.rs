@@ -101,23 +101,29 @@ pub fn add_root(doc: &mut RigDoc, pic: &Picture) -> Result<BoneId, OpError> {
 
 /// "Bind to bones": automatic weights for every mesh of every skin from the
 /// current bones. One undo step; returns how many meshes were bound.
+/// (The editor runs [`bind_rig`] as a background job; this is the
+/// synchronous form the tests use.)
+#[cfg(test)]
 pub fn bind(doc: &mut RigDoc, falloff: f32) -> Result<usize, OpError> {
-    doc.edit(|rig| {
-        if rig.bones.is_empty() {
-            return Ok(0);
-        }
-        let snapshot = rig.clone();
-        let mut n = 0;
-        for skin in &mut rig.skins {
-            for att in skin.attachments.values_mut() {
-                if let Attachment::Mesh(m) = att {
-                    m.weights = weights::bind_mesh(&snapshot, m, falloff);
-                    n += 1;
-                }
+    doc.edit(|rig| Ok(bind_rig(rig, falloff)))
+}
+
+/// The work of [`bind`] on a rig (pure: runs on a copy in the background).
+pub fn bind_rig(rig: &mut Rig, falloff: f32) -> usize {
+    if rig.bones.is_empty() {
+        return 0;
+    }
+    let snapshot = rig.clone();
+    let mut n = 0;
+    for skin in &mut rig.skins {
+        for att in skin.attachments.values_mut() {
+            if let Attachment::Mesh(m) = att {
+                m.weights = weights::bind_mesh(&snapshot, m, falloff);
+                n += 1;
             }
         }
-        Ok(n)
-    })
+    }
+    n
 }
 
 /// The bone new parts and drops attach to: the selected one, else the root.

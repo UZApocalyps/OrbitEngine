@@ -290,6 +290,45 @@ fn edit_undo_redo_save_and_validate() {
 }
 
 #[test]
+fn background_save_writes_the_same_bytes_and_keeps_later_edits_modified() {
+    let ctx = Context::default();
+    let dir = TempDir::new("bgsave");
+    let project = demo_project(dir.path());
+    let mut core = EditorCore::new(options(None), &ctx);
+    core.open_project(&project);
+    core.state.selection = Some(Selection::Node(first_say(&core)));
+    core.run_action_now("orbit.explorer.add_say", &ctx);
+    assert!(core.is_modified());
+    let expected = core.story().unwrap().to_ron().unwrap();
+
+    let started = std::time::Instant::now();
+    core.save_in_background();
+    let stall = started.elapsed();
+    // The UI thread only copied the story: an edit made now is not saved.
+    core.run_action_now("orbit.explorer.add_say", &ctx);
+    let wait = std::time::Instant::now();
+    loop {
+        core.after_frame(&ctx);
+        let saved = core.session.as_mut().unwrap().saved_story().to_ron().unwrap();
+        if !core.state.tasks.any() && saved == expected {
+            break;
+        }
+        assert!(wait.elapsed() < Duration::from_secs(30), "the save never ended");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    eprintln!("background save: {stall:?} on the UI thread");
+    let on_disk = std::fs::read_to_string(project.join("story.orbit")).unwrap();
+    assert_eq!(on_disk, expected, "same bytes as a synchronous save");
+    assert!(core.is_modified(), "the edit made during the save is still unsaved");
+
+    // A synchronous save after it writes the same bytes as the snapshot path.
+    let now = core.story().unwrap().to_ron().unwrap();
+    assert!(core.save());
+    assert_eq!(std::fs::read_to_string(project.join("story.orbit")).unwrap(), now);
+    assert!(!core.is_modified());
+}
+
+#[test]
 fn shortcut_undo_is_reachable_through_requests_and_selection_follows() {
     let ctx = Context::default();
     let dir = TempDir::new("selection");

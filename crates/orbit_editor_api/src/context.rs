@@ -309,9 +309,21 @@ pub struct EditorState {
     pub ai: crate::ai::AiState,
     /// Positions of the graph blocks (`.layout` sidecar).
     pub graph: crate::GraphState,
+    /// Background jobs (status bar progress, busy documents).
+    pub tasks: crate::tasks::Tasks,
 }
 
 impl EditorState {
+    /// Runs `job` on the editor's worker pool (see [`crate::tasks`]); the
+    /// host is woken when it ends.
+    pub fn spawn_task<T, F>(&self, title: impl Into<String>, doc: Option<&str>, job: F) -> crate::tasks::TaskHandle<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&crate::tasks::Progress) -> Result<T, crate::tasks::TaskError> + Send + 'static,
+    {
+        self.tasks.spawn(&self.waker, title, doc, job)
+    }
+
     const TOAST_LIFETIME: Duration = Duration::from_secs(4);
 
     /// Text of a key in the current language (see [`Translator::get`]).
