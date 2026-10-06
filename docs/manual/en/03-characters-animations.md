@@ -48,6 +48,38 @@ A **rig** brings a drawing to life with bones: breathing, a waving arm, a head t
 
 If you add bones later, the step bar asks you to bind again. Then click **Add to project**: the file is saved as `assets/rigs/<name>.rig.ron` and appears in the Library. The pictures a rig draws must be files of the project.
 
+### Cutting a picture into layers
+
+A character drawn as one flat picture can be split into layers that sit on different planes and move on their own bones — typically, for an anime face: **front hair strands / eyelids / face / back hair**. Select the part in the slot list (Rig hierarchy) and take the **cut tool** (scissors, in rest mode):
+
+- **Lasso**: drag around the pixels. **Polygon**: click the corners, then click the first point again, double-click or press **Enter**. **Magic wand**: click a color (tolerance, contiguous or everywhere).
+- **Shift** adds to the selection, **Ctrl** removes from it, **Esc** clears it. The selection is shown tinted over the picture.
+- Choose **In front** or **Behind**, then **Cut to new part**: the selected pixels become a new picture (`<part>_cut.png`, next to the original, declared in the project) and a new slot with its own traced mesh, **exactly where they were**, drawn just in front of (or behind) the source and following the **selected bone** (draw a bone along a strand first, select it, then cut: the strand swings on it).
+- **Fill the hole** (on by default) fills the hole left in the source from the pixels around it — fine under hair strands, on skin or flat colors. Untick it to keep the original underneath. If the hole changes the source's outline, its mesh is traced again.
+
+The whole cut (new slot, new picture, filled hole) is **one undo step**. The original file is never overwritten: the first change of an imported picture writes a copy (`<name>_edit.png`) that the rig uses from then on.
+
+### Painting on a part
+
+The **paint tool** (wide brush) paints on the selected part's picture: **brush** (size, hardness, opacity, color), **eraser**, **clone stamp** (**Alt-click** sets the source), **fill bucket** (tolerance) and **eyedropper** (or **Alt-click** with the brush). **[** and **]** change the size. Each stroke is one undo step, shared with the rig's history. Pictures are written when you save the rig; tick **Paint over the original file** if you really want to change the imported file itself.
+
+**New layer…** makes a blank picture (by default the selected part's size, lined up on it) as a new part just in front of it — the way to **paint closed eyelids** over open eyes. **Re-trace mesh** traces the part's mesh again after you erased or painted outside its outline.
+
+**Edit in external app** opens the picture in your image editor (the system's default, or the program set in the **⋯** menu next to it). Each time you save it there, the part reloads in the rig editor (one undo step; mesh traced again if the outline changed).
+
+### Draw order
+
+The slot list shows what is drawn on top **at the top**, with each slot's draw-order number (**1** is drawn first, behind everything). **Drag a slot** in the list to move it, or use its right-click menu. Typical order for a face, back to front: back hair, face, eyes, eyelids, front hair strands.
+
+### Making a character blink
+
+1. Paint the closed eyelids on a **New layer…** over the face, or cut them from a "closed eyes" picture you pasted in. Keep the layer **under the front hair strands** in the draw order, so strands crossing the eyes stay visible.
+2. In the Clips panel, create a clip (**New clip**, for example `idle`, 3 seconds, **Forever**).
+3. Select the eyelid slot, add a **Attachment** track: a key at **0 s** set to **(none)** (hidden), a key at **2.85 s** set to the eyelid picture, a key at **2.95 s** back to **(none)**. Attachment keys switch instantly (no in-between), which is exactly a blink.
+4. Play the clip: the eyes close for a tenth of a second every three seconds. Another clip can blink twice, or at another pace.
+
+Over MCP, the same keys are `rig_clip_key_set` with `track: "slot_attachment"` and `value` the attachment id or `null`.
+
 To use it, open the character, choose the type **Rig** for an expression, then pick the rig, the **skin** (outfit), the **clip** and what happens at the end (loop, play once, ping-pong). A small animated preview shows the result. The expression's picture stays the **poster**: it is used for thumbnails and drawn while the rig loads or if it cannot be used (the Problems panel tells you why: missing file, unknown clip or skin, missing picture). The rig is drawn to the scale of the poster, with its origin at the bottom-center of the character.
 
 - Showing the same character with another expression **of the same rig** cross-fades the two clips over 0.2 seconds instead of cutting.
@@ -57,7 +89,7 @@ To use it, open the character, choose the type **Rig** for an expression, then p
 
 An AI assistant can list and read rigs, check a pose without drawing it, generate a mesh from a picture and assign a rig to an expression (see the MCP guide).
 
-**Building and animating a rig through MCP.** An assistant can do the whole workflow without the editor UI: `rig_create` (from a project picture, imported as an asset if needed: `root` bone at the feet, a slot and a mesh traced from the alpha; or an empty rig), `rig_add_image_part`, `rig_bone_add` / `rig_bone_update` / `rig_bone_reparent` / `rig_bone_delete` (positions relative to the parent or in rig space, or a `head` and `tip` like the click-drag of the bone tool), `rig_bind` (automatic weights of every mesh), `rig_slot_update` (picture shown, tint, draw order), `rig_skin_add` / `rig_skin_duplicate` / `rig_skin_delete`, `rig_ik_set` / `rig_ik_remove`, `rig_clip_create` / `rig_clip_update` / `rig_clip_delete`, `rig_clip_key_set` / `rig_clip_key_delete` (bone rotate, translate and scale, slot picture and tint, deform, draw order; each key has an easing: a preset, a bezier or a named curve of the story), `rig_add_to_project` and `rig_delete`. Every edit is validated (an error refuses it and nothing is written; web budget warnings come back with the answer) and atomic. When the rig is open in the rig editor, the change goes through its document: it refreshes the view and **Ctrl+Z undoes it**; otherwise the file is rewritten. `rig_sample` then shows the result, including how far the mesh moved.
+**Building and animating a rig through MCP.** An assistant can do the whole workflow without the editor UI: `rig_create` (from a project picture, imported as an asset if needed: `root` bone at the feet, a slot and a mesh traced from the alpha; or an empty rig), `rig_add_image_part`, `rig_bone_add` / `rig_bone_update` / `rig_bone_reparent` / `rig_bone_delete` (positions relative to the parent or in rig space, or a `head` and `tip` like the click-drag of the bone tool), `rig_bind` (automatic weights of every mesh), `rig_slot_update` (picture shown, tint, draw order), `rig_skin_add` / `rig_skin_duplicate` / `rig_skin_delete`, `rig_ik_set` / `rig_ik_remove`, `rig_clip_create` / `rig_clip_update` / `rig_clip_delete`, `rig_clip_key_set` / `rig_clip_key_delete` (bone rotate, translate and scale, slot picture and tint, deform, draw order; each key has an easing: a preset, a bezier or a named curve of the story), `rig_add_to_project`, `rig_delete` and `rig_cut` (cut the pixels inside a polygon, given in the picture's pixel coordinates, into a new part at the same place; the filled source is written as a new picture). Every edit is validated (an error refuses it and nothing is written; web budget warnings come back with the answer) and atomic. When the rig is open in the rig editor, the change goes through its document: it refreshes the view and **Ctrl+Z undoes it**; otherwise the file is rewritten. `rig_sample` then shows the result, including how far the mesh moved.
 
 
 ## Voice acting

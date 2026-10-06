@@ -48,6 +48,38 @@ Un **rig** donne vie à un dessin avec des os : respiration, bras qui salue, tê
 
 Si vous ajoutez des os ensuite, la barre d'étapes demande de lier à nouveau. Cliquez enfin sur **Ajouter au projet** : le fichier est enregistré en `assets/rigs/<nom>.rig.ron` et apparaît dans la Bibliothèque. Les images dessinées par un rig doivent être des fichiers du projet.
 
+### Découper une image en calques
+
+Un personnage dessiné d'un seul bloc peut être séparé en calques posés sur des plans différents et animés par leurs propres os — typiquement, pour un visage d'anime : **mèches de devant / paupières / visage / cheveux de derrière**. Sélectionnez la partie dans la liste des slots (Hiérarchie du rig) et prenez l'**outil découpe** (ciseaux, en mode repos) :
+
+- **Lasso** : tracez autour des pixels. **Polygone** : cliquez les coins, puis recliquez le premier point, double-cliquez ou appuyez sur **Entrée**. **Baguette magique** : cliquez une couleur (tolérance, contiguë ou partout).
+- **Maj** ajoute à la sélection, **Ctrl** en retire, **Échap** l'efface. La sélection apparaît teintée sur l'image.
+- Choisissez **Devant** ou **Derrière**, puis **Découper en nouvelle partie** : les pixels sélectionnés deviennent une nouvelle image (`<partie>_cut.png`, à côté de l'originale, déclarée dans le projet) et un nouveau slot avec son propre maillage tracé, **exactement à leur place**, dessiné juste devant (ou derrière) la source et suivant l'**os sélectionné** (dessinez d'abord un os le long d'une mèche, sélectionnez-le, puis découpez : la mèche se balance dessus).
+- **Boucher le trou** (coché par défaut) remplit le trou laissé dans la source à partir des pixels autour — convenable sous des mèches, sur la peau ou des aplats. Décochez pour garder l'original dessous. Si le trou change le contour de la source, son maillage est retracé.
+
+Toute la découpe (nouveau slot, nouvelle image, trou bouché) s'annule **en une fois**. Le fichier original n'est jamais écrasé : la première modification d'une image importée écrit une copie (`<nom>_edit.png`) que le rig utilise ensuite.
+
+### Peindre sur une partie
+
+L'**outil peinture** (pinceau large) peint sur l'image de la partie sélectionnée : **pinceau** (taille, dureté, opacité, couleur), **gomme**, **tampon de duplication** (**Alt-clic** fixe la source), **pot de peinture** (tolérance) et **pipette** (ou **Alt-clic** avec le pinceau). **[** et **]** changent la taille. Chaque trait s'annule d'un coup, dans l'historique du rig. Les images sont écrites à l'enregistrement du rig ; cochez **Peindre sur le fichier original** si vous voulez vraiment modifier le fichier importé lui-même.
+
+**Nouveau calque…** crée une image vide (par défaut à la taille de la partie sélectionnée, alignée dessus) comme nouvelle partie juste devant — la façon de **peindre des paupières fermées** sur des yeux ouverts. **Retracer le maillage** retrace le maillage de la partie après avoir gommé ou peint hors de son contour.
+
+**Modifier dans une app externe** ouvre l'image dans votre logiciel de dessin (celui du système, ou le programme choisi dans le menu **⋯** à côté). À chaque enregistrement là-bas, la partie se recharge dans l'éditeur de rig (une annulation ; maillage retracé si le contour a changé).
+
+### Ordre d'affichage
+
+La liste des slots montre **en haut** ce qui est dessiné par-dessus, avec le numéro d'ordre de chaque slot (**1** est dessiné en premier, derrière tout). **Glissez un slot** dans la liste pour le déplacer, ou utilisez son menu clic droit. Ordre typique d'un visage, de l'arrière vers l'avant : cheveux de derrière, visage, yeux, paupières, mèches de devant.
+
+### Faire cligner des yeux
+
+1. Peignez les paupières fermées sur un **Nouveau calque…** au-dessus du visage, ou découpez-les d'une image « yeux fermés » collée par-dessus. Gardez ce calque **sous les mèches de devant** dans l'ordre d'affichage, pour que les mèches qui traversent les yeux restent visibles.
+2. Dans le panneau Clips, créez un clip (**Nouveau clip**, par exemple `idle`, 3 secondes, **Sans fin**).
+3. Sélectionnez le slot des paupières, ajoutez une piste **Pièce jointe** : une clé à **0 s** sur **(aucune)** (masqué), une clé à **2,85 s** sur l'image des paupières, une clé à **2,95 s** de nouveau sur **(aucune)**. Les clés de pièce jointe basculent d'un coup (sans intermédiaire) : c'est exactement un clignement.
+4. Lancez le clip : les yeux se ferment un dixième de seconde toutes les trois secondes. Un autre clip peut cligner deux fois, ou à un autre rythme.
+
+Par MCP, ce sont des `rig_clip_key_set` avec `track: "slot_attachment"` et pour `value` l'id de la pièce jointe ou `null`.
+
 Pour l'utiliser, ouvrez le personnage, choisissez le type **Rig** pour une expression, puis le rig, la **skin** (tenue), le **clip** et ce qui se passe à la fin (boucle, une fois, aller-retour). Une petite vignette animée montre le résultat. L'image de l'expression reste le **poster** : elle sert aux miniatures et s'affiche pendant le chargement du rig ou s'il est inutilisable (le panneau Problèmes explique pourquoi : fichier absent, clip ou skin inconnus, image absente). Le rig est dessiné à l'échelle du poster, son origine au bas-centre du personnage.
 
 - Montrer le même personnage avec une autre expression **du même rig** fait un fondu croisé des deux clips sur 0,2 seconde au lieu d'un changement sec.
@@ -57,7 +89,7 @@ Pour l'utiliser, ouvrez le personnage, choisissez le type **Rig** pour une expre
 
 Un assistant IA peut lister et lire les rigs, vérifier une pose sans dessiner, générer un maillage depuis une image et affecter un rig à une expression (voir le guide MCP).
 
-**Construire et animer un rig par MCP.** Un assistant peut faire tout le parcours sans l'interface de l'éditeur : `rig_create` (depuis une image du projet, importée comme asset si besoin : os `root` aux pieds, un slot et un maillage tracé depuis l'alpha ; ou un rig vide), `rig_add_image_part`, `rig_bone_add` / `rig_bone_update` / `rig_bone_reparent` / `rig_bone_delete` (positions relatives au parent ou dans l'espace du rig, ou une `head` et une `tip` comme le cliquer-glisser de l'outil os), `rig_bind` (auto-poids de tous les maillages), `rig_slot_update` (image affichée, teinte, ordre de dessin), `rig_skin_add` / `rig_skin_duplicate` / `rig_skin_delete`, `rig_ik_set` / `rig_ik_remove`, `rig_clip_create` / `rig_clip_update` / `rig_clip_delete`, `rig_clip_key_set` / `rig_clip_key_delete` (rotation, translation et échelle d'os, image et teinte de slot, déformation, ordre de dessin ; chaque clé a une interpolation : préréglage, bézier ou courbe nommée de l'histoire), `rig_add_to_project` et `rig_delete`. Chaque modification est validée (une erreur la refuse et rien n'est écrit ; les avertissements du budget web reviennent avec la réponse) et atomique. Quand le rig est ouvert dans l'éditeur de rig, le changement passe par son document : la vue se rafraîchit et **Ctrl+Z l'annule** ; sinon le fichier est réécrit. `rig_sample` montre ensuite le résultat, y compris de combien le maillage a bougé.
+**Construire et animer un rig par MCP.** Un assistant peut faire tout le parcours sans l'interface de l'éditeur : `rig_create` (depuis une image du projet, importée comme asset si besoin : os `root` aux pieds, un slot et un maillage tracé depuis l'alpha ; ou un rig vide), `rig_add_image_part`, `rig_bone_add` / `rig_bone_update` / `rig_bone_reparent` / `rig_bone_delete` (positions relatives au parent ou dans l'espace du rig, ou une `head` et une `tip` comme le cliquer-glisser de l'outil os), `rig_bind` (auto-poids de tous les maillages), `rig_slot_update` (image affichée, teinte, ordre de dessin), `rig_skin_add` / `rig_skin_duplicate` / `rig_skin_delete`, `rig_ik_set` / `rig_ik_remove`, `rig_clip_create` / `rig_clip_update` / `rig_clip_delete`, `rig_clip_key_set` / `rig_clip_key_delete` (rotation, translation et échelle d'os, image et teinte de slot, déformation, ordre de dessin ; chaque clé a une interpolation : préréglage, bézier ou courbe nommée de l'histoire), `rig_add_to_project`, `rig_delete` et `rig_cut` (découpe les pixels d'un polygone, donné en coordonnées pixels de l'image, en une nouvelle partie au même endroit ; la source bouchée est écrite comme nouvelle image). Chaque modification est validée (une erreur la refuse et rien n'est écrit ; les avertissements du budget web reviennent avec la réponse) et atomique. Quand le rig est ouvert dans l'éditeur de rig, le changement passe par son document : la vue se rafraîchit et **Ctrl+Z l'annule** ; sinon le fichier est réécrit. `rig_sample` montre ensuite le résultat, y compris de combien le maillage a bougé.
 
 
 ## Voix

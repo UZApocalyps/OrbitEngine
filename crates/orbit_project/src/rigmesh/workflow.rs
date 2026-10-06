@@ -3,12 +3,12 @@
 //! extra part goes. Pure functions on [`Rig`]; decoding the picture is the
 //! caller's business (this crate has no image codec).
 
-use orbit_anim::rig::{Attachment, MeshAttachment, Rig, Xform};
+use orbit_anim::rig::{Affine, Attachment, MeshAttachment, Rig, Xform};
 
 use super::meshgen::{self, MeshParams};
 
 /// A decoded picture and its path as the rig stores it.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Picture {
     /// Project path (relative to the assets root, `/`) or absolute path.
     pub path: String,
@@ -53,9 +53,15 @@ pub fn root_length(pic: &Picture) -> f32 {
 /// `center` (rig space). Falls back to the picture's rectangle when the
 /// tracing fails.
 pub fn mesh_for_picture(pic: &Picture, center: [f32; 2]) -> MeshAttachment {
-    let size = pic.size();
     let placement = Xform::translate(center[0], center[1]).matrix();
-    let uv_to_rig = meshgen::region_uv_to_rig(&placement, size);
+    mesh_with_map(pic, &meshgen::region_uv_to_rig(&placement, pic.size()))
+}
+
+/// The mesh of `pic` traced from its alpha, its UVs (`0..1`) placed in rig
+/// space by `uv_to_rig`. Falls back to the picture's rectangle when the
+/// tracing fails (a blank picture: a quad to paint on).
+pub fn mesh_with_map(pic: &Picture, uv_to_rig: &Affine) -> MeshAttachment {
+    let uv_to_rig = *uv_to_rig;
     let params = MeshParams::for_character(pic.width, pic.height);
     match meshgen::generate(pic.width, pic.height, &pic.rgba, &params) {
         Ok(g) => meshgen::to_attachment(&pic.path, &g, pic.width, pic.height, &uv_to_rig),

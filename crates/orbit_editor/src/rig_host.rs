@@ -32,6 +32,21 @@ pub struct RigRequest {
     pub pan: [f32; 2],
     /// Project root the image references are relative to.
     pub root: PathBuf,
+    /// Pictures edited in memory (paint, cut) whose pixels changed since the
+    /// last request: they replace the file's texture.
+    pub pixels: Vec<PixelUpload>,
+    /// Pictures whose edited pixels were dropped (another rig opened): their
+    /// texture is loaded from the file again.
+    pub forget: Vec<String>,
+}
+
+/// The pixels of a picture held by the rig editor.
+pub struct PixelUpload {
+    /// Project path, as the rig names it.
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -56,9 +71,43 @@ pub struct RigHost {
     target: Option<(TextureId, [u32; 2])>,
     /// Loaded pictures by project path (`None`: could not be loaded).
     images: HashMap<(PathBuf, String), Option<TextureId>>,
+    /// Textures made for edited pixels (not shared by name: released when
+    /// replaced).
+    edited: std::collections::HashSet<TextureId>,
 }
 
 impl RigHost {
+    /// Uploads edited pixels into a texture of their own (reused while the
+    /// size holds).
+    fn upload(&mut self, renderer: &mut Renderer2d, root: &std::path::Path, up: &PixelUpload) {
+        let key = (root.to_owned(), up.name.clone());
+        let current = self.images.get(&key).copied().flatten();
+        if up.rgba.len() != up.width as usize * up.height as usize * 4 || up.width == 0 || up.height == 0 {
+            return;
+        }
+        // Only a texture of our own is written over: the file's texture is
+        // shared by name (thumbnails) and must keep the file's pixels.
+        if let Some(id) = current
+            && self.edited.contains(&id)
+            && renderer.texture_size(id) == Some([up.width, up.height])
+            && renderer.update_texture(id, 0, 0, up.width, up.height, &up.rgba).is_ok()
+        {
+            return;
+        }
+        let label = format!("rig edit:{}", up.name);
+        if let Ok(id) = renderer.create_empty_texture(&label, up.width, up.height, TextureOptions::COLOR)
+            && renderer.update_texture(id, 0, 0, up.width, up.height, &up.rgba).is_ok()
+        {
+            if let Some(old) = current
+                && self.edited.remove(&old)
+            {
+                renderer.release_texture(old);
+            }
+            self.edited.insert(id);
+            self.images.insert(key, Some(id));
+        }
+    }
+
     /// Renders the pending request. Returns true when the texture id or size
     /// changed, so the UI needs another frame to pick it up.
     pub fn update(
@@ -105,6 +154,28 @@ impl RigHost {
             return changed;
         };
 
+        // Dropped edits: the file's current pixels again (read now: the
+        // texture shared by name may hold what the file had before a save).
+        for name in &req.forget {
+            let fresh = std::fs::read(req.root.join(name)).ok().and_then(|b| orbit_assets::decode_image(&b).ok());
+            match fresh {
+                Some(img) => self.upload(
+                    renderer,
+                    &req.root,
+                    &PixelUpload { name: name.clone(), width: img.width, height: img.height, rgba: img.rgba },
+                ),
+                None => {
+                    if let Some(Some(id)) = self.images.remove(&(req.root.clone(), name.clone()))
+                        && self.edited.remove(&id)
+                    {
+                        renderer.release_texture(id);
+                    }
+                }
+            }
+        }
+        for up in &req.pixels {
+            self.upload(renderer, &req.root, up);
+        }
         // Load every picture the rig can show (any skin).
         let mut missing = Vec::new();
         for skin in &req.rig.rig().skins {

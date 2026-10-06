@@ -107,7 +107,7 @@ fn the_edit_tools_are_advertised() {
         "rig_create", "rig_add_image_part", "rig_delete", "rig_bone_add", "rig_bone_update", "rig_bone_delete",
         "rig_bone_reparent", "rig_bind", "rig_slot_update", "rig_skin_add", "rig_skin_duplicate", "rig_skin_delete",
         "rig_ik_set", "rig_ik_remove", "rig_clip_create", "rig_clip_update", "rig_clip_delete", "rig_clip_key_set",
-        "rig_clip_key_delete", "rig_add_to_project",
+        "rig_clip_key_delete", "rig_add_to_project", "rig_cut",
     ] {
         let t = tools.iter().find(|t| t.name == n).unwrap_or_else(|| panic!("missing {n}"));
         assert!(!t.read_only, "{n}");
@@ -409,6 +409,51 @@ fn an_open_rig_editor_gets_the_edits_instead_of_the_file() {
     let r = f.ok("rig_bone_add", json!({"rig": "hero", "name": "ear", "parent": "root"}));
     assert!(r["note"].as_str().unwrap().contains("rewritten"));
     assert_eq!(f.rig("hero").bones.len(), 4);
+}
+
+#[test]
+fn rig_cut_splits_a_picture_into_a_new_part() {
+    let mut f = Fixture::new("cut");
+    hero(&mut f);
+    let original = fs::read(f.dir.join("assets/images/hero.png")).unwrap();
+    // The top-left quarter of the bar (x 4..16, y 0..20) becomes "fringe".
+    let c = f.ok(
+        "rig_cut",
+        json!({"rig": "hero", "slot": "hero", "polygon": [[4, 0], [16, 0], [16, 20], [4, 20]], "name": "fringe", "bone": "head"}),
+    );
+    no_errors(&c);
+    assert_eq!(c["image"], "assets/images/fringe.png");
+    assert_eq!(c["size"], json!([12, 20]));
+    assert_eq!(c["offset"], json!([4, 0]));
+    assert_eq!(c["source_image"], "assets/images/hero_filled.png");
+    let part = image::open(f.dir.join("assets/images/fringe.png")).unwrap().to_rgba8();
+    assert_eq!(part.dimensions(), (12, 20));
+    assert_eq!(part.get_pixel(0, 0).0, [200, 40, 90, 255]);
+    // The original file is kept; the rig shows the filled copy.
+    assert_eq!(fs::read(f.dir.join("assets/images/hero.png")).unwrap(), original);
+    let rig = f.rig("hero");
+    let names: Vec<&str> = rig.slots.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["hero", "fringe"]);
+    let images: Vec<String> = rig.skins[0].attachments.values().map(|a| a.image().to_owned()).collect();
+    assert!(images.contains(&"assets/images/hero_filled.png".to_owned()), "{images:?}");
+    assert!(!images.contains(&"assets/images/hero.png".to_owned()));
+    let assets = f.ok("list_assets", json!({})).to_string();
+    assert!(assets.contains("assets/images/fringe.png") && assets.contains("assets/images/hero_filled.png"), "{assets}");
+
+    // Behind, the original underneath: no new source picture.
+    let k = f.ok("rig_cut", json!({"rig": "hero", "slot": "hero", "polygon": [[4, 40], [28, 40], [28, 64], [4, 64]], "below": true, "fill_hole": false}));
+    assert_eq!(k["source_image"], "assets/images/hero_filled.png");
+    assert_eq!(f.rig("hero").slots[0].name, "hero_cut");
+
+    // Refusals write nothing.
+    let before = f.rig_file("hero");
+    assert_eq!(f.err("rig_cut", json!({"rig": "hero", "slot": "hero", "polygon": [[0, 0], [1, 1]]})).kind, ErrorKind::InvalidArguments);
+    assert_eq!(
+        f.err("rig_cut", json!({"rig": "hero", "slot": "hero", "polygon": [[0, 0], [3, 0], [3, 3], [0, 3]]})).kind,
+        ErrorKind::Refused
+    );
+    assert_eq!(f.rig_file("hero"), before);
+    assert!(!f.dir.join("assets/images/hero_cut_2.png").exists());
 }
 
 fn same(a: &Path, b: &Path) -> bool {
