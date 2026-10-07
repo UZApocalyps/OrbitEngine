@@ -409,15 +409,22 @@ impl PreviewHost {
         let Some(session) = core.session.as_ref() else {
             return;
         };
+        orbit_profile::scope!("preview reload");
         let started = Instant::now();
-        let story = Arc::new(session.project.story().clone());
+        let story = {
+            orbit_profile::scope!("preview: story copy");
+            Arc::new(session.project.story().clone())
+        };
         let root = find_assets_root(&session.location.root, &story);
         if root != Path::new(self.runtime.assets_root()) {
             self.asset_stamps.clear();
         }
-        for path in changed_assets(&mut self.asset_stamps, &root, &story) {
-            if self.runtime.invalidate_asset(&path) {
-                log::info!("preview: asset `{path}` changed on disk, reloaded");
+        {
+            orbit_profile::scope!("preview: asset stamps");
+            for path in changed_assets(&mut self.asset_stamps, &root, &story) {
+                if self.runtime.invalidate_asset(&path) {
+                    log::info!("preview: asset `{path}` changed on disk, reloaded");
+                }
             }
         }
         // The project's own screens (`ui/`) are part of what Play shows.
@@ -428,7 +435,10 @@ impl PreviewHost {
         self.ui_error = None;
         self.runtime
             .set_ui_dir(ui_dir.is_dir().then(|| ui_dir.to_string_lossy().into_owned()));
-        let outcome = self.runtime.load_story(story, &root.to_string_lossy());
+        let outcome = {
+            orbit_profile::scope!("preview: runtime load_story");
+            self.runtime.load_story(story, &root.to_string_lossy())
+        };
         let elapsed = started.elapsed();
         let first_edit = self.debounce.take();
         if let Some(first) = first_edit {
@@ -1694,5 +1704,74 @@ mod tests {
         std::fs::remove_file(dir.join("a.screen.ron")).unwrap();
         assert_eq!(ui_stamps(&dir).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The preview's hot reload after the first edit of a big story runs on
+    /// the UI thread: its frame must stay under the budget. Prints the
+    /// breakdown. Skipped (with a message) without a GPU adapter.
+    #[test]
+    fn the_first_edit_hot_reload_of_a_big_story_stays_within_budget() {
+        let Ok(mut gfx) = pollster::block_on(Gfx::headless((64, 64))) else {
+            eprintln!("no GPU adapter: skipping the preview reload test");
+            return;
+        };
+        gfx.enable_gamma_view();
+        let dir = std::env::temp_dir().join(format!("orbit-preview-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let story = crate::bench::generate_story(10_000);
+        std::fs::write(dir.join("story.orbit"), story.to_ron().unwrap()).unwrap();
+        std::fs::write(
+            dir.join(orbit_project::MANIFEST_FILE),
+            "(format: 1, name: \"Reload\", story: \"story.orbit\", plugins: [])",
+        )
+        .unwrap();
+        let ctx = egui::Context::default();
+        let mut core = EditorCore::new(crate::core::CoreOptions::with_language(orbit_editor_api::Lang::En), &ctx);
+        core.open_project(&dir);
+        let mut preview = PreviewHost::new(gfx).unwrap();
+        let mut er = egui_wgpu::Renderer::new(
+            preview.gfx().device(),
+            wgpu::TextureFormat::Rgba8Unorm,
+            egui_wgpu::RendererOptions::default(),
+        );
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        let timed = |preview: &mut PreviewHost, core: &mut EditorCore, er: &mut egui_wgpu::Renderer, now: Instant| {
+            orbit_profile::begin_frame();
+            let t = Instant::now();
+            preview.update(core, er, now);
+            let took = t.elapsed();
+            orbit_profile::finish_frame();
+            let f = orbit_profile::frames(1).pop().unwrap();
+            (took, orbit_profile::Hitch::of(&f, 0).summary())
+        };
+        let start = Instant::now();
+        let (open, open_spans) = timed(&mut preview, &mut core, &mut er, start);
+
+        // An edit, then the frame where the debounced reload happens.
+        let line = core.story().unwrap().scenes[0]
+            .nodes
+            .iter()
+            .find_map(|n| match &n.kind {
+                orbit_core::NodeKind::Say { text_id, .. } => Some(*text_id),
+                _ => None,
+            })
+            .unwrap();
+        {
+            let session = core.session.as_mut().unwrap();
+            let mut ectx = orbit_editor_api::EditorContext::new(Some(&mut session.project), &mut core.state, &core.registry);
+            ectx.exec(orbit_project::Command::SetString { id: line, text: Some("edited".into()) }).unwrap();
+        }
+        let _ = timed(&mut preview, &mut core, &mut er, start + Duration::from_millis(10));
+        let (reload, reload_spans) = timed(&mut preview, &mut core, &mut er, start + Duration::from_secs(2));
+        let _ = std::fs::remove_dir_all(&dir);
+        eprintln!(
+            "preview ({}, 10k nodes): first load {:.1} ms [{open_spans}]\n  first edit hot reload {:.1} ms [{reload_spans}]",
+            if cfg!(debug_assertions) { "debug" } else { "release" },
+            ms(open),
+            ms(reload)
+        );
+        let budget = Duration::from_millis(if cfg!(debug_assertions) { 150 } else { 50 });
+        assert!(reload <= budget, "the hot reload took {:.1} ms", ms(reload));
     }
 }

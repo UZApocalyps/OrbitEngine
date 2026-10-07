@@ -109,3 +109,50 @@ fn capture_png_renders_a_named_camera() {
     .unwrap_err();
     assert!(err.contains("nope"), "{err}");
 }
+
+/// The first viewport frame used to build the 3D renderer and compile its
+/// shaders on the UI thread; the host now prewarms it on a worker
+/// (`Scene3dHost::prewarm`). Frame budget of the first render, prewarmed.
+#[test]
+fn a_prewarmed_renderer_draws_its_first_frame_within_budget() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter: skipping the 3D prewarm test");
+        return;
+    };
+    let mut m = MaterialDef::new("Red");
+    m.base_color = [1.0, 0.1, 0.1, 1.0];
+    let scene = preview_scene(&m);
+    let cam = geom::EditCamera::default().camera3d();
+    let target = RenderTarget3d::new_viewable(&device, 256, 256);
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+    let budget = std::time::Duration::from_millis(if cfg!(debug_assertions) { 150 } else { 50 });
+
+    // Before: everything on the first frame.
+    let t = std::time::Instant::now();
+    let mut cold = Renderer3d::new(&device, &queue);
+    cold.upload_mesh(&device, &model::preview_sphere(PREVIEW_MESH));
+    cold.render(&device, &queue, &scene, CameraSelect::View(cam.clone()), &target).unwrap();
+    let before = t.elapsed();
+
+    // After: built and prewarmed on a worker, then the first frame.
+    let (d, q) = (device.clone(), queue.clone());
+    let worker = std::thread::spawn(move || {
+        let t = std::time::Instant::now();
+        let mut r = Renderer3d::new(&d, &q);
+        r.prewarm(&d, &q);
+        (r, t.elapsed())
+    });
+    let (mut warm, prewarm) = worker.join().unwrap();
+    let t = std::time::Instant::now();
+    warm.upload_mesh(&device, &model::preview_sphere(PREVIEW_MESH));
+    warm.render(&device, &queue, &scene, CameraSelect::View(cam), &target).unwrap();
+    let after = t.elapsed();
+    eprintln!(
+        "3D viewport first frame ({}): before {:.1} ms, after {:.1} ms (prewarm on a worker: {:.1} ms)",
+        if cfg!(debug_assertions) { "debug" } else { "release" },
+        ms(before),
+        ms(after),
+        ms(prewarm)
+    );
+    assert!(after <= budget, "first 3D frame took {:.1} ms", ms(after));
+}

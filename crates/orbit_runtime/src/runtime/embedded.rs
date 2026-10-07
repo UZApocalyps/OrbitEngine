@@ -398,7 +398,10 @@ impl Runtime {
     /// closest label before it, else from the beginning). A story that does
     /// not validate is refused and the previous one keeps playing.
     pub fn load_story(&mut self, story: Arc<Story>, assets_root: &str) -> LoadOutcome {
-        let report = orbit_core::validate(&story);
+        let report = {
+            orbit_profile::scope!("runtime: validate story");
+            orbit_core::validate(&story)
+        };
         if !report.errors.is_empty() {
             let mut message = format!("{} erreur(s) de validation :", report.errors.len());
             for error in report.errors.iter().take(8) {
@@ -418,7 +421,10 @@ impl Runtime {
         }
         let mut pending = start_loading(&self.assets_loader, &story, &self.store);
         // The files the UI draws with, declared in the story or not.
-        let ui = super::resolve_ui_bundle(&self.config, None);
+        let ui = {
+            orbit_profile::scope!("runtime: read ui bundle");
+            super::resolve_ui_bundle(&self.config, None)
+        };
         let (images, fonts) = super::ui_eager_files(&self.config.theme, ui.as_ref(), &story);
         let extra = crate::loading::start_loading_files(
             &self.assets_loader,
@@ -526,6 +532,7 @@ impl Runtime {
         let Some(awaiting) = self.emb_mut().awaiting.take() else {
             return;
         };
+        orbit_profile::scope!("runtime: finish loading");
         let failures = finish_loading(&mut self.ctx.renderer, &mut self.store, awaiting.pending);
         for failure in failures {
             self.notify(true, format!("Asset : {failure}"));
