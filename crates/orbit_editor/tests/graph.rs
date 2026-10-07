@@ -629,6 +629,7 @@ fn revealing_elsewhere_brings_the_graph_to_the_node_and_problems_are_located() {
 
     // The branch scenes end the game: warnings, located on a node that a
     // click on the Problems panel (or on the badge of the block) reveals.
+    core.settle_diagnostics();
     let problems = core.state.diagnostics.problems.clone();
     let ends: Vec<_> = problems
         .iter()

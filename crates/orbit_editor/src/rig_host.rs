@@ -552,4 +552,105 @@ mod tests {
         let (lo, hi) = draw_bounds(&list).unwrap();
         assert!((hi[0] - lo[0] - 10.0).abs() < 1e-3 && (hi[1] - lo[1] - 20.0).abs() < 1e-3, "{lo:?} {hi:?}");
     }
+
+    /// The first draw of a rig whose picture is a 2048 px PNG: the picture
+    /// is decoded on a worker, so no host update takes long. Skipped (with a
+    /// message) without a GPU adapter.
+    #[test]
+    fn the_first_draw_of_a_2048_px_rig_does_not_decode_on_the_ui_thread() {
+        use orbit_anim::rig::{PreparedRig, load_rig};
+        use std::time::{Duration, Instant};
+        let Ok(mut gfx) = pollster::block_on(orbit_gfx::Gfx::headless((64, 64))) else {
+            eprintln!("no GPU adapter: skipping the rig host test");
+            return;
+        };
+        gfx.enable_gamma_view();
+        let mut renderer = Renderer2d::new(gfx).unwrap();
+        renderer.enable_target_gamma_views();
+        let mut egui_renderer = egui_wgpu::Renderer::new(
+            renderer.gfx().device(),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            egui_wgpu::RendererOptions::default(),
+        );
+        let dir = std::env::temp_dir().join(format!("orbit_rig_host_2048_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Noise compresses badly, like a painted picture.
+        let n = 2048u32;
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let rgba: Vec<u8> = (0..n * n * 4)
+            .map(|i| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                if i % 4 == 3 { 255 } else { (seed >> 24) as u8 }
+            })
+            .collect();
+        {
+            use image::ImageEncoder;
+            use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+            let mut png = Vec::new();
+            PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Sub)
+                .write_image(&rgba, n, n, image::ExtendedColorType::Rgba8)
+                .unwrap();
+            std::fs::write(dir.join("body.png"), png).unwrap();
+        }
+        let rig = load_rig(
+            r#"(rig_version: 1, bones: [(id: "root", name: "root")],
+            slots: [(id: "s", name: "body", bone: "root", attachment: Some("b"))],
+            skins: [(name: "default", attachments: {"b": Region((image: "body.png", size: (2048.0, 2048.0)))})],
+            clips: {"idle": (duration: 1.0, looping: Forever, tracks: [])})"#,
+        )
+        .unwrap()
+        .rig;
+        let prepared = Rc::new(PreparedRig::new(rig).unwrap());
+        let request = || RigRequest {
+            rig: prepared.clone(),
+            pose: prepared.setup_pose(),
+            skin: None,
+            size: [512, 512],
+            zoom: 0.25,
+            pan: [0.0, 0.0],
+            root: dir.clone(),
+            pixels: Vec::new(),
+            forget: Vec::new(),
+        };
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+
+        // Before: read + decode + upload on the UI thread, in the first draw.
+        let t = Instant::now();
+        let bytes = std::fs::read(dir.join("body.png")).unwrap();
+        let img = orbit_assets::decode_image(&bytes).unwrap();
+        let _ = renderer.create_texture("before", img.width, img.height, &img.rgba, TextureOptions::COLOR);
+        let before = t.elapsed();
+
+        let link: SharedLink = Rc::new(RefCell::new(RigLink::default()));
+        let mut host = RigHost::default();
+        let mut worst = Duration::ZERO;
+        let mut frames = 0;
+        let started = Instant::now();
+        while link.borrow().images_loaded == 0 {
+            assert!(started.elapsed() < Duration::from_secs(60), "the picture never arrived");
+            link.borrow_mut().request = Some(request());
+            let t = Instant::now();
+            host.update(&link, &mut renderer, &mut egui_renderer);
+            worst = worst.max(t.elapsed());
+            frames += 1;
+            std::thread::sleep(Duration::from_millis(4));
+        }
+        // The frame that draws with the picture (its upload happened above).
+        link.borrow_mut().request = Some(request());
+        let t = Instant::now();
+        host.update(&link, &mut renderer, &mut egui_renderer);
+        worst = worst.max(t.elapsed());
+        assert!(link.borrow().missing.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+        eprintln!(
+            "rig viewport, 2048 px picture ({}): before {:.1} ms in one frame, after worst {:.1} ms over {frames} frames",
+            if cfg!(debug_assertions) { "debug" } else { "release" },
+            ms(before),
+            ms(worst)
+        );
+        let budget = Duration::from_millis(if cfg!(debug_assertions) { 150 } else { 50 });
+        assert!(worst <= budget, "a rig host update took {:.1} ms", ms(worst));
+    }
 }

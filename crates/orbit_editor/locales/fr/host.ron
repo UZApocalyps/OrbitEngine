@@ -21,6 +21,8 @@
     "action.palette": "Palette de commandes",
     "action.toggle_theme": "Basculer le thème clair / sombre",
     "action.experimental_3d": "Fonctionnalités 3D expérimentales",
+    "action.auto_validation": "Validation automatique",
+    "action.validate": "Valider le projet",
     "action.reset_layout": "Réinitialiser la disposition",
     "action.show_hitches": "Afficher les saccades",
     "action.language": "Langue : {language}",

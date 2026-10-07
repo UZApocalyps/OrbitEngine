@@ -2,12 +2,12 @@
 //! scene editor and the inspector) and the full list of problems (the
 //! Problems panel, the status bar badges).
 //!
-//! Small stories are validated inline (well under a millisecond). Big ones
-//! (see [`SYNC_NODE_LIMIT`]) are validated **off the frame**: the story is
-//! cloned once the edits paused for [`DEBOUNCE`], a worker thread runs
-//! `orbit_core::validate` and the findings are published when they arrive
-//! (the previous ones stay on screen meanwhile). A burst of edits costs one
-//! validation, not one per keystroke.
+//! Validation never runs on the frame: once the edits paused for [DEBOUNCE]
+//! (or at once when the user asks) the story is copied and a worker thread runs
+//! orbit_core::validate and the file based lints; the findings are published
+//! when they arrive and the previous ones stay on screen meanwhile. A burst of
+//! edits costs one validation, not one per keystroke; with automatic validation
+//! off nothing runs until the user presses Validate.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -18,8 +18,6 @@ use orbit_editor_api::{Diagnostics, Level, Location, Problem, Translator, Waker}
 
 use crate::assets::AssetIssue;
 
-/// Stories with more nodes than this are validated on the worker thread.
-pub const SYNC_NODE_LIMIT: usize = 1500;
 /// How often the module files are looked at for changes.
 const SCRIPTS_RECHECK: Duration = Duration::from_secs(1);
 
@@ -41,8 +39,8 @@ fn scripts_stamp(root: &std::path::Path) -> Vec<(String, u64, u64)> {
         .collect()
 }
 
-/// Quiet time before a big story is validated again.
-pub const DEBOUNCE: Duration = Duration::from_millis(80);
+/// Quiet time after the last edit before the project is validated.
+pub const DEBOUNCE: Duration = Duration::from_millis(300);
 
 fn label_of(texts: &Translator, story: &Story, id: NodeId) -> String {
     match story.node(id).map(|n| &n.kind) {
@@ -495,45 +493,96 @@ pub fn node_count(story: &Story) -> usize {
 struct Job {
     key: (u64, u64),
     story: Story,
+    /// Findings that need the registry (not `Send`): computed by the caller.
     extras: Extras,
     texts: Translator,
+    root: std::path::PathBuf,
+    /// The asset files must be looked at again whatever the manifest says.
+    refresh_assets: bool,
 }
 
 struct Done {
     key: (u64, u64),
     diagnostics: Diagnostics,
     elapsed: Duration,
+    scripts_stamp: Vec<(String, u64, u64)>,
 }
 
-/// The live validation engine: decides when to validate (inline, debounced,
-/// on the worker) and hands the findings back.
+/// What the worker keeps between two runs: the asset-file findings only
+/// change with the manifest or the files.
+#[derive(Default)]
+struct WorkerCache {
+    asset_key: Option<Vec<(String, String)>>,
+    asset_issues: Vec<AssetIssue>,
+}
+
+fn asset_key_of(story: &Story) -> Vec<(String, String)> {
+    story
+        .assets
+        .assets
+        .iter()
+        .map(|a| (a.id.to_string(), a.path.clone()))
+        .collect()
+}
+
+/// One validation, entirely on the worker: the file based extras (module
+/// scripts, rigs, asset files) and the story rules.
+fn run_job(job: Job, cache: &mut WorkerCache) -> Done {
+    let started = Instant::now();
+    let Job { key, story, mut extras, texts, root, refresh_assets } = job;
+    let stamp = scripts_stamp(&root);
+    extras.script_problems = if stamp.is_empty() && !orbit_core::scripting::story_uses_scripts(&story) {
+        Vec::new()
+    } else {
+        let modules = orbit_project::scripts::read_modules(&root);
+        orbit_project::scripts::check_scripts(&story, &modules)
+    };
+    // Rigged expressions (rig, clip, skin) change with the story without
+    // touching the manifest: looked at on every run.
+    extras.rig_problems = orbit_project::rigs::rig_problems(&root, &story);
+    let asset_key = asset_key_of(&story);
+    if refresh_assets || cache.asset_key.as_ref() != Some(&asset_key) {
+        cache.asset_issues = crate::assets::lint_asset_files(&root, &story);
+        cache.asset_key = Some(asset_key);
+    }
+    extras.asset_issues.clone_from(&cache.asset_issues);
+    let diagnostics = compute(&texts, &story, key.1, &extras);
+    Done { key, diagnostics, elapsed: started.elapsed(), scripts_stamp: stamp }
+}
+
+/// The live validation engine: decides when to validate and hands the
+/// findings back. Validation never runs on the frame: the story is copied
+/// once the edits paused for [`DEBOUNCE`] (or at once for a request of the
+/// user) and a worker thread does the rest. A result for an older revision
+/// than the current one is dropped.
 pub struct Live {
     jobs: Option<Sender<Job>>,
     results: Receiver<Done>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// "Automatic validation": off, only [`Live::force`] starts a run.
+    pub auto: bool,
+    /// Validate now, whatever `auto` and the debounce say (Validate button,
+    /// before an export, tests). Reset when the run starts.
+    pub force: bool,
     /// `(project generation, revision)` the last published findings are for.
     published: Option<(u64, u64)>,
-    /// The state the findings should describe.
+    /// The state the debounce is waiting to validate.
     wanted: Option<(u64, u64)>,
     /// When the debounced validation starts.
     due: Option<Instant>,
     inflight: Option<(u64, u64)>,
-    /// When the last worker validation was started.
-    last_started: Option<Instant>,
-    /// Duration of the last validation (worker or inline) and, for a worker
-    /// run, the time from the edit to the publication.
+    /// Duration of the last validation and the time from the edit to the
+    /// publication.
     pub last_run: Option<Duration>,
     pub last_latency: Option<Duration>,
+    /// Runs started and results dropped as stale (tests, perf logs).
+    pub started: usize,
+    pub discarded: usize,
     first_edit: Option<Instant>,
-    /// Asset-file findings, refreshed when files or the manifest change.
-    asset_issues: Vec<AssetIssue>,
-    rig_problems: Vec<orbit_project::rigs::RigProblem>,
-    script_problems: Vec<orbit_project::scripts::ScriptProblem>,
     /// Stamp of the module files and when it was last looked at.
     scripts_stamp: Vec<(String, u64, u64)>,
     scripts_checked: Option<Instant>,
     assets_dirty: bool,
-    asset_key: Option<Vec<(String, String)>>,
 }
 
 impl Live {
@@ -543,19 +592,13 @@ impl Live {
         let thread = std::thread::Builder::new()
             .name("orbit-validate".to_owned())
             .spawn(move || {
+                let mut cache = WorkerCache::default();
                 while let Ok(mut job) = job_rx.recv() {
                     // Only the newest job matters.
                     while let Ok(newer) = job_rx.try_recv() {
                         job = newer;
                     }
-                    let started = Instant::now();
-                    let diagnostics = compute(&job.texts, &job.story, job.key.1, &job.extras);
-                    let done = Done {
-                        key: job.key,
-                        diagnostics,
-                        elapsed: started.elapsed(),
-                    };
-                    if done_tx.send(done).is_err() {
+                    if done_tx.send(run_job(job, &mut cache)).is_err() {
                         return;
                     }
                     waker.wake();
@@ -566,21 +609,20 @@ impl Live {
             jobs: Some(job_tx),
             results: done_rx,
             thread,
+            auto: true,
+            force: false,
             published: None,
             wanted: None,
             due: None,
             inflight: None,
-            last_started: None,
             last_run: None,
             last_latency: None,
+            started: 0,
+            discarded: 0,
             first_edit: None,
-            asset_issues: Vec::new(),
-            rig_problems: Vec::new(),
-            script_problems: Vec::new(),
             scripts_stamp: Vec::new(),
             scripts_checked: None,
             assets_dirty: true,
-            asset_key: None,
         }
     }
 
@@ -590,15 +632,10 @@ impl Live {
         self.wanted = None;
         self.due = None;
         self.inflight = None;
-        self.last_started = None;
         self.first_edit = None;
-        self.asset_issues.clear();
-        self.rig_problems.clear();
-        self.script_problems.clear();
         self.scripts_stamp.clear();
         self.scripts_checked = None;
         self.assets_dirty = true;
-        self.asset_key = None;
     }
 
     /// Files changed on disk: look at the asset findings again.
@@ -616,6 +653,11 @@ impl Live {
         self.due.is_some() || self.inflight.is_some()
     }
 
+    /// Whether the published findings are not for `key`.
+    pub fn is_stale(&self, key: (u64, u64)) -> bool {
+        self.published != Some(key)
+    }
+
     /// One step. `registry_extras` is called only when a validation really
     /// starts. Returns findings to publish, if any.
     pub fn update(
@@ -627,36 +669,40 @@ impl Live {
         texts: &Translator,
         registry_extras: impl FnOnce(&Story) -> Extras,
     ) -> Option<Diagnostics> {
-        // A finished worker run.
+        // Finished runs: only the one for the current state is published.
         let mut finished = None;
         while let Ok(done) = self.results.try_recv() {
-            if Some(done.key) == self.wanted {
-                finished = Some(done);
-            } else if Some(done.key) == self.inflight {
+            if Some(done.key) == self.inflight {
                 self.inflight = None;
+            }
+            if done.key == key {
+                finished = Some(done);
+            } else {
+                self.discarded += 1;
             }
         }
         if let Some(done) = finished {
-            self.inflight = None;
             self.published = Some(done.key);
+            self.wanted = None;
+            self.due = None;
             self.last_run = Some(done.elapsed);
             self.last_latency = self.first_edit.take().map(|t| now.duration_since(t));
+            self.scripts_stamp = done.scripts_stamp;
+            self.scripts_checked = Some(now);
             return Some(done.diagnostics);
         }
 
         if self.assets_dirty {
-            self.assets_dirty = false;
-            self.refresh_asset_issues(root, story);
             // The findings must include the new asset state.
             self.published = None;
-            self.wanted = None;
         }
-        if self.published == Some(key) {
+        if self.published == Some(key) && !self.force {
             // Module files are edited outside the story: look at them from
-            // time to time.
-            let due = self
-                .scripts_checked
-                .is_none_or(|t| now.duration_since(t) >= SCRIPTS_RECHECK);
+            // time to time (automatic validation only).
+            let due = self.auto
+                && self
+                    .scripts_checked
+                    .is_none_or(|t| now.duration_since(t) >= SCRIPTS_RECHECK);
             if !due {
                 return None;
             }
@@ -664,111 +710,54 @@ impl Live {
             if scripts_stamp(root) == self.scripts_stamp {
                 return None;
             }
-            self.refresh_scripts(root, story);
             self.published = None;
-            self.wanted = None;
         }
-        if self.wanted != Some(key) {
-            self.wanted = Some(key);
-            self.first_edit.get_or_insert(now);
-            self.refresh_scripts(root, story);
-            // Only a new revision can have changed the manifest.
-            if self.asset_key_changed(story) {
-                self.refresh_asset_issues(root, story);
-            } else {
-                // Rigged expressions (rig, clip, skin) change with the story
-                // without touching the manifest.
-                self.rig_problems = orbit_project::rigs::rig_problems(root, story);
-            }
-        }
-        let big = node_count(story) > SYNC_NODE_LIMIT;
-        if !big {
-            let started = Instant::now();
-            let mut extras = registry_extras(story);
-            extras.asset_issues.clone_from(&self.asset_issues);
-            extras.rig_problems.clone_from(&self.rig_problems);
-            extras.script_problems.clone_from(&self.script_problems);
-            let out = compute(texts, story, key.1, &extras);
-            self.published = Some(key);
+        if !self.auto && !self.force {
+            // Results stay as they are (shown as stale) until the user asks.
             self.due = None;
-            self.first_edit = None;
-            self.last_run = Some(started.elapsed());
-            self.last_latency = self.last_run;
-            return Some(out);
-        }
-        if self.inflight == Some(key) {
+            self.wanted = None;
             return None;
         }
-        // Leading edge: the first edit after a quiet moment is validated at
-        // once; edits that follow a validation closely wait for DEBOUNCE
-        // after it (a burst of typing costs a few runs, not one per key).
-        let ready_at = self.last_started.map_or(now, |started| started + DEBOUNCE);
-        match self.due {
-            None if ready_at > now => {
-                self.due = Some(ready_at);
-                None
+        if self.inflight == Some(key) && !self.force {
+            return None;
+        }
+        if !self.force {
+            // Trailing edge: every new revision restarts the wait, so a
+            // burst of edits costs one run, after the burst.
+            if self.wanted != Some(key) {
+                self.wanted = Some(key);
+                self.first_edit.get_or_insert(now);
+                self.due = Some(now + DEBOUNCE);
             }
-            Some(due) if due > now => None,
-            _ => {
-                self.due = None;
-                self.last_started = Some(now);
-                let mut extras = registry_extras(story);
-                extras.asset_issues.clone_from(&self.asset_issues);
-                extras.rig_problems.clone_from(&self.rig_problems);
-                extras.script_problems.clone_from(&self.script_problems);
-                let job = Job {
-                    key,
-                    story: story.clone(),
-                    extras,
-                    texts: texts.clone(),
-                };
-                self.inflight = Some(key);
-                if let Some(tx) = &self.jobs
-                    && tx.send(job).is_err()
-                {
-                    self.inflight = None;
-                }
-                None
+            if self.due.is_some_and(|d| d > now) {
+                return None;
             }
         }
-    }
-
-    fn refresh_scripts(&mut self, root: &std::path::Path, story: &Story) {
-        orbit_profile::scope!("validate: scripts");
-        self.scripts_stamp = scripts_stamp(root);
-        self.scripts_checked = None;
-        self.script_problems = if self.scripts_stamp.is_empty()
-            && !orbit_core::scripting::story_uses_scripts(story)
-        {
-            Vec::new()
-        } else {
-            let modules = orbit_project::scripts::read_modules(root);
-            orbit_project::scripts::check_scripts(story, &modules)
+        self.first_edit.get_or_insert(now);
+        let refresh_assets = self.assets_dirty || self.force;
+        self.assets_dirty = false;
+        self.force = false;
+        self.due = None;
+        self.wanted = Some(key);
+        let job = Job {
+            key,
+            story: story.clone(),
+            extras: registry_extras(story),
+            texts: texts.clone(),
+            root: root.to_path_buf(),
+            refresh_assets,
         };
-    }
-
-    fn asset_key_changed(&mut self, story: &Story) -> bool {
-        let key: Vec<(String, String)> = story
-            .assets
-            .assets
-            .iter()
-            .map(|a| (a.id.to_string(), a.path.clone()))
-            .collect();
-        if self.asset_key.as_ref() == Some(&key) {
-            return false;
+        self.inflight = Some(key);
+        self.started += 1;
+        if let Some(tx) = &self.jobs
+            && tx.send(job).is_err()
+        {
+            self.inflight = None;
         }
-        self.asset_key = Some(key);
-        true
-    }
-
-    fn refresh_asset_issues(&mut self, root: &std::path::Path, story: &Story) {
-        orbit_profile::scope!("validate: asset files");
-        self.asset_issues = crate::assets::lint_asset_files(root, story);
-        self.rig_problems = orbit_project::rigs::rig_problems(root, story);
-        self.asset_key = None;
-        self.asset_key_changed(story);
+        None
     }
 }
+
 
 impl Drop for Live {
     fn drop(&mut self) {
@@ -870,28 +859,97 @@ mod tests {
         );
     }
 
+    fn step(live: &mut Live, at: Instant, key: (u64, u64), story: &Story) -> Option<Diagnostics> {
+        live.update(at, key, story, &std::env::temp_dir(), &Translator::default(), |_| {
+            Extras::default()
+        })
+    }
+
+    /// Calls `update` until the worker answers (or 5 s).
+    fn wait_for(live: &mut Live, at: Instant, key: (u64, u64), story: &Story) -> Option<Diagnostics> {
+        for _ in 0..5000 {
+            if let Some(d) = step(live, at, key, story) {
+                return Some(d);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        None
+    }
+
     #[test]
-    fn a_small_story_is_validated_inline_and_only_once_per_revision() {
+    fn a_validation_never_runs_inline_and_runs_once_per_revision() {
         let mut live = Live::new(Waker::default());
         let story = story_with_error();
-        let root = std::env::temp_dir();
-        let now = Instant::now();
-        let first = live.update(now, (1, 1), &story, &root, &Translator::default(), |_| {
-            Extras::default()
-        });
+        let t0 = Instant::now();
+        // Nothing is published on the frame of the edit.
+        assert!(step(&mut live, t0, (1, 1), &story).is_none());
+        assert!(live.busy());
+        let late = t0 + DEBOUNCE * 2;
+        let first = wait_for(&mut live, late, (1, 1), &story);
         assert!(first.is_some_and(|d| d.error_count() > 0));
-        assert!(
-            live.update(now, (1, 1), &story, &root, &Translator::default(), |_| {
-                Extras::default()
-            })
-            .is_none()
-        );
-        assert!(
-            live.update(now, (1, 2), &story, &root, &Translator::default(), |_| {
-                Extras::default()
-            })
-            .is_some()
-        );
+        assert!(step(&mut live, late, (1, 1), &story).is_none());
+        assert_eq!(live.started, 1);
+    }
+
+    #[test]
+    fn a_hundred_rapid_edits_cost_at_most_one_validation() {
+        let mut live = Live::new(Waker::default());
+        let story = story_with_error();
+        let t0 = Instant::now();
+        for i in 0..100u64 {
+            let at = t0 + Duration::from_millis(i); // 1 ms apart
+            assert!(step(&mut live, at, (1, i + 1), &story).is_none());
+        }
+        assert_eq!(live.started, 0, "nothing starts during the burst");
+        let after = t0 + Duration::from_millis(100) + DEBOUNCE;
+        assert!(wait_for(&mut live, after, (1, 100), &story).is_some());
+        assert_eq!(live.started, 1);
+    }
+
+    #[test]
+    fn automatic_validation_off_only_validates_on_request() {
+        let mut live = Live::new(Waker::default());
+        live.auto = false;
+        let story = story_with_error();
+        let t0 = Instant::now();
+        for i in 0..20u64 {
+            let at = t0 + DEBOUNCE * 4 * (i as u32 + 1);
+            assert!(step(&mut live, at, (1, i + 1), &story).is_none());
+        }
+        assert_eq!(live.started, 0);
         assert!(!live.busy());
+        assert!(live.is_stale((1, 20)));
+        live.force = true;
+        let done = wait_for(&mut live, t0, (1, 20), &story);
+        assert!(done.is_some_and(|d| d.revision == 20));
+        assert_eq!(live.started, 1);
+        assert!(!live.is_stale((1, 20)));
+        // The next edit makes the results stale again, without a new run.
+        assert!(step(&mut live, t0 + DEBOUNCE * 100, (1, 21), &story).is_none());
+        assert!(live.is_stale((1, 21)));
+        assert_eq!(live.started, 1);
+    }
+
+    #[test]
+    fn the_result_of_an_older_revision_is_discarded() {
+        let mut live = Live::new(Waker::default());
+        let story = story_with_error();
+        let t0 = Instant::now();
+        live.force = true;
+        assert!(step(&mut live, t0, (1, 1), &story).is_none());
+        // A newer revision arrives before the answer is read.
+        let later = t0 + DEBOUNCE * 2;
+        assert!(step(&mut live, later, (1, 2), &story).is_none());
+        let later = later + DEBOUNCE * 2;
+        let mut published = None;
+        for _ in 0..5000 {
+            if let Some(d) = step(&mut live, later, (1, 2), &story) {
+                published = Some(d);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(published.is_some_and(|d| d.revision == 2));
+        assert!(live.discarded >= 1 || live.started == 2);
     }
 }

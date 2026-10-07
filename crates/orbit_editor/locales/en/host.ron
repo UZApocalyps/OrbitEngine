@@ -21,6 +21,8 @@
     "action.palette": "Command palette",
     "action.toggle_theme": "Toggle light / dark theme",
     "action.experimental_3d": "Experimental 3D features",
+    "action.auto_validation": "Automatic validation",
+    "action.validate": "Validate project",
     "action.reset_layout": "Reset layout",
     "action.show_hitches": "Show hitches",
     "action.language": "Language: {language}",

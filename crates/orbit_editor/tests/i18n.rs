@@ -221,6 +221,7 @@ fn the_problems_are_written_again_in_the_new_language() {
     for i in 0..4 {
         frame(&mut core, &ctx, f64::from(i) * 0.016);
     }
+    core.settle_diagnostics();
     let first = core.state.diagnostics.problems.first().cloned().unwrap();
     assert_eq!(first.level, Level::Error);
     assert!(
@@ -233,6 +234,7 @@ fn the_problems_are_written_again_in_the_new_language() {
     for i in 0..4 {
         frame(&mut core, &ctx, 1.0 + f64::from(i) * 0.016);
     }
+    core.settle_diagnostics();
     let first = core.state.diagnostics.problems.first().cloned().unwrap();
     assert!(
         first.message.starts_with("Target not found"),

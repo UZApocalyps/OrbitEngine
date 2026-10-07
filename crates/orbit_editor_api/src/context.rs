@@ -249,6 +249,28 @@ impl std::fmt::Debug for Waker {
     }
 }
 
+/// How the project is validated and what the last findings are worth.
+#[derive(Clone, Debug)]
+pub struct ValidationStatus {
+    /// "Automatic validation" (View menu): validate after a pause in the
+    /// edits. Off: only the Validate button / F7.
+    pub auto: bool,
+    /// A validation is queued or running.
+    pub running: bool,
+    /// The findings are older than the project.
+    pub stale: bool,
+    /// Local time (`HH:MM`) the findings were computed.
+    pub at: Option<String>,
+    /// Set by the Validate action; the host runs a full validation at once.
+    pub requested: bool,
+}
+
+impl Default for ValidationStatus {
+    fn default() -> Self {
+        Self { auto: true, running: false, stale: false, at: None, requested: false }
+    }
+}
+
 /// State owned by the editor, separate from the project: never undoable.
 #[derive(Default)]
 pub struct EditorState {
@@ -311,6 +333,8 @@ pub struct EditorState {
     pub graph: crate::GraphState,
     /// Background jobs (status bar progress, busy documents).
     pub tasks: crate::tasks::Tasks,
+    /// Project validation: automatic or on demand.
+    pub validation: ValidationStatus,
 }
 
 impl EditorState {
