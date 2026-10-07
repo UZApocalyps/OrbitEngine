@@ -3056,7 +3056,7 @@ dependencies = [
 
 [[package]]
 name = "orbit-dice"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orbit_core",
  "orbit_plugin_api",
@@ -3065,7 +3065,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_anim"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libm",
  "ron",
@@ -3075,7 +3075,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_assets"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "hound",
  "image",
@@ -3091,7 +3091,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_audio"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "kira",
  "log",
@@ -3101,7 +3101,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orbit_core",
  "orbit_export",
@@ -3116,7 +3116,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "getrandom 0.4.3",
  "libm",
@@ -3131,7 +3131,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_dsl"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orbit_core",
  "orbit_project",
@@ -3140,7 +3140,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_editor"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "egui",
  "egui-phosphor",
@@ -3187,7 +3187,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_editor_api"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "egui",
  "egui-phosphor",
@@ -3201,7 +3201,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_export"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "brotli",
  "flate2",
@@ -3222,7 +3222,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_gfx"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "log",
@@ -3233,7 +3233,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_i18n"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orbit_core",
  "ron",
@@ -3243,7 +3243,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_layers"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "image",
  "orbit_anim",
@@ -3253,7 +3253,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_mcp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -3287,7 +3287,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_pak"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lz4_flex",
  "orbit_core",
@@ -3299,7 +3299,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_platform"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -3320,7 +3320,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_player"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "console_error_panic_hook",
  "console_log",
@@ -3343,7 +3343,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_plugin_api"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orbit_core",
  "orbit_project",
@@ -3353,11 +3353,11 @@ dependencies = [
 
 [[package]]
 name = "orbit_profile"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "orbit_project"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orbit_anim",
  "orbit_core",
@@ -3370,7 +3370,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_render2d"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "log",
@@ -3383,7 +3383,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_render3d"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "log",
@@ -3396,7 +3396,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "accesskit",
  "image",
@@ -3424,7 +3424,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_save"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "orbit_core",
@@ -3439,7 +3439,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_scene"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "flate2",
  "gltf",
@@ -3455,7 +3455,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_script"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orbit_core",
  "orbit_save",
@@ -3465,7 +3465,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_text"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cosmic-text",
  "log",
@@ -3476,7 +3476,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_ui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "accesskit",
  "orbit_core",
@@ -3489,7 +3489,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_ui_data"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orbit_core",
  "ron",
@@ -3499,7 +3499,7 @@ dependencies = [
 
 [[package]]
 name = "orbit_vm"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orbit_core",
  "ron",
@@ -5922,7 +5922,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "brotli",
  "hound",
