@@ -209,6 +209,47 @@ mod tests {
         assert_eq!(rig, std::fs::read(dir.path().join("fixtures/assets/robo.rig.ron")).unwrap());
     }
 
+    // A clip key showing an attachment no skin has, and a picture outside
+    // `assets/` (a duplicated rig copies its pictures to `images/<name>/`):
+    // both are reported; the outside picture still ships.
+    #[test]
+    fn rig_problems_are_reported_by_the_export() {
+        use orbit_anim::rig::{RigClip, RigTrack, load_rig, save_rig};
+        use orbit_anim::{Key, Step, Track};
+        let dir = TempDir::new("pak_rig_warnings");
+        let project = crate::testing::rigged_project(dir.path());
+        let rig_path = dir.path().join("fixtures/assets/robo.rig.ron");
+        let mut rig = load_rig(&std::fs::read_to_string(&rig_path).unwrap()).unwrap().rig;
+        let slot = rig.slots[0].id.clone();
+        let mut clip = RigClip::new(1.0, Default::default());
+        clip.tracks.push(RigTrack::SlotAttachment {
+            slot,
+            track: Track {
+                keys: vec![Key { t: 0.0, value: Step(Some(orbit_anim::rig::AttachmentId::new("ghost"))), ease: Default::default() }],
+            },
+        });
+        rig.clips.insert("blink".into(), clip);
+        let moved = "images/robo/robo_head.png";
+        let att = rig.skins[0]
+            .attachments
+            .values_mut()
+            .find(|a| a.image().ends_with("robo_head.png"))
+            .unwrap();
+        match att {
+            orbit_anim::rig::Attachment::Region(r) => r.image = moved.into(),
+            orbit_anim::rig::Attachment::Mesh(m) => m.image = moved.into(),
+        }
+        std::fs::create_dir_all(dir.path().join("images/robo")).unwrap();
+        std::fs::copy(dir.path().join("fixtures/assets/robo_head.png"), dir.path().join(moved)).unwrap();
+        std::fs::write(&rig_path, save_rig(&rig).unwrap()).unwrap();
+        let profile = project.profile(None).unwrap();
+        let compiled = compile(&project, &profile).unwrap();
+        let w = compiled.warnings.join("\n");
+        assert!(w.contains("`ghost`") && w.contains("no skin"), "{w}");
+        assert!(w.contains(moved) && w.contains("outside the `fixtures/` folder"), "{w}");
+        assert!(compiled.assets.iter().any(|a| a.path == moved));
+    }
+
     #[test]
     fn a_rig_drawing_a_missing_picture_blocks_the_export_with_the_file_name() {
         let dir = TempDir::new("pak_rig_missing");

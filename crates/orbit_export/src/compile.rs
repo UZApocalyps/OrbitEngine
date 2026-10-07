@@ -62,12 +62,45 @@ fn rig_images(rig: &AssetFile, warnings: &mut Vec<String>) -> Vec<String> {
                 || path.contains(':')
                 || path.split('/').any(|p| p == "..");
             if unsafe_path {
-                warnings.push(format!("rig `{}` draws `{path}`: not a project path", rig.path));
+                warnings.push(format!(
+                    "rig `{}` draws `{path}`: not a project path, it will not be packed",
+                    rig.path
+                ));
             } else if !out.iter().any(|p| p == path) {
+                // The asset folder of the rig (`assets/` in a project): a
+                // duplicated rig may copy its pictures elsewhere (`images/`).
+                let top = |p: &str| p.split('/').next().unwrap_or_default().to_owned();
+                if rig.path.contains('/') && top(path) != top(&rig.path) {
+                    warnings.push(format!(
+                        "rig `{}` draws `{path}`, outside the `{}/` folder (it ships, but keep the pictures of a rig under `{}/`)",
+                        rig.path,
+                        top(&rig.path),
+                        top(&rig.path)
+                    ));
+                }
                 out.push(path.to_owned());
             }
         }
     }
+    // Clip keys showing an attachment no skin has: nothing draws there.
+    let has = |id: &orbit_anim::rig::AttachmentId| rig_file.skins.iter().any(|s| s.attachments.contains_key(id));
+    let mut reported: Vec<String> = Vec::new();
+    for (name, clip) in &rig_file.clips {
+        for track in &clip.tracks {
+            let orbit_anim::rig::RigTrack::SlotAttachment { slot, track } = track else { continue };
+            for key in &track.keys {
+                let Some(id) = &key.value.0 else { continue };
+                let message = format!(
+                    "rig `{}`: clip `{name}` shows attachment `{id}` in slot `{slot}`, which no skin of the rig has",
+                    rig.path
+                );
+                if !has(id) && !reported.contains(&message) {
+                    reported.push(message);
+                }
+            }
+        }
+    }
+    warnings.extend(reported);
     out
 }
 

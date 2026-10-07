@@ -338,6 +338,30 @@ mod native {
         assert!(store.texture("fixtures/assets/robo_head.png").is_some());
     }
 
+    /// A picture a rig draws that the story also declares as an image, after
+    /// the rig (an eyelid only a clip shows): the rig uploads it first, then
+    /// the image finishes under the same name. The texture must stay alive
+    /// (regression: the exported game released it, blinks never showed).
+    #[test]
+    fn a_rig_picture_also_declared_after_the_rig_stays_alive() {
+        let Some(mut r) = renderer() else {
+            eprintln!("no GPU adapter: skipping the shared rig picture test");
+            return;
+        };
+        let mut story = Story::from_ron(STORY).unwrap();
+        let head = "fixtures/assets/robo_head.png";
+        assert!(!story.assets.assets.iter().any(|a| a.path == head));
+        story.assets.assets.push(orbit_core::AssetEntry {
+            id: orbit_core::AssetId::new(),
+            kind: orbit_core::AssetKind::Image,
+            path: head.into(),
+        });
+        let store = load(&mut r, &story);
+        let id = store.texture(head).expect("the picture is loaded");
+        assert!(r.texture_size(id).is_some(), "the rig picture was released");
+        assert_eq!(r.texture_by_name(head), Some(id));
+    }
+
     fn differing(a: &[u8], b: &[u8]) -> usize {
         a.chunks(4).zip(b.chunks(4)).filter(|(x, y)| x != y).count()
     }

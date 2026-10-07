@@ -595,7 +595,14 @@ pub fn finish_loading(
                 match created {
                     Ok(id) => {
                         store.texture_bytes.insert(asset.path.clone(), bytes);
-                        if let Some(old) = store.textures.insert(asset.path, id) {
+                        // The renderer caches textures by name: a picture a
+                        // rig already uploaded under this path comes back with
+                        // the same id, which must not be released (the rig
+                        // would draw a dead texture, e.g. eyelids that never
+                        // show in an exported game).
+                        if let Some(old) = store.textures.insert(asset.path, id)
+                            && old != id
+                        {
                             renderer.release_texture(old);
                         }
                     }
