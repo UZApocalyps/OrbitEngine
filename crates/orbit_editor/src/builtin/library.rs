@@ -85,6 +85,7 @@ impl EditorPlugin for LibraryPlugin {
 /// user what happened: one toast for the successes, one per refusal, the
 /// reason in the editor's language. The first new asset is selected in the library.
 pub fn import_paths(ctx: &mut EditorContext<'_>, paths: &[PathBuf]) -> ImportReport {
+    orbit_profile::scope!("library: import");
     let Some(root) = assets_root_of(ctx) else {
         let message = ctx.t("import.no_project");
         ctx.error(message);
@@ -512,6 +513,7 @@ fn panel(
     // The files of the asset folder, looked at again when something changed.
     let key = (root.clone(), ctx.state().asset_epoch);
     if st.scan_key.as_ref() != Some(&key) {
+        orbit_profile::scope!("library: scan");
         st.scan = assets::scan_assets(&root);
         st.scan_key = Some(key);
     }

@@ -1021,16 +1021,27 @@ impl EditorCore {
     /// Bookkeeping after the UI of a frame: change events, project info,
     /// autosave, layout persistence.
     pub fn after_frame(&mut self, ctx: &Context) {
-        self.process_changes();
+        {
+            orbit_profile::scope!("after frame: changes");
+            self.process_changes();
+        }
         self.poll_save(false);
         self.poll_open();
-        self.poll_watcher(ctx);
-        if self.refresh_diagnostics() {
+        {
+            orbit_profile::scope!("after frame: watcher");
+            self.poll_watcher(ctx);
+        }
+        let refreshed = {
+            orbit_profile::scope!("after frame: diagnostics");
+            self.refresh_diagnostics()
+        };
+        if refreshed {
             // Findings arrived after the UI of this frame was drawn.
             ctx.request_repaint();
         }
         self.sync_info();
         if let Some(session) = self.session.as_mut() {
+            orbit_profile::scope!("after frame: autosave");
             let now = Instant::now();
             if session.autosave_due(now, self.options.autosave_interval)
                 && let Err(e) = session.autosave(now)

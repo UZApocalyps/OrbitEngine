@@ -392,6 +392,21 @@ fn ron_round_trip_and_versions() {
 }
 
 #[test]
+fn the_version_is_read_from_the_top_level_only_and_fast() {
+    // Nested, in a string or in a comment: not the rig's version.
+    let text = "// rig_version: 7\n(bones: [(id: \"rig_version: 8\", name: \"r\")], /* rig_version: 9 */ rig_version : 1)";
+    assert_eq!(rig_text_version(text).unwrap(), 1);
+    assert_eq!(rig_text_version("Rig(rig_version: 3, bones: [])").unwrap(), 3);
+    assert_eq!(rig_text_version("(skins: [(name: \"x\", rig_version: 5)])").unwrap(), 1);
+    // A big mesh on one line (what made the old probe take seconds).
+    let verts: Vec<String> = (0..60_000).map(|i| format!("({i}.5, -{i}.25)")).collect();
+    let big = format!("(rig_version: 1, bones: [], extra: [{}])", verts.join(", "));
+    let t = std::time::Instant::now();
+    assert_eq!(rig_text_version(&big).unwrap(), 1);
+    assert!(t.elapsed() < std::time::Duration::from_millis(500), "{:?}", t.elapsed());
+}
+
+#[test]
 fn named_curves_resolve_in_rig_tracks() {
     let mut r = arm_rig();
     let mut clip = rotate_clip("arm", 0.0, 40.0, 2.0, Loop::Once);

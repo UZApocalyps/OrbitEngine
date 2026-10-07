@@ -734,6 +734,7 @@ impl Live {
     }
 
     fn refresh_scripts(&mut self, root: &std::path::Path, story: &Story) {
+        orbit_profile::scope!("validate: scripts");
         self.scripts_stamp = scripts_stamp(root);
         self.scripts_checked = None;
         self.script_problems = if self.scripts_stamp.is_empty()
@@ -761,6 +762,7 @@ impl Live {
     }
 
     fn refresh_asset_issues(&mut self, root: &std::path::Path, story: &Story) {
+        orbit_profile::scope!("validate: asset files");
         self.asset_issues = crate::assets::lint_asset_files(root, story);
         self.rig_problems = orbit_project::rigs::rig_problems(root, story);
         self.asset_key = None;

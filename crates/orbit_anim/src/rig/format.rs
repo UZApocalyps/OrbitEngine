@@ -51,9 +51,74 @@ struct VersionProbe {
 
 /// Version declared by a `.rig.ron` text (a missing field reads as 1, the
 /// first format).
+///
+/// The top level of the text is scanned for the `rig_version` field instead
+/// of deserializing a probe struct: skipping the other fields goes through
+/// `ron`'s self-describing path, which is super-linear on the long lines of
+/// big meshes (4 s for a 500 KB rig, 35 s for 2 MB). Whether the text is
+/// valid RON is left to the typed parse that follows.
 pub fn rig_text_version(text: &str) -> Result<u32, RigLoadError> {
-    let probe: VersionProbe = ron::from_str(text).map_err(|e| RigLoadError::Parse(e.to_string()))?;
-    Ok(probe.rig_version.max(1))
+    match scan_top_level_u32(text, "rig_version") {
+        Some(Ok(v)) => Ok(v.max(1)),
+        Some(Err(())) => {
+            // Unusual spelling of the value: let `ron` read it (and word the error).
+            let probe: VersionProbe = ron::from_str(text).map_err(|e| RigLoadError::Parse(e.to_string()))?;
+            Ok(probe.rig_version.max(1))
+        }
+        None => Ok(1),
+    }
+}
+
+/// The value of the field `name` of the outermost struct of a RON text, in
+/// one linear pass (strings and comments skipped). `None`: no such field;
+/// `Some(Err)`: present but not a plain decimal `u32`.
+fn scan_top_level_u32(text: &str, name: &str) -> Option<Result<u32, ()>> {
+    let b = text.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'"' => {
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+            }
+            b'/' if b.get(i + 1) == Some(&b'/') => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            c if depth == 1 && (c.is_ascii_alphabetic() || c == b'_') => {
+                let start = i;
+                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                    i += 1;
+                }
+                let ident = &text[start..i];
+                let rest = text[i..].trim_start();
+                if ident == name && let Some(value) = rest.strip_prefix(':') {
+                    let value = value.trim_start();
+                    let digits: &str = &value[..value.bytes().take_while(u8::is_ascii_digit).count()];
+                    let after = value[digits.len()..].trim_start();
+                    let clean = after.is_empty() || after.starts_with(',') || after.starts_with(')');
+                    return Some(digits.parse().ok().filter(|_| clean).ok_or(()));
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Brings a `.rig.ron` text to [`RIG_VERSION`].
