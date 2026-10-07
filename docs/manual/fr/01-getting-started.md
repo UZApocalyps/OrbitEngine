@@ -21,7 +21,7 @@ Un projet est un dossier ordinaire. Votre histoire est le fichier `story.orbit`,
 - **Personnages** et **Variables** : les définitions utilisées par votre histoire.
 - **Bibliothèque** : vos images et sons. Glissez des fichiers dans la fenêtre pour les ajouter.
 - **Preview** : joue l'histoire avec le vrai moteur, et se recharge quand vous modifiez.
-- **Problèmes** : vérifications en direct. Une erreur bloque l'export, un avertissement non.
+- **Problèmes** : vérifications en direct. Une erreur bloque l'export, un avertissement non. Les vérifications tournent en arrière-plan environ 300 ms après votre dernière modification. Désactivez-les avec **Affichage > Validation automatique** (utile sur les très gros projets) : la liste est alors estompée quand elle est périmée et se met à jour avec **Valider** (Ctrl+F7). L'export et la compilation valident toujours d'abord.
 
 Chaque fenêtre peut être rouverte depuis le menu **Affichage**, et réorganisée en faisant glisser son onglet.
 

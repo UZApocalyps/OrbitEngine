@@ -79,6 +79,8 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             d.warning_count() + t.iter().filter(|p| p.level == Level::Warn).count(),
         )
     };
+    // Results older than the project, with automatic validation off: dimmed.
+    let stale = !ctx.state().validation.auto && ctx.state().validation.stale;
     ui.horizontal(|ui| {
         ui.toggle_value(
             &mut filter.0,
@@ -96,6 +98,26 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                 ctx.tn("problems.warnings", warnings, &[])
             ),
         );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let running = ctx.state().validation.running;
+            if ui
+                .button(format!("{}  {}", icons::CHECK_CIRCLE, ctx.t("problems.validate")))
+                .on_hover_text(ctx.t("action.validate"))
+                .clicked()
+            {
+                ctx.state_mut().validation.requested = true;
+            }
+            if running {
+                ui.add(egui::Spinner::new().size(14.0));
+                ui.label(egui::RichText::new(ctx.t("problems.running")).color(weak(ui)));
+            } else if stale {
+                let text = match &ctx.state().validation.at {
+                    Some(at) => ctx.tf("problems.stale", &[("time", at)]),
+                    None => ctx.t("problems.stale_no_time"),
+                };
+                ui.label(egui::RichText::new(text).color(weak(ui)));
+            }
+        });
     });
     ui.data_mut(|d| d.insert_temp(id, filter));
     ui.add_space(2.0);
@@ -140,6 +162,9 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         })
         .collect();
     let click_hint = ctx.t("problems.click_hint");
+    if stale {
+        ui.set_opacity(0.5);
+    }
     let mut clicked: Option<Location> = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])

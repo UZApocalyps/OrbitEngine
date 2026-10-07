@@ -189,6 +189,30 @@ impl EditorPlugin for CorePlugin {
             .menu("view", 125),
         );
         reg.action(
+            ActionDef::new("auto_validation", "action.auto_validation", |c| {
+                let on = !c.state().validation.auto;
+                c.state_mut().validation.auto = on;
+                c.set_pref(
+                    super::PREF_PLUGIN,
+                    super::PREF_AUTO_VALIDATION,
+                    if on { "1" } else { "0" },
+                );
+            })
+            .checked(|c| c.state().validation.auto)
+            .icon(icons::CHECK_CIRCLE)
+            .category("category.view")
+            .menu("view", 126),
+        );
+        reg.action(
+            ActionDef::new("validate", "action.validate", |c| {
+                c.state_mut().validation.requested = true;
+            })
+            .icon(icons::CHECK_CIRCLE)
+            .category("category.edit")
+            .shortcut(egui::Modifiers::CTRL, Key::F7)
+            .menu("edit", 399)
+            .enabled(|c| c.has_project()),
+        );        reg.action(
             ActionDef::new("reset_layout", "action.reset_layout", |c| {
                 c.request(EditorRequest::ResetLayout);
             })

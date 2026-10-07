@@ -25,7 +25,8 @@ pub mod varwidgets;
 
 pub use context::{
     ConsoleEntry, ConsoleLog, Diagnostics, EditorContext, EditorError, EditorRequest, EditorState,
-    Level, Location, Problem, ProjectInfo, RecentProject, Selection, ThemeMode, Toast, Waker,
+    Level, Location, Problem, ProjectInfo, RecentProject, Selection, ThemeMode, Toast,
+    ValidationStatus, Waker,
 };
 pub use errors::{
     describe_command_error, describe_editor_error, describe_project_error, describe_rejection,

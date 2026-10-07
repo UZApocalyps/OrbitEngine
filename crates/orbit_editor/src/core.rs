@@ -202,7 +202,16 @@ impl EditorCore {
         let dock = dock::restore(config.dock, config.dock_layout_version, &registry);
 
         builtin::apply_saved_prefs(&config.plugin_prefs);
+        let validation = orbit_editor_api::ValidationStatus {
+            auto: config
+                .plugin_prefs
+                .get(builtin::PREF_PLUGIN)
+                .and_then(|p| p.get(builtin::PREF_AUTO_VALIDATION))
+                .is_none_or(|v| v != "0"),
+            ..Default::default()
+        };
         let mut state = EditorState {
+            validation,
             i18n: translator,
             theme: mode,
             recent: config.recent,
@@ -1081,9 +1090,9 @@ impl EditorCore {
         });
     }
 
-    /// Keeps the validation findings up to date: inline for small stories,
-    /// debounced on a worker thread for big ones. `true` when new findings
-    /// were published.
+    /// Keeps the validation findings up to date: on a worker thread, once the
+    /// edits paused (automatic validation) or when the user asked. `true`
+    /// when new findings were published.
     pub fn refresh_diagnostics(&mut self) -> bool {
         let Some(session) = self.session.as_ref() else {
             if self.state.diagnostics.revision != 0 || !self.state.diagnostics.problems.is_empty() {
@@ -1093,6 +1102,10 @@ impl EditorCore {
         };
         let key = (self.project_generation, session.project.revision());
         let registry = &self.registry.project;
+        self.live.auto = self.state.validation.auto;
+        if std::mem::take(&mut self.state.validation.requested) {
+            self.live.force = true;
+        }
         let published = self.live.update(
             Instant::now(),
             key,
@@ -1107,6 +1120,9 @@ impl EditorCore {
                 script_problems: Vec::new(),
             },
         );
+        let status = &mut self.state.validation;
+        status.running = self.live.busy();
+        status.stale = self.live.is_stale(key);
         match published {
             Some(diagnostics) => {
                 if let Some(ms) = self.live.last_run.filter(|d| *d > Duration::from_millis(8)) {
@@ -1116,6 +1132,12 @@ impl EditorCore {
                         ms.as_millis()
                     );
                 }
+                let offset = orbit_platform::local_utc_offset_minutes();
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                let stamp = orbit_runtime::format::format_timestamp(now_ms, offset);
+                self.state.validation.at = stamp.get(11..16).map(str::to_owned);
                 self.state.diagnostics = diagnostics;
                 true
             }
@@ -1123,6 +1145,24 @@ impl EditorCore {
         }
     }
 
+    /// Validates now and waits for the findings (tests, headless callers).
+    pub fn settle_diagnostics(&mut self) {
+        self.state.validation.requested = true;
+        for _ in 0..10_000 {
+            self.refresh_diagnostics();
+            if !self.live.busy() && !self.state.validation.requested {
+                if !self.state.validation.stale || self.session.is_none() {
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// Validation runs started so far (tests).
+    pub fn validation_runs(&self) -> usize {
+        self.live.started
+    }
     /// Validation timings of the last run (tests, perf logs): `(run, edit to
     /// publication)`.
     pub fn validation_timings(&self) -> (Option<Duration>, Option<Duration>) {

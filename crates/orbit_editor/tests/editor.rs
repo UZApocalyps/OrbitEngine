@@ -605,6 +605,8 @@ fn idle_ui_asks_for_no_more_frames() {
     core.open_project(&project);
     core.state.selection = Some(Selection::Node(first_say(&core)));
     let size = (1360.0, 820.0);
+    // The debounced validation is a scheduled wake-up: let it run first.
+    core.settle_diagnostics();
     let settled_at = settle(&mut core, &ctx, size);
     // Ten more frames with no event: egui never asks to be redrawn.
     for i in 0..10 {

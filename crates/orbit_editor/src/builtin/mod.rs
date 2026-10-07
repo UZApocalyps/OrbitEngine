@@ -40,6 +40,8 @@ pub(crate) mod scene3d;
 /// Plugin id and preference key of the "experimental 3D features" switch.
 pub const PREF_PLUGIN: &str = "orbit.editor";
 pub const PREF_3D: &str = "experimental_3d";
+/// Preference key of the automatic validation switch ("0" = off).
+pub const PREF_AUTO_VALIDATION: &str = "auto_validation";
 
 /// Is this plugin's UI (menu entries, palette actions) hidden because it
 /// belongs to the experimental 3D features and they are off?
