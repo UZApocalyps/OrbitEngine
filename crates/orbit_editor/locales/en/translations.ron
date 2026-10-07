@@ -16,6 +16,7 @@
     "transl.adopt_hint": "{count} translated string(s) have no recorded source text: record the current one so later edits are detected as stale.",
     "transl.stale_title": "Stale translations ({count})",
     "transl.stale_none": "No stale translation: the source texts did not change since they were translated.",
+    "transl.computing": "Computing the coverage…",
     "transl.accept_all": "Mark all as reviewed",
     "transl.exported": "Exported {count} string(s) to {file}.",
     "transl.imported": "Imported {lang}: {count} string(s) updated, {stale} stale.",

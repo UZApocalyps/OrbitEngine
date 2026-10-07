@@ -35,7 +35,16 @@ pub struct PanelDef {
     /// `default_dock`, or `Center` for hidden panels; see [`Self::opens_in`].
     pub home: DockSlot,
     pub ui: PanelUi,
+    /// Called (before `ui`) on the first frame the panel is drawn after not
+    /// being on screen: refresh what was left stale while hidden.
+    pub on_shown: Option<PanelHook>,
+    /// Called once the panel was not drawn for a whole frame (another tab
+    /// of its group was chosen, it was closed): release what only the
+    /// visible panel needs.
+    pub on_hidden: Option<PanelHook>,
 }
+
+type PanelHook = Box<dyn Fn(&mut EditorContext<'_>)>;
 
 impl PanelDef {
     pub fn new(
@@ -56,7 +65,21 @@ impl PanelDef {
                 default_dock
             },
             ui: Box::new(ui),
+            on_shown: None,
+            on_hidden: None,
         }
+    }
+
+    /// See [`PanelDef::on_shown`].
+    pub fn on_shown(mut self, hook: impl Fn(&mut EditorContext<'_>) + 'static) -> Self {
+        self.on_shown = Some(Box::new(hook));
+        self
+    }
+
+    /// See [`PanelDef::on_hidden`].
+    pub fn on_hidden(mut self, hook: impl Fn(&mut EditorContext<'_>) + 'static) -> Self {
+        self.on_hidden = Some(Box::new(hook));
+        self
     }
 
     /// Opens the panel as a tab of the `slot` area instead of the default

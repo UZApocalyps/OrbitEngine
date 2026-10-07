@@ -16,6 +16,7 @@ pub mod errors;
 pub mod fields;
 mod graph_state;
 pub mod i18n;
+pub mod lazy;
 
 mod preview;
 mod registry;
@@ -33,6 +34,7 @@ pub use errors::{
     describe_undo_label,
 };
 pub use graph_state::GraphState;
+pub use lazy::{DocKey, Freshness, Lazy, LazyAsync, PanelVisibility};
 pub use i18n::{Lang, Translator, UiText};
 pub use orbit_plugin_api::{API_VERSION, Plugin, PluginError, PluginManifest, ProjectRegistry};
 pub use preview::{

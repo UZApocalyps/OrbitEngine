@@ -35,12 +35,16 @@ impl SearchPlugin {
     }
 }
 
+/// Least time between two index rebuilds caused by story edits alone.
+const REBUILD_EVERY: Duration = Duration::from_millis(400);
+
 #[derive(Default)]
 struct SearchUi {
     query: String,
     hits: Vec<Hit>,
     /// `(query, project revision, language)` the hits are for.
     computed_for: Option<(String, u64, orbit_editor_api::Lang)>,
+    computed_at: Option<Instant>,
     took: Duration,
     selected: usize,
     scroll_to_selected: bool,
@@ -170,19 +174,42 @@ fn panel(
         }
     });
 
-    // The results, recomputed when the query or the project changed.
+    // The results, recomputed when the query or the project changed. An
+    // empty query needs no index. While the story keeps changing (typing
+    // elsewhere with the panel open) the index is rebuilt at most every
+    // `REBUILD_EVERY`: the previous hits stay meanwhile.
     let key = (st.query.clone(), revision, ctx.lang());
-    if st.computed_for.as_ref() != Some(&key) {
-        if let Some(story) = ctx.story() {
-            handle.refresh(story, (0, revision), &ctx.translator());
+    let only_revision = st
+        .computed_for
+        .as_ref()
+        .is_some_and(|(q, r, l)| *q == key.0 && *l == key.2 && *r != revision);
+    let wait = st
+        .computed_at
+        .map(|t| REBUILD_EVERY.saturating_sub(t.elapsed()))
+        .filter(|d| only_revision && !d.is_zero());
+    if let Some(wait) = wait {
+        ui.ctx().request_repaint_after(wait);
+    } else if st.computed_for.as_ref() != Some(&key) {
+        if !st.query.trim().is_empty()
+            && let Some(story) = ctx.story()
+        {
+            handle.refresh(story, (ctx.state().project_generation, revision), &ctx.translator());
         }
         let started = Instant::now();
-        let hits = handle.query(&st.query);
+        let hits = if st.query.trim().is_empty() {
+            Vec::new()
+        } else {
+            handle.query(&st.query)
+        };
         st.took = started.elapsed();
         st.hits = hits;
         st.computed_for = Some(key);
-        st.selected = 0;
-        st.scroll_to_selected = true;
+        st.computed_at = Some(Instant::now());
+        if !only_revision {
+            st.selected = 0;
+            st.scroll_to_selected = true;
+        }
+        st.selected = st.selected.min(st.hits.len().saturating_sub(1));
     }
     let n = st.hits.len();
     if n > 0 {

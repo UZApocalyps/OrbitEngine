@@ -2,14 +2,16 @@
 //! their coverage, the stale translations (source text edited since), and the
 //! PO / CSV export and import for translation tools.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use egui::Ui;
 use orbit_editor_api::{
-    ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, PanelDef, Plugin,
-    PluginManifest, icons,
+    ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, LazyAsync, PanelDef, Plugin,
+    PluginManifest, TaskError, icons,
 };
-use orbit_i18n::{ExchangeFormat, StaleEntry, Translation, files, stale_entries};
+use orbit_i18n::{CoverageReport, ExchangeFormat, StaleEntry, Translation, files, stale_entries};
 
 use super::ids;
 use super::ui_util::{faint, section_title, secondary_button, warning, weak};
@@ -24,13 +26,20 @@ impl Plugin for TranslationsPlugin {
 
 impl EditorPlugin for TranslationsPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
-        reg.panel(PanelDef::new(
-            "translations",
-            "transl.title",
-            icons::TRANSLATE,
-            DockSlot::Bottom,
-            panel,
-        ));
+        let view = Rc::new(RefCell::new(View::default()));
+        let shown = view.clone();
+        reg.panel(
+            PanelDef::new(
+                "translations",
+                "transl.title",
+                icons::TRANSLATE,
+                DockSlot::Bottom,
+                move |ui, ctx| panel(ui, ctx, &mut view.borrow_mut()),
+            )
+            // Back on screen: look at the disk now (the files may have been
+            // edited meanwhile); the coverage follows if anything changed.
+            .on_shown(move |_| shown.borrow_mut().polled = None),
+        );
         reg.action(
             ActionDef::new("export_po", "transl.menu_export_po", |c| {
                 export_selected(c, ExchangeFormat::Po);
@@ -59,15 +68,44 @@ impl EditorPlugin for TranslationsPlugin {
     }
 }
 
-/// What the panel knows about the selected language, refreshed about once a
-/// second (the files are edited outside the editor too).
-#[derive(Clone, Default)]
+/// How often the visible panel looks at the `i18n/` folder (the files are
+/// edited outside the editor too): a directory listing and one `stat`.
+const DISK_POLL: f64 = 1.0;
+
+/// What the coverage of a language was computed for: the story's strings
+/// (project generation and revision), the language and its file on disk.
+#[derive(Clone, Debug, PartialEq)]
+struct ReportKey {
+    generation: u64,
+    revision: u64,
+    lang: String,
+    file: Option<(u64, Option<std::time::SystemTime>)>,
+}
+
+/// The coverage of the selected language, computed on the worker pool.
+struct Report {
+    coverage: CoverageReport,
+    stale: Vec<StaleEntry>,
+    legacy: usize,
+}
+
+/// The panel's state. Nothing is read or computed while it is hidden; when
+/// shown (or when the story or the file changed) the language file is read
+/// and the coverage computed off the UI thread.
+#[derive(Default)]
 struct View {
-    stamp: f64,
+    /// Time of the last look at the disk (`i18n/` listing, file stamp).
+    polled: Option<f64>,
     langs: Vec<String>,
     lang: String,
-    translation: Option<Translation>,
+    file: Option<(u64, Option<std::time::SystemTime>)>,
     new_lang: String,
+    report: LazyAsync<ReportKey, Report>,
+}
+
+fn file_stamp(path: &Path) -> Option<(u64, Option<std::time::SystemTime>)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()))
 }
 
 fn story_path(ctx: &EditorContext<'_>) -> Option<PathBuf> {
@@ -81,25 +119,25 @@ fn selected(ctx: &EditorContext<'_>) -> Option<String> {
     files::list_languages(&path).into_iter().next()
 }
 
-fn refresh(view: &mut View, path: &Path, now: f64, force: bool) {
-    if !force && now - view.stamp < 1.0 {
+/// Looks at the disk (at most every [`DISK_POLL`], or now with `force`):
+/// the languages and the stamp of the selected one's file.
+fn poll_disk(view: &mut View, path: &Path, now: f64, force: bool) {
+    if !force && view.polled.is_some_and(|t| now - t < DISK_POLL) {
         return;
     }
-    view.stamp = now;
+    view.polled = Some(now);
     view.langs = files::list_languages(path);
     if !view.langs.contains(&view.lang) {
         view.lang = view.langs.first().cloned().unwrap_or_default();
     }
-    view.translation = if view.lang.is_empty() {
+    view.file = if view.lang.is_empty() {
         None
     } else {
-        files::load(&files::translation_path(path, &view.lang))
-            .ok()
-            .flatten()
+        file_stamp(&files::translation_path(path, &view.lang))
     };
 }
 
-fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
+fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, view: &mut View) {
     let Some(path) = story_path(ctx) else {
         ui.add_space(14.0);
         ui.vertical_centered(|ui| {
@@ -107,11 +145,9 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         });
         return;
     };
-    let id = egui::Id::new("orbit_translations_view");
-    let mut view: View = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     let now = ui.input(|i| i.time);
-    let first = view.stamp == 0.0;
-    refresh(&mut view, &path, now, first);
+    poll_disk(view, &path, now, false);
+    ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(DISK_POLL));
     let mut force = false;
 
     ui.horizontal_wrapped(|ui| {
@@ -148,89 +184,139 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             }
         }
     });
+    if force {
+        poll_disk(view, &path, now, true);
+        force = false;
+    }
     ui.separator();
 
     if view.lang.is_empty() {
         ui.add_space(10.0);
         ui.label(egui::RichText::new(ctx.t("transl.none")).color(weak(ui)));
-        ui.data_mut(|d| d.insert_temp(id, view));
         return;
     }
 
     let lang = view.lang.clone();
-    let Some(story) = ctx.story().cloned() else {
+    let doc = ctx.doc_key();
+    let key = ReportKey {
+        generation: doc.generation,
+        revision: doc.revision,
+        lang: lang.clone(),
+        file: view.file,
+    };
+    // Only the string table is copied (not the story), once per change
+    // while the panel is visible, and at most every 250 ms while typing.
+    let strings = || ctx.story().map(|s| s.strings.clone()).unwrap_or_default();
+    let file = files::translation_path(&path, &lang);
+    view.report.poll(
+        true,
+        key,
+        &ctx.state().tasks,
+        &ctx.state().waker,
+        || {
+            let strings = strings();
+            orbit_editor_api::lazy::job(move |_| {
+                let translation = files::load(&file)
+                    .map_err(TaskError::Failed)?
+                    .unwrap_or_default();
+                let coverage = orbit_i18n::coverage_of_strings(&strings, &translation);
+                let stale = stale_entries(&strings, &translation);
+                let legacy = translation
+                    .entries
+                    .iter()
+                    .filter(|(k, v)| !v.trim().is_empty() && !translation.source_hashes.contains_key(k))
+                    .count();
+                Ok(Report {
+                    coverage,
+                    stale,
+                    legacy,
+                })
+            })
+        },
+    );
+    if let Some(after) = view.report.retry_after() {
+        ui.ctx().request_repaint_after(after);
+    }
+    let Some(report) = view.report.value() else {
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(egui::RichText::new(ctx.t("transl.computing")).color(weak(ui)));
+        });
         return;
     };
-    let translation = view.translation.clone().unwrap_or_default();
-    let report = orbit_i18n::coverage(&story, &translation);
-    let stale: Vec<StaleEntry> = stale_entries(&story.strings, &translation);
-    let legacy = translation
-        .entries
-        .iter()
-        .filter(|(k, v)| !v.trim().is_empty() && !translation.source_hashes.contains_key(k))
-        .count();
+    let coverage = &report.coverage;
 
     ui.horizontal_wrapped(|ui| {
         ui.label(ctx.tf(
             "transl.coverage",
             &[
-                ("translated", &report.translated),
-                ("total", &report.total),
-                ("missing", &report.missing.len()),
-                ("orphans", &report.orphans.len()),
+                ("translated", &coverage.translated),
+                ("total", &coverage.total),
+                ("missing", &coverage.missing.len()),
+                ("orphans", &coverage.orphans.len()),
             ],
         ));
-        ui.add(egui::ProgressBar::new(report.ratio()).desired_width(120.0));
+        ui.add(egui::ProgressBar::new(coverage.ratio()).desired_width(120.0));
     });
     ui.horizontal_wrapped(|ui| {
         if secondary_button(ui, &ctx.t("transl.export_po")).clicked() {
-            export(ctx, &story.strings, &path, &lang, ExchangeFormat::Po);
+            export_current(ctx, &path, &lang, ExchangeFormat::Po);
         }
         if secondary_button(ui, &ctx.t("transl.export_csv")).clicked() {
-            export(ctx, &story.strings, &path, &lang, ExchangeFormat::Csv);
+            export_current(ctx, &path, &lang, ExchangeFormat::Csv);
         }
         if secondary_button(ui, &ctx.t("transl.import")).clicked() {
             import_dialog(ctx);
             force = true;
         }
-        if legacy > 0
+        if report.legacy > 0
             && secondary_button(ui, &ctx.t("transl.adopt"))
-                .on_hover_text(ctx.tf("transl.adopt_hint", &[("count", &legacy)]))
+                .on_hover_text(ctx.tf("transl.adopt_hint", &[("count", &report.legacy)]))
                 .clicked()
+            && let Some(strings) = ctx.story().map(|s| s.strings.clone())
         {
             update(ctx, &path, &lang, |t| {
-                t.stamp_missing(&story.strings);
+                t.stamp_missing(&strings);
             });
             force = true;
         }
     });
     ui.add_space(4.0);
-    section_title(ui, &ctx.tf("transl.stale_title", &[("count", &stale.len())]));
-    if stale.is_empty() {
+    section_title(ui, &ctx.tf("transl.stale_title", &[("count", &report.stale.len())]));
+    if report.stale.is_empty() {
         ui.label(egui::RichText::new(ctx.t("transl.stale_none")).color(weak(ui)));
     } else {
-        if secondary_button(ui, &ctx.t("transl.accept_all")).clicked() {
+        if secondary_button(ui, &ctx.t("transl.accept_all")).clicked()
+            && let Some(strings) = ctx.story().map(|s| s.strings.clone())
+        {
             update(ctx, &path, &lang, |t| {
-                t.accept_stale(&story.strings);
+                t.accept_stale(&strings);
             });
             force = true;
         }
+        // Virtualized: one line per entry (the id on hover), only the rows
+        // on screen are laid out.
+        let row = ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                for s in &stale {
-                    ui.horizontal_wrapped(|ui| {
+            .show_rows(ui, row, report.stale.len(), |ui, range| {
+                for s in &report.stale[range] {
+                    ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(icons::WARNING).color(warning(ui)));
-                        ui.label(format!("{} -> {}", s.source, s.translation));
+                        ui.add(
+                            egui::Label::new(format!("{} -> {}", s.source, s.translation))
+                                .truncate(),
+                        )
+                        .on_hover_text(egui::RichText::new(s.id.to_string()).color(faint(ui)));
                     });
-                    ui.label(egui::RichText::new(s.id.to_string()).small().color(faint(ui)));
                 }
             });
     }
     if force {
-        refresh(&mut view, &path, now, true);
+        poll_disk(view, &path, now, true);
+        view.report.invalidate();
     }
-    ui.data_mut(|d| d.insert_temp(id, view));
 }
 
 fn update(
@@ -285,12 +371,20 @@ fn export(
 }
 
 fn export_selected(ctx: &mut EditorContext<'_>, format: ExchangeFormat) {
-    let (Some(path), Some(lang), Some(story)) = (story_path(ctx), selected(ctx), ctx.story().cloned())
-    else {
+    let (Some(path), Some(lang)) = (story_path(ctx), selected(ctx)) else {
         ctx.warn(ctx.t("transl.none"));
         return;
     };
-    export(ctx, &story.strings, &path, &lang, format);
+    export_current(ctx, &path, &lang, format);
+}
+
+/// Exports `lang` against the current source strings.
+fn export_current(ctx: &mut EditorContext<'_>, path: &Path, lang: &str, format: ExchangeFormat) {
+    let Some(strings) = ctx.story().map(|s| s.strings.clone()) else {
+        ctx.warn(ctx.t("transl.none"));
+        return;
+    };
+    export(ctx, &strings, path, lang, format);
 }
 
 fn import_dialog(ctx: &mut EditorContext<'_>) {

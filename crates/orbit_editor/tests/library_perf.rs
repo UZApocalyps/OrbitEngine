@@ -220,82 +220,85 @@ fn real_project_lint_parts() {
     }
 }
 
-#[test]
-#[ignore]
-fn ron_shapes() {
-    #[derive(serde::Deserialize)]
-    #[allow(dead_code)]
-    struct M {
-        image: String,
-        vertices: Vec<[f32; 2]>,
-    }
-    #[derive(serde::Deserialize)]
-    #[allow(dead_code)]
-    enum A {
-        Mesh(M),
-    }
-    if let Ok(src) = std::env::var("ORBIT_BENCH_PROJECT") {
-        let text = std::fs::read_to_string(Path::new(&src).join("assets/rigs/ada.rig.ron")).unwrap();
-        for (i, line) in text.lines().enumerate() {
-            if line.len() < 5000 {
-                continue;
-            }
-            let mut frag = line.trim().trim_end_matches(',');
-            if let Some((_, rest)) = frag.split_once("\": ") {
-                frag = rest;
-            }
-            let t = Instant::now();
-            let r: Result<ron::Value, _> = ron::from_str(frag);
-            eprintln!("line {} ({} chars): {:?} ok={}", i + 1, line.len(), t.elapsed(), r.is_ok());
-            if i == 15 {
-                let d = Instant::now();
-                let r: Result<orbit_anim::rig::Attachment, _> = ron::from_str(frag);
-                eprintln!("   typed: {:?} ok={}", d.elapsed(), r.is_ok());
-                if let Some(at) = frag.find("weights:") {
-                    let w = &frag[at + 9..frag.rfind(']').unwrap() + 1];
-                    let d = Instant::now();
-                    let r: Result<Vec<Vec<(String, f32)>>, _> = ron::from_str(w.trim());
-                    eprintln!("   weights only ({}): {:?} ok={}", w.len(), d.elapsed(), r.is_ok());
-                }
-                for key in ["vertices: ", "uvs: ", "triangles: "] {
-                    let s = frag.find(key).unwrap() + key.len();
-                    let e = s + frag[s..].find(']').unwrap() + 1;
-                    let d = Instant::now();
-                    let r: Result<ron::Value, _> = ron::from_str(&frag[s..e]);
-                    eprintln!("   {key}({}): {:?} ok={}", e - s, d.elapsed(), r.is_ok());
-                }
-            }
+/// Working set and peak working set of this process (Windows; empty
+/// elsewhere). Read through PowerShell: the workspace forbids `unsafe`.
+fn memory() -> String {
+    let pid = std::process::id();
+    let out = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!("$p = Get-Process -Id {pid}; '{{0:N0}} MB (peak {{1:N0}} MB)' -f ($p.WorkingSet64/1MB), ($p.PeakWorkingSet64/1MB)"),
+        ])
+        .output();
+    out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .unwrap_or_default()
+}
+
+/// The editor preview on a headless GPU: time to the first picture after
+/// Play, the slowest host update, and the typing frames while it plays.
+fn preview_start(core: &mut EditorCore, ctx: &Context) {
+    use orbit_editor::preview_host::PreviewHost;
+    let Ok(mut gfx) = pollster::block_on(orbit_gfx::Gfx::headless((64, 64))) else {
+        eprintln!("preview: no GPU adapter, skipped");
+        return;
+    };
+    gfx.enable_gamma_view();
+    let mut preview = PreviewHost::new(gfx).unwrap();
+    let mut er = egui_wgpu::Renderer::new(
+        preview.gfx().device(),
+        egui_wgpu::wgpu::TextureFormat::Rgba8Unorm,
+        egui_wgpu::RendererOptions::default(),
+    );
+    core.state.requests.push(EditorRequest::ShowPanel("orbit.preview.preview".into()));
+    let t = Instant::now();
+    let mut worst = Duration::ZERO;
+    let mut first_update = None;
+    let mut n = 0u32;
+    let mut played = false;
+    let start_frames = preview.frames;
+    while t.elapsed() < Duration::from_secs(60) {
+        frame(core, ctx, 30.0 + f64::from(n) * 0.016);
+        let u = Instant::now();
+        preview.update(core, &mut er, Instant::now());
+        let took = u.elapsed();
+        first_update.get_or_insert(took);
+        worst = worst.max(took);
+        n += 1;
+        if !played {
+            core.state.preview.commands.push(orbit_editor_api::PreviewCommand::Play);
+            played = true;
+        } else if preview.runtime().status() == orbit_runtime::PlayStatus::Playing
+            && preview.frames > start_frames + 2
+        {
+            break;
         }
+        std::thread::sleep(Duration::from_millis(4));
     }
-    for n in [5_000usize, 10_000, 20_000] {
-        let w: Vec<&str> = (0..n).map(|_| "[(\"head\", 1.0)]").collect();
-        let text = format!("[{}]", w.join(", "));
-        let t = Instant::now();
-        let _: Vec<Vec<(String, f32)>> = ron::from_str(&text).unwrap();
-        eprintln!("{n}: weights {:?}", t.elapsed());
-        let tr: Vec<String> = (0..n)
-            .map(|i| format!("(t: {i}.0, value: (x: 0.2799, y: -0.3484), ease: Preset(Linear))"))
-            .collect();
-        let text = format!("BoneTranslate(bone: \"chest\", track: [{}])", tr.join(", "));
-        let t = Instant::now();
-        let _: orbit_anim::rig::RigTrack = ron::from_str(&text).unwrap();
-        eprintln!("{n}: track {:?}", t.elapsed());
-        let items: Vec<String> = (0..n).map(|i| format!("({i}.5, -{i}.25)")).collect();
-        for (name, sep) in [("one line", ", "), ("lines", ",\n")] {
-            let text = format!("[{}]", items.join(sep));
-            let t = Instant::now();
-            let v: Vec<[f32; 2]> = ron::from_str(&text).unwrap();
-            eprintln!("{n} {name}: vec {:?} ({})", t.elapsed(), v.len());
-            let text = format!("(image: \"a\", vertices: [{}])", items.join(sep));
-            let t = Instant::now();
-            let _: M = ron::from_str(&text).unwrap();
-            eprintln!("{n} {name}: struct {:?}", t.elapsed());
-            let text = format!("Mesh({text})");
-            let t = Instant::now();
-            let _: A = ron::from_str(&text).unwrap();
-            eprintln!("{n} {name}: newtype variant {:?}", t.elapsed());
-        }
+    eprintln!(
+        "preview start: playing after {:?} ({n} frames), first host update {first_update:?}, worst host update {worst:?}",
+        t.elapsed()
+    );
+    let mut worst = Duration::ZERO;
+    let t = Instant::now();
+    for i in 0..60 {
+        let f = Instant::now();
+        drop(core.edit_nth_say(1, &"hot ".repeat(i + 1)));
+        frame(core, ctx, 40.0 + i as f64 * 0.016);
+        preview.update(core, &mut er, Instant::now());
+        worst = worst.max(f.elapsed());
+        std::thread::sleep(Duration::from_millis(4));
     }
+    // Past the debounce: the hot reload frame.
+    std::thread::sleep(Duration::from_millis(400));
+    let f = Instant::now();
+    frame(core, ctx, 42.0);
+    preview.update(core, &mut er, Instant::now());
+    eprintln!(
+        "typing while playing: worst frame {worst:?} (total {:?}), hot reload frame {:?}",
+        t.elapsed(),
+        f.elapsed()
+    );
 }
 
 type Before = Box<dyn FnMut(&mut EditorCore, usize)>;
@@ -342,18 +345,49 @@ fn real_project_bench() {
         extra.push(to);
     }
     orbit_profile::set_enabled(true);
+    eprintln!("memory before open: {}", memory());
     let ctx = Context::default();
-    let t = Instant::now();
     let mut core = EditorCore::new(CoreOptions::with_language(orbit_editor_api::Lang::En), &ctx);
-    core.open_project(&p);
-    core.wait_for_background_work();
-    eprintln!("open: {:?}, dialog open: {}", t.elapsed(), core.dialog.is_some());
-    if core.dialog.is_some() {
-        core.dialog = None;
+    // Open as the interface does (background job), drawing frames meanwhile:
+    // "interactive" is the first frame under 16 ms once the project is in.
+    let t = Instant::now();
+    core.open_project_in_background(&p);
+    let (mut installed, mut interactive) = (None, None);
+    let mut worst = Duration::ZERO;
+    let mut slow = 0;
+    let mut n = 0u32;
+    while interactive.is_none() && t.elapsed() < Duration::from_secs(120) {
+        let f = frame(&mut core, &ctx, f64::from(n) * 0.016);
+        n += 1;
+        worst = worst.max(f);
+        slow += usize::from(f > Duration::from_millis(16));
+        if installed.is_none() && core.has_project() {
+            installed = Some(t.elapsed());
+        } else if installed.is_some() && f <= Duration::from_millis(16) {
+            interactive = Some(t.elapsed());
+        }
+        if core.dialog.is_some() {
+            core.dialog = None;
+        }
+        std::thread::sleep(Duration::from_millis(2));
     }
-    core.state.requests.push(EditorRequest::ShowPanel("orbit.library.library".into()));
+    eprintln!(
+        "open (background): installed {installed:?}, interactive {interactive:?}, {n} frames, {slow} over 16 ms, worst {worst:?}"
+    );
+    eprintln!("memory after open: {}", memory());
     run(&mut core, &ctx, "first frames", 30, Box::new(|_, _| {}), 0.0);
     run(&mut core, &ctx, "idle", 30, Box::new(|_, _| {}), 1.0);
+    for panel in ["orbit.graph.graph", "orbit.translations.translations", "orbit.search.search", "orbit.problems.problems"] {
+        core.state.requests.push(EditorRequest::ShowPanel(panel.into()));
+        run(&mut core, &ctx, &format!("show {panel}"), 30, Box::new(|_, _| {}), 1.5);
+    }
+    // Typing in a line: one edit per frame.
+    run(&mut core, &ctx, "typing (60 edits)", 60,
+        Box::new(|c, i| drop(c.edit_nth_say(0, &"typed ".repeat(i + 1)))), 1.8);
+    preview_start(&mut core, &ctx);
+    eprintln!("memory after preview: {}", memory());
+    core.state.requests.push(EditorRequest::ShowPanel("orbit.library.library".into()));
+    run(&mut core, &ctx, "show library", 30, Box::new(|_, _| {}), 1.9);
     let one: Vec<PathBuf> = extra[..20].to_vec();
     run(&mut core, &ctx, "declare 20 one by one", 20,
         Box::new(move |c, i| c.import_dropped(vec![one[i].clone()])), 2.0);

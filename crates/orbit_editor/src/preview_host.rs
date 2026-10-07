@@ -208,6 +208,18 @@ pub fn changed_assets(
     root: &Path,
     story: &Story,
 ) -> Vec<String> {
+    changed_assets_since(stamps, root, story, false)
+}
+
+/// [`changed_assets`]; with `new_changed`, a file seen for the first time
+/// counts as changed too (the stamps are only taken when the asset folder
+/// changed: a file declared since may have been loaded in its old version).
+pub fn changed_assets_since(
+    stamps: &mut HashMap<String, SystemTime>,
+    root: &Path,
+    story: &Story,
+    new_changed: bool,
+) -> Vec<String> {
     let mut changed = Vec::new();
     for asset in &story.assets.assets {
         let Ok(modified) = std::fs::metadata(root.join(&asset.path)).and_then(|m| m.modified())
@@ -215,10 +227,10 @@ pub fn changed_assets(
             stamps.remove(&asset.path);
             continue;
         };
-        if let Some(previous) = stamps.insert(asset.path.clone(), modified)
-            && previous != modified
-        {
-            changed.push(asset.path.clone());
+        match stamps.insert(asset.path.clone(), modified) {
+            Some(previous) if previous != modified => changed.push(asset.path.clone()),
+            None if new_changed => changed.push(asset.path.clone()),
+            _ => {}
         }
     }
     changed
@@ -304,6 +316,8 @@ pub struct PreviewHost {
     pub scene_frames: u64,
     /// `EditorCore::asset_epoch` as last seen: files changed on disk.
     seen_asset_epoch: u64,
+    /// `EditorCore::asset_epoch` when the asset files were last stamped.
+    asset_stamps_epoch: Option<u64>,
     /// The scene view's own target and what it was last drawn for.
     scene_target: Option<Target>,
     scene_egui_texture: Option<egui::TextureId>,
@@ -373,6 +387,7 @@ impl PreviewHost {
             last_reload_ms: None,
             scene_frames: 0,
             seen_asset_epoch: 0,
+            asset_stamps_epoch: None,
             scene_target: None,
             scene_egui_texture: None,
             scene_cache: None,
@@ -404,6 +419,17 @@ impl PreviewHost {
         self.window_focused = focused;
     }
 
+    /// Whether anything shows the runtime's story: the preview or the scene
+    /// view on screen, or a playthrough (it keeps its place, and its sound,
+    /// while hidden).
+    fn wanted(&self, core: &EditorCore) -> bool {
+        use crate::builtin::panels;
+        core.state.panels.is_visible(panels::PREVIEW)
+            || core.state.panels.is_visible(panels::SCENEVIEW)
+            || core.state.maximized_panel.as_deref() == Some(panels::PREVIEW)
+            || self.runtime.status() != PlayStatus::Stopped
+    }
+
     /// Loads the project's current story into the runtime.
     fn load(&mut self, core: &mut EditorCore, now: Instant) {
         let Some(session) = core.session.as_ref() else {
@@ -418,10 +444,15 @@ impl PreviewHost {
         let root = find_assets_root(&session.location.root, &story);
         if root != Path::new(self.runtime.assets_root()) {
             self.asset_stamps.clear();
+            self.asset_stamps_epoch = None;
         }
-        {
+        // The files are looked at only when the watcher saw the asset folder
+        // change (not at every reload of the story): one `stat` per asset.
+        if self.asset_stamps_epoch != Some(core.asset_epoch) {
             orbit_profile::scope!("preview: asset stamps");
-            for path in changed_assets(&mut self.asset_stamps, &root, &story) {
+            let first = self.asset_stamps_epoch.is_none();
+            self.asset_stamps_epoch = Some(core.asset_epoch);
+            for path in changed_assets_since(&mut self.asset_stamps, &root, &story, !first) {
                 if self.runtime.invalidate_asset(&path) {
                     log::info!("preview: asset `{path}` changed on disk, reloaded");
                 }
@@ -430,8 +461,12 @@ impl PreviewHost {
         // The project's own screens (`ui/`) are part of what Play shows.
         let ui_dir = session.location.root.join("ui");
         // The shell built below reads `ui/` now: the hot reload compares
-        // against what it will see next.
-        self.ui_stamps = Some(ui_stamps(&ui_dir));
+        // against what it will see next. Read again only when it changed.
+        let stamps = ui_stamps(&ui_dir);
+        if self.ui_stamps.as_ref() != Some(&stamps) {
+            self.runtime.invalidate_ui();
+        }
+        self.ui_stamps = Some(stamps);
         self.ui_error = None;
         self.runtime
             .set_ui_dir(ui_dir.is_dir().then(|| ui_dir.to_string_lossy().into_owned()));
@@ -489,8 +524,14 @@ impl PreviewHost {
                 self.seen = Some(key);
                 if new_project {
                     self.runtime.stop();
-                    self.load(core, now);
-                    force_draw = true;
+                    self.asset_stamps_epoch = None;
+                    if self.wanted(core) {
+                        self.load(core, now);
+                        force_draw = true;
+                    } else {
+                        // Loaded when the preview (or the scene view) shows.
+                        self.debounce.changed(now);
+                    }
                 } else {
                     self.debounce.changed(now);
                 }
@@ -505,7 +546,10 @@ impl PreviewHost {
                 self.debounce.changed(now);
             }
         }
-        if self.debounce.due(now) {
+        // Nothing shows the runtime's story (preview and scene view hidden,
+        // nothing playing): the reload waits until something does.
+        let shown = self.wanted(core);
+        if self.debounce.due(now) && shown {
             self.load(core, now);
             force_draw = true;
         }
@@ -628,8 +672,9 @@ impl PreviewHost {
         }
 
         // ---- when to come back
-        let mut at = self.debounce.deadline();
-        if animating {
+        let mut at = self.debounce.deadline().filter(|_| shown);
+        // Assets on their way (on demand): come back to move them in.
+        if animating || self.runtime.is_loading() {
             let next = now + FRAME_INTERVAL;
             at = Some(at.map_or(next, |d| d.min(next)));
         }
@@ -932,6 +977,9 @@ impl PreviewHost {
         let stage = scene_view::stage_state(story, &at.after);
         self.scene_animated = orbit_runtime::Runtime::stage_is_animated(story, &stage);
         let time = self.scene_animated.then_some(0.0);
+        // Pictures load on demand: what this stage shows is fetched now and
+        // drawn again when it arrives (the assets epoch is in the key).
+        self.runtime.request_stage_assets(story, &stage);
         if let Err(e) = self
             .runtime
             .render_stage_to_target_at(story, &stage, target, time)
@@ -1739,6 +1787,9 @@ mod tests {
         let timed = |preview: &mut PreviewHost, core: &mut EditorCore, er: &mut egui_wgpu::Renderer, now: Instant| {
             orbit_profile::begin_frame();
             let t = Instant::now();
+            // The preview panel is on screen (the reload waits for it otherwise).
+            core.state.panels.begin_frame();
+            core.state.panels.mark_drawn(crate::builtin::panels::PREVIEW);
             preview.update(core, er, now);
             let took = t.elapsed();
             orbit_profile::finish_frame();

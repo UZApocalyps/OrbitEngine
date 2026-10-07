@@ -107,45 +107,37 @@ impl GraphLayout {
             return true;
         }
         let edges = model.edges();
-        let mut taken: Vec<(f32, f32, f32, f32)> = model
-            .blocks
-            .iter()
-            .filter_map(|b| {
-                self.get(b.id)
-                    .map(|(x, y)| (x, y, BLOCK_WIDTH, block_height(b)))
-            })
-            .collect();
+        // Edges indexed by endpoint, once: scanning every edge per missing
+        // block made this O(missing × edges).
+        let mut into: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+        let mut out_of: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+        for e in &edges {
+            into.entry(e.to).or_default().push(e.from.block);
+            out_of.entry(e.from.block).or_default().push(e.to);
+        }
+        let mut taken = TakenGrid::default();
+        for b in &model.blocks {
+            if let Some((x, y)) = self.get(b.id) {
+                taken.push((x, y, BLOCK_WIDTH, block_height(b)));
+            }
+        }
         for block in missing {
             let height = block_height(block);
-            let anchor = edges
-                .iter()
-                .filter(|e| e.to == block.id)
-                .find_map(|e| self.get(e.from.block).map(|p| (p, true)))
+            let anchor = into
+                .get(&block.id)
+                .and_then(|v| v.iter().find_map(|from| self.get(*from).map(|p| (p, true))))
                 .or_else(|| {
-                    edges
-                        .iter()
-                        .filter(|e| e.from.block == block.id)
-                        .find_map(|e| self.get(e.to).map(|p| (p, false)))
+                    out_of
+                        .get(&block.id)
+                        .and_then(|v| v.iter().find_map(|to| self.get(*to).map(|p| (p, false))))
                 });
             let (mut x, mut y) = match anchor {
                 Some(((px, py), true)) => (px + BLOCK_WIDTH + H_GAP, py),
                 Some(((px, py), false)) => (px - BLOCK_WIDTH - H_GAP, py),
-                None => {
-                    let min_x = taken.iter().map(|r| r.0).fold(f32::INFINITY, f32::min);
-                    let max_y = taken
-                        .iter()
-                        .map(|r| r.1 + r.3)
-                        .fold(f32::NEG_INFINITY, f32::max);
-                    (min_x, max_y + V_GAP * 2.0)
-                }
+                None => (taken.min_x, taken.max_bottom + V_GAP * 2.0),
             };
             // Slide down until free.
-            while let Some(hit) = taken.iter().find(|r| {
-                x < r.0 + r.2 + 8.0
-                    && r.0 < x + BLOCK_WIDTH + 8.0
-                    && y < r.1 + r.3 + 8.0
-                    && r.1 < y + height + 8.0
-            }) {
+            while let Some(hit) = taken.hit(x, y, height) {
                 y = hit.1 + hit.3 + V_GAP;
             }
             taken.push((x, y, BLOCK_WIDTH, height));
@@ -154,6 +146,54 @@ impl GraphLayout {
             self.set(block.id, (x, y));
         }
         true
+    }
+}
+
+/// Rectangles already placed, bucketed by column so that an overlap test
+/// only looks at the blocks of the columns it spans, not at every block.
+struct TakenGrid {
+    cells: HashMap<i32, Vec<(f32, f32, f32, f32)>>,
+    min_x: f32,
+    max_bottom: f32,
+}
+
+impl Default for TakenGrid {
+    fn default() -> Self {
+        Self {
+            cells: HashMap::new(),
+            min_x: f32::INFINITY,
+            max_bottom: f32::NEG_INFINITY,
+        }
+    }
+}
+
+impl TakenGrid {
+    const CELL: f32 = BLOCK_WIDTH + H_GAP;
+    const MARGIN: f32 = 8.0;
+
+    fn span(lo: f32, hi: f32) -> std::ops::RangeInclusive<i32> {
+        ((lo / Self::CELL).floor() as i32)..=((hi / Self::CELL).floor() as i32)
+    }
+
+    fn push(&mut self, r: (f32, f32, f32, f32)) {
+        self.min_x = self.min_x.min(r.0);
+        self.max_bottom = self.max_bottom.max(r.1 + r.3);
+        for c in Self::span(r.0 - Self::MARGIN, r.0 + r.2 + Self::MARGIN) {
+            self.cells.entry(c).or_default().push(r);
+        }
+    }
+
+    /// A placed rectangle that a block at `(x, y)` would overlap.
+    fn hit(&self, x: f32, y: f32, height: f32) -> Option<(f32, f32, f32, f32)> {
+        let m = Self::MARGIN;
+        Self::span(x, x + BLOCK_WIDTH).find_map(|c| {
+            self.cells.get(&c)?.iter().copied().find(|r| {
+                x < r.0 + r.2 + m
+                    && r.0 < x + BLOCK_WIDTH + m
+                    && y < r.1 + r.3 + m
+                    && r.1 < y + height + m
+            })
+        })
     }
 }
 
@@ -457,6 +497,50 @@ mod tests {
             });
         }
         story
+    }
+
+    /// Half of a big graph has positions: the other half is placed without
+    /// overlapping anything, quickly (indexed edges, column buckets: no scan
+    /// of every block per missing block).
+    #[test]
+    fn place_missing_on_a_big_graph_is_fast_and_never_overlaps() {
+        let n = 3000;
+        let model = GraphModel::build(&big_story(n));
+        let full = auto_layout(&model);
+        let mut layout = GraphLayout::default();
+        for (i, b) in model.blocks.iter().enumerate() {
+            if i % 2 == 0 {
+                layout.set(b.id, full[&b.id]);
+            }
+        }
+        let started = std::time::Instant::now();
+        assert!(layout.place_missing(&model));
+        let took = started.elapsed();
+        assert_eq!(layout.positions.len(), n);
+        assert!(took < std::time::Duration::from_secs(2), "place_missing took {took:?}");
+        // The placed blocks overlap nothing (bucket by column for the check).
+        let rects: Vec<_> = model
+            .blocks
+            .iter()
+            .map(|b| rect(&model, b.id, layout.get(b.id).unwrap()))
+            .collect();
+        let mut by_col: HashMap<i32, Vec<usize>> = HashMap::new();
+        for (i, r) in rects.iter().enumerate() {
+            let c0 = (r.0 / 100.0).floor() as i32;
+            let c1 = ((r.0 + r.2) / 100.0).floor() as i32;
+            for c in c0..=c1 {
+                by_col.entry(c).or_default().push(i);
+            }
+        }
+        for (i, r) in rects.iter().enumerate().filter(|(i, _)| i % 2 == 1) {
+            let c0 = (r.0 / 100.0).floor() as i32;
+            let c1 = ((r.0 + r.2) / 100.0).floor() as i32;
+            for c in c0..=c1 {
+                for &j in by_col.get(&c).into_iter().flatten() {
+                    assert!(j == i || !overlap(*r, rects[j]), "{i} overlaps {j}");
+                }
+            }
+        }
     }
 
     #[test]

@@ -245,6 +245,14 @@ impl GraphModel {
         }
         let index: HashMap<BlockId, usize> =
             blocks.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
+        // Node index built once per build: `Story::node` is a linear scan,
+        // calling it for every node made the build O(N²) on big stories.
+        let nodes: HashMap<NodeId, &orbit_core::Node> = story
+            .scenes
+            .iter()
+            .flat_map(|s| s.nodes.iter())
+            .map(|n| (n.id, n))
+            .collect();
 
         // Pass 2: summaries and slots.
         let resolve = |id: NodeId| match label_block.get(&id) {
@@ -269,8 +277,9 @@ impl GraphModel {
         for (bi, block) in blocks.iter_mut().enumerate() {
             let mut terminator: Option<(NodeId, Terminator)> = None;
             let mut dead = 0;
-            for &id in &block.nodes.clone() {
-                let Some(node) = story.node(id) else { continue };
+            for i in 0..block.nodes.len() {
+                let id = block.nodes[i];
+                let Some(&node) = nodes.get(&id) else { continue };
                 if terminator.is_some() {
                     dead += 1;
                     continue;
@@ -304,7 +313,7 @@ impl GraphModel {
                             (None, false) => SlotTarget::Missing(id),
                         };
                         let name = scene_names.get(scene).map_or("?", String::as_str);
-                        let label_text = match label.and_then(|l| story.node(l)).map(|n| &n.kind) {
+                        let label_text = match label.and_then(|l| nodes.get(&l)).map(|n| &n.kind) {
                             Some(NodeKind::Label { name: l }) => format!(" › {l}"),
                             _ => String::new(),
                         };
@@ -722,6 +731,54 @@ mod tests {
         assert!(model.blocks[0].falls_off_scene());
         assert!(model.unreachable.contains(&model.blocks[1].id));
         assert!(GraphModel::build(&Story::new("e")).blocks.is_empty());
+    }
+
+    /// The build looks nodes up through an index made once: a story of
+    /// tens of thousands of nodes (one scene, many labels) builds in a
+    /// blink, and every node is found in its block.
+    #[test]
+    fn a_big_story_builds_in_linear_time() {
+        let mut story = Story::new("big");
+        let mut nodes = Vec::new();
+        let mut labels = Vec::new();
+        for i in 0..4000 {
+            let label = node(NodeKind::Label { name: format!("l{i}") });
+            labels.push(label.id);
+            nodes.push(label);
+            for _ in 0..9 {
+                let text_id = story.strings.add(format!("line {i}"));
+                nodes.push(node(NodeKind::Say {
+                    speaker: None,
+                    text_id,
+                    voice: None,
+                }));
+            }
+        }
+        // Jumps between far apart labels.
+        for (i, l) in labels.iter().enumerate().skip(1) {
+            if i % 7 == 0 {
+                nodes.push(node(NodeKind::Jump { target: labels[(i * 31) % labels.len()] }));
+                nodes.push(node(NodeKind::Label { name: format!("after{i}") }));
+            }
+            let _ = l;
+        }
+        nodes.push(node(NodeKind::End));
+        story.scenes.push(Scene {
+            id: SceneId::new(),
+            name: "one".into(),
+            nodes,
+        });
+        let total = story.scenes[0].nodes.len();
+        let started = std::time::Instant::now();
+        let model = GraphModel::build(&story);
+        let took = started.elapsed();
+        assert!(took < std::time::Duration::from_secs(1), "build took {took:?}");
+        assert!(model.blocks.len() > 4000);
+        for n in &story.scenes[0].nodes {
+            assert!(model.block_of(n.id).is_some(), "node {} has no block", n.id);
+        }
+        let in_blocks: usize = model.blocks.iter().map(|b| b.nodes.len()).sum();
+        assert_eq!(in_blocks, total);
     }
 
     #[test]

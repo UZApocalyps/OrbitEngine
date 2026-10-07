@@ -15,7 +15,7 @@ use std::path::Path;
 use orbit_anim::rig::{Attachment, Rig};
 use orbit_core::{AssetKind, Story};
 
-use crate::ext::{AssetUser, asset_users};
+use crate::ext::{AssetUser, asset_users_index};
 
 /// One user of a picture.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,21 +87,27 @@ impl PictureUsers {
     /// Adds the pictures a rig draws (one user per slot).
     pub fn add_rig(&mut self, rig_path: &str, rig: &Rig) {
         let rig_path = norm(rig_path);
+        // Slot of each attachment, once (the first slot showing it).
+        let mut slot_of = HashMap::new();
+        for s in &rig.slots {
+            if let Some(a) = &s.attachment {
+                slot_of.entry(a).or_insert(&s.name);
+            }
+        }
         for skin in &rig.skins {
             for (id, att) in &skin.attachments {
-                let slot = rig
-                    .slots
-                    .iter()
-                    .find(|s| s.attachment.as_ref() == Some(id))
-                    .map_or_else(|| id.to_string(), |s| s.name.clone());
+                let slot = slot_of.get(id).map_or_else(|| id.to_string(), |s| (*s).clone());
                 self.add(att.image(), PictureUser::Rig { rig: rig_path.clone(), slot });
             }
         }
     }
 
     fn add_story(&mut self, story: &Story) {
+        // One pass over the story for every asset (a scan per picture made
+        // this O(pictures × nodes)).
+        let mut users = asset_users_index(story);
         for entry in story.assets.assets.iter().filter(|a| a.kind == AssetKind::Image) {
-            for u in asset_users(story, entry.id) {
+            for u in users.remove(&entry.id).unwrap_or_default() {
                 let what = match u {
                     AssetUser::Node(n) => format!("story node {n}"),
                     AssetUser::Character(c) => format!("character {c}"),

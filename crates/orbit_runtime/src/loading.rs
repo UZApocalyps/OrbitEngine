@@ -148,6 +148,79 @@ pub fn scene_asset_paths(story: &Story, scene: usize) -> Vec<String> {
     paths
 }
 
+/// Paths of what a declarative stage shows or plays: background (and its
+/// layers), the pictures of the characters on stage (every picture of their
+/// expression: animated and rigged ones draw several), the 3D scene and the
+/// music. What a playthrough started in the middle of the story needs at
+/// once, whichever scene brought it there.
+pub fn stage_asset_paths(story: &Story, stage: &orbit_vm::SceneState) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    let mut add = |id: orbit_core::AssetId| {
+        if let Some(entry) = story.assets.get(id)
+            && !paths.contains(&entry.path)
+        {
+            paths.push(entry.path.clone());
+        }
+    };
+    if let Some(bg) = stage.background {
+        add(bg);
+    }
+    for layer in &stage.bg_layers {
+        add(layer.asset);
+    }
+    for c in &stage.characters {
+        if let Some(expr) = story
+            .character(c.character)
+            .and_then(|ch| ch.expression(&c.expression))
+        {
+            for asset in expr.assets() {
+                add(asset);
+            }
+        }
+    }
+    if let Some(music) = &stage.music {
+        add(music.asset);
+    }
+    if let Some(scene) = &stage.scene3d {
+        add(scene.scene);
+    }
+    paths
+}
+
+/// [`stage_asset_paths`] for the stage as drawn (the scene view's still
+/// picture): background, layers, characters, 3D scene.
+pub fn stage_state_paths(story: &Story, stage: &crate::stage::StageState) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    let mut add = |id: orbit_core::AssetId| {
+        if let Some(entry) = story.assets.get(id)
+            && !paths.contains(&entry.path)
+        {
+            paths.push(entry.path.clone());
+        }
+    };
+    if let Some(bg) = stage.background {
+        add(bg);
+    }
+    for layer in &stage.bg_layers {
+        add(layer.asset);
+    }
+    for c in &stage.characters {
+        add(c.image);
+        if let Some(expr) = story
+            .character(c.character)
+            .and_then(|ch| ch.expression(&c.expression))
+        {
+            for asset in expr.assets() {
+                add(asset);
+            }
+        }
+    }
+    if let Some(scene) = &stage.scene3d {
+        add(scene.scene);
+    }
+    paths
+}
+
 /// Scenes (indices) a scene can lead to: the targets of its jumps.
 pub fn successor_scenes(story: &Story, scene: usize) -> Vec<usize> {
     let Some(from) = story.scenes.get(scene) else {
@@ -192,6 +265,12 @@ pub struct AssetStore {
     /// Parsed `.rig.ron` skeletons by manifest path (M5B-07). The pictures
     /// they draw are textures of `textures`, under the paths the rig names.
     rigs: HashMap<String, Arc<orbit_anim::rig::PreparedRig>>,
+    /// GPU bytes of the textures made from manifest pictures (the ones
+    /// [`AssetStore::evict_textures`] may release).
+    texture_bytes: HashMap<String, u64>,
+    /// Pictures never released by the memory budget (what the interface
+    /// draws, see [`AssetStore::pin`]).
+    pinned: HashSet<String>,
 }
 
 impl AssetStore {
@@ -258,9 +337,58 @@ impl AssetStore {
         std::mem::take(&mut self.new_fonts)
     }
 
+    /// Marks pictures the memory budget must never release (replaces the
+    /// previous set).
+    pub fn pin(&mut self, paths: impl IntoIterator<Item = String>) {
+        self.pinned = paths.into_iter().collect();
+    }
+
+    /// GPU memory held by the pictures of the manifest, in bytes.
+    pub fn texture_memory(&self) -> u64 {
+        self.texture_bytes.values().sum()
+    }
+
+    /// Releases pictures until the textures fit in `budget` bytes: the
+    /// least recently used first (`last_use`: a stamp per path, higher is
+    /// more recent, missing is oldest), never one `keep` says is needed.
+    /// Returns the released paths (they are loaded again when needed).
+    pub fn evict_textures(
+        &mut self,
+        renderer: &mut Renderer2d,
+        budget: u64,
+        last_use: &HashMap<String, u64>,
+        keep: impl Fn(&str) -> bool,
+    ) -> Vec<String> {
+        let mut total = self.texture_memory();
+        if total <= budget {
+            return Vec::new();
+        }
+        let mut candidates: Vec<(u64, String, u64)> = self
+            .texture_bytes
+            .iter()
+            .filter(|(path, _)| !keep(path) && !self.pinned.contains(*path))
+            .map(|(path, bytes)| (last_use.get(path).copied().unwrap_or(0), path.clone(), *bytes))
+            .collect();
+        candidates.sort();
+        let mut released = Vec::new();
+        for (_, path, bytes) in candidates {
+            if total <= budget {
+                break;
+            }
+            if let Some(texture) = self.textures.remove(&path) {
+                renderer.release_texture(texture);
+            }
+            self.texture_bytes.remove(&path);
+            total = total.saturating_sub(bytes);
+            released.push(path);
+        }
+        released
+    }
+
     /// Drops the asset at `path` (a file that changed on disk): the next
     /// loading pass fetches it again. The texture, if any, is released.
     pub fn forget(&mut self, renderer: &mut Renderer2d, path: &str) -> bool {
+        self.texture_bytes.remove(path);
         let texture = self.textures.remove(path);
         if let Some(texture) = texture {
             renderer.release_texture(texture);
@@ -277,6 +405,7 @@ impl AssetStore {
         for (_, texture) in self.textures.drain() {
             renderer.release_texture(texture);
         }
+        self.texture_bytes.clear();
         self.sounds.clear();
         self.rigs.clear();
         #[cfg(feature = "3d")]
@@ -440,14 +569,18 @@ pub fn finish_loading(
     for asset in pending {
         match asset.handle {
             Handle::Image(h) => {
+                let mut bytes = 4;
                 let created = match h.poll() {
-                    AssetPoll::Ready(img) => renderer.create_texture(
-                        &asset.path,
-                        img.width,
-                        img.height,
-                        &img.rgba,
-                        TextureOptions::COLOR,
-                    ),
+                    AssetPoll::Ready(img) => {
+                        bytes = u64::from(img.width) * u64::from(img.height) * 4;
+                        renderer.create_texture(
+                            &asset.path,
+                            img.width,
+                            img.height,
+                            &img.rgba,
+                            TextureOptions::COLOR,
+                        )
+                    }
                     other => {
                         failures.push(describe_failure(&asset.path, &other));
                         renderer.create_texture(
@@ -461,7 +594,10 @@ pub fn finish_loading(
                 };
                 match created {
                     Ok(id) => {
-                        store.textures.insert(asset.path, id);
+                        store.texture_bytes.insert(asset.path.clone(), bytes);
+                        if let Some(old) = store.textures.insert(asset.path, id) {
+                            renderer.release_texture(old);
+                        }
                     }
                     Err(err) => failures.push(format!("texture `{}`: {err}", asset.path)),
                 }
@@ -503,6 +639,41 @@ pub fn finish_loading(
     }
     failures
 }
+
+/// [`finish_loading`] spread over frames: moves the finished assets of
+/// `pending` into the store (GPU uploads, sound conversion) until `budget`
+/// is spent (at least one per call, so loading always progresses), and
+/// leaves the rest in `pending` for the next frame. Returns how many were
+/// finished and the failures.
+pub fn finish_loading_budget(
+    renderer: &mut Renderer2d,
+    store: &mut AssetStore,
+    pending: &mut Vec<PendingAsset>,
+    budget: std::time::Duration,
+) -> (usize, Vec<String>) {
+    let started = std::time::Instant::now();
+    let mut finished = 0;
+    let mut failures = Vec::new();
+    let mut i = 0;
+    while i < pending.len() {
+        if finished > 0 && started.elapsed() >= budget {
+            break;
+        }
+        if pending[i].is_done() {
+            let asset = pending.swap_remove(i);
+            failures.extend(finish_loading(renderer, store, vec![asset]));
+            finished += 1;
+        } else {
+            i += 1;
+        }
+    }
+    (finished, failures)
+}
+
+/// Time a frame may spend moving loaded assets to the GPU (see
+/// [`finish_loading_budget`]): a scene's pictures arrive over a few frames
+/// instead of freezing one.
+pub const UPLOAD_BUDGET: std::time::Duration = std::time::Duration::from_millis(4);
 
 fn describe_failure<T>(path: &str, poll: &AssetPoll<T>) -> String {
     match poll {

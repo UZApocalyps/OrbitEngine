@@ -321,7 +321,7 @@ impl EditorCore {
     /// Whether the open project has unsaved edits.
     pub fn is_modified(&mut self) -> bool {
         let ui = self.registry.ui_link.dirty.get() || self.registry.ui_link.scene3d_dirty.get();
-        self.session.as_mut().is_some_and(|s| s.modified() || ui)
+        self.session.as_mut().is_some_and(|s| s.modified_exact() || ui)
     }
 
     /// Opens a project, asking first when the current one has unsaved edits.
@@ -433,6 +433,7 @@ impl EditorCore {
             None => location.story_path(),
         };
         self.project_generation += 1;
+        self.state.project_generation = self.project_generation;
         let session = Session::open(location, story, recovery_dir);
         let pending = session.pending_recovery();
         let title = session.name.clone();
@@ -687,6 +688,7 @@ impl EditorCore {
     fn close_now(&mut self) {
         self.flush_layout();
         self.project_generation += 1;
+        self.state.project_generation = self.project_generation;
         self.state.graph = orbit_editor_api::GraphState {
             generation: self.project_generation,
             ..Default::default()
@@ -786,7 +788,7 @@ impl EditorCore {
         let Some(session) = self.session.as_mut() else {
             return false;
         };
-        if !session.modified() {
+        if !session.modified_exact() {
             return false;
         }
         match session.autosave(Instant::now()) {
@@ -1107,7 +1109,9 @@ impl EditorCore {
     pub fn refresh_diagnostics(&mut self) -> bool {
         let Some(session) = self.session.as_ref() else {
             if self.state.diagnostics.revision != 0 || !self.state.diagnostics.problems.is_empty() {
+                let serial = self.state.diagnostics.serial + 1;
                 self.state.diagnostics = Default::default();
+                self.state.diagnostics.serial = serial;
             }
             return false;
         };
@@ -1149,7 +1153,9 @@ impl EditorCore {
                     .map_or(0, |d| d.as_millis() as u64);
                 let stamp = orbit_runtime::format::format_timestamp(now_ms, offset);
                 self.state.validation.at = stamp.get(11..16).map(str::to_owned);
+                let serial = self.state.diagnostics.serial + 1;
                 self.state.diagnostics = diagnostics;
+                self.state.diagnostics.serial = serial;
                 true
             }
             None => false,
@@ -1309,6 +1315,7 @@ impl EditorCore {
         match session.reload_from_disk() {
             Ok(()) => {
                 self.project_generation += 1;
+                self.state.project_generation = self.project_generation;
                 self.reset_project_services();
                 if let Some(watcher) = &self.watcher {
                     watcher.accept_story_now();

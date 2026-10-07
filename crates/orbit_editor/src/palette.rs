@@ -108,7 +108,7 @@ pub fn navigation(handle: &SearchHandle, ctx: &EditorContext<'_>, query: &str) -
     let (Some(story), Some(project)) = (ctx.story(), ctx.project()) else {
         return Vec::new();
     };
-    handle.refresh(story, (0, project.revision()), &ctx.translator());
+    handle.refresh(story, (ctx.state().project_generation, project.revision()), &ctx.translator());
     let mut hits = handle.query(query);
     // Names are what one jumps to; long texts come after.
     hits.sort_by_key(|h| matches!(h.kind, HitKind::Line | HitKind::Choice));
