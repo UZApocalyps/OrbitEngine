@@ -183,6 +183,9 @@ pub struct Diagnostics {
     /// Every finding (nodes, definitions, asset files), errors first, in
     /// reading order: what the Problems panel lists.
     pub problems: Vec<Problem>,
+    /// Bumped by the host each time new findings are published: what
+    /// caches derived from them are keyed by.
+    pub serial: u64,
 }
 
 impl Diagnostics {
@@ -335,6 +338,10 @@ pub struct EditorState {
     pub tasks: crate::tasks::Tasks,
     /// Project validation: automatic or on demand.
     pub validation: ValidationStatus,
+    /// Which panels are on screen (fed by the dock, see `crate::lazy`).
+    pub panels: crate::lazy::PanelVisibility,
+    /// Bumped by the host each time a project is opened or closed.
+    pub project_generation: u64,
 }
 
 impl EditorState {
@@ -446,6 +453,20 @@ impl<'a> EditorContext<'a> {
 
     pub fn state_mut(&mut self) -> &mut EditorState {
         self.state
+    }
+
+    /// What project-derived caches are keyed by (see `crate::lazy`).
+    pub fn doc_key(&self) -> crate::lazy::DocKey {
+        crate::lazy::DocKey {
+            generation: self.state.project_generation,
+            revision: self.project.as_deref().map_or(0, Project::revision),
+            asset_epoch: self.state.asset_epoch,
+        }
+    }
+
+    /// Whether the panel `id` (full id) is on screen.
+    pub fn panel_visible(&self, id: &str) -> bool {
+        self.state.panels.is_visible(id)
     }
 
     // ---- commands

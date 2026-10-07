@@ -33,8 +33,9 @@ use crate::format::slug;
 use crate::gamepad_bindings::GamepadBindings;
 use crate::input::{InputAction, InputMapper};
 use crate::loading::{
-    AssetStore, LoadedStory, PendingAsset, finish_loading, parse_story, scene_asset_paths,
-    start_loading, start_loading_only, successor_scenes,
+    AssetStore, LoadedStory, PendingAsset, UPLOAD_BUDGET, finish_loading, finish_loading_budget,
+    parse_story, scene_asset_paths, stage_asset_paths, start_loading, start_loading_only,
+    successor_scenes,
 };
 use crate::shell::{AutosaveConfig, Effect, Shell, ShellConfig};
 use crate::splash::{AfterLoad, SplashPhase, SplashState};
@@ -297,9 +298,12 @@ impl LoadingState {
     }
 }
 
-/// Scene by scene loading of the assets (see [`RuntimeConfig::lazy_assets`]):
-/// the assets of the scene on screen are required, those of the scenes it can
-/// lead to are fetched ahead.
+/// Scene by scene loading of the assets (see [`RuntimeConfig::lazy_assets`],
+/// and the editor preview, which always loads this way): the assets of the
+/// scene on screen (and of the stage it shows) are required, those of the
+/// scenes it can lead to are fetched ahead. Finished assets reach the GPU
+/// within a time budget per frame; with a memory budget (editor preview),
+/// the pictures used least recently are released.
 struct Streaming {
     /// Assets being fetched, whichever scene asked for them.
     in_flight: Vec<PendingAsset>,
@@ -309,16 +313,51 @@ struct Streaming {
     last_scene: Option<usize>,
     /// The scene on screen waits for an asset: the game is held.
     blocked: bool,
+    /// What the scene on screen needs (its assets and its stage's).
+    needed: Vec<String>,
+    /// What the scene on screen and the ones it leads to need: never
+    /// released by the memory budget.
+    keep: HashSet<String>,
+    /// Path -> when a scene needing it was last on screen or ahead
+    /// (higher is more recent): the order of the memory budget.
+    used: HashMap<String, u64>,
+    clock: u64,
 }
 
 impl Streaming {
     fn new(first_scene: usize) -> Self {
         Self {
-            in_flight: Vec::new(),
             requested: HashSet::from([first_scene]),
+            ..Self::fresh()
+        }
+    }
+
+    /// Nothing requested yet (the editor preview: every scene on demand).
+    fn fresh() -> Self {
+        Self {
+            in_flight: Vec::new(),
+            requested: HashSet::new(),
             last_scene: None,
             blocked: false,
+            needed: Vec::new(),
+            keep: HashSet::new(),
+            used: HashMap::new(),
+            clock: 0,
         }
+    }
+
+    /// Starts loading `paths` that are neither loaded nor on their way.
+    fn request(&mut self, loader: &AssetLoader, story: &Story, store: &AssetStore, paths: &[String]) {
+        let paths: Vec<String> = paths
+            .iter()
+            .filter(|p| !store.contains(p) && !self.in_flight.iter().any(|f| f.path() == p.as_str()))
+            .cloned()
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let started = start_loading_only(loader, story, store, Some(&paths));
+        self.in_flight.extend(started);
     }
 }
 
@@ -534,6 +573,11 @@ pub struct Runtime {
     overlay: Option<crate::overlay::ProfilerOverlay>,
     /// Lazy asset loading in progress (web player, see [`Streaming`]).
     streaming: Option<Streaming>,
+    /// GPU memory the pictures of the manifest may take before the least
+    /// recently used are released (editor preview; `None`: no limit).
+    texture_budget: Option<u64>,
+    /// Editor preview: the UI bundle read from `ui_dir` (see `resolve_ui`).
+    ui_cache: std::cell::RefCell<Option<(Option<String>, Option<UiBundle>)>>,
     /// The page is hidden: nothing is drawn.
     hidden: bool,
     /// Android: the window insets clear of system bars and cutouts.
@@ -670,6 +714,8 @@ impl Runtime {
             embedded: embedded.map(embedded::Embedded::new),
             overlay: None,
             streaming: None,
+            texture_budget: None,
+            ui_cache: std::cell::RefCell::new(None),
             hidden: false,
             safe_area: orbit_platform::SafeArea::default(),
             splash_assets: SplashAssets::default(),
@@ -905,7 +951,31 @@ impl Runtime {
     /// else the one of the game pack. A bundle with errors is dropped (the
     /// stock screens stay).
     fn resolve_ui(&self, pack_ui: Option<UiBundle>) -> Option<UiBundle> {
+        // An editor preview reloads the story at every pause in the edits:
+        // the `ui/` folder is read once, and again only when the host says
+        // it changed (`invalidate_ui`) or the folder is another one.
+        if self.embedded.is_some() && pack_ui.is_none() && self.config.ui_bundle.is_none() {
+            let mut cache = self.ui_cache.borrow_mut();
+            if let Some((dir, bundle)) = cache.as_ref()
+                && *dir == self.config.ui_dir
+            {
+                return bundle.clone();
+            }
+            let bundle = resolve_ui_bundle(&self.config, None);
+            *cache = Some((self.config.ui_dir.clone(), bundle.clone()));
+            return bundle;
+        }
         resolve_ui_bundle(&self.config, pack_ui)
+    }
+
+    /// The UI bundle the next shells use (cached for an editor preview).
+    pub(crate) fn cached_ui_bundle(&self) -> Option<UiBundle> {
+        self.resolve_ui(None)
+    }
+
+    /// The `ui/` folder changed on disk: the next story load reads it again.
+    pub fn invalidate_ui(&mut self) {
+        *self.ui_cache.borrow_mut() = None;
     }
 
     /// The shell of a loaded story: `translations` are RON texts (files next
@@ -1080,19 +1150,36 @@ impl Runtime {
         let Some(stream) = self.streaming.as_mut() else {
             return;
         };
+        let mut arrived = false;
         if stream.in_flight.iter().any(PendingAsset::is_done) {
-            let (done, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut stream.in_flight)
-                .into_iter()
-                .partition(PendingAsset::is_done);
-            stream.in_flight = waiting;
-            finish_loading(&mut self.ctx.renderer, &mut self.store, done);
-        }
-        let (story, current) = match &self.phase {
-            Phase::Running(shell) | Phase::Ready(shell) => {
-                (shell.story().clone(), shell.current_scene())
+            orbit_profile::scope!("runtime: stream uploads");
+            let (finished, failures) = finish_loading_budget(
+                &mut self.ctx.renderer,
+                &mut self.store,
+                &mut stream.in_flight,
+                UPLOAD_BUDGET,
+            );
+            arrived = finished > 0;
+            if let Some(emb) = self.embedded.as_mut() {
+                for failure in failures {
+                    emb.notice(true, format!("Asset : {failure}"));
+                }
             }
-            Phase::Splash(sp) => (sp.shell.story().clone(), sp.shell.current_scene()),
-            _ => return,
+        }
+        let (story, current, stage) = match &self.phase {
+            Phase::Running(shell) | Phase::Ready(shell) => (
+                shell.story().clone(),
+                shell.current_scene(),
+                shell.game().map(|g| g.director.vm().scene().clone()),
+            ),
+            Phase::Splash(sp) => (sp.shell.story().clone(), sp.shell.current_scene(), None),
+            _ => {
+                self.after_stream_arrivals(arrived);
+                return;
+            }
+        };
+        let Some(stream) = self.streaming.as_mut() else {
+            return;
         };
         let first = story
             .entry()
@@ -1101,34 +1188,82 @@ impl Runtime {
         let scene = current.unwrap_or(first);
         if stream.last_scene != Some(scene) {
             stream.last_scene = Some(scene);
+            stream.clock += 1;
+            let clock = stream.clock;
             let mut wanted = vec![scene];
             wanted.extend(successor_scenes(&story, scene));
-            for next in wanted {
+            stream.keep.clear();
+            stream.needed.clear();
+            // What the stage shows now (a playthrough started in the middle
+            // of the story shows pictures of earlier scenes).
+            if let Some(stage) = &stage {
+                let paths = stage_asset_paths(&story, stage);
+                stream.request(&self.assets_loader, &story, &self.store, &paths);
+                stream.needed.extend(paths);
+            }
+            for (i, next) in wanted.into_iter().enumerate() {
+                let paths = scene_asset_paths(&story, next);
+                for p in &paths {
+                    stream.used.insert(p.clone(), clock);
+                    stream.keep.insert(p.clone());
+                }
+                if i == 0 {
+                    stream.needed.extend(paths.iter().cloned());
+                }
                 if !stream.requested.insert(next) {
                     continue;
                 }
-                let paths: Vec<String> = scene_asset_paths(&story, next)
-                    .into_iter()
-                    .filter(|p| !stream.in_flight.iter().any(|f| f.path() == p))
-                    .collect();
-                let started =
-                    start_loading_only(&self.assets_loader, &story, &self.store, Some(&paths));
-                if !started.is_empty() {
-                    log::info!(
-                        "lazy loading: scene {next}, {} asset(s) requested",
-                        started.len()
-                    );
+                let before = stream.in_flight.len();
+                stream.request(&self.assets_loader, &story, &self.store, &paths);
+                let started = stream.in_flight.len() - before;
+                if started > 0 {
+                    log::info!("lazy loading: scene {next}, {started} asset(s) requested");
                 }
-                stream.in_flight.extend(started);
+            }
+            for p in &stream.needed {
+                stream.keep.insert(p.clone());
             }
         }
-        stream.blocked = current.is_some() && !stream.in_flight.is_empty() && {
-            let needed = scene_asset_paths(&story, scene);
-            stream
+        stream.blocked = current.is_some()
+            && !stream.in_flight.is_empty()
+            && stream
                 .in_flight
                 .iter()
-                .any(|p| needed.iter().any(|n| n == p.path()))
+                .any(|p| stream.needed.iter().any(|n| n == p.path()));
+        self.after_stream_arrivals(arrived);
+    }
+
+    /// Assets arrived: an editor preview redraws, and the pictures over the
+    /// memory budget (editor preview only) are released.
+    fn after_stream_arrivals(&mut self, arrived: bool) {
+        if !arrived {
+            return;
+        }
+        if let Some(emb) = self.embedded.as_mut() {
+            emb.assets_arrived();
+        }
+        let Some(budget) = self.texture_budget else {
+            return;
         };
+        let Some(stream) = self.streaming.as_mut() else {
+            return;
+        };
+        if self.store.texture_memory() <= budget {
+            return;
+        }
+        let keep = &stream.keep;
+        let released = self.store.evict_textures(&mut self.ctx.renderer, budget, &stream.used, |p| {
+            keep.contains(p)
+        });
+        if !released.is_empty() {
+            log::info!(
+                "preview: {} picture(s) released (texture budget {} MB)",
+                released.len(),
+                budget / (1024 * 1024)
+            );
+            // Scenes that used them load them again when they come back.
+            stream.requested.clear();
+        }
     }
 
     /// Advances the animation clock, unless the game is held (paused by a

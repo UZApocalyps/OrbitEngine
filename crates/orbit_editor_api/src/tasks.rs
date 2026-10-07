@@ -245,9 +245,27 @@ impl Tasks {
         T: Send + 'static,
         F: FnOnce(&Progress) -> Result<T, TaskError> + Send + 'static,
     {
+        self.spawn_inner(waker, title.into(), doc, true, job)
+    }
+
+    /// Like [`Tasks::spawn`] for internal refreshes (a panel's cache, see
+    /// `crate::lazy`): not listed in the status bar, holds no document.
+    pub fn spawn_quiet<T, F>(&self, waker: &Waker, job: F) -> TaskHandle<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Progress) -> Result<T, TaskError> + Send + 'static,
+    {
+        self.spawn_inner(waker, String::new(), None, false, job)
+    }
+
+    fn spawn_inner<T, F>(&self, waker: &Waker, title: String, doc: Option<&str>, listed: bool, job: F) -> TaskHandle<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Progress) -> Result<T, TaskError> + Send + 'static,
+    {
         let shared = Arc::new(Shared {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
-            title: title.into(),
+            title,
             doc: doc.map(str::to_owned),
             fraction: AtomicU32::new(INDETERMINATE),
             label: Mutex::new(String::new()),
@@ -255,7 +273,7 @@ impl Tasks {
             done: AtomicBool::new(false),
             started: Instant::now(),
         });
-        if let Ok(mut live) = self.live.lock() {
+        if listed && let Ok(mut live) = self.live.lock() {
             live.retain(|s| !s.done.load(Ordering::Acquire));
             live.push(Arc::clone(&shared));
         }

@@ -28,6 +28,10 @@ impl SaveSnapshot {
     }
 }
 
+/// How long the edits must pause before [`Session::modified`] compares the
+/// story with the file.
+const COMPARE_QUIET: std::time::Duration = std::time::Duration::from_millis(800);
+
 pub struct Session {
     pub project: Project,
     pub location: ProjectLocation,
@@ -38,6 +42,12 @@ pub struct Session {
     changes: Arc<Mutex<Vec<ChangeEvent>>>,
     checked_revision: u64,
     modified: bool,
+    /// Revision of the project whose story is the one on disk (`u64::MAX`:
+    /// none, e.g. after restoring a recovery snapshot).
+    saved_revision: u64,
+    /// A revision not compared with the disk yet, and since when it is the
+    /// current one: compared once the edits pause.
+    compare_after: Option<(u64, Instant)>,
     recovery: Recovery,
     autosaved_revision: u64,
     last_autosave: Instant,
@@ -57,11 +67,14 @@ impl Session {
             changes: Arc::default(),
             checked_revision: 0,
             modified: false,
+            saved_revision: 0,
+            compare_after: None,
             recovery: Recovery::new(recovery_dir),
             autosaved_revision: 0,
             last_autosave: Instant::now(),
         };
         session.attach();
+        session.saved_revision = session.project.revision();
         session
     }
 
@@ -104,11 +117,43 @@ impl Session {
         out
     }
 
-    /// Whether the story differs from what is on disk. Cached per revision.
+    /// Whether the story differs from what is on disk, cheap enough for
+    /// every frame (window title, status bar). Revision based: the story
+    /// at the saved revision is the file; any later revision is taken as
+    /// modified at once, and compared with the file (a whole-story
+    /// comparison) only once the edits paused for [`COMPARE_QUIET`]: undoing
+    /// back to the saved text then clears the flag. Decisions that must be
+    /// exact (asking before closing) use [`Session::modified_exact`].
     pub fn modified(&mut self) -> bool {
         let revision = self.project.revision();
+        if revision == self.saved_revision {
+            return false;
+        }
+        if revision == self.checked_revision {
+            return self.modified;
+        }
+        match self.compare_after {
+            Some((r, since)) if r == revision && since.elapsed() >= COMPARE_QUIET => {
+                self.modified_exact()
+            }
+            Some((r, _)) if r == revision => true,
+            _ => {
+                self.compare_after = Some((revision, Instant::now()));
+                true
+            }
+        }
+    }
+
+    /// [`Session::modified`], comparing the story with the file now when the
+    /// revision changed since the last comparison.
+    pub fn modified_exact(&mut self) -> bool {
+        let revision = self.project.revision();
+        if revision == self.saved_revision {
+            return false;
+        }
         if revision != self.checked_revision {
             self.checked_revision = revision;
+            self.compare_after = None;
             self.modified = self.project.story() != &self.saved;
         }
         self.modified
@@ -128,6 +173,7 @@ impl Session {
         self.attach();
         self.saved = story;
         self.checked_revision = u64::MAX; // force the comparison
+        self.saved_revision = self.project.revision();
         self.autosaved_revision = self.project.revision();
         self.recovery.clear();
         Ok(())
@@ -157,6 +203,7 @@ impl Session {
     /// was written keep the project modified.
     pub fn saved_snapshot(&mut self, snapshot: SaveSnapshot) {
         self.saved = snapshot.story;
+        self.saved_revision = snapshot.revision;
         if self.project.revision() == snapshot.revision {
             self.checked_revision = snapshot.revision;
             self.modified = false;
@@ -184,6 +231,7 @@ impl Session {
         self.attach();
         self.autosaved_revision = self.project.revision();
         self.checked_revision = u64::MAX; // force the comparison
+        self.saved_revision = u64::MAX; // the snapshot is not what the file holds
         Ok(())
     }
 

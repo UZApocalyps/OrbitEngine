@@ -256,6 +256,35 @@ pub fn open_panels(dock: &DockState<String>) -> Vec<String> {
     dock.iter_all_tabs().map(|(_, t)| t.clone()).collect()
 }
 
+/// Draws one panel: records that it is on screen (see
+/// `orbit_editor_api::lazy`), runs its `on_shown` hook when it just
+/// appeared, then its UI in its own id scope (two panels using an auto-id
+/// widget, a `ScrollArea`..., would otherwise share its state).
+pub fn draw_panel(
+    ui: &mut Ui,
+    ctx: &mut EditorContext<'_>,
+    panel: &orbit_editor_api::RegisteredPanel,
+    id: &str,
+) {
+    let shown = ctx.state_mut().panels.mark_drawn(id);
+    if shown && let Some(hook) = &panel.def.on_shown {
+        hook(ctx);
+    }
+    ui.push_id(("orbit_panel_ui", id), |ui| {
+        (panel.def.ui)(ui, ctx);
+    });
+}
+
+/// End of a frame: runs the `on_hidden` hook of the panels that were on
+/// screen the previous frame and not this one.
+pub fn end_frame(ctx: &mut EditorContext<'_>) {
+    for id in ctx.state_mut().panels.take_hidden() {
+        if let Some(hook) = ctx.registry().find_panel(&id).and_then(|p| p.def.on_hidden.as_ref()) {
+            hook(ctx);
+        }
+    }
+}
+
 /// Draws the panels of the registry inside the dock.
 pub struct DockViewer<'a, 'b> {
     pub ctx: &'a mut EditorContext<'b>,
@@ -283,9 +312,7 @@ impl TabViewer for DockViewer<'_, '_> {
             Some(panel) => {
                 let _span = orbit_profile::is_enabled()
                     .then(|| orbit_profile::Scope::new(orbit_profile::intern(tab)));
-                ui.push_id(("orbit_panel_ui", tab.as_str()), |ui| {
-                    (panel.def.ui)(ui, self.ctx);
-                });
+                draw_panel(ui, self.ctx, panel, tab);
             }
             None => {
                 ui.label(self.ctx.tf("dock.unknown_panel", &[("id", tab)]));

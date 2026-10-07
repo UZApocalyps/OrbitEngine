@@ -16,6 +16,7 @@
     "transl.adopt_hint": "{count} chaîne(s) traduite(s) n'ont pas de texte source enregistré : enregistrer le texte actuel pour détecter les modifications futures.",
     "transl.stale_title": "Traductions périmées ({count})",
     "transl.stale_none": "Aucune traduction périmée : les textes sources n'ont pas changé depuis leur traduction.",
+    "transl.computing": "Calcul de la couverture…",
     "transl.accept_all": "Tout marquer comme relu",
     "transl.exported": "{count} chaîne(s) exportée(s) vers {file}.",
     "transl.imported": "{lang} importée : {count} chaîne(s) mise(s) à jour, {stale} périmée(s).",

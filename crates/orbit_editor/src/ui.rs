@@ -54,6 +54,7 @@ impl EditorCore {
     /// `Context::run_ui`).
     pub fn ui(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        self.state.panels.begin_frame();
         self.first_frame();
         self.handle_shortcuts(&ctx);
         self.handle_dropped_files(&ctx);
@@ -104,9 +105,7 @@ impl EditorCore {
                         .clone()
                         .and_then(|id| ectx.registry().find_panel(&id).map(|p| (id, p)));
                     if let Some((id, panel)) = maximized {
-                        ui.push_id(("orbit_panel_ui", id.as_str()), |ui| {
-                            (panel.def.ui)(ui, &mut ectx);
-                        });
+                        crate::dock::draw_panel(ui, &mut ectx, panel, &id);
                         return;
                     }
                     let style = theme.dock_style(ui.style());
@@ -135,6 +134,7 @@ impl EditorCore {
                 dialog_outcome = show_dialog(&ctx, theme, d, &name);
             }
             toasts(&ctx, theme, &mut ectx);
+            crate::dock::end_frame(&mut ectx);
         }
 
         self.state

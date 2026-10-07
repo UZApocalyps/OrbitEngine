@@ -82,10 +82,51 @@ pub fn rig_images(rig: &Rig) -> Vec<String> {
     out
 }
 
+/// A file's length and modification time.
+type FileStamp = Option<(u64, Option<std::time::SystemTime>)>;
+
+/// Rig files read (and prepared) by [`rig_problems_cached`], kept between
+/// runs: a rig is read again only when its file changed. A big rig takes
+/// a while to parse and prepare, and the live validation runs after every
+/// pause in the edits.
+#[derive(Default)]
+pub struct RigFileCache {
+    files: std::collections::HashMap<String, (FileStamp, Result<(Rig, Vec<String>), String>)>,
+}
+
+impl RigFileCache {
+    fn load(&mut self, root: &Path, path: &str) -> &Result<(Rig, Vec<String>), String> {
+        let stamp: FileStamp = std::fs::metadata(root.join(path))
+            .ok()
+            .map(|m| (m.len(), m.modified().ok()));
+        let fresh = matches!(self.files.get(path), Some((s, _)) if stamp.is_some() && *s == stamp);
+        if !fresh {
+            let loaded = read_rig(root, path).and_then(|rig| {
+                let warnings = match PreparedRig::new(rig.clone()) {
+                    Ok(p) => p.warnings.iter().map(|w| w.to_string()).collect(),
+                    Err(issues) => {
+                        return Err(issues.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("; "));
+                    }
+                };
+                Ok((rig, warnings))
+            });
+            self.files.insert(path.to_owned(), (stamp, loaded));
+        }
+        &self.files[path].1
+    }
+}
+
 /// Checks every rigged expression of `story` against the rig files under
 /// `root`. Each rig file is read once.
 pub fn rig_problems(root: &Path, story: &Story) -> Vec<RigProblem> {
-    let mut cache: Vec<(AssetId, Result<(Rig, Vec<String>), String>)> = Vec::new();
+    rig_problems_cached(root, story, &mut RigFileCache::default())
+}
+
+/// [`rig_problems`], reusing the rigs `files` holds when their file did not
+/// change.
+pub fn rig_problems_cached(root: &Path, story: &Story, files: &mut RigFileCache) -> Vec<RigProblem> {
+    // Pictures each rig draws that are not files, looked up once per rig.
+    let mut missing_images: std::collections::HashMap<AssetId, Vec<String>> = Default::default();
     let mut out = Vec::new();
     for c in &story.characters {
         for e in &c.expressions {
@@ -99,20 +140,7 @@ pub fn rig_problems(root: &Path, story: &Story) -> Vec<RigProblem> {
                 rig: entry.path.clone(),
                 kind,
             };
-            if !cache.iter().any(|(id, _)| *id == m.rig) {
-                let loaded = read_rig(root, &entry.path).and_then(|rig| {
-                    let warnings = match PreparedRig::new(rig.clone()) {
-                        Ok(p) => p.warnings.iter().map(|w| w.to_string()).collect(),
-                        Err(issues) => {
-                            return Err(issues.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("; "));
-                        }
-                    };
-                    Ok((rig, warnings))
-                });
-                cache.push((m.rig, loaded));
-            }
-            let (_, loaded) = cache.iter().find(|(id, _)| *id == m.rig).expect("just cached");
-            match loaded {
+            match files.load(root, &entry.path) {
                 Err(e) => out.push(problem(RigProblemKind::Unreadable(e.clone()))),
                 Ok((rig, _)) => {
                     if !rig.clips.contains_key(&m.clip) {
@@ -123,10 +151,14 @@ pub fn rig_problems(root: &Path, story: &Story) -> Vec<RigProblem> {
                     {
                         out.push(problem(RigProblemKind::UnknownSkin(skin.clone())));
                     }
-                    for image in rig_images(rig) {
-                        if !root.join(&image).is_file() {
-                            out.push(problem(RigProblemKind::MissingImage(image)));
-                        }
+                    let missing = missing_images.entry(m.rig).or_insert_with(|| {
+                        rig_images(rig)
+                            .into_iter()
+                            .filter(|image| !root.join(image).is_file())
+                            .collect()
+                    });
+                    for image in missing.iter() {
+                        out.push(problem(RigProblemKind::MissingImage(image.clone())));
                     }
                 }
             }
@@ -141,8 +173,8 @@ pub fn rig_problems(root: &Path, story: &Story) -> Vec<RigProblem> {
                 continue;
             }
             seen.push(m.rig);
-            let Some(entry) = story.assets.get(m.rig) else { continue };
-            if let Some((_, Ok((_, warnings)))) = cache.iter().find(|(id, _)| *id == m.rig) {
+            let Some(entry) = story.assets.get(m.rig).filter(|a| a.kind == AssetKind::Rig) else { continue };
+            if let Some((_, Ok((_, warnings)))) = files.files.get(&entry.path) {
                 for w in warnings {
                     out.push(RigProblem {
                         character: c.id,

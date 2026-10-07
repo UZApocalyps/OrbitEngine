@@ -379,6 +379,12 @@ pub fn coverage(story: &Story, translation: &Translation) -> CoverageReport {
     coverage_of(&story.strings.entries, translation)
 }
 
+/// [`coverage`] from the string table alone (a snapshot taken for a
+/// background job, without copying the whole story).
+pub fn coverage_of_strings(strings: &orbit_core::StringTable, translation: &Translation) -> CoverageReport {
+    coverage_of(&strings.entries, translation)
+}
+
 /// Problems of the voices of a translation (M7-06): a voice that is not a
 /// `Sound` asset of the story, or for a text no line of the story shows.
 /// The messages are meant for `orbit validate`, the editor and the export.

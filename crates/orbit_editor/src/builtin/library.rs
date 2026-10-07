@@ -15,8 +15,8 @@ use orbit_audio::{AudioEngine, MusicOptions, Sound};
 use orbit_core::{AssetEntry, AssetId, AssetKind, Story};
 use orbit_editor_api::fields::AssetDrag;
 use orbit_editor_api::{
-    ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Level,
-    Location, PanelDef, Plugin, PluginManifest, Translator, UiText, icons,
+    ActionDef, DocKey, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Level,
+    Lazy, Location, PanelDef, Plugin, PluginManifest, Translator, UiText, icons,
 };
 use orbit_project::{AssetUser, asset_users, ops};
 
@@ -448,6 +448,14 @@ struct LibUi {
     audio: AudioPreview,
     seen_reveal: u64,
     scroll_to: Option<usize>,
+    /// The items (manifest + undeclared files) and the filtered, sorted
+    /// ones shown: rebuilt only when what they depend on changed, not at
+    /// every frame.
+    items_cache: Lazy<ItemsKey, Rc<Vec<Item>>>,
+    items_serial: u64,
+    shown_cache: Lazy<(u64, Filter, Sort, String), Rc<Shown>>,
+    retained_serial: u64,
+    users_cache: Lazy<(DocKey, AssetId), Vec<AssetUser>>,
 }
 
 impl Default for LibUi {
@@ -468,6 +476,11 @@ impl Default for LibUi {
             audio: AudioPreview::default(),
             seen_reveal: 0,
             scroll_to: None,
+            items_cache: Lazy::default(),
+            items_serial: 0,
+            shown_cache: Lazy::default(),
+            retained_serial: 0,
+            users_cache: Lazy::default(),
         }
     }
 }
@@ -645,23 +658,43 @@ fn panel(
         st.scan_key = Some(key);
     }
     let extensions = ctx.registry().project.import_extensions();
-    let mut issues: HashMap<AssetId, (Level, String)> = HashMap::new();
-    for p in &ctx.state().diagnostics.problems {
-        if let Some(Location::Asset(id)) = p.location {
-            issues
-                .entry(id)
-                .or_insert_with(|| (p.level, p.message.clone()));
-        }
-    }
     poll_declare(ctx, &mut st);
     if st.declare.is_some() {
         ui.ctx().request_repaint_after(Duration::from_millis(100));
     }
     let Some(story) = ctx.story() else { return };
-    let all = {
-        orbit_profile::scope!("library: items");
-        items(story, &st.scan, &extensions, &issues)
+    // The items, rebuilt only when the story, the files on disk or the
+    // findings changed (not at every frame).
+    let items_key: ItemsKey = (
+        ctx.doc_key(),
+        st.scan_key.clone(),
+        ctx.state().diagnostics.serial,
+        extensions.len(),
+    );
+    if st.items_cache.is_stale(&items_key) {
+        st.items_serial += 1;
+    }
+    let all: Rc<Vec<Item>> = {
+        let st: &mut LibUi = &mut st;
+        let problems = &ctx.state().diagnostics.problems;
+        st.items_cache
+            .get(true, items_key, || {
+                orbit_profile::scope!("library: items");
+                let mut issues: HashMap<AssetId, (Level, String)> = HashMap::new();
+                for p in problems {
+                    if let Some(Location::Asset(id)) = p.location {
+                        issues
+                            .entry(id)
+                            .or_insert_with(|| (p.level, p.message.clone()));
+                    }
+                }
+                Rc::new(items(story, &st.scan, &extensions, &issues))
+            })
+            .cloned()
+            .unwrap_or_default()
     };
+    let items_changed = st.retained_serial != st.items_serial;
+    st.retained_serial = st.items_serial;
 
     // Another panel (a problem, a search hit, a drop) selected an asset:
     // the library's selection follows.
@@ -675,7 +708,7 @@ fn panel(
         }
     }
     // A rescan or an undo may have removed files: forget them.
-    {
+    if items_changed {
         let paths: std::collections::HashSet<&str> =
             all.iter().map(|i| i.entry.path.as_str()).collect();
         st.selection.retain(|p| paths.contains(p));
@@ -685,8 +718,10 @@ fn panel(
     let serial = ctx.state().reveal_serial;
     if st.seen_reveal != serial {
         st.seen_reveal = serial;
+        let shown = shown_items(&mut st, &all);
         st.scroll_to = ctx.state().selected_asset.and_then(|id| {
-            visible(&st, &all)
+            shown
+                .items
                 .iter()
                 .position(|i| i.entry.id == id && !i.undeclared)
         });
@@ -696,8 +731,9 @@ fn panel(
     toolbar(ui, &mut st, &all, &mut actions);
     ui.add_space(2.0);
 
-    let shown = visible(&st, &all);
-    let order: Vec<String> = shown.iter().map(|i| i.entry.path.clone()).collect();
+    let cached = shown_items(&mut st, &all);
+    let shown = &cached.items;
+    let order = &cached.order;
     let mut info = SelectionInfo::default();
     for item in all.iter().filter(|i| st.selection.contains(&i.entry.path)) {
         if item.undeclared {
@@ -753,7 +789,6 @@ fn panel(
     {
         details(ui, ctx, &mut st, item, &root, &waker, &mut actions);
     }
-    drop(shown);
     confirm_delete(ui, ctx, &mut st, &all, &mut actions);
 
     // Selection changes are applied here (they need the order shown).
@@ -833,6 +868,34 @@ fn reveal_files(paths: &[PathBuf]) {
     if let Some(dir) = first.parent() {
         let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
     }
+}
+
+/// What the items cache depends on: the story and asset epoch, the scan of
+/// the asset folder, the findings, the importable extensions.
+type ItemsKey = (DocKey, Option<(PathBuf, u64)>, u64, usize);
+
+/// The items shown (filtered, sorted) and their paths in that order.
+struct Shown {
+    items: Vec<Item>,
+    order: Vec<String>,
+}
+
+/// [`visible`], cached until the items, the filter, the sort or the query
+/// change.
+fn shown_items(st: &mut LibUi, all: &[Item]) -> Rc<Shown> {
+    let key = (st.items_serial, st.filter, st.sort, st.query.clone());
+    if st.shown_cache.is_stale(&key) {
+        let items = visible(st, all);
+        let order = items.iter().map(|i| i.entry.path.clone()).collect();
+        let shown = Rc::new(Shown { items, order });
+        st.shown_cache.get(true, key, || shown);
+    }
+    st.shown_cache.value().cloned().unwrap_or_else(|| {
+        Rc::new(Shown {
+            items: Vec::new(),
+            order: Vec::new(),
+        })
+    })
 }
 
 fn visible(st: &LibUi, all: &[Item]) -> Vec<Item> {
@@ -1655,7 +1718,13 @@ fn details(
                 if icon_button(ui, icons::TRASH, &ui.t("library.menu.remove")).clicked() {
                     actions.push(Action::AskDeleteSelected);
                 }
-                let users = asset_users(story, item.entry.id);
+                // The users of the selected asset: one scan of the story per change,
+                // not per frame.
+                let users: Vec<AssetUser> = st
+                    .users_cache
+                    .get(true, (ctx.doc_key(), item.entry.id), || asset_users(story, item.entry.id))
+                    .cloned()
+                    .unwrap_or_default();
                 if users.is_empty() {
                     ui.label(
                         egui::RichText::new(ui.t("library.details.unused"))

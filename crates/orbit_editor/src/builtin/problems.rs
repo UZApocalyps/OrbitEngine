@@ -2,6 +2,11 @@
 //! warnings) with their location. A click selects and reveals the faulty
 //! node (explorer, scene editor, inspector) or opens the definition.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
+
 use egui::{Align2, FontId, Ui};
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, Level, Location, PanelDef,
@@ -24,12 +29,13 @@ impl Plugin for ProblemsPlugin {
 
 impl EditorPlugin for ProblemsPlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
+        let cache = Rc::new(RefCell::new(ListCache::default()));
         reg.panel(PanelDef::new(
             "problems",
             "problems.title",
             icons::WARNING_CIRCLE,
             DockSlot::Bottom,
-            panel,
+            move |ui, ctx| panel(ui, ctx, &mut cache.borrow_mut()),
         ));
         reg.action(
             ActionDef::new("next", "problems.next", |c| {
@@ -61,7 +67,29 @@ impl EditorPlugin for ProblemsPlugin {
     }
 }
 
-fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
+/// The filtered list and the location texts of its rows, kept until the
+/// findings, the story or the filter change: not rebuilt at every frame,
+/// and a location is described only for the rows on screen (describing
+/// one looks the node up in the story).
+#[derive(Default)]
+struct ListCache {
+    key: Option<(u64, u64, u64, u64, bool, bool)>,
+    shown: Rc<Vec<Problem>>,
+    locations: HashMap<usize, String>,
+}
+
+/// Fingerprint of the text view's findings (few, published by the text
+/// view without a serial).
+fn text_problems_hash(problems: &[Problem]) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for p in problems {
+        p.message.hash(&mut h);
+        (p.level as u8).hash(&mut h);
+    }
+    h.finish()
+}
+
+fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, cache: &mut ListCache) {
     if !ctx.has_project() {
         ui.add_space(14.0);
         ui.vertical_centered(|ui| {
@@ -122,19 +150,34 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     ui.data_mut(|d| d.insert_temp(id, filter));
     ui.add_space(2.0);
 
-    let shown: Vec<Problem> = ctx
-        .state()
-        .diagnostics
-        .problems
-        .iter()
-        .chain(ctx.state().text_problems.iter())
-        .filter(|p| match p.level {
-            Level::Error => filter.0,
-            Level::Warn => filter.1,
-            Level::Info => true,
-        })
-        .cloned()
-        .collect();
+    let doc = ctx.doc_key();
+    let key = (
+        ctx.state().diagnostics.serial,
+        doc.generation,
+        doc.revision,
+        text_problems_hash(&ctx.state().text_problems),
+        filter.0,
+        filter.1,
+    );
+    if cache.key != Some(key) {
+        cache.key = Some(key);
+        cache.locations.clear();
+        cache.shown = Rc::new(
+            ctx.state()
+                .diagnostics
+                .problems
+                .iter()
+                .chain(ctx.state().text_problems.iter())
+                .filter(|p| match p.level {
+                    Level::Error => filter.0,
+                    Level::Warn => filter.1,
+                    Level::Info => true,
+                })
+                .cloned()
+                .collect(),
+        );
+    }
+    let shown = cache.shown.clone();
     if shown.is_empty() {
         ui.add_space(14.0);
         ui.vertical_centered(|ui| {
@@ -152,15 +195,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         });
         return;
     }
-    let locations: Vec<String> = shown
-        .iter()
-        .map(|p| {
-            p.location
-                .as_ref()
-                .map(|l| describe(ctx, l))
-                .unwrap_or_default()
-        })
-        .collect();
+    let locations = &mut cache.locations;
     let click_hint = ctx.t("problems.click_hint");
     if stale {
         ui.set_opacity(0.5);
@@ -187,7 +222,13 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                     FontId::proportional(14.0),
                     color,
                 );
-                let location = &locations[i];
+                let location: &String = locations.entry(i).or_insert_with(|| {
+                    problem
+                        .location
+                        .as_ref()
+                        .map(|l| describe(ctx, l))
+                        .unwrap_or_default()
+                });
                 let clip = egui::Rect::from_min_max(
                     egui::pos2(rect.left() + 30.0, rect.top()),
                     egui::pos2(rect.right() - 8.0, rect.bottom()),

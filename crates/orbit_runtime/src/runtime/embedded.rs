@@ -325,7 +325,31 @@ pub(super) struct Embedded {
     limits: SeekLimits,
     /// Skip was asked before a playthrough existed: applied when one starts.
     pending_skip: bool,
+    /// A scrub of the timeline asked while the playthrough it needs waited
+    /// for its assets: applied once it starts.
+    pending_scrub: Option<(NodeId, f32)>,
 }
+
+impl Embedded {
+    pub(super) fn notice(&mut self, warning: bool, text: String) {
+        if warning {
+            log::warn!("preview: {text}");
+        } else {
+            log::info!("preview: {text}");
+        }
+        self.notices.push(Notice { warning, text });
+    }
+
+    /// Assets loaded on demand arrived: what is shown may change.
+    pub(super) fn assets_arrived(&mut self) {
+        self.dirty = true;
+        self.epoch += 1;
+    }
+}
+
+/// GPU memory the editor preview lets the pictures of the story take before
+/// it releases the least recently used ones.
+pub const PREVIEW_TEXTURE_BUDGET: u64 = 512 * 1024 * 1024;
 
 impl Embedded {
     pub(super) fn new(_config: EmbeddedConfig) -> Self {
@@ -345,6 +369,7 @@ impl Embedded {
             epoch: 0,
             limits: SeekLimits::default(),
             pending_skip: false,
+            pending_scrub: None,
         }
     }
 }
@@ -356,7 +381,38 @@ impl Runtime {
         renderer: Renderer2d,
         config: EmbeddedConfig,
     ) -> Result<Self, RuntimeError> {
-        Self::build(renderer, RuntimeConfig::new("", "", "", ""), Some(config))
+        let mut runtime = Self::build(renderer, RuntimeConfig::new("", "", "", ""), Some(config))?;
+        runtime.texture_budget = Some(PREVIEW_TEXTURE_BUDGET);
+        Ok(runtime)
+    }
+
+    /// GPU memory the pictures of the story may take before the least
+    /// recently used are released (`None`: no limit).
+    pub fn set_texture_budget(&mut self, bytes: Option<u64>) {
+        self.texture_budget = bytes;
+    }
+
+    /// GPU memory the pictures of the story take now, in bytes.
+    pub fn texture_memory(&self) -> u64 {
+        self.store.texture_memory()
+    }
+
+    /// Assets are being fetched (on demand): the host should keep ticking.
+    pub fn is_loading(&self) -> bool {
+        self.embedded.as_ref().is_some_and(|e| e.awaiting.is_some())
+            || self.streaming.as_ref().is_some_and(|s| !s.in_flight.is_empty())
+    }
+
+    /// Fetches what `stage` shows (the scene view's still picture of a
+    /// node): pictures load on demand, not with the story. When they
+    /// arrive, [`Runtime::assets_epoch`] changes.
+    pub fn request_stage_assets(&mut self, story: &Story, stage: &StageState) {
+        let paths = crate::loading::stage_state_paths(story, stage);
+        if paths.iter().all(|p| self.store.contains(p)) {
+            return;
+        }
+        let stream = self.streaming.get_or_insert_with(Streaming::fresh);
+        stream.request(&self.assets_loader, story, &self.store, &paths);
     }
 
     pub fn renderer(&self) -> &Renderer2d {
@@ -419,21 +475,25 @@ impl Runtime {
             self.assets_loader = AssetLoader::new(assets_root);
             self.store.clear(&mut self.ctx.renderer);
         }
-        let mut pending = start_loading(&self.assets_loader, &story, &self.store);
-        // The files the UI draws with, declared in the story or not.
+        // Nothing of the story's own assets is loaded here: the scenes'
+        // pictures and sounds come on demand (the scene a playthrough starts
+        // in, then the scene on screen and the ones it leads to, see
+        // `Streaming`; the scene view asks for its stage). Only the files the
+        // interface draws with are needed at once, declared in the story or
+        // not. The UI bundle is read once per `ui/` change, not per reload.
         let ui = {
             orbit_profile::scope!("runtime: read ui bundle");
-            super::resolve_ui_bundle(&self.config, None)
+            self.cached_ui_bundle()
         };
         let (images, fonts) = super::ui_eager_files(&self.config.theme, ui.as_ref(), &story);
-        let extra = crate::loading::start_loading_files(
+        self.store.pin(images.iter().cloned());
+        let pending = crate::loading::start_loading_files(
             &self.assets_loader,
             &images,
             &fonts,
             &self.store,
-            &pending,
+            &[],
         );
-        pending.extend(extra);
         let play = self.emb_mut().awaiting.take().and_then(|a| a.play);
         let done = pending.iter().all(PendingAsset::is_done);
         self.emb_mut().awaiting = Some(Awaiting {
@@ -472,6 +532,9 @@ impl Runtime {
         {
             return Err(format!("`{}` {}: {}", issue.screen, issue.widget, issue.message));
         }
+        // The next shells (hot reloads) use this version without reading
+        // the folder again.
+        *self.ui_cache.borrow_mut() = Some((self.config.ui_dir.clone(), Some(bundle.clone())));
         if self.shell_mut().is_none() {
             return Ok(());
         }
@@ -517,11 +580,28 @@ impl Runtime {
     }
 
     fn poll_embedded(&mut self) {
+        // What arrived reaches the GPU within the frame's upload budget; the
+        // awaited story (or playthrough) starts once everything is in.
+        let Some(awaiting) = self.embedded.as_mut().and_then(|e| e.awaiting.as_mut()) else {
+            return;
+        };
+        if awaiting.pending.iter().any(PendingAsset::is_done) {
+            orbit_profile::scope!("runtime: preview uploads");
+            let (_, failures) = finish_loading_budget(
+                &mut self.ctx.renderer,
+                &mut self.store,
+                &mut awaiting.pending,
+                UPLOAD_BUDGET,
+            );
+            for failure in failures {
+                self.notify(true, format!("Asset : {failure}"));
+            }
+        }
         let done = self
             .embedded
             .as_ref()
             .and_then(|e| e.awaiting.as_ref())
-            .is_some_and(|a| a.pending.iter().all(PendingAsset::is_done));
+            .is_some_and(|a| a.pending.is_empty());
         if done {
             self.finish_awaiting();
         }
@@ -547,8 +627,16 @@ impl Runtime {
         self.emb_mut().story = Some(story.clone());
         self.emb_mut().dirty = true;
         self.emb_mut().epoch += 1;
+        // Scenes are loaded on demand: the requests start over with this
+        // version of the story (its scenes may have moved or changed).
+        let stream = self.streaming.get_or_insert_with(Streaming::fresh);
+        stream.requested.clear();
+        stream.last_scene = None;
         if let Some(from) = awaiting.play {
             self.play(from);
+            if let Some((node, seconds)) = self.emb_mut().pending_scrub.take() {
+                self.scrub_animation(node, seconds);
+            }
         } else if let Some(source) = resume {
             let planned = plan_resume(&story, &source, self.emb().limits);
             self.install(&story, planned, true);
@@ -618,6 +706,44 @@ impl Runtime {
             PlayFrom::Beginning => plan_from_beginning(&story),
             PlayFrom::Node(node) => plan_from_node(&story, node, limits),
         };
+        // What the start shows and plays is loaded first (its scene, and the
+        // stage and music a start in the middle of the story carries over):
+        // the playthrough starts when they are in, with no picture popping
+        // in and its music playing. The rest comes on demand.
+        if let Ok(p) = &planned {
+            let mut paths = stage_asset_paths(&story, p.vm.scene());
+            if let Some((scene, _)) = p.vm.position().and_then(|n| story.locate(n)) {
+                paths.extend(scene_asset_paths(&story, scene));
+            }
+            paths.retain(|path| !self.store.contains(path));
+            if !paths.is_empty() {
+                // Already on their way (fetched ahead): awaited, not fetched twice.
+                let mut pending = Vec::new();
+                if let Some(stream) = self.streaming.as_mut() {
+                    let (moved, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut stream.in_flight)
+                        .into_iter()
+                        .partition(|f| paths.iter().any(|p| p == f.path()));
+                    stream.in_flight = rest;
+                    paths.retain(|p| !moved.iter().any(|f| f.path() == p));
+                    pending = moved;
+                }
+                pending.extend(start_loading_only(
+                    &self.assets_loader,
+                    &story,
+                    &self.store,
+                    Some(&paths),
+                ));
+                if !pending.is_empty() {
+                    self.emb_mut().awaiting = Some(Awaiting {
+                        story,
+                        pending,
+                        play: Some(from),
+                    });
+                    self.emb_mut().dirty = true;
+                    return;
+                }
+            }
+        }
         self.emb_mut().music = None;
         self.emb_mut().status = PlayStatus::Playing;
         self.emb_mut().dirty = true;
@@ -639,6 +765,11 @@ impl Runtime {
         };
         if !(self.emb().status != PlayStatus::Stopped && running(self)) {
             self.play(PlayFrom::Node(node));
+            if self.emb().awaiting.as_ref().is_some_and(|a| a.play.is_some()) {
+                // Its assets are loading: scrubbed once it starts.
+                self.emb_mut().pending_scrub = Some((node, seconds));
+                return true;
+            }
             if !running(self) {
                 return false;
             }
@@ -753,6 +884,9 @@ impl Runtime {
     pub fn tick(&mut self, dt: Duration) {
         self.audio.update();
         self.poll_embedded();
+        // Assets on demand: the scene on screen and the ones ahead, the
+        // scene view's stage (also while paused or stopped).
+        self.poll_streaming();
         if self.tick_ui_preview(dt) {
             return;
         }
@@ -764,7 +898,11 @@ impl Runtime {
         let was_animating = self.is_animating();
         let dt_secs = dt.as_secs_f32().min(MAX_DT) * self.emb().speed.factor();
         self.time += dt_secs;
-        if let Phase::Running(shell) = &mut self.phase {
+        // Held while the scene on screen still waits for an asset.
+        let blocked = self.is_blocked();
+        if let Phase::Running(shell) = &mut self.phase
+            && !blocked
+        {
             shell.set_now(orbit_platform::unix_time_ms());
             shell.update(dt_secs);
         }
@@ -812,7 +950,7 @@ impl Runtime {
             Some(UiPreview::Screen(_) | UiPreview::Dialogue(_)) => return emb.ui_settle > 0.0,
             None => {}
         }
-        if emb.awaiting.is_some() {
+        if emb.awaiting.is_some() || self.streaming.as_ref().is_some_and(|s| !s.in_flight.is_empty()) {
             return true;
         }
         match (&self.phase, emb.status) {

@@ -1,4 +1,4 @@
-//! Platform I/O: worker threads natively, `fetch` on the web.
+//! Platform I/O: a bounded pool of worker threads natively, `fetch` on the web.
 
 use crate::handle::Slot;
 use crate::{AssetError, Source};
@@ -19,38 +19,108 @@ fn decode_error(path: &str, message: String) -> AssetError {
     }
 }
 
+/// The native loading pool: a few threads (half the cores, at least one)
+/// shared by every loader, fed in request order. One thread per asset made a
+/// game with hundreds of pictures start hundreds of threads at once, each
+/// holding a decoded picture in memory at the same time.
+#[cfg(not(target_arch = "wasm32"))]
+mod pool {
+    use std::collections::VecDeque;
+    use std::sync::{Condvar, Mutex, OnceLock};
+
+    type Job = Box<dyn FnOnce() + Send + 'static>;
+
+    struct Pool {
+        queue: Mutex<VecDeque<Job>>,
+        ready: Condvar,
+    }
+
+    /// Threads of the pool: half the cores (the other half for the game
+    /// and the GPU driver), at least one.
+    pub(crate) fn size() -> usize {
+        std::thread::available_parallelism().map_or(2, |n| n.get() / 2).max(1)
+    }
+
+    fn pool() -> &'static Pool {
+        static POOL: OnceLock<&'static Pool> = OnceLock::new();
+        POOL.get_or_init(|| {
+            let pool: &'static Pool = Box::leak(Box::new(Pool {
+                queue: Mutex::new(VecDeque::new()),
+                ready: Condvar::new(),
+            }));
+            for i in 0..size() {
+                let spawned = std::thread::Builder::new()
+                    .name(format!("orbit-asset-{i}"))
+                    .spawn(move || worker(pool));
+                if let Err(err) = spawned {
+                    log::error!("could not start an asset loading thread: {err}");
+                }
+            }
+            pool
+        })
+    }
+
+    fn worker(pool: &'static Pool) {
+        loop {
+            let job = {
+                let mut queue = pool.queue.lock().unwrap_or_else(|e| e.into_inner());
+                loop {
+                    if let Some(job) = queue.pop_front() {
+                        break job;
+                    }
+                    queue = pool.ready.wait(queue).unwrap_or_else(|e| e.into_inner());
+                }
+            };
+            // A panicking decoder fails its handle (the slot is dropped)
+            // and never takes the thread down.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+        }
+    }
+
+    pub(crate) fn submit(job: impl FnOnce() + Send + 'static) {
+        let pool = pool();
+        pool.queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_back(Box::new(job));
+        pool.ready.notify_one();
+    }
+}
+
+/// Number of threads loading assets natively (see the pool).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn loading_threads() -> usize {
+    pool::size()
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn spawn_load<T, F>(source: Source, path: String, decode: F, slot: Slot<T>)
 where
     T: Send + Sync + 'static,
     F: FnOnce(&str, Vec<u8>) -> Result<T, String> + Send + 'static,
 {
-    let job_path = path.clone();
-    let spawned = std::thread::Builder::new()
-        .name("orbit-asset-loader".to_owned())
-        .spawn(move || {
-            let path = job_path;
-            let read = match &source {
-                Source::Root(root) => {
-                    let full = std::path::Path::new(&**root).join(&path);
-                    std::fs::read(&full).map_err(|err| AssetError::Io {
-                        path: path.clone(),
-                        message: err.to_string(),
-                    })
-                }
-                Source::Pak { pak, prefix } => pak.read_blocking(&pak_path(prefix, &path)),
-            };
-            match read {
-                Err(err) => slot.fail(err),
-                Ok(bytes) => match decode(&path, bytes) {
-                    Ok(value) => slot.ready(value),
-                    Err(msg) => slot.fail(decode_error(&path, msg)),
-                },
+    pool::submit(move || {
+        if slot.is_abandoned() {
+            return;
+        }
+        let read = match &source {
+            Source::Root(root) => {
+                let full = std::path::Path::new(&**root).join(&path);
+                std::fs::read(&full).map_err(|err| AssetError::Io {
+                    path: path.clone(),
+                    message: err.to_string(),
+                })
             }
-        });
-    if let Err(err) = spawned {
-        log::error!("could not spawn the asset loader thread for `{path}`: {err}");
-    }
+            Source::Pak { pak, prefix } => pak.read_blocking(&pak_path(prefix, &path)),
+        };
+        match read {
+            Err(err) => slot.fail(err),
+            Ok(bytes) => match decode(&path, bytes) {
+                Ok(value) => slot.ready(value),
+                Err(msg) => slot.fail(decode_error(&path, msg)),
+            },
+        }
+    });
 }
 
 #[cfg(target_arch = "wasm32")]

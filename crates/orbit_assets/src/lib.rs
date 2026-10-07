@@ -21,6 +21,8 @@ mod audio;
 mod handle;
 mod image_data;
 mod io;
+#[cfg(not(target_arch = "wasm32"))]
+pub use io::loading_threads;
 mod pak;
 mod watch;
 
@@ -181,6 +183,39 @@ mod tests {
             h.wait_blocking(),
             AssetPoll::Failed(AssetError::Io { .. })
         ));
+    }
+
+    /// Many requests at once run on the bounded pool: all complete, never
+    /// more at a time than it has threads.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn loads_run_on_a_bounded_pool() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = std::env::temp_dir().join(format!("orbit_assets_pool_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.bin"), b"abc").unwrap();
+        let loader = AssetLoader::new(dir.to_string_lossy());
+        let (now, peak) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let handles: Vec<_> = (0..48)
+            .map(|_| {
+                let (now, peak) = (now.clone(), peak.clone());
+                loader.load_with("a.bin", move |_, bytes| {
+                    let n = now.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(n, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    now.fetch_sub(1, Ordering::SeqCst);
+                    Ok(bytes.len())
+                })
+            })
+            .collect();
+        for h in &handles {
+            assert!(matches!(h.wait_blocking(), AssetPoll::Ready(n) if *n == 3));
+        }
+        assert!(peak.load(Ordering::SeqCst) <= loading_threads(), "{peak:?}");
+        // A request nobody waits for any more is skipped.
+        drop(loader.load_bytes("a.bin"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

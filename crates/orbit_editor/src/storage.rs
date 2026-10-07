@@ -347,14 +347,14 @@ impl Recovery {
 
     /// The pending snapshot, if a previous session left one.
     pub fn pending(&self) -> Option<RecoveryMeta> {
-        crate::writer::flush();
+        crate::writer::flush_key(&self.dir);
         let meta = fs::read_to_string(self.dir.join(RECOVERY_META)).ok()?;
         let meta: RecoveryMeta = ron::from_str(&meta).ok()?;
         self.dir.join(RECOVERY_STORY).is_file().then_some(meta)
     }
 
     pub fn load(&self) -> Result<Story, String> {
-        crate::writer::flush();
+        crate::writer::flush_key(&self.dir);
         let text = fs::read_to_string(self.dir.join(RECOVERY_STORY)).map_err(|e| e.to_string())?;
         Story::from_ron_unchecked(&text).map_err(|e| e.to_string())
     }

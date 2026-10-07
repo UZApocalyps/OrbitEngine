@@ -4,8 +4,11 @@
 //!
 //! A deliberately simple polling watcher (no new dependency, same approach as
 //! `orbit_assets::FileWatcher`, which only follows one file): every
-//! `interval` the thread compares the modification time and length of what
-//! it watches. A change is reported only once it **settled** (the same state
+//! `interval` the thread compares the modification time and length of the
+//! story file, and the modification times of the asset **folders** (a file
+//! added, removed or renamed changes its folder's). The whole asset tree is
+//! walked only when a folder changed, or every few intervals for files
+//! rewritten in place ([`FULL_SCAN_EVERY`]). A change is reported only once it **settled** (the same state
 //! seen on two consecutive scans), so a file still being copied is not read
 //! half-written. The thread wakes the UI only when it has something to say;
 //! idle, the editor still draws no frame.
@@ -45,6 +48,43 @@ pub fn snapshot(root: &std::path::Path) -> Snapshot {
         .map(|f| (f.path, (f.len, f.modified)))
         .collect()
 }
+
+/// Modification times of the folders of the asset tree. A file added,
+/// removed or renamed changes the time of its folder, so looking at the
+/// folders alone (a few `stat`s) tells whether a full walk is needed.
+pub type DirStamps = BTreeMap<PathBuf, Option<SystemTime>>;
+
+/// The folders under `root/assets` (and itself) with their times.
+pub fn dir_stamps(root: &std::path::Path) -> DirStamps {
+    let mut out = DirStamps::new();
+    let mut stack = vec![root.join("assets")];
+    while let Some(dir) = stack.pop() {
+        let Ok(meta) = std::fs::metadata(&dir) else { continue };
+        out.insert(dir.clone(), meta.modified().ok());
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for entry in rd.flatten() {
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                stack.push(entry.path());
+            }
+        }
+    }
+    out
+}
+
+/// Whether a folder of `dirs` changed (or disappeared) since it was stamped.
+fn dirs_changed(dirs: &DirStamps) -> bool {
+    dirs.iter().any(|(dir, stamp)| {
+        std::fs::metadata(dir).ok().map(|m| m.modified().ok()) != Some(*stamp)
+    })
+}
+
+/// A full walk of the asset folder happens at least every this many
+/// intervals (files modified in place change no folder time); in between,
+/// only the folder times are looked at.
+const FULL_SCAN_EVERY: u32 = 4;
 
 /// Differences between two snapshots: `(added, modified, removed)`.
 pub fn diff(old: &Snapshot, new: &Snapshot) -> (Vec<String>, Vec<String>, Vec<String>) {
@@ -95,6 +135,11 @@ impl<T: PartialEq + Clone> Settle<T> {
         }
         self.candidate = Some(now);
         None
+    }
+
+    /// A change was seen once and waits for its confirmation.
+    pub fn pending(&self) -> bool {
+        self.candidate.is_some()
     }
 
     /// Forgets a pending change and takes `state` as the known one.
@@ -177,12 +222,14 @@ impl ProjectWatcher {
 }
 
 impl Drop for ProjectWatcher {
+    /// Asks the thread to stop without waiting for it: it may be in the
+    /// middle of a walk of a big folder (or of a slow disk), and closing a
+    /// project must not wait for that on the UI thread. It ends on its own
+    /// and sends nothing more (its channel is gone).
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::SeqCst);
         self.shared.sleep.1.notify_all();
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
+        drop(self.thread.take());
     }
 }
 
@@ -196,6 +243,8 @@ fn watch_loop(
     waker: &Waker,
 ) {
     let (mut story, mut assets) = baselines;
+    let mut dirs = dir_stamps(assets_root);
+    let mut tick: u32 = 0;
     loop {
         {
             let guard = shared.sleep.0.lock();
@@ -216,6 +265,21 @@ fn watch_loop(
         if now.is_some() && story.observe(now).is_some() {
             sent |= tx.send(WatchEvent::StoryChanged).is_ok();
         }
+        // The whole tree is walked only when a folder changed (file added,
+        // removed, renamed), while a change waits for its confirmation, or
+        // every `FULL_SCAN_EVERY` intervals (a file rewritten in place).
+        tick = tick.wrapping_add(1);
+        let full = tick % FULL_SCAN_EVERY == 0 || assets.pending() || dirs_changed(&dirs);
+        if !full {
+            if sent {
+                waker.wake();
+            }
+            continue;
+        }
+        if shared.stop.load(Ordering::SeqCst) {
+            return;
+        }
+        dirs = dir_stamps(assets_root);
         let current = snapshot(assets_root);
         if let Some(previous) = assets.observe(current.clone()) {
             let (added, modified, removed) = diff(&previous, &current);

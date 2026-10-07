@@ -88,6 +88,13 @@ impl<T> Drop for Slot<T> {
 }
 
 impl<T> Slot<T> {
+    /// Every handle was dropped: nobody wants the result any more (the
+    /// loader skips the work).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn is_abandoned(&self) -> bool {
+        Arc::strong_count(&self.shared) == 1
+    }
+
     pub(crate) fn ready(&self, value: T) {
         *self.shared.lock().unwrap_or_else(|e| e.into_inner()) = State::Ready(Arc::new(value));
     }

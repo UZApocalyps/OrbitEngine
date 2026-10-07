@@ -24,6 +24,8 @@ struct Queue {
     jobs: VecDeque<(Option<PathBuf>, Job)>,
     /// A job is running (taken off the queue).
     busy: bool,
+    /// Key of the running job.
+    busy_key: Option<PathBuf>,
     /// Jobs submitted since the start (tests: no write per keystroke).
     submitted: u64,
 }
@@ -56,11 +58,15 @@ fn run(w: &'static Writer) {
         let job = {
             let mut q = w.queue.lock().unwrap_or_else(|e| e.into_inner());
             loop {
-                if let Some((_, job)) = q.jobs.pop_front() {
+                if let Some((key, job)) = q.jobs.pop_front() {
                     q.busy = true;
+                    q.busy_key = key;
+                    // The previous job is done: wake the keyed waiters.
+                    w.changed.notify_all();
                     break job;
                 }
                 q.busy = false;
+                q.busy_key = None;
                 w.changed.notify_all();
                 q = w.changed.wait(q).unwrap_or_else(|e| e.into_inner());
             }
@@ -123,6 +129,21 @@ pub fn flush() {
     }
 }
 
+/// Waits until no job with the key `key` is queued or running: before
+/// reading back a file the writer may still be writing (recovery check),
+/// without waiting for the writes of everything else (a config, a layout,
+/// another project's snapshot).
+pub fn flush_key(key: &std::path::Path) {
+    let w = writer();
+    let mut q = w.queue.lock().unwrap_or_else(|e| e.into_inner());
+    let holds = |q: &Queue| {
+        q.busy_key.as_deref() == Some(key) || q.jobs.iter().any(|(k, _)| k.as_deref() == Some(key))
+    };
+    while holds(&q) {
+        q = w.changed.wait(q).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
 /// Whether jobs are queued or running (does not wait).
 pub fn pending() -> bool {
     writer().queue.lock().map_or(false, |q| q.busy || !q.jobs.is_empty())
@@ -140,6 +161,22 @@ mod tests {
 
     use super::*;
     use crate::storage::testing::TempDir;
+
+    #[test]
+    fn flush_key_waits_for_the_jobs_of_its_key_only() {
+        let dir = TempDir::new("writer-key");
+        let key = dir.path().join("recovery");
+        let done = Arc::new(AtomicUsize::new(0));
+        let d = done.clone();
+        submit(Some(key.clone()), move || {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            d.store(1, Ordering::SeqCst);
+        });
+        flush_key(&key);
+        assert_eq!(done.load(Ordering::SeqCst), 1, "the keyed job ran before flush_key returned");
+        // Nothing queued for a key: returns at once.
+        flush_key(&dir.path().join("other"));
+    }
 
     #[test]
     fn writes_land_after_flush_and_the_latest_wins() {

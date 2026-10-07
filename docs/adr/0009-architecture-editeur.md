@@ -277,3 +277,55 @@ Ce qui diffère de §7, et pourquoi :
 - **Plugins.** `registry.texts(Lang, ron)` ajoute la table d'un plugin (préfixe de son id) ; le plugin d'essai le démontre.
 - **Tests.** Parité des clés et des paramètres, préfixes, paires de pluriels, anglais sans accents, clés littérales du code, enregistrements du registre, changement à chaud, persistance.
 - **Dettes** : voir ROADMAP, M3h.
+
+## Addendum (octobre 2026) : ne calculer que ce qui est visible, charger à la demande
+
+Règle de l'utilisateur, désormais règle d'architecture : **on ne charge ni ne calcule ce qui n'est pas visible, et on ne charge jamais tout d'un coup.** Le moteur doit rester léger et rapide.
+
+### Mécanisme commun de l'éditeur (`orbit_editor_api::lazy`)
+
+- **Visibilité des panneaux** : `EditorState::panels` (`PanelVisibility`) est alimenté par le dock. egui_dock ne dessine que l'onglet actif de chaque groupe : un panneau est *visible* s'il a été dessiné à cette frame ou à la précédente (`EditorContext::panel_visible`). `PanelDef::on_shown` est appelé (avant `ui`) à la première frame où un panneau réapparaît, `PanelDef::on_hidden` une fois qu'il n'a pas été dessiné pendant une frame entière (`dock::draw_panel`, `dock::end_frame`). Un panneau agrandi passe par le même chemin.
+- **Clé de cache** : `DocKey { generation, revision, asset_epoch }` (`EditorContext::doc_key`) ; `EditorState::project_generation` suit le projet ouvert ; `Diagnostics::serial` change à chaque publication de la validation.
+- **`Lazy<K, V>`** : valeur calculée pour une clé, recalculée seulement pour un usage *visible* avec une autre clé ; un panneau caché garde l'ancienne valeur et ne coûte rien.
+- **`LazyAsync<K, V>`** : idem hors du fil de l'UI, sur le pool de tâches (`Tasks::spawn_quiet` : tâche interne, absente de la barre d'état). L'ancienne valeur reste affichée pendant le calcul ; un résultat pour une clé périmée est ignoré ; une rafale de changements (frappe) lance au plus un calcul par `min_interval` (`retry_after` dit quand redessiner).
+
+### Application
+
+- **Graphe** : `GraphModel::build` n'est appelé que par le panneau dessiné (clé génération + révision) ; la construction indexe les nœuds une fois (`Story::node` est un parcours linéaire : la construction était O(N²)). `GraphLayout::place_missing` indexe les arêtes par extrémité et range les blocs placés par colonne (`TakenGrid`) au lieu de parcourir tous les blocs pour chaque bloc manquant.
+- **Traductions** : plus de copie de l'histoire ni de calcul de couverture à chaque frame (ni de copie du `View` par les données temporaires d'egui) ; le panneau regarde le disque (liste `i18n/` + un `stat`) au plus une fois par seconde quand il est visible, et la couverture (lecture du fichier, `coverage_of_strings`, entrées périmées) est calculée par `LazyAsync` à partir de la seule table des chaînes. Liste des entrées périmées virtualisée.
+- **Recherche globale** : pas d'index pour une requête vide ; quand seule l'histoire change (frappe ailleurs, panneau ouvert), l'index est reconstruit au plus toutes les 400 ms. La clé inclut la génération du projet.
+- **Bibliothèque** : `items()` (manifeste + fichiers non déclarés + problèmes) et `visible()` (filtre, tri, recherche) sont en cache (clé `DocKey` + scan + `Diagnostics::serial`, puis filtre/tri/requête) ; la purge de la sélection ne se fait qu'après un changement des éléments ; les utilisateurs de l'asset sélectionné (`asset_users`) sont en cache par (`DocKey`, asset).
+- **Problèmes** : la liste filtrée est en cache (série des problèmes, révision, empreinte des problèmes de la vue texte, filtre) ; l'emplacement d'une ligne (`describe`, qui cherche le nœud dans l'histoire) n'est calculé que pour les lignes à l'écran (il l'était pour toutes, à chaque frame). Côté validation, `rigs::rig_problems_cached` garde les rigs lus entre deux validations (relus seulement si le fichier a changé) et ne vérifie qu'une fois par rig l'existence de ses images.
+- **Éditeur d'UI, rig, 3D** : vérifiés, déjà à la demande (le dossier `ui/` n'est lu que par le panneau dessiné, une fois par projet ; les hôtes rig et 3D ne dessinent que sur requête du panneau visible). La preview ne relit plus `ui/` à chaque rechargement (cache invalidé quand `ui/` change).
+- **`PictureUsers`** : une passe `asset_users_index` au lieu d'un `asset_users` par image ; emplacement des attachements indexé par slot.
+- **Session** : `Session::modified` (titre de fenêtre, barre d'état, à chaque frame) est fondé sur la révision : à la révision enregistrée l'histoire *est* le fichier, toute autre révision est « modifiée » tout de suite, et la comparaison complète avec le fichier n'a lieu qu'après 800 ms sans modification (annuler jusqu'au texte enregistré efface encore l'indicateur). Les décisions (confirmer avant de fermer) utilisent `modified_exact`.
+- **Surveillance des fichiers** : le fil de surveillance regarde le fichier de l'histoire et les **dates des dossiers** d'`assets/` (ajout, suppression, renommage changent celle du dossier) ; l'arbre n'est parcouru en entier que si un dossier a changé, pendant la confirmation d'un changement, ou toutes les 4 périodes (fichier réécrit sur place). `ProjectWatcher` ne joint plus son fil sur le fil de l'UI à la fermeture. Le crate `notify` n'est pas une dépendance du projet : pas de dépendance ajoutée.
+- **Récupération** : la vérification d'un instantané attend seulement les écritures de son dossier (`writer::flush_key`), plus toute la file de l'écrivain.
+
+### Chargement des assets de la preview (runtime)
+
+- **Pool borné** (`orbit_assets`, natif) : un fil par asset est remplacé par un pool de `max(1, cœurs / 2)` fils partagé par tous les chargeurs, en ordre de demande ; une demande dont plus personne ne tient la poignée est sautée. Le web garde `fetch`.
+- **À la demande** (preview de l'éditeur) : `Runtime::load_story` ne charge plus tous les assets du manifeste, seulement ce que l'interface dessine (images du thème, des écrans, galerie, succès ; épinglées). Une partie commence quand la scène de départ et ce que montre/joue l'étape de départ (fond, personnages, musique d'une partie lancée au milieu de l'histoire) sont chargés : pas d'image qui apparaît en retard, la musique démarre. Ensuite `Streaming` (le mécanisme du player web) charge la scène à l'écran et précharge les scènes suivantes ; si la scène à l'écran attend un asset, le jeu est retenu (pas de pop-in). La vue de scène demande l'étape qu'elle dessine (`request_stage_assets`) et se redessine à l'arrivée (`assets_epoch`).
+- **Envoi GPU étalé** : `finish_loading_budget` ne déplace vers le GPU que ce qui tient dans ~4 ms par frame (au moins un asset), le reste à la frame suivante.
+- **Budget mémoire** (preview seulement) : `AssetStore` compte les octets des textures ; au-delà de `PREVIEW_TEXTURE_BUDGET` (512 Mo), les images les moins récemment utilisées (horloge par scène demandée) sont libérées, jamais celles de la scène à l'écran, des suivantes, ni celles de l'interface ; elles sont rechargées si on y revient.
+- **Rechargement à chaud incrémental** : l'hôte ne recharge l'histoire dans le runtime que si la preview ou la vue de scène est visible ou qu'une partie tourne (sinon le rechargement attend) ; les `stat` des fichiers d'assets n'ont lieu que si le dossier a changé (`asset_epoch`) ; `ui/` n'est relu que si ses fichiers ont changé. La copie de l'histoire et sa validation restent (débouncées) : `Project` ne partage pas encore son histoire par `Arc`.
+- **Player exporté** : inchangé (chargement complet avant le départ, ou `lazy_assets` pour le web) ; il profite du pool borné et de l'envoi GPU étalé en mode paresseux.
+
+### Mesures
+
+Copie de « Lost in the dark » (release, `library_perf::real_project_bench`, preview sur un adaptateur headless), avant → après :
+
+| Mesure | Avant | Après |
+|---|---|---|
+| Ouverture jusqu'à interactif | 33 ms | 32 ms |
+| Affichage du graphe, pire frame | 44 ms | 41 ms (1re mise en page egui-snarl, pas la construction) |
+| Affichage des traductions, pire frame | 17,0 ms | 8,9 ms |
+| Frappe (60 éditions), pire frame / total | 12,0 ms / 613 ms | 11,1 ms / 454 ms |
+| Preview : démarrage jusqu'à la lecture | 729 ms | 348 ms |
+| Preview : 1re / pire mise à jour de l'hôte | 81 / 221 ms | 42 / 56 ms |
+| Rechargement à chaud (frame) | 19,4 ms | 9,4 ms |
+| Pic mémoire après la preview | 1 019 Mo | 452 Mo |
+| Déclaration une à une, pire frame | 18,8 ms | 15,5 ms |
+| « Tout déclarer » (pool), pire frame | 18,0 ms | 11,9 ms |
+
+Reste au-dessus de 16 ms : première frame du graphe (mise en page de tous les blocs par egui-snarl), première mise à jour de l'hôte de preview (cibles, polices) et frappe pendant la lecture (copie + validation de l'histoire au rechargement débouncé).

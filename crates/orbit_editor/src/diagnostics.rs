@@ -514,6 +514,8 @@ struct Done {
 struct WorkerCache {
     asset_key: Option<Vec<(String, String)>>,
     asset_issues: Vec<AssetIssue>,
+    /// Rig files read by earlier runs (read again only when changed).
+    rigs: orbit_project::rigs::RigFileCache,
 }
 
 fn asset_key_of(story: &Story) -> Vec<(String, String)> {
@@ -539,7 +541,7 @@ fn run_job(job: Job, cache: &mut WorkerCache) -> Done {
     };
     // Rigged expressions (rig, clip, skin) change with the story without
     // touching the manifest: looked at on every run.
-    extras.rig_problems = orbit_project::rigs::rig_problems(&root, &story);
+    extras.rig_problems = orbit_project::rigs::rig_problems_cached(&root, &story, &mut cache.rigs);
     let asset_key = asset_key_of(&story);
     if refresh_assets || cache.asset_key.as_ref() != Some(&asset_key) {
         cache.asset_issues = crate::assets::lint_asset_files(&root, &story);
