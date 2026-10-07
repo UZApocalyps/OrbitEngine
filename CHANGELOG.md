@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.1 (2026-10-07)
+
+Version corrective.
+
+### Corrections
+- **Clignements des yeux dans le jeu exporté** : une image utilisée à la fois par un rig et déclarée comme image du projet (par exemple des paupières fermées) pouvait être libérée au chargement, et le rig ne l'affichait plus. Les clignements fonctionnent désormais dans le jeu exporté comme dans l'aperçu de l'éditeur. Réexportez votre jeu pour en profiter.
+
+### Export
+- Nouvel avertissement quand une clé de clip affiche une image absente de tous les costumes du rig.
+- Nouvel avertissement quand une image de rig est rangée hors du dossier du rig (elle reste incluse dans le jeu).
+
 ## 0.3.0 (2026-10-07)
 
 Version centrée sur l'habillage de l'interface, les succès, le doublage et un éditeur de rig beaucoup plus complet, avec un éditeur nettement plus fluide.
