@@ -20,12 +20,14 @@ use orbit_editor_api::{
 };
 use orbit_project::{AssetUser, asset_users, ops};
 
+use super::library_select::Selection;
 use super::thumbs::{self, ThumbState};
 use super::ui_util::{
     accent, accent_soft, danger, faint, icon_button, primary_button, strong, warning, weak,
 };
 use super::{ids, reveal};
-use crate::assets::{self, DiskFile, ImportReport, MoveJournal};
+use crate::assets::{self, DeclareChecked, DiskFile, ImportReport, MoveJournal};
+use orbit_editor_api::tasks::{TaskError, TaskHandle};
 
 const CELL: egui::Vec2 = egui::Vec2::new(108.0, 124.0);
 const THUMB_BOX: egui::Vec2 = egui::Vec2::new(96.0, 76.0);
@@ -76,6 +78,92 @@ impl EditorPlugin for LibraryPlugin {
             .menu("menu.file", 130)
             .enabled(|c| c.has_project()),
         );
+        let state = self.state.clone();
+        reg.action(
+            ActionDef::new("declare_all", "library.action.declare_all", move |c| {
+                let Some(root) = assets_root_of(c) else { return };
+                let scan = assets::scan_assets(&root);
+                let extensions = c.registry().project.import_extensions();
+                let Some(story) = c.story() else { return };
+                let rels: Vec<String> = items(story, &scan, &extensions, &HashMap::new())
+                    .into_iter()
+                    .filter(|i| i.undeclared)
+                    .map(|i| i.entry.path)
+                    .collect();
+                start_declare(c, &mut state.borrow_mut(), &root, rels);
+            })
+            .icon(icons::PLUS)
+            .category("category.file")
+            .enabled(|c| c.has_project()),
+        );
+    }
+}
+
+// ----------------------------------------------------------------- declare
+
+/// Starts "Declare in project" for `rels` (manifest paths of files already
+/// in the asset folder): reading and decoding run on the task pool with
+/// progress in the status bar; the result is declared as one undo step
+/// when the library polls it ([`poll_declare`]).
+fn start_declare(ctx: &mut EditorContext<'_>, st: &mut LibUi, root: &Path, rels: Vec<String>) {
+    if rels.is_empty() {
+        return;
+    }
+    if st.declare.is_some() {
+        let message = ctx.t("library.declare.busy");
+        ctx.info(message);
+        return;
+    }
+    let registry = ctx.registry();
+    let inputs = assets::declare_inputs(&registry.project, &rels);
+    let accepted = registry.project.import_extensions().join(", ");
+    let root = root.to_owned();
+    let n = rels.len();
+    let title = ctx.tn("library.declare.task", n, &[]);
+    let handle = ctx.state().spawn_task(title, None, move |progress| {
+        let checked = assets::check_declare(&root, inputs, &accepted, |done| {
+            progress.set_fraction(done as f32 / n as f32);
+            if done % 8 == 0 {
+                progress.wake();
+            }
+            !progress.is_cancelled()
+        });
+        progress.check()?;
+        Ok(checked)
+    });
+    st.declare = Some(handle);
+}
+
+/// Applies a finished declaration, if any: one transaction, one toast.
+fn poll_declare(ctx: &mut EditorContext<'_>, st: &mut LibUi) {
+    let Some(handle) = st.declare.as_mut() else { return };
+    let Some(outcome) = handle.poll() else { return };
+    st.declare = None;
+    let checked = match outcome {
+        Ok(c) => c,
+        Err(TaskError::Cancelled) => return,
+        Err(TaskError::Failed(e)) => {
+            ctx.error(e);
+            return;
+        }
+        Err(_) => {
+            let message = ctx.t("library.declare.failed");
+            ctx.error(message);
+            return;
+        }
+    };
+    orbit_profile::scope!("library: declare commit");
+    let texts = ctx.translator();
+    let report = match ctx.ops(|p| Ok(assets::commit_declare(p, &checked, &texts))) {
+        Ok(r) => r,
+        Err(e) => {
+            ctx.error(e.to_string());
+            return;
+        }
+    };
+    report_import(ctx, &texts, &report);
+    if !report.imported.is_empty() {
+        ctx.state_mut().asset_epoch += 1;
     }
 }
 
@@ -108,6 +196,18 @@ pub fn import_paths(ctx: &mut EditorContext<'_>, paths: &[PathBuf]) -> ImportRep
             return ImportReport::default();
         }
     };
+    report_import(ctx, &texts, &report);
+    if let Some(first) = report.imported.first() {
+        ctx.state_mut().selected_asset = Some(first.id);
+    }
+    if !report.imported.is_empty() {
+        ctx.state_mut().asset_epoch += 1;
+    }
+    report
+}
+
+/// The toasts of an import / declaration: one for the successes, one per refusal.
+fn report_import(ctx: &mut EditorContext<'_>, texts: &Translator, report: &ImportReport) {
     let added = report.added();
     if added > 0 {
         let kinds: Vec<String> = [
@@ -143,17 +243,10 @@ pub fn import_paths(ctx: &mut EditorContext<'_>, paths: &[PathBuf]) -> ImportRep
         );
         let message = texts.tf(
             "import.refused",
-            &[("name", &name), ("error", &error.message(&texts))],
+            &[("name", &name), ("error", &error.message(texts))],
         );
         ctx.error(message);
     }
-    if let Some(first) = report.imported.first() {
-        ctx.state_mut().selected_asset = Some(first.id);
-    }
-    if !report.imported.is_empty() {
-        ctx.state_mut().asset_epoch += 1;
-    }
-    report
 }
 
 /// Folder the manifest's relative paths resolve against (the project folder,
@@ -338,8 +431,18 @@ struct LibUi {
     query: String,
     /// Asset being renamed, and the new file name (without extension).
     rename: Option<(AssetId, String)>,
-    /// Asset waiting for the user's confirmation to be removed.
-    confirm_delete: Option<AssetId>,
+    /// Assets waiting for the user's confirmation to be removed: id, file
+    /// name, number of uses.
+    confirm_delete: Vec<(AssetId, String, usize)>,
+    /// Selected items, by manifest path (declared or not).
+    selection: Selection,
+    /// The marquee being dragged (grid view): start in content coordinates,
+    /// and the selection from before it.
+    marquee: Option<(egui::Pos2, Selection)>,
+    /// "Declare in project" running on the task pool.
+    declare: Option<TaskHandle<Vec<DeclareChecked>>>,
+    /// `selected_asset` as last seen: another panel changed it when it differs.
+    seen_selected: Option<AssetId>,
     scan: Vec<DiskFile>,
     scan_key: Option<(PathBuf, u64)>,
     audio: AudioPreview,
@@ -355,7 +458,11 @@ impl Default for LibUi {
             view: View::Grid,
             query: String::new(),
             rename: None,
-            confirm_delete: None,
+            confirm_delete: Vec::new(),
+            selection: Selection::default(),
+            marquee: None,
+            declare: None,
+            seen_selected: None,
             scan: Vec::new(),
             scan_key: None,
             audio: AudioPreview::default(),
@@ -388,16 +495,36 @@ impl Item {
 
 /// What the user asked this frame; applied once the story is no longer borrowed.
 enum Action {
-    Select(AssetId),
+    /// A click on the item of this path (modifiers: Ctrl toggles, Shift ranges).
+    Click {
+        path: String,
+        ctrl: bool,
+        shift: bool,
+    },
+    /// Right click: the menu acts on the selection, which must hold the item.
+    ContextOn(String),
+    SelectAll,
+    ClearSelection,
     Import,
-    Declare(String),
+    /// Declare the undeclared files of the selection.
+    DeclareSelected,
     Play(AssetId),
     Stop,
     BeginRename(AssetId),
     CommitRename(AssetId, String),
-    AskDelete(AssetId),
-    Delete(AssetId),
+    /// Ask to remove the declared assets of the selection.
+    AskDeleteSelected,
+    Delete(Vec<AssetId>),
+    /// Show the selected files in the system's file manager.
+    RevealSelected,
     ShowUser(Location),
+}
+
+/// What the selection holds, for the context menu's labels.
+#[derive(Clone, Copy, Default)]
+struct SelectionInfo {
+    declared: usize,
+    undeclared: usize,
 }
 
 fn items(
@@ -526,8 +653,33 @@ fn panel(
                 .or_insert_with(|| (p.level, p.message.clone()));
         }
     }
+    poll_declare(ctx, &mut st);
+    if st.declare.is_some() {
+        ui.ctx().request_repaint_after(Duration::from_millis(100));
+    }
     let Some(story) = ctx.story() else { return };
-    let all = items(story, &st.scan, &extensions, &issues);
+    let all = {
+        orbit_profile::scope!("library: items");
+        items(story, &st.scan, &extensions, &issues)
+    };
+
+    // Another panel (a problem, a search hit, a drop) selected an asset:
+    // the library's selection follows.
+    let selected = ctx.state().selected_asset;
+    if selected != st.seen_selected {
+        st.seen_selected = selected;
+        match selected.and_then(|id| all.iter().find(|i| i.entry.id == id && !i.undeclared)) {
+            Some(item) => st.selection.set_one(&item.entry.path),
+            None if selected.is_some() => st.selection.clear(),
+            None => {}
+        }
+    }
+    // A rescan or an undo may have removed files: forget them.
+    {
+        let paths: std::collections::HashSet<&str> =
+            all.iter().map(|i| i.entry.path.as_str()).collect();
+        st.selection.retain(|p| paths.contains(p));
+    }
 
     // A reveal (problem, search hit, drop) selects an asset: bring it into view.
     let serial = ctx.state().reveal_serial;
@@ -544,8 +696,33 @@ fn panel(
     toolbar(ui, &mut st, &all, &mut actions);
     ui.add_space(2.0);
 
-    let selected = ctx.state().selected_asset;
     let shown = visible(&st, &all);
+    let order: Vec<String> = shown.iter().map(|i| i.entry.path.clone()).collect();
+    let mut info = SelectionInfo::default();
+    for item in all.iter().filter(|i| st.selection.contains(&i.entry.path)) {
+        if item.undeclared {
+            info.undeclared += 1;
+        } else {
+            info.declared += 1;
+        }
+    }
+    // The marquee changes the selection while drawing: compare with this.
+    let before = st.selection.clone();
+    // Keyboard, while the pointer is over the panel and no text field has focus.
+    let panel_rect = ui.max_rect();
+    if ui.rect_contains_pointer(panel_rect) && !ui.ctx().egui_wants_keyboard_input() {
+        ui.input_mut(|i| {
+            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::A) {
+                actions.push(Action::SelectAll);
+            }
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::Delete) && info.declared > 0 {
+                actions.push(Action::AskDeleteSelected);
+            }
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) && !st.selection.is_empty() {
+                actions.push(Action::ClearSelection);
+            }
+        });
+    }
     let details_height =
         if selected.is_some_and(|id| all.iter().any(|i| i.entry.id == id && !i.undeclared)) {
             72.0
@@ -564,22 +741,98 @@ fn panel(
             });
         } else {
             match st.view {
-                View::Grid => grid(ui, &mut st, &shown, selected, &root, &waker, &mut actions),
-                View::List => list(ui, &mut st, &shown, selected, &root, &waker, &mut actions),
+                View::Grid => grid(ui, &mut st, &shown, info, &root, &waker, &mut actions),
+                View::List => list(ui, &mut st, &shown, info, &root, &waker, &mut actions),
             }
         }
     });
 
-    if let Some(id) = selected
+    if st.selection.len() == 1
+        && let Some(id) = selected
         && let Some(item) = all.iter().find(|i| i.entry.id == id && !i.undeclared)
     {
         details(ui, ctx, &mut st, item, &root, &waker, &mut actions);
     }
     drop(shown);
     confirm_delete(ui, ctx, &mut st, &all, &mut actions);
+
+    // Selection changes are applied here (they need the order shown).
+    let mut rest = Vec::new();
+    for action in actions {
+        match action {
+            Action::Click { path, ctrl, shift } => st.selection.click(&order, &path, ctrl, shift),
+            Action::ContextOn(path) => {
+                if !st.selection.contains(&path) {
+                    st.selection.set_one(&path);
+                }
+            }
+            Action::SelectAll => st.selection.select_all(&order),
+            Action::ClearSelection => st.selection.clear(),
+            Action::DeclareSelected => {
+                let rels: Vec<String> = st
+                    .selection
+                    .ordered(&order)
+                    .into_iter()
+                    .filter(|p| all.iter().any(|i| i.undeclared && i.entry.path == *p))
+                    .map(str::to_owned)
+                    .collect();
+                start_declare(ctx, &mut st, &root, rels);
+            }
+            Action::AskDeleteSelected => {
+                let ids = selected_ids(&st.selection, &order, &all);
+                if let Some(story) = ctx.story() {
+                    st.confirm_delete = removal_candidates(story, &ids, &all);
+                }
+            }
+            Action::RevealSelected => {
+                let paths: Vec<PathBuf> = st
+                    .selection
+                    .ordered(&order)
+                    .into_iter()
+                    .map(|p| root.join(p))
+                    .collect();
+                reveal_files(&paths);
+            }
+            other => rest.push(other),
+        }
+    }
+    if st.selection != before {
+        // The details strip and the other panels follow a single declared item.
+        let one = (st.selection.len() == 1)
+            .then(|| selected_ids(&st.selection, &order, &all).first().copied())
+            .flatten();
+        ctx.state_mut().selected_asset = one;
+        st.seen_selected = one;
+    }
     drop(st);
 
-    apply(ctx, state, moves, &root, actions);
+    apply(ctx, state, moves, &root, rest);
+}
+
+/// The declared assets of the selection, in the order shown.
+fn selected_ids(selection: &Selection, order: &[String], all: &[Item]) -> Vec<AssetId> {
+    selection
+        .ordered(order)
+        .into_iter()
+        .filter_map(|p| all.iter().find(|i| !i.undeclared && i.entry.path == p))
+        .map(|i| i.entry.id)
+        .collect()
+}
+
+/// Opens the system's file manager on the files (the first one selected
+/// where the platform allows it).
+fn reveal_files(paths: &[PathBuf]) {
+    let Some(first) = paths.first() else { return };
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("explorer")
+        .arg(format!("/select,{}", first.display().to_string().replace('/', "\\")))
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg("-R").args(paths).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(dir) = first.parent() {
+        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+    }
 }
 
 fn visible(st: &LibUi, all: &[Item]) -> Vec<Item> {
@@ -686,6 +939,29 @@ fn toolbar(ui: &mut Ui, st: &mut LibUi, all: &[Item], actions: &mut Vec<Action>)
             .on_hover_text(ui.t("library.view.grid"));
         ui.selectable_value(&mut st.view, View::List, icons::LIST)
             .on_hover_text(ui.t("library.view.list"));
+        if st.selection.len() > 1 {
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(ui.tn("library.selection.count", st.selection.len(), &[]))
+                    .color(accent(ui)),
+            )
+            .on_hover_text(ui.t("library.selection.tip"));
+            if ui.small_button(icons::X).on_hover_text(ui.t("library.selection.clear")).clicked() {
+                actions.push(Action::ClearSelection);
+            }
+        }
+        if let Some(job) = &st.declare {
+            ui.add_space(6.0);
+            ui.spinner();
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} {:.0} %",
+                    ui.t("library.declare.running"),
+                    job.fraction().unwrap_or(0.0) * 100.0
+                ))
+                .color(weak(ui)),
+            );
+        }
     });
 }
 
@@ -777,6 +1053,7 @@ fn paint_thumb(
 }
 
 /// Click, double click, drag, context menu of one item; `rect` is its area.
+#[allow(clippy::too_many_arguments)]
 fn interact(
     ui: &mut Ui,
     rect: egui::Rect,
@@ -785,12 +1062,31 @@ fn interact(
     state: &ThumbState,
     actions: &mut Vec<Action>,
     audio_playing: bool,
+    selected: bool,
+    info: SelectionInfo,
 ) -> egui::Response {
     let response = ui.interact(rect, id, Sense::click_and_drag());
-    if !item.undeclared {
-        if response.clicked() {
-            actions.push(Action::Select(item.entry.id));
+    if response.clicked() {
+        let m = ui.input(|i| i.modifiers);
+        actions.push(Action::Click {
+            path: item.entry.path.clone(),
+            ctrl: m.command,
+            shift: m.shift,
+        });
+    }
+    if response.secondary_clicked() {
+        actions.push(Action::ContextOn(item.entry.path.clone()));
+    }
+    // The menu acts on the selection; on an item outside it, on that item.
+    let sel_info = if selected {
+        info
+    } else {
+        SelectionInfo {
+            declared: usize::from(!item.undeclared),
+            undeclared: usize::from(item.undeclared),
         }
+    };
+    if !item.undeclared {
         if response.drag_started() {
             egui::DragAndDrop::set_payload(
                 ui.ctx(),
@@ -799,7 +1095,13 @@ fn interact(
                     kind: item.entry.kind,
                 },
             );
-            actions.push(Action::Select(item.entry.id));
+            if !selected {
+                actions.push(Action::Click {
+                    path: item.entry.path.clone(),
+                    ctrl: false,
+                    shift: false,
+                });
+            }
         }
         if response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -842,14 +1144,50 @@ fn interact(
     }
     let response = response.on_hover_text(tip);
     response.context_menu(|ui| {
-        if item.undeclared {
-            if ui
-                .button(format!("{}  {}", icons::PLUS, ui.t("library.menu.declare")))
-                .clicked()
-            {
-                actions.push(Action::Declare(item.entry.path.clone()));
+        let many = sel_info.declared + sel_info.undeclared > 1;
+        if sel_info.undeclared > 0 {
+            let label = if many {
+                ui.tn("library.menu.declare_n", sel_info.undeclared, &[])
+            } else {
+                ui.t("library.menu.declare")
+            };
+            if ui.button(format!("{}  {}", icons::PLUS, label)).clicked() {
+                actions.push(Action::DeclareSelected);
                 ui.close();
             }
+        }
+        if ui
+            .button(format!("{}  {}", icons::FOLDER_OPEN, ui.t("library.menu.reveal")))
+            .clicked()
+        {
+            actions.push(Action::RevealSelected);
+            ui.close();
+        }
+        if many {
+            if sel_info.declared > 0
+                && ui
+                    .button(format!(
+                        "{}  {}",
+                        icons::TRASH,
+                        ui.tn("library.menu.remove_n", sel_info.declared, &[])
+                    ))
+                    .clicked()
+            {
+                actions.push(Action::AskDeleteSelected);
+                ui.close();
+            }
+            ui.separator();
+            if ui.button(ui.t("library.menu.select_all")).clicked() {
+                actions.push(Action::SelectAll);
+                ui.close();
+            }
+            if ui.button(ui.t("library.selection.clear")).clicked() {
+                actions.push(Action::ClearSelection);
+                ui.close();
+            }
+            return;
+        }
+        if item.undeclared {
             return;
         }
         if item.entry.kind != AssetKind::Image {
@@ -875,7 +1213,11 @@ fn interact(
             ))
             .clicked()
         {
-            actions.push(Action::Select(item.entry.id));
+            actions.push(Action::Click {
+                path: item.entry.path.clone(),
+                ctrl: false,
+                shift: false,
+            });
             actions.push(Action::BeginRename(item.entry.id));
             ui.close();
         }
@@ -883,7 +1225,7 @@ fn interact(
             .button(format!("{}  {}", icons::TRASH, ui.t("library.menu.remove")))
             .clicked()
         {
-            actions.push(Action::AskDelete(item.entry.id));
+            actions.push(Action::AskDeleteSelected);
             ui.close();
         }
     });
@@ -901,7 +1243,7 @@ fn grid(
     ui: &mut Ui,
     st: &mut LibUi,
     shown: &[Item],
-    selected: Option<AssetId>,
+    info: SelectionInfo,
     root: &Path,
     waker: &orbit_editor_api::Waker,
     actions: &mut Vec<Action>,
@@ -917,8 +1259,17 @@ fn grid(
     let progress = st.audio.progress();
     area.show_rows(ui, CELL.y, rows, |ui, range| {
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        // The empty space behind the cells: click to clear, drag a marquee.
+        // Registered first, so the cells (on top) keep their own clicks.
+        let background = ui.interact(
+            ui.clip_rect(),
+            ui.id().with("library_marquee"),
+            Sense::click_and_drag(),
+        );
+        let mut origin: Option<egui::Pos2> = None;
         for r in range {
             let (row, _) = ui.allocate_exact_size(vec2(width, CELL.y), Sense::hover());
+            origin.get_or_insert(row.min - vec2(0.0, r as f32 * CELL.y));
             for c in 0..cols {
                 let Some(item) = shown.get(r * cols + c) else {
                     break;
@@ -928,8 +1279,18 @@ fn grid(
                 let thumb = thumbs::state(ui.ctx(), waker, root, &item.entry);
                 let is_playing = playing == Some(item.entry.id) && !item.undeclared;
                 let id = ui.id().with(("asset_cell", r, c, &item.entry.path));
-                let response = interact(ui, rect, id, item, &thumb, actions, is_playing);
-                let is_selected = !item.undeclared && selected == Some(item.entry.id);
+                let is_selected = st.selection.contains(&item.entry.path);
+                let response = interact(
+                    ui,
+                    rect,
+                    id,
+                    item,
+                    &thumb,
+                    actions,
+                    is_playing,
+                    is_selected,
+                    info,
+                );
                 let painter = ui.painter();
                 if is_selected || response.hovered() {
                     painter.rect_filled(
@@ -1000,7 +1361,67 @@ fn grid(
                 );
             }
         }
+        if let Some(origin) = origin {
+            marquee(ui, st, &background, origin, cols, shown, actions);
+        }
     });
+}
+
+/// Marquee selection of the grid: a drag on the empty space selects the
+/// cells it touches (added to the selection with Ctrl or Shift). Positions
+/// are kept relative to the content, so the marquee follows scrolling.
+fn marquee(
+    ui: &Ui,
+    st: &mut LibUi,
+    background: &egui::Response,
+    origin: egui::Pos2,
+    cols: usize,
+    shown: &[Item],
+    actions: &mut Vec<Action>,
+) {
+    let pointer = ui.ctx().pointer_interact_pos();
+    if background.drag_started()
+        && let Some(p) = pointer
+    {
+        st.marquee = Some((
+            egui::pos2(p.x - origin.x, p.y - origin.y),
+            st.selection.clone(),
+        ));
+    }
+    if background.clicked() && !ui.input(|i| i.modifiers.command || i.modifiers.shift) {
+        actions.push(Action::ClearSelection);
+    }
+    let Some((start, base)) = st.marquee.clone() else { return };
+    if !background.dragged() {
+        st.marquee = None;
+        return;
+    }
+    let Some(p) = pointer else { return };
+    let now = egui::pos2(p.x - origin.x, p.y - origin.y);
+    let area = egui::Rect::from_two_pos(start, now);
+    let hits: Vec<String> = shown
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| {
+            let cell = egui::Rect::from_min_size(
+                egui::pos2((i % cols) as f32 * CELL.x, (i / cols) as f32 * CELL.y),
+                CELL,
+            )
+            .shrink(3.0);
+            cell.intersects(area)
+        })
+        .map(|(_, item)| item.entry.path.clone())
+        .collect();
+    let additive = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+    st.selection.marquee(&base, &hits, additive);
+    let shown_rect = area.translate(origin.to_vec2());
+    ui.painter().rect(
+        shown_rect,
+        CornerRadius::same(2),
+        accent_soft(ui, 40),
+        Stroke::new(1.0, accent(ui)),
+        egui::StrokeKind::Inside,
+    );
 }
 
 /// Corner badges: a problem with the file, a file not in the manifest.
@@ -1034,7 +1455,7 @@ fn list(
     ui: &mut Ui,
     st: &mut LibUi,
     shown: &[Item],
-    selected: Option<AssetId>,
+    info: SelectionInfo,
     root: &Path,
     waker: &orbit_editor_api::Waker,
     actions: &mut Vec<Action>,
@@ -1054,8 +1475,18 @@ fn list(
             let thumb = thumbs::state(ui.ctx(), waker, root, &item.entry);
             let is_playing = playing == Some(item.entry.id) && !item.undeclared;
             let id = ui.id().with(("asset_row", index, &item.entry.path));
-            let response = interact(ui, rect, id, item, &thumb, actions, is_playing);
-            let is_selected = !item.undeclared && selected == Some(item.entry.id);
+            let is_selected = st.selection.contains(&item.entry.path);
+            let response = interact(
+                ui,
+                rect,
+                id,
+                item,
+                &thumb,
+                actions,
+                is_playing,
+                is_selected,
+                info,
+            );
             if is_selected || response.hovered() {
                 ui.painter().rect_filled(
                     rect.shrink2(vec2(2.0, 0.0)),
@@ -1222,7 +1653,7 @@ fn details(
                     actions.push(Action::BeginRename(item.entry.id));
                 }
                 if icon_button(ui, icons::TRASH, &ui.t("library.menu.remove")).clicked() {
-                    actions.push(Action::AskDelete(item.entry.id));
+                    actions.push(Action::AskDeleteSelected);
                 }
                 let users = asset_users(story, item.entry.id);
                 if users.is_empty() {
@@ -1287,37 +1718,70 @@ fn split_path(path: &str) -> (&str, &str) {
     (dir, ext)
 }
 
+/// The assets to remove, with their file name and how many places use them
+/// (counted once, when the removal is asked, in one pass over the story).
+fn removal_candidates(story: &Story, ids: &[AssetId], all: &[Item]) -> Vec<(AssetId, String, usize)> {
+    let users = orbit_project::asset_users_index(story);
+    ids.iter()
+        .filter_map(|id| {
+            let item = all.iter().find(|i| i.entry.id == *id && !i.undeclared)?;
+            let uses = users.get(id).map_or(0, Vec::len);
+            Some((*id, item.file_name().to_owned(), uses))
+        })
+        .collect()
+}
+
 fn confirm_delete(
     ui: &mut Ui,
-    ctx: &EditorContext<'_>,
+    _ctx: &EditorContext<'_>,
     st: &mut LibUi,
-    all: &[Item],
+    _all: &[Item],
     actions: &mut Vec<Action>,
 ) {
-    let Some(id) = st.confirm_delete else { return };
-    let Some(item) = all.iter().find(|i| i.entry.id == id) else {
-        st.confirm_delete = None;
+    if st.confirm_delete.is_empty() {
         return;
-    };
-    let name = item.file_name().to_owned();
-    let uses = ctx.story().map_or(0, |s| asset_users(s, id).len());
+    }
+    let candidates = &st.confirm_delete;
+    let free: Vec<AssetId> = candidates.iter().filter(|c| c.2 == 0).map(|c| c.0).collect();
+    let used: Vec<&(AssetId, String, usize)> = candidates.iter().filter(|c| c.2 > 0).collect();
     let modal = egui::Modal::new(Id::new("orbit_asset_delete")).show(ui.ctx(), |ui| {
         ui.set_width(380.0);
-        ui.label(strong(ui.t("library.delete.title"), 15.0));
-        ui.add_space(6.0);
-        if uses > 0 {
-            ui.label(
-                egui::RichText::new(ui.tn("library.delete.in_use", uses, &[("name", &name)]))
-                    .color(danger(ui)),
-            );
+        if let [(_, name, uses)] = candidates.as_slice() {
+            ui.label(strong(ui.t("library.delete.title"), 15.0));
+            ui.add_space(6.0);
+            if *uses > 0 {
+                ui.label(
+                    egui::RichText::new(ui.tn("library.delete.in_use", *uses, &[("name", name)]))
+                        .color(danger(ui)),
+                );
+            } else {
+                ui.label(ui.tf("library.delete.confirm", &[("name", name)]));
+            }
         } else {
-            ui.label(ui.tf("library.delete.confirm", &[("name", &name)]));
+            ui.label(strong(ui.tn("library.delete.title_n", candidates.len(), &[]), 15.0));
+            ui.add_space(6.0);
+            if !free.is_empty() {
+                ui.label(ui.tn("library.delete.confirm_n", free.len(), &[]));
+            }
+            if !used.is_empty() {
+                let names: Vec<&str> = used.iter().take(5).map(|c| c.1.as_str()).collect();
+                let more = if used.len() > 5 { ", …" } else { "" };
+                ui.label(
+                    egui::RichText::new(ui.tn(
+                        "library.delete.in_use_n",
+                        used.len(),
+                        &[("names", &format!("{}{more}", names.join(", ")))],
+                    ))
+                    .color(danger(ui)),
+                );
+            }
         }
+        let uses = usize::from(free.is_empty());
         ui.add_space(10.0);
         let mut close = false;
         ui.horizontal(|ui| {
-            if uses == 0 && primary_button(ui, &ui.t("common.remove")).clicked() {
-                actions.push(Action::Delete(id));
+            if !free.is_empty() && primary_button(ui, &ui.t("common.remove")).clicked() {
+                actions.push(Action::Delete(free.clone()));
                 close = true;
             }
             let dismiss = ui.t(if uses == 0 {
@@ -1332,7 +1796,7 @@ fn confirm_delete(
         close
     });
     if modal.inner || modal.should_close() {
-        st.confirm_delete = None;
+        st.confirm_delete.clear();
     }
 }
 
@@ -1347,11 +1811,7 @@ fn apply(
 ) {
     for action in actions {
         match action {
-            Action::Select(id) => ctx.state_mut().selected_asset = Some(id),
             Action::Import => import_dialog(ctx),
-            Action::Declare(path) => {
-                import_paths(ctx, &[root.join(path)]);
-            }
             Action::Play(id) => {
                 let Some(entry) = ctx.story().and_then(|s| s.assets.get(id)).cloned() else {
                     continue;
@@ -1377,18 +1837,40 @@ fn apply(
                 state.borrow_mut().rename = None;
                 rename(ctx, moves, root, id, &stem);
             }
-            Action::AskDelete(id) => state.borrow_mut().confirm_delete = Some(id),
-            Action::Delete(id) => {
+            Action::Delete(ids) => {
                 state.borrow_mut().audio.stop();
-                if ctx.ops_or_toast(|p| ops::remove_asset(p, id)).is_some() {
-                    if ctx.state().selected_asset == Some(id) {
+                let n = ids.len();
+                let label = ctx.tn("library.delete.undo", n, &[]);
+                // All the removals are one undo step.
+                let removed = ctx.ops_or_toast(|p| {
+                    p.group(&label, |p| {
+                        for id in &ids {
+                            ops::remove_asset(p, *id)?;
+                        }
+                        Ok::<(), orbit_project::ProjectError>(())
+                    })
+                });
+                if removed.is_some() {
+                    if ctx.state().selected_asset.is_some_and(|s| ids.contains(&s)) {
                         ctx.state_mut().selected_asset = None;
                     }
                     ctx.state_mut().asset_epoch += 1;
-                    let message = ctx.t("library.removed");
+                    let message = if n == 1 {
+                        ctx.t("library.removed")
+                    } else {
+                        ctx.tn("library.removed_n", n, &[])
+                    };
                     ctx.log(Level::Info, message);
                 }
             }
+            Action::Click { .. }
+            | Action::ContextOn(_)
+            | Action::SelectAll
+            | Action::ClearSelection
+            | Action::DeclareSelected
+            | Action::AskDeleteSelected
+            | Action::RevealSelected => {} // handled by the panel
+
             Action::ShowUser(location) => reveal::reveal(ctx, location),
         }
     }

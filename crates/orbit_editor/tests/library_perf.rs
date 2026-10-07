@@ -72,6 +72,56 @@ fn open(dir: &TempDir, n: usize, side: u32) -> (EditorCore, Context, Vec<PathBuf
     (core, ctx, files)
 }
 
+/// Declaring 200 undeclared PNGs: the decoding runs on the task pool, no
+/// frame stalls, the whole declaration is one undo step.
+#[test]
+fn declaring_200_files_is_one_step_and_keeps_frames_short() {
+    let dir = TempDir::new("declare200");
+    let (mut core, ctx, _files) = open(&dir, 200, 48);
+    let before = core.story().unwrap().assets.assets.len();
+    let start = Instant::now();
+    core.state
+        .requests
+        .push(EditorRequest::RunAction("orbit.library.declare_all".into()));
+    let mut worst = Duration::ZERO;
+    let mut frames = 0;
+    while core.story().unwrap().assets.assets.len() == before {
+        worst = worst.max(frame(&mut core, &ctx, 3.0 + f64::from(frames) * 0.016));
+        frames += 1;
+        assert!(start.elapsed() < Duration::from_secs(60), "the declaration never landed");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let total = start.elapsed();
+    for i in 0..5 {
+        worst = worst.max(frame(&mut core, &ctx, 10.0 + f64::from(i) * 0.016));
+    }
+    let after = core.story().unwrap().assets.assets.len();
+    eprintln!("declare 200: total {total:?} in {frames} frames, worst frame {worst:?}");
+    assert_eq!(after, before + 200);
+    // Frames stay short: 16 ms in release, a looser bound for debug builds.
+    let budget = if cfg!(debug_assertions) { 250 } else { 16 };
+    assert!(worst < Duration::from_millis(budget), "a frame took {worst:?}");
+    // One undo removes the whole declaration.
+    core.run_action_now("orbit.core.undo", &ctx);
+    assert_eq!(core.story().unwrap().assets.assets.len(), before);
+}
+
+/// The one-pass usage index (bulk removal) agrees with `asset_users`.
+#[test]
+fn the_asset_users_index_matches_asset_users() {
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/stories/demo.ron"),
+    )
+    .unwrap();
+    let story = orbit_core::Story::from_ron(&text).unwrap();
+    let index = orbit_project::asset_users_index(&story);
+    assert!(!index.is_empty());
+    for a in &story.assets.assets {
+        let one = orbit_project::asset_users(&story, a.id);
+        assert_eq!(index.get(&a.id).cloned().unwrap_or_default(), one, "{}", a.path);
+    }
+}
+
 #[test]
 #[ignore]
 fn baseline_declare_one_by_one() {
@@ -139,6 +189,9 @@ fn real_project_lint_parts() {
         return;
     };
     let root = Path::new(&src);
+    let t = Instant::now();
+    let ok = orbit_ui::UiBundle::load_dir(&root.join("ui")).is_ok();
+    eprintln!("ui bundle: {:?} ok={ok}", t.elapsed());
     for e in std::fs::read_dir(root.join("assets/rigs")).unwrap().flatten() {
         let rel = format!("assets/rigs/{}", e.file_name().to_string_lossy());
         let t = Instant::now();
@@ -293,7 +346,11 @@ fn real_project_bench() {
     let t = Instant::now();
     let mut core = EditorCore::new(CoreOptions::with_language(orbit_editor_api::Lang::En), &ctx);
     core.open_project(&p);
-    eprintln!("open: {:?}", t.elapsed());
+    core.wait_for_background_work();
+    eprintln!("open: {:?}, dialog open: {}", t.elapsed(), core.dialog.is_some());
+    if core.dialog.is_some() {
+        core.dialog = None;
+    }
     core.state.requests.push(EditorRequest::ShowPanel("orbit.library.library".into()));
     run(&mut core, &ctx, "first frames", 30, Box::new(|_, _| {}), 0.0);
     run(&mut core, &ctx, "idle", 30, Box::new(|_, _| {}), 1.0);
@@ -304,6 +361,34 @@ fn real_project_bench() {
     run(&mut core, &ctx, "declare 180 at once", 1,
         Box::new(move |c, _| c.import_dropped(rest.clone())), 3.0);
     run(&mut core, &ctx, "after declare", 200, Box::new(|_, _| {}), 4.0);
+    // The library's "Declare all" (task pool) on 200 more copies.
+    for i in 0..200 {
+        let to = p.join(format!("assets/images/bench/more_{i:03}.png"));
+        std::fs::copy(&images[i % images.len()], &to).unwrap();
+    }
+    run(&mut core, &ctx, "rescan", 5, Box::new(|c, _| c.state.asset_epoch += 1), 8.0);
+    let before = core.story().unwrap().assets.assets.len();
+    orbit_profile::clear();
+    let t = Instant::now();
+    core.state
+        .requests
+        .push(EditorRequest::RunAction("orbit.library.declare_all".into()));
+    let mut worst = Duration::ZERO;
+    let mut n = 0;
+    while core.story().unwrap().assets.assets.len() == before && t.elapsed() < Duration::from_secs(120) {
+        orbit_profile::begin_frame();
+        worst = worst.max(frame(&mut core, &ctx, 9.0 + f64::from(n) * 0.016));
+        orbit_profile::finish_frame();
+        n += 1;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    eprintln!(
+        "declare all (200 large PNGs, task pool): total {:?}, {n} frames, worst frame {worst:?}, declared {}",
+        t.elapsed(),
+        core.story().unwrap().assets.assets.len() - before
+    );
+    profile_top("declare all", n.min(200) as usize);
+    run(&mut core, &ctx, "after declare all", 60, Box::new(|_, _| {}), 20.0);
     let t = Instant::now();
     core.save();
     core.wait_for_background_work();

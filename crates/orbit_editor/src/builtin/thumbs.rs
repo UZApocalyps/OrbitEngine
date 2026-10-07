@@ -115,6 +115,7 @@ impl Service {
         {
             return *stamp;
         }
+        orbit_profile::scope!("thumbs: stat");
         let stamp = Stamp::of(&root.join(rel));
         self.stamps.insert(key, (now, stamp));
         stamp
@@ -131,6 +132,7 @@ pub fn state(egui_ctx: &Context, waker: &Waker, root: &Path, entry: &AssetEntry)
     if svc.polled_pass != pass {
         svc.polled_pass = pass;
         svc.tick += 1;
+        orbit_profile::scope!("thumbs: poll");
         svc.poll(egui_ctx);
     }
     if !svc.pruned.iter().any(|r| r == root) {

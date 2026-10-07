@@ -25,6 +25,7 @@ mod scripts_panel;
 mod achievements_panel;
 mod inspector_stage;
 mod library;
+mod library_select;
 pub mod manual;
 mod nodeinfo;
 mod preview;

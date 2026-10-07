@@ -440,6 +440,179 @@ pub fn import_files(
     report
 }
 
+// ------------------------------------------------------------ declare
+
+/// An importer's validation function (see `AssetImporter::import`).
+pub type ImportFn = fn(&[u8]) -> Result<orbit_plugin_api::ImportedAsset, String>;
+
+/// One file of the asset folder to declare, as the UI thread hands it to the
+/// worker: everything owned, nothing borrowed from the project.
+pub struct DeclareInput {
+    /// Manifest path (relative, `/`), under `assets/`.
+    pub rel: String,
+    pub import: Option<ImportFn>,
+}
+
+/// What the worker found for one file.
+pub struct DeclareChecked {
+    pub rel: String,
+    pub result: Result<AssetKind, ImportError>,
+}
+
+/// What [`declare_inputs`] needs per file: its importer (looked up on the UI
+/// thread, the registry stays there).
+pub fn declare_inputs(registry: &ProjectRegistry, rels: &[String]) -> Vec<DeclareInput> {
+    rels.iter()
+        .map(|rel| {
+            let ext = rel.rsplit_once('.').map_or("", |(_, e)| e);
+            DeclareInput {
+                rel: rel.clone(),
+                import: registry.importer_for(ext).map(|i| i.import),
+            }
+        })
+        .collect()
+}
+
+/// Worker side of "Declare in project": reads and validates each file
+/// (decoding it with its importer), nothing else. Files are not copied:
+/// they already are in the asset folder. `step` is called after each file
+/// with the number done; returning `false` stops (cancelled).
+pub fn check_declare(
+    root: &Path,
+    inputs: Vec<DeclareInput>,
+    accepted: &str,
+    step: impl FnMut(usize) -> bool + Send,
+) -> Vec<DeclareChecked> {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    // Decoding dominates: spread it over a few threads, half the cores at
+    // most so the UI and the thumbnails keep theirs.
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get() / 2)
+        .clamp(1, 4)
+        .min(inputs.len().max(1));
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let step = Mutex::new(step);
+    let slots: Vec<Mutex<Option<DeclareChecked>>> = inputs.iter().map(|_| Mutex::new(None)).collect();
+    let inputs: Vec<Mutex<Option<DeclareInput>>> = inputs.into_iter().map(|i| Mutex::new(Some(i))).collect();
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                loop {
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(input) = inputs.get(i).and_then(|m| m.lock().ok()?.take()) else {
+                        return;
+                    };
+                    let checked = check_one(root, input, accepted);
+                    if let Ok(mut slot) = slots[i].lock() {
+                        *slot = Some(checked);
+                    }
+                    let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    if let Ok(mut step) = step.lock()
+                        && !step(n)
+                    {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                }
+            });
+        }
+    });
+    slots
+        .into_iter()
+        .filter_map(|m| m.into_inner().ok().flatten())
+        .collect()
+}
+
+/// Reads and decodes one file to declare.
+fn check_one(root: &Path, input: DeclareInput, accepted: &str) -> DeclareChecked {
+    let path = root.join(&input.rel);
+    let result = (|| {
+        let Some(import) = input.import else {
+            return Err(ImportError::Unsupported {
+                extension: input.rel.rsplit_once('.').map_or("", |(_, e)| e).to_owned(),
+                accepted: accepted.to_owned(),
+            });
+        };
+        let meta = fs::metadata(&path).map_err(|e| ImportError::Unreadable(e.to_string()))?;
+        if meta.len() > MAX_IMPORT_BYTES {
+            return Err(ImportError::TooLarge(meta.len()));
+        }
+        let bytes = fs::read(&path).map_err(|e| ImportError::Unreadable(e.to_string()))?;
+        import(&bytes).map(|a| a.kind).map_err(ImportError::Invalid)
+    })();
+    DeclareChecked { rel: input.rel, result }
+}
+
+/// UI-thread side: declares the checked files as **one** undo step (one
+/// revision, so one validation and one search reindex). Files declared
+/// meanwhile (or whose path is not a clean `assets/` path) are skipped.
+pub fn commit_declare(
+    project: &mut Project,
+    checked: &[DeclareChecked],
+    texts: &Translator,
+) -> ImportReport {
+    let mut report = ImportReport::default();
+    let mut taken: HashSet<String> = project
+        .story()
+        .assets
+        .assets
+        .iter()
+        .map(|a| a.path.to_lowercase())
+        .collect();
+    let mut to_declare: Vec<AssetEntry> = Vec::new();
+    for c in checked {
+        match &c.result {
+            Err(e) => report.failed.push((PathBuf::from(&c.rel), e.clone())),
+            Ok(kind) => {
+                if !c.rel.starts_with("assets/") || !taken.insert(c.rel.to_lowercase()) {
+                    continue;
+                }
+                to_declare.push(AssetEntry {
+                    id: AssetId::new(),
+                    kind: *kind,
+                    path: c.rel.clone(),
+                });
+            }
+        }
+    }
+    if to_declare.is_empty() {
+        return report;
+    }
+    let label = texts.tn("library.declare.undo", to_declare.len(), &[]);
+    let base = project.story().assets.assets.len();
+    let result = project.transaction_labeled(&label, |tx| {
+        for (i, entry) in to_declare.iter().enumerate() {
+            tx.execute(Command::SetAsset {
+                id: entry.id,
+                entry: Some(entry.clone()),
+                index: Some(base + i),
+            })?;
+        }
+        Ok(())
+    });
+    match result {
+        Ok(()) => report.imported.extend(to_declare.into_iter().map(|e| Imported {
+            id: e.id,
+            kind: e.kind,
+            path: e.path,
+            existing: false,
+        })),
+        Err(e) => {
+            for entry in to_declare {
+                report
+                    .failed
+                    .push((PathBuf::from(entry.path), ImportError::Io(e.to_string())));
+            }
+        }
+    }
+    report
+}
+
 // ------------------------------------------------------------- rename, move
 
 /// A file move made by the editor: undoing / redoing the manifest change

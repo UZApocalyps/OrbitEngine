@@ -70,6 +70,46 @@ pub fn asset_users(story: &Story, id: AssetId) -> Vec<AssetUser> {
     nodes.chain(characters).chain(achievements).collect()
 }
 
+/// [`asset_users`] of every asset at once, in one pass over the story (for
+/// the questions about many assets: a bulk removal, a usage column). Same
+/// order per asset as [`asset_users`]; unused assets are absent.
+pub fn asset_users_index(story: &Story) -> std::collections::HashMap<AssetId, Vec<AssetUser>> {
+    let mut out: std::collections::HashMap<AssetId, Vec<AssetUser>> = Default::default();
+    let mut add = |id: AssetId, user: AssetUser| {
+        let users = out.entry(id).or_default();
+        // A user's references come in a row: comparing with the last is enough.
+        if users.last() != Some(&user) {
+            users.push(user);
+        }
+    };
+    for n in story.scenes.iter().flat_map(|s| &s.nodes) {
+        let user = AssetUser::Node(n.id);
+        match &n.kind {
+            NodeKind::Background { asset, .. }
+            | NodeKind::PlayMusic { asset, .. }
+            | NodeKind::PlaySound { asset }
+            | NodeKind::ShowScene3d { scene: asset, .. } => add(*asset, user),
+            NodeKind::BackgroundLayers { layers, .. } => layers.iter().for_each(|l| add(l.asset, user)),
+            NodeKind::Particles(e) => e.sprite.into_iter().for_each(|s| add(s, user)),
+            NodeKind::Say { voice: Some(v), .. } => add(*v, user),
+            _ => {}
+        }
+    }
+    for c in &story.characters {
+        for e in &c.expressions {
+            for a in e.assets() {
+                add(a, AssetUser::Character(c.id));
+            }
+        }
+    }
+    for a in &story.achievements {
+        for icon in [a.icon, a.locked_icon].into_iter().flatten() {
+            add(icon, AssetUser::Achievement(a.id));
+        }
+    }
+    out
+}
+
 pub(crate) fn apply(cmd: &Command, story: &mut Story) -> Result<Applied, CommandError> {
     match cmd {
         Command::InsertScene { index, scene } => {

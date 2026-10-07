@@ -34,7 +34,7 @@ pub use export::{
     AndroidFormat, AndroidOrientation, DesktopQuality, ExportProfile, ExportTarget, PakCompression,
     is_valid_android_package, slugify,
 };
-pub use ext::{AssetUser, asset_users};
+pub use ext::{AssetUser, asset_users, asset_users_index};
 pub use project::{
     ChangeEvent, ChangeKind, Project, ProjectError, Rejection, SubscriptionId, Transaction,
 };
