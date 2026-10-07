@@ -98,6 +98,9 @@ pub struct PixelState {
     failed: HashSet<String>,
     /// Pictures open in another application, and their file's last state.
     watched: HashMap<String, Stamp>,
+    /// Watched pictures being written by the background writer (their new
+    /// stamp is taken once written).
+    own_writes: HashSet<String>,
     epoch: u64,
     /// Pixel revision of each picture last sent to the viewport host.
     sent: HashMap<String, u64>,
@@ -130,6 +133,7 @@ impl Default for PixelState {
             owned: HashSet::new(),
             failed: HashSet::new(),
             watched: HashMap::new(),
+            own_writes: HashSet::new(),
             epoch: 0,
             sent: HashMap::new(),
             forget: Vec::new(),
@@ -423,28 +427,32 @@ pub(super) fn editable(ctx: &mut EditorContext<'_>, st: &mut State, path: &str, 
     Some(copy)
 }
 
-/// Writes the pictures changed in memory (with the rig's save).
+/// Writes the pictures changed in memory (with the rig's save), on the
+/// background writer: encoding a 2048 px PNG takes over 100 ms in debug
+/// builds, which froze the editor on every save of a painted rig. Callers
+/// that need the files at once (external editor, duplicate) call
+/// [`crate::writer::flush`]. A failure is logged (console).
 pub fn save_canvases(ctx: &mut EditorContext<'_>, st: &mut State) -> bool {
     let root = st.project_root(ctx);
     let Some(doc) = st.doc.as_mut() else { return true };
-    let mut ok = true;
     for path in doc.unsaved_canvases() {
         let Some(c) = doc.canvas(&path) else { continue };
         let abs = root.join(&path);
-        match write_png(&abs, c.w, c.h, &c.rgba) {
-            Ok(()) => {
-                doc.mark_canvas_saved(&path);
-                if let Some(s) = st.px.watched.get_mut(&path) {
-                    *s = stamp(&abs);
-                }
+        let (w, h, rgba) = (c.w, c.h, c.rgba.clone());
+        let failed = ctx.tf("rig.pixels.write_failed", &[("path", &path), ("error", &"{error}")]);
+        crate::writer::submit(Some(abs.clone()), move || {
+            orbit_profile::scope!("rig picture encode + write");
+            if let Err(e) = write_png(&abs, w, h, &rgba) {
+                log::error!("{}", failed.replace("{error}", &e));
             }
-            Err(e) => {
-                ok = false;
-                ctx.error(ctx.tf("rig.pixels.write_failed", &[("path", &path), ("error", &e)]));
-            }
+        });
+        doc.mark_canvas_saved(&path);
+        if st.px.watched.contains_key(&path) {
+            // Our own write must not look like an external edit.
+            st.px.own_writes.insert(path);
         }
     }
-    ok
+    true
 }
 
 /// The edited pixels the viewport host does not have yet.
@@ -739,6 +747,8 @@ pub fn open_external(ctx: &mut EditorContext<'_>, st: &mut State) {
     if !save_canvases(ctx, st) {
         return;
     }
+    // The other application opens the file: it must be on disk.
+    crate::writer::flush();
     let abs = st.project_root(ctx).join(&t.path);
     let custom = ctx.pref(crate::builtin::ids::RIG, PREF_IMAGE_EDITOR).map(str::trim).filter(|s| !s.is_empty()).map(String::from);
     let spawned = match &custom {
@@ -762,6 +772,19 @@ pub fn poll_external(ctx: &mut EditorContext<'_>, st: &mut State) {
     let epoch = ctx.state().asset_epoch;
     if epoch == st.px.epoch {
         return;
+    }
+    if !st.px.own_writes.is_empty() {
+        // Our pictures are still being written: look again next frame,
+        // then take their new stamps as ours.
+        if crate::writer::pending() {
+            return;
+        }
+        let root = st.project_root(ctx);
+        for path in std::mem::take(&mut st.px.own_writes) {
+            if let Some(s) = st.px.watched.get_mut(&path) {
+                *s = stamp(&root.join(&path));
+            }
+        }
     }
     st.px.epoch = epoch;
     if st.px.watched.is_empty() || st.doc.is_none() {

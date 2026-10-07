@@ -32,6 +32,8 @@ mod layered_import;
 mod jobs;
 mod rigtools;
 mod shared;
+#[cfg(test)]
+mod budget;
 
 use std::cell::RefCell;
 use std::collections::HashMap;

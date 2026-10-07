@@ -123,6 +123,11 @@ pub fn flush() {
     }
 }
 
+/// Whether jobs are queued or running (does not wait).
+pub fn pending() -> bool {
+    writer().queue.lock().map_or(false, |q| q.busy || !q.jobs.is_empty())
+}
+
 /// Jobs submitted since the start of the process.
 pub fn submitted() -> u64 {
     writer().queue.lock().map_or(0, |q| q.submitted)

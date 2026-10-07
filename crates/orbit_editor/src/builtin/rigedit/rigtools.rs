@@ -116,6 +116,8 @@ impl State {
         // The files are copied in the background (pictures can be big).
         let name = name.to_owned();
         super::jobs::start(ctx, self, "rig.task.duplicate", super::jobs::files(Vec::new()), move |_| {
+            // The painted pictures are written by the background writer.
+            crate::writer::flush();
             rigops::duplicate_files(&root, &rig, &name, copy_pictures)
                 .map(|done| super::jobs::Out::Duplicated(Box::new(done)))
                 .map_err(|e| orbit_editor_api::TaskError::Failed(e.message))

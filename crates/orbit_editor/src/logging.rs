@@ -47,12 +47,52 @@ impl log::Log for Tee {
     }
 }
 
+/// stderr, written by a thread of its own: a console that blocks its
+/// writer (a selection in a Windows console in QuickEdit mode, a slow
+/// terminal, a full pipe) must not freeze the editor's UI thread.
+struct AsyncStderr {
+    tx: std::sync::mpsc::Sender<Vec<u8>>,
+    buf: Vec<u8>,
+}
+
+impl AsyncStderr {
+    fn new() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let _ = std::thread::Builder::new()
+            .name("orbit-log".into())
+            .spawn(move || {
+                use std::io::Write;
+                let mut err = std::io::stderr();
+                while let Ok(line) = rx.recv() {
+                    let _ = err.write_all(&line);
+                }
+            });
+        Self { tx, buf: Vec::new() }
+    }
+}
+
+impl std::io::Write for AsyncStderr {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if !self.buf.is_empty() {
+            // A gone log thread only loses the line.
+            let _ = self.tx.send(std::mem::take(&mut self.buf));
+        }
+        Ok(())
+    }
+}
+
 /// Installs the logger (`RUST_LOG` as usual, `info` by default). Safe to
 /// call twice: the second call is ignored.
 pub fn init() {
     let inner = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn"),
     )
+    .target(env_logger::Target::Pipe(Box::new(AsyncStderr::new())))
     .build();
     let max = inner.filter();
     if log::set_boxed_logger(Box::new(Tee { inner })).is_ok() {
