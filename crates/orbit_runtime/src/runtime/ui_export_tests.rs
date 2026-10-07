@@ -147,12 +147,12 @@ fn ui_files_are_exported_and_loaded_before_the_first_screen() {
         let mut rt = Runtime::new(renderer().unwrap(), config).unwrap();
         for _ in 0..5_000 {
             rt.update(Duration::from_millis(16));
-            if matches!(rt.phase, Phase::Ready(_) | Phase::Failed(_)) {
+            if matches!(rt.phase, Phase::Ready(_) | Phase::Splash(_) | Phase::Failed(_)) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(2));
         }
-        assert!(matches!(rt.phase, Phase::Ready(_)), "the game is ready (lazy: {lazy})");
+        assert!(matches!(rt.phase, Phase::Ready(_) | Phase::Splash(_)), "the game is ready (lazy: {lazy})");
         // Before the first screen: every image is a texture, the font is
         // registered, the splash image is requested.
         for path in [BUTTON, BUTTON_HOVER, PANEL, LOGO, INDICATOR, MEDAL, MEDAL_LOCKED] {
@@ -166,7 +166,7 @@ fn ui_files_are_exported_and_loaded_before_the_first_screen() {
         }
         // The achievements screen binds Achievement(Icon): the locked icon
         // while locked, the icon once unlocked, both drawable textures.
-        let Phase::Ready(shell) = &rt.phase else { unreachable!() };
+        let shell = match &rt.phase { Phase::Ready(shell) => shell, Phase::Splash(sp) => &sp.shell, _ => unreachable!() };
         let story = shell.story().clone();
         let achievements = achievement_images(&story, &rt.store);
         let loc = orbit_i18n::Localizer::from_story(&story);

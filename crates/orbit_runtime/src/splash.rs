@@ -192,7 +192,8 @@ pub(crate) enum AfterLoad {
     /// A restart inside a running session (hot reload): the splashes
     /// already played, the game starts at once.
     RunNow,
-    /// Native `auto_start`: the splashes play, then a new game starts.
+    /// Native: no click gate, the splashes play at once (then a new game
+    /// when `auto_start`, else the main menu).
     Splash,
     /// Wait for the "click to start" gesture.
     Ready,

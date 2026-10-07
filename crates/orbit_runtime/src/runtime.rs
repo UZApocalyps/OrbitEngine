@@ -848,9 +848,13 @@ impl Runtime {
             self.streaming = Some(Streaming::new(first));
         }
         let shell = self.build_shell_full(story, &translation_texts, packed, info, pack_ui);
-        // Hot reload restarts at once; `auto_start` skips the click natively
-        // (nothing blocks audio there) but not on the web (autoplay policy).
-        let native_auto = self.config.auto_start && !cfg!(target_arch = "wasm32");
+        // Hot reload restarts at once. Natively the "click to start" gate is
+        // skipped (nothing blocks audio there): the splashes play right away,
+        // then a new game starts (`auto_start`) or the main menu shows. The
+        // web keeps the gate (autoplay policy), and so does an embedded
+        // runtime's own flow.
+        let native_auto = !cfg!(target_arch = "wasm32") && self.embedded.is_none();
+        let start_game = self.config.auto_start;
         self.phase = match AfterLoad::decide(autostart, native_auto) {
             AfterLoad::RunNow => {
                 self.started_once = true;
@@ -861,7 +865,7 @@ impl Runtime {
             AfterLoad::Splash => {
                 self.started_once = true;
                 self.audio.resume_after_user_gesture();
-                self.begin_splash(shell, true)
+                self.begin_splash(shell, start_game)
             }
             AfterLoad::Ready => Phase::Ready(shell),
         };
