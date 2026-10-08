@@ -10,7 +10,7 @@ use crate::layout::{Align, Anchor, Dir, PanelKind, Size};
 use crate::transition::ScreenTransition;
 
 /// Current version of the screen document format.
-pub const UI_VERSION: u32 = 8;
+pub const UI_VERSION: u32 = 9;
 
 fn default_version() -> u32 {
     UI_VERSION
@@ -48,6 +48,61 @@ pub struct ScreenAsset {
     /// Played when the screen closes (`ui_version` 4, UI-16).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition_out: Option<ScreenTransition>,
+    /// The music the screen plays while it is open (`ui_version` 9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub music: Option<ScreenMusic>,
+}
+
+/// What the music of a screen does when the screen opens over a running
+/// game (`ui_version` 9). On the title it is always a plain replacement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OverGame {
+    /// The screen's track replaces the game's music (restored on close when
+    /// [`ScreenMusic::resume_game_music`] is set).
+    #[default]
+    Replace,
+    /// The game's music keeps playing, quieter ([`ScreenMusic::duck_volume`]),
+    /// and the screen plays no track of its own.
+    Duck,
+}
+
+/// The music of a screen (`ui_version` 9): started when the screen opens
+/// (or when it becomes the screen on top of the ones that declare music),
+/// faded out when it closes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScreenMusic {
+    /// Project path of the audio file (empty = no track: with
+    /// [`OverGame::Duck`] the screen only lowers the game's music).
+    pub asset: String,
+    pub looping: bool,
+    /// Linear volume of the track, `0.0..=1.0`.
+    pub volume: f32,
+    pub fade_in_ms: u32,
+    pub fade_out_ms: u32,
+    /// The next screen playing the same track does not restart it.
+    pub keep_if_same: bool,
+    /// Closing back to the game puts the game's music back.
+    pub resume_game_music: bool,
+    pub over_game: OverGame,
+    /// Volume factor of the game's music while ducked, `0.0..=1.0`.
+    pub duck_volume: f32,
+}
+
+impl Default for ScreenMusic {
+    fn default() -> Self {
+        Self {
+            asset: String::new(),
+            looping: true,
+            volume: 1.0,
+            fade_in_ms: 500,
+            fade_out_ms: 500,
+            keep_if_same: true,
+            resume_game_music: true,
+            over_game: OverGame::Replace,
+            duck_volume: 0.3,
+        }
+    }
 }
 
 fn is_false(b: &bool) -> bool {
@@ -97,6 +152,14 @@ pub enum Cond {
     Unlocked,
     /// The story defines at least one achievement (`ui_version` 7).
     HasAchievements,
+    /// Inside a `SaveSlots` card template (`ui_version` 9): the slot has no
+    /// save. Always false elsewhere.
+    SlotEmpty,
+    /// Inside a card template: the slot holds a loadable save.
+    SlotUsed,
+    /// Inside a card template: the slot holds a save this version of the
+    /// story cannot load.
+    SlotLocked,
 }
 
 /// Size, spacing and placement of a widget.
@@ -160,6 +223,60 @@ pub enum SlotsMode {
     Save,
     /// Every category as a tab; picking a used slot loads it.
     Load,
+}
+
+/// How the cards, tabs and buttons of a [`WidgetKind::SaveSlots`] look
+/// (`ui_version` 9). Every field is optional; a default value keeps the
+/// stock look.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SlotsLook {
+    /// Style of a card holding a save (hover / pressed / focused states are
+    /// those of the style).
+    pub card_style: Option<String>,
+    /// Style of an empty card (`card_style` when unset).
+    pub empty_style: Option<String>,
+    /// Style of a card whose save cannot be loaded (`card_style` when
+    /// unset).
+    pub locked_style: Option<String>,
+    /// Style of the category tabs.
+    pub tab_style: Option<String>,
+    /// Style of the previous / next page buttons.
+    pub pager_style: Option<String>,
+    /// Style of the delete button under each card.
+    pub delete_style: Option<String>,
+    /// Style of the panel of the confirmation dialog.
+    pub confirm_style: Option<String>,
+    /// Style of the dialog's Yes / No buttons.
+    pub confirm_button_style: Option<String>,
+    /// Height of a card in virtual pixels (default 170).
+    pub card_height: Option<f32>,
+    /// Gap between the columns of cards (default 24).
+    pub column_gap: Option<f32>,
+    /// Gap between the rows of cards (default 18).
+    pub row_gap: Option<f32>,
+}
+
+impl SlotsLook {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The style names the look uses.
+    pub fn styles(&self) -> impl Iterator<Item = &str> {
+        [
+            &self.card_style,
+            &self.empty_style,
+            &self.locked_style,
+            &self.tab_style,
+            &self.pager_style,
+            &self.delete_style,
+            &self.confirm_style,
+            &self.confirm_button_style,
+        ]
+        .into_iter()
+        .filter_map(|s| s.as_deref())
+    }
 }
 
 fn three() -> usize {
@@ -248,12 +365,19 @@ pub enum WidgetKind {
     /// last line) with category tabs (`Load`), page buttons and a delete
     /// button per card. Picking a card saves or loads (after a confirmation
     /// when it would overwrite); delete always confirms.
+    ///
+    /// With children (`ui_version` 9) they are the template of the *inside*
+    /// of one card, built once per slot: `BindPath::SlotField` and the
+    /// `Cond::Slot*` conditions read the slot. Without children the stock
+    /// card (thumbnail, title, date, last line) is drawn.
     SaveSlots {
         mode: SlotsMode,
         #[serde(default = "three")]
         columns: usize,
         #[serde(default = "two")]
         rows: usize,
+        #[serde(default, skip_serializing_if = "SlotsLook::is_default")]
+        look: SlotsLook,
     },
     /// A list generated from a story variable or a screen parameter
     /// (`ui_version` 4, UI-15, ADR 0016 §4): the children of the widget are

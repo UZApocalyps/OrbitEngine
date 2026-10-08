@@ -48,6 +48,9 @@ fn slot(category: SlotCategory, index: u32, state: SlotState) -> SlotView {
         thumbnail: None,
         timestamp: if used { format!("2026-03-{:02} 21:0{}", 10 + index, index % 10) } else { String::new() },
         preview: if used { "Sample line of the story, as the player left it.".into() } else { String::new() },
+        date: if used { format!("2026-03-{:02} 21:0{}", 10 + index, index % 10) } else { String::new() },
+        play_time: if used { format!("{}h {:02}m", 1 + index % 4, (index * 11) % 60) } else { String::new() },
+        chapter: if used { format!("Chapter {}", 1 + index % 3) } else { String::new() },
     }
 }
 
@@ -127,6 +130,11 @@ impl PreviewNav {
         self.vars = vars;
     }
 
+    /// Ids of the screens open, the one shown last.
+    pub fn stack(&self) -> &[String] {
+        &self.stack
+    }
+
     /// Id of the screen shown.
     pub fn top(&self) -> &str {
         self.stack.last().map_or("", String::as_str)
@@ -174,6 +182,8 @@ impl PreviewNav {
             UiEvent::SaveSlot(id) => format!("SaveSlot({:?} {})", id.category, id.index + 1),
             UiEvent::DeleteSlot(id) => format!("DeleteSlot({:?} {})", id.category, id.index + 1),
             UiEvent::PlaySound(path) => format!("PlaySound({path})"),
+            UiEvent::PlayMusic(path) => format!("PlayMusic({path})"),
+            UiEvent::StopMusic => "StopMusic".to_owned(),
             UiEvent::Custom { name, args } if args.is_empty() => format!("Custom({name})"),
             UiEvent::Custom { name, args } => format!("Custom({name}: {})", args.join(", ")),
             UiEvent::ResetPreferences => "ResetPreferences".to_owned(),

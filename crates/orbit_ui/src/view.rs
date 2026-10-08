@@ -61,6 +61,13 @@ pub struct SlotView {
     pub timestamp: String,
     /// Last line spoken, as plain text.
     pub preview: String,
+    /// Date and time alone (`timestamp` without the chapter); empty when the
+    /// host gives none.
+    pub date: String,
+    /// Time played, formatted by the host (empty when unknown).
+    pub play_time: String,
+    /// Name of the scene (chapter) the save was made in.
+    pub chapter: String,
 }
 
 impl SlotView {
@@ -71,6 +78,9 @@ impl SlotView {
             thumbnail: None,
             timestamp: String::new(),
             preview: String::new(),
+            date: String::new(),
+            play_time: String::new(),
+            chapter: String::new(),
         }
     }
 }
@@ -251,6 +261,10 @@ pub enum UiEvent {
     CloseAll,
     /// Play a sound asset by path.
     PlaySound(String),
+    /// Play a music file of the project in a loop (`UiAction::PlayMusic`).
+    PlayMusic(String),
+    /// Fade the music out (`UiAction::StopMusic`).
+    StopMusic,
     /// Free-form hook for the host or a plugin.
     Custom { name: String, args: Vec<String> },
     /// Apply a no-code variable operation to the running game.

@@ -703,6 +703,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_music_of_the_screens_is_exported_and_a_missing_one_is_a_warning() {
+        let dir = TempDir::new("compile_ui_music");
+        let project = demo_project(dir.path());
+        let profile = project.profile(None).unwrap();
+        let ui = dir.path().join("ui");
+        std::fs::create_dir_all(&ui).unwrap();
+        std::fs::write(
+            ui.join("main_menu.screen.ron"),
+            "(id: \"main_menu\", root: (kind: Stack(dir: Vertical), children: [             (kind: Button(text: Literal(\"x\"), action: [PlayMusic(\"assets/ui/gone.ogg\")]))]),              music: Some((asset: \"assets/ui/theme.ogg\")))",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("assets/ui")).unwrap();
+        std::fs::write(dir.path().join("assets/ui/theme.ogg"), b"x").unwrap();
+        let compiled = compile(&project, &profile).unwrap();
+        assert!(
+            compiled.assets.iter().any(|a| a.path == "assets/ui/theme.ogg"),
+            "the screen music is packed"
+        );
+        assert!(
+            compiled
+                .warnings
+                .iter()
+                .any(|w| w.contains("assets/ui/gone.ogg") && w.contains("does not exist")),
+            "{:?}",
+            compiled.warnings
+        );
+    }
+
     // Fixture: exact title, asset count and unreferenced list come from test_minimal.ron.
     #[test]
     fn the_fixture_compiles_with_its_translation() {

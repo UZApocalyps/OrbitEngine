@@ -46,6 +46,7 @@ use crate::format::{format_timestamp, language_name, plain_text};
 use crate::game::{FlowKind, Game, InputOutcome, PlaySettings};
 use crate::input::{Hotkey, InputAction};
 use crate::stage::{CANVAS, StageState};
+use crate::ui_music::{MusicOp, UiMusic};
 
 /// Autosave rules.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -147,6 +148,10 @@ pub(crate) enum Effect {
     SetFullscreen(bool),
     /// Play a sound asset by path (a `PlaySound` action of a data screen).
     PlayAsset(String),
+    /// Start a music file of the project, or duck the music (screens'
+    /// music, `ui_version` 9). Never `Stop` / `RestoreGame`: the shell
+    /// turns those into audio commands of the game.
+    UiMusic(MusicOp),
     /// A `Custom` action of a data screen, for the host or a plugin.
     Custom { name: String, args: Vec<String> },
     Quit,
@@ -213,6 +218,7 @@ enum EntryState {
         label: String,
         preview: String,
         png: Option<Arc<Vec<u8>>>,
+        play_time_secs: u64,
     },
     Corrupt,
 }
@@ -358,6 +364,33 @@ pub(crate) struct Shell {
     /// The next screens built from the VM appear without transition (a
     /// rollback, a load).
     cut_screen_fx: bool,
+    /// The music the open screens ask for.
+    ui_music: UiMusic,
+}
+
+/// The screen whose music counts: the topmost open data screen that declares
+/// one, else (on the title) the main menu's.
+fn wanted_music<'a>(
+    stack: &[Overlay],
+    data: &'a [DataScreen],
+    sys_main: Option<usize>,
+    game: bool,
+) -> Option<crate::ui_music::Wanted<'a>> {
+    let screen = |i: usize| {
+        let asset = data.get(i)?.asset();
+        Some(crate::ui_music::Wanted {
+            screen: asset.id.as_str(),
+            music: asset.music.as_ref()?,
+        })
+    };
+    stack
+        .iter()
+        .rev()
+        .find_map(|o| match o {
+            Overlay::Custom(i) => screen(*i),
+            _ => None,
+        })
+        .or_else(|| if game { None } else { sys_main.and_then(screen) })
 }
 
 pub(crate) fn make_texts(language: &str, overrides: &HashMap<String, Vec<(String, String)>>) -> Texts {
@@ -495,6 +528,7 @@ impl Shell {
             ghosts: Vec::new(),
             stack_opened: HashMap::new(),
             cut_screen_fx: false,
+            ui_music: UiMusic::default(),
         };
         shell.apply_prefs_effects();
         shell.refresh_slots();
@@ -744,10 +778,53 @@ impl Shell {
     }
 
     fn leave_music(&mut self) {
-        if self.game.is_some() {
+        // The track of a screen goes with the game's music (the screens ask
+        // for theirs again at the next sync).
+        let screens_track = self.ui_music.forget_for_game_change();
+        if self.game.is_some() || screens_track {
             self.effects.push(Effect::Audio(AudioCommand::StopMusic {
                 fade_out: LEAVE_MUSIC_FADE,
             }));
+        }
+        if let Some(level) = self.ui_music.take_duck() {
+            self.effects.push(Effect::UiMusic(MusicOp::Duck(level)));
+        }
+    }
+
+    /// Makes the music match the screens that are open (`ScreenAsset::music`):
+    /// cheap, and silent when nothing changed.
+    fn sync_ui_music(&mut self) {
+        if self.data.is_empty() && self.ui_music.playing().is_none() {
+            return;
+        }
+        let game = self.game.is_some();
+        let wanted = wanted_music(&self.stack, &self.data, self.sys_main, game);
+        let ops = self.ui_music.sync(wanted, game);
+        self.apply_music_ops(ops);
+    }
+
+    fn apply_music_ops(&mut self, ops: Vec<MusicOp>) {
+        let secs = |ms: u32| ms as f32 / 1000.0;
+        for op in ops {
+            match op {
+                MusicOp::Stop { fade_out_ms } => self.effects.push(Effect::Audio(AudioCommand::StopMusic {
+                    fade_out: secs(fade_out_ms),
+                })),
+                MusicOp::RestoreGame { fade_in_ms } => {
+                    let game_music = self.game.as_ref().and_then(|g| g.director.music());
+                    self.effects.push(Effect::Audio(match game_music {
+                        Some(m) => AudioCommand::PlayMusic {
+                            asset: m.asset,
+                            fade_in: secs(fade_in_ms),
+                            looping: m.looping,
+                        },
+                        None => AudioCommand::StopMusic {
+                            fade_out: secs(fade_in_ms),
+                        },
+                    }));
+                }
+                op @ (MusicOp::Play { .. } | MusicOp::Duck(_)) => self.effects.push(Effect::UiMusic(op)),
+            }
         }
     }
 
@@ -1142,6 +1219,7 @@ impl Shell {
                         label: meta.label.clone(),
                         preview: plain_text(&meta.preview),
                         png: meta.thumbnail.map(Arc::new),
+                        play_time_secs: meta.play_time_secs,
                     }
                 }
             };
@@ -1225,15 +1303,18 @@ impl Shell {
                 thumbnail: None,
                 timestamp: "\u{2014}".into(),
                 preview: self.texts.get("ui.toast.corrupt"),
+                ..SlotView::empty(entry.id)
             },
             EntryState::Occupied {
                 loadable,
                 created_at_ms,
                 label,
                 preview,
+                play_time_secs,
                 ..
             } => {
-                let mut timestamp = format_timestamp(*created_at_ms, self.cfg.utc_offset_minutes);
+                let date = format_timestamp(*created_at_ms, self.cfg.utc_offset_minutes);
+                let mut timestamp = date.clone();
                 if !label.is_empty() {
                     timestamp.push_str("  \u{b7}  ");
                     timestamp.push_str(label);
@@ -1252,6 +1333,9 @@ impl Shell {
                     thumbnail,
                     timestamp,
                     preview: preview.clone(),
+                    date,
+                    play_time: crate::format::format_play_time(*play_time_secs),
+                    chapter: label.clone(),
                 }
             }
         }
@@ -2006,6 +2090,14 @@ impl Shell {
                 self.open_screen(&id);
             }
             UiEvent::PlaySound(path) => self.effects.push(Effect::PlayAsset(path)),
+            UiEvent::PlayMusic(path) => {
+                let op = self.ui_music.manual_play(&path, self.game.is_some());
+                self.apply_music_ops(vec![op]);
+            }
+            UiEvent::StopMusic => {
+                let op = self.ui_music.manual_stop();
+                self.apply_music_ops(vec![op]);
+            }
             UiEvent::Custom { name, args } => self.custom_action(name, args),
             UiEvent::VarOp(op) => self.apply_var_op(&op),
             UiEvent::SceneGoto(scene) => self.goto_scene(&scene),
@@ -2466,6 +2558,7 @@ impl Shell {
             self.check_autosave(dt);
         }
         self.sync_story_screens();
+        self.sync_ui_music();
         self.autosave_cooldown = (self.autosave_cooldown - dt).max(0.0);
         self.sync_quick_view();
 

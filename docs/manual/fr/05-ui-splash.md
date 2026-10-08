@@ -43,6 +43,30 @@ L'onglet **Boîte de dialogue** stylise ce que le joueur voit pendant l'histoire
 
 Le bouton **+** à côté d'un champ de style crée un style à partir des couleurs actuelles et le relie ; le crayon l'ouvre dans l'onglet Thème. Un projet créé avant ces options garde exactement la même boîte de dialogue.
 
+## Musique dans les menus
+
+Un écran peut jouer sa propre musique. Dans l'onglet **Écrans**, sélectionnez l'écran (la racine de son arbre) et cochez **Musique de l'écran** dans ses propriétés :
+
+- **Fichier audio** : un fichier musique ou son du projet. Un avertissement s'affiche si le fichier n'existe pas. La piste est empaquetée dans le jeu exporté.
+- **Volume**, **Fondu entrée / sortie** (millisecondes) et **Jouer la piste en boucle**.
+- **Continuer si l'écran suivant a la même piste** : ouvrir les options depuis le menu principal avec la même piste ne la relance pas. Décochez pour relancer la piste sur cet écran.
+- **Par-dessus le jeu** : quand l'écran s'ouvre pendant la partie (pause, sauvegarde, chargement...), choisissez **Remplacer la musique du jeu** (la piste du menu joue ; **Remettre la musique du jeu à la fermeture** relance la piste en cours de l'histoire quand les menus se ferment) ou **Baisser la musique du jeu** (la piste du jeu continue au volume choisi et l'écran ne joue pas de piste).
+
+La musique de l'écran choisi comme **menu principal** joue dès l'écran de démarrage. Lancer ou charger une partie la fait disparaître en fondu. Quand plusieurs écrans sont ouverts, le plus haut qui a une musique décide ; un écran sans musique laisse jouer celui du dessous. Revenir au titre relance la musique du menu principal.
+
+Les boutons ont deux actions de plus : **Jouer une musique** (un fichier, en boucle, qui remplace la musique ; elle dure jusqu'à ce qu'un autre écran avec musique s'affiche) et **Arrêter la musique**. Dans l'éditeur, l'aperçu en direct joue la musique de l'écran affiché ; le bouton muet de l'aperçu la coupe.
+
+## Emplacements de sauvegarde et de chargement
+
+Le widget **Emplacements** affiche les sauvegardes du jeu en grille de cartes, avec des onglets de catégories, des boutons de page et un bouton Supprimer sous chaque carte. Par défaut il utilise la carte standard (miniature, nom de l'emplacement, date et dernière réplique). Tout peut être restylé :
+
+- **Apparence des emplacements** (dans ses propriétés) : un **style** pour les cartes, les cartes vides, les cartes incompatibles, les onglets, les boutons de page, le bouton Supprimer, la boîte de confirmation et ses boutons Oui / Non ; la **hauteur des cartes** et les **espaces** entre colonnes et lignes, à côté des **colonnes** et **lignes**. Les apparences survol, appui, focus et désactivé viennent de ces styles (voir *Les styles*).
+- **Personnaliser la carte** écrit la carte standard sous forme de widgets : les enfants du widget Emplacements sont l'intérieur d'une carte, répété pour chaque emplacement. Modifiez-les comme n'importe quels widgets : déplacer la miniature, ajouter le temps de jeu, changer polices et couleurs. L'apparence ne change pas tant que vous ne modifiez rien. **Revenir à la carte par défaut** les supprime.
+- Dans la carte, liez un **texte** à un **champ de l'emplacement** : titre (Emplacement 3), numéro, date et chapitre, date et heure, temps de jeu, chapitre (scène), dernière réplique, état (Vide / Incompatible) ; liez une **Image** à la **miniature**. Les conditions **l'emplacement est vide**, **l'emplacement contient une sauvegarde** et **la sauvegarde est incompatible** n'affichent un widget que dans un état (par exemple un texte « Vide », ou un cadenas sur les sauvegardes incompatibles).
+- Le temps de jeu et le chapitre sont vides pour une sauvegarde qui ne les enregistre pas.
+
+Un projet créé avant cette version garde ses cartes exactement comme avant.
+
 ## Les splashes
 
 Au démarrage, le jeu affiche d'abord le splash OrbitEngine. Celui-ci est obligatoire et ne peut être ni retiré ni modifié. Ensuite, vous pouvez ajouter vos propres splashes : un texte ou une image de votre projet, avec une durée, des temps d'apparition et de disparition en fondu, une couleur de fond, et la possibilité ou non de le passer. Utilisez **Aperçu des splashes** pour les visionner.

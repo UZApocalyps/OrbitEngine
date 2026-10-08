@@ -29,6 +29,16 @@ pub fn format_timestamp(ms: u64, utc_offset_minutes: i32) -> String {
     )
 }
 
+/// `1h 05m`, `12m`, `45s`: a play time given in seconds (empty for 0).
+pub fn format_play_time(secs: u64) -> String {
+    match secs {
+        0 => String::new(),
+        1..=59 => format!("{secs}s"),
+        _ if secs < 3600 => format!("{}m", secs / 60),
+        _ => format!("{}h {:02}m", secs / 3600, (secs % 3600) / 60),
+    }
+}
+
 /// `markup` without its `{tags}`: what the history and the save previews
 /// show.
 pub fn plain_text(markup: &str) -> String {

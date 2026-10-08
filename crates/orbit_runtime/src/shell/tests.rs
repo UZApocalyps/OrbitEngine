@@ -8,6 +8,7 @@ use crate::director::Flow;
 use orbit_ui::UiBundle;
 
 mod a11y;
+mod music;
 mod splashes;
 mod replay;
 mod story_screens;

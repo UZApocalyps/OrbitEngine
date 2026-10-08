@@ -43,6 +43,30 @@ The **Dialogue box** tab styles what the player sees during the story, with a li
 
 The **+** button next to a style field creates a style from the current colors and links it; the pencil opens it in the Theme tab. A project made before these options keeps exactly the same dialogue box.
 
+## Music in the menus
+
+A screen can play its own music. In the **Screens** tab, select the screen (nothing selected in its tree, or the root) and tick **Screen music** in its properties:
+
+- **Audio file**: a music or sound file of the project. A warning appears when the file is not there. The track is packed in the exported game.
+- **Volume**, **Fade in / out** (milliseconds) and **Loop the track**.
+- **Keep playing if the next screen has the same track**: opening the options from the main menu with the same track does not restart it. Untick it to restart the track on that screen.
+- **Over the game**: when the screen opens during play (pause menu, save, load...), choose **Replace the game music** (the menu track plays; **Put the game music back on close** restarts the story's current track when the menus close) or **Lower the game music** (the game's track keeps playing at the chosen volume, and the screen plays no track of its own).
+
+The music of the screen set as **main menu** plays from the start screen. Starting or loading a game fades it out. When several screens are open, the topmost one that has music decides; a screen without music lets the one below keep playing. Returning to the title starts the main menu music again.
+
+Buttons have two more actions: **Play music** (a file, looped, replacing the music; it lasts until another screen with music is shown) and **Stop music**. In the editor, the live preview plays the music of the screen shown; the preview's mute button silences it.
+
+## Save and load slots
+
+The **Save slots** widget shows the saves of the game as a grid of cards with category tabs, page buttons and a delete button under each card. By default it uses the stock card (thumbnail, slot name, date and last line). You can restyle everything:
+
+- **Look of the slots** (in its properties): a **style** for the cards, for the empty cards, for the incompatible ones, for the tabs, the page buttons, the delete button, the confirmation dialog and its Yes / No buttons; the **card height** and the **gaps** between columns and rows, next to the **columns** and **rows**. Hover, pressed, focus and disabled looks come from those styles (see *Styles*).
+- **Customize the card** writes the stock card as widgets: the children of the Save slots widget are the inside of one card, repeated for every slot. Edit them like any other widgets: move the thumbnail, add the play time, change fonts and colors. The look does not change until you edit something. **Back to the stock card** removes them.
+- Inside the card, bind a **text** to a **slot field**: title (Slot 3), number, date and chapter, date and time, play time, chapter (scene), last line, status (Empty / Incompatible); bind an **Image** to the **thumbnail**. Use the conditions **the slot is empty**, **the slot has a save** and **the save is incompatible** to show a widget only in one state (for example an "Empty" text, or a padlock icon on incompatible saves).
+- The play time and the chapter are empty for a save that does not record them.
+
+A project made before this keeps the stock cards exactly as they were.
+
 ## Splash screens
 
 When the game starts it first shows the OrbitEngine splash. This one is required and cannot be removed or changed. After it, you can add your own splashes: a text or an image of your project, with a duration, fade in and fade out times, a background color, and whether the player may skip it. Use **Preview splashes** to watch them.

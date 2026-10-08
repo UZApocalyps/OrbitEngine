@@ -62,6 +62,34 @@ pub enum BindPath {
     /// A field of the achievement of the row of an `Achievements` list
     /// (`ui_version` 7), or the unlock progress of the whole story.
     Achievement(AchievementField),
+    /// A field of the slot of the card of a `SaveSlots` template
+    /// (`ui_version` 9).
+    SlotField(SlotField),
+}
+
+/// What [`BindPath::SlotField`] reads (`ui_version` 9): one slot of a
+/// `SaveSlots` card template. Texts are empty when the slot has no save
+/// (or the host does not know the value).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SlotField {
+    /// `Slot 3`, `Auto 1`, `Quick save`.
+    Title,
+    /// The number of the slot alone (`3`).
+    Number,
+    /// Date and time, then the chapter: what the stock card shows.
+    Timestamp,
+    /// Date and time of the save.
+    Date,
+    /// Time played (`1h 05m`), when the save records it.
+    PlayTime,
+    /// Name of the scene (chapter) the save was made in.
+    Chapter,
+    /// The last line spoken, cut to what the stock card shows.
+    Preview,
+    /// `Empty` or `Incompatible` (localized); empty for a usable save.
+    Status,
+    /// Thumbnail of the save (bind it to an `Image`).
+    Thumbnail,
 }
 
 /// What [`BindPath::Achievement`] reads (`ui_version` 7, M7-05).
@@ -106,6 +134,7 @@ impl BindPath {
                 | BindPath::Achievement(
                     AchievementField::Title | AchievementField::Description | AchievementField::Icon
                 )
+                | BindPath::SlotField(_)
         )
     }
 }
@@ -160,6 +189,12 @@ pub enum UiAction {
     /// the variables, nothing is saved, and its end (or the menu) comes back
     /// to the title with the `replay` screen open. Only seen scenes replay.
     ReplayScene(Operand),
+    /// Plays a music file of the project (path) in a loop, replacing the
+    /// music playing (`ui_version` 9). Lasts until another screen with music
+    /// is shown or `StopMusic`.
+    PlayMusic(String),
+    /// Fades the music out (`ui_version` 9).
+    StopMusic,
 }
 
 impl UiAction {

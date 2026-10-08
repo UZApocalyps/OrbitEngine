@@ -245,12 +245,75 @@ impl UiBundle {
     pub fn asset_paths(&self) -> Vec<String> {
         let mut out = self.image_paths();
         out.extend(self.splash_image_paths());
+        out.extend(self.music_paths());
         if let Some(theme) = &self.theme {
             out.extend(theme.font_paths());
             out.extend(theme.sound_paths());
         }
         out.sort();
         out.dedup();
+        out
+    }
+
+    /// Every music file the screens play (`ScreenAsset::music` and
+    /// `PlayMusic` actions), each once, sorted.
+    pub fn music_paths(&self) -> Vec<String> {
+        use crate::action::UiAction;
+        let mut out = Vec::new();
+        for screen in &self.screens {
+            if let Some(m) = &screen.music {
+                out.push(m.asset.clone());
+            }
+            for a in &screen.on_cancel {
+                if let UiAction::PlayMusic(p) = a {
+                    out.push(p.clone());
+                }
+            }
+            screen.root.walk(&mut |w| {
+                for a in w.kind.actions().into_iter().flatten() {
+                    if let UiAction::PlayMusic(p) = a {
+                        out.push(p.clone());
+                    }
+                }
+            });
+        }
+        out.retain(|p| !p.trim().is_empty());
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// A warning per screen naming a music file that does not exist
+    /// (`exists` says whether a project path is a file).
+    pub fn missing_music_issues(&self, exists: &dyn Fn(&str) -> bool) -> Vec<Issue> {
+        use crate::action::UiAction;
+        let mut out = Vec::new();
+        for screen in &self.screens {
+            let mut check = |path: &str, wid: &str| {
+                if !path.trim().is_empty() && !exists(path) {
+                    out.push(Issue::warning(
+                        &screen.id,
+                        wid,
+                        format!("the music `{path}` does not exist in the project: it will not play"),
+                    ));
+                }
+            };
+            if let Some(m) = &screen.music {
+                check(&m.asset, "");
+            }
+            for a in &screen.on_cancel {
+                if let UiAction::PlayMusic(p) = a {
+                    check(p, "");
+                }
+            }
+            screen.root.walk(&mut |w| {
+                for a in w.kind.actions().into_iter().flatten() {
+                    if let UiAction::PlayMusic(p) = a {
+                        check(p, &w.id);
+                    }
+                }
+            });
+        }
         out
     }
 

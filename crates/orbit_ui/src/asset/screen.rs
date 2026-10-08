@@ -6,7 +6,7 @@ use orbit_core::{Value, VarOp};
 use orbit_render2d::TextureId;
 
 use orbit_ui_data::{BindPath, SettingKey, UiAction};
-use super::slots::{SlotAction, build_slots, slots_page};
+use super::slots::{SlotAction, SlotCtx};
 use orbit_ui_data::{Cond, ScreenAsset, SlotsMode, TextRef, WidgetDef, WidgetKind};
 use crate::input::UiInput;
 use crate::screens::{Confirm, Screen};
@@ -123,6 +123,9 @@ impl DataContext {
             Cond::Vars(c) => c.eval(&|n| self.vars.get(n).cloned()).unwrap_or(false),
             Cond::Unlocked => self.achievement(item).is_some_and(|a| a.unlocked),
             Cond::HasAchievements => !self.achievements.is_empty(),
+            Cond::SlotEmpty => matches!(item, Some(Value::Str(s)) if s == "empty"),
+            Cond::SlotUsed => matches!(item, Some(Value::Str(s)) if s == "used"),
+            Cond::SlotLocked => matches!(item, Some(Value::Str(s)) if s == "locked"),
             Cond::Item => item.is_some_and(|v| match v {
                 Value::Bool(b) => *b,
                 Value::Int(i) => *i != 0,
@@ -166,7 +169,7 @@ impl DataContext {
 
 /// What a tagged widget does when it reports an event.
 #[derive(Clone, Debug)]
-enum Bound {
+pub(super) enum Bound {
     Button(Vec<UiAction>),
     Slider {
         key: SettingKey,
@@ -203,25 +206,28 @@ enum Readout {
     Var(String),
 }
 
-struct Build {
-    ui: Ui,
+pub(super) struct Build {
+    pub(super) ui: Ui,
     next_tag: Tag,
-    binds: HashMap<Tag, Bound>,
+    pub(super) binds: HashMap<Tag, Bound>,
     readouts: Vec<(Tag, Readout)>,
     styles: BTreeMap<String, Style>,
     counter: usize,
     paths: Vec<(NodeId, Vec<usize>)>,
     /// The rows of the `Repeat` templates being built, innermost last.
-    items: Vec<ItemCtx>,
+    pub(super) items: Vec<ItemCtx>,
 }
 
-/// One row of a generated list (`WidgetKind::Repeat`, UI-15).
+/// One row of a generated list (`WidgetKind::Repeat`, UI-15), or one slot
+/// of a `SaveSlots` card template (`value` is then the state of the slot).
 #[derive(Clone, Debug, PartialEq)]
-struct ItemCtx {
-    value: Value,
-    index: usize,
+pub(super) struct ItemCtx {
+    pub(super) value: Value,
+    pub(super) index: usize,
     /// The key of the entry, for a list generated from a map.
-    key: Option<String>,
+    pub(super) key: Option<String>,
+    /// The slot of a card template.
+    pub(super) slot: Option<SlotCtx>,
 }
 
 /// A screen defined by data. The shell keeps its [`DataContext`] current
@@ -229,17 +235,17 @@ struct ItemCtx {
 pub struct DataScreen {
     asset: ScreenAsset,
     ui: Ui,
-    theme: Theme,
-    texts: Texts,
-    ctx: DataContext,
+    pub(super) theme: Theme,
+    pub(super) texts: Texts,
+    pub(super) ctx: DataContext,
     binds: HashMap<Tag, Bound>,
     readouts: Vec<(Tag, Readout)>,
     /// Widget nodes and where their definitions are (child indices from the
     /// root): what the editor picks with the pointer.
     node_paths: Vec<(NodeId, Vec<usize>)>,
     /// Tab and page of the `SaveSlots` widget.
-    slots_category: usize,
-    slots_page: usize,
+    pub(super) slots_category: usize,
+    pub(super) slots_page: usize,
     confirm: Confirm,
     /// Actions run that have no effect yet (none today; see
     /// `UiAction::is_supported`), for hosts that want to say so.
@@ -338,6 +344,12 @@ impl DataScreen {
             BindPath::Achievements => {
                 return Some(Value::list(orbit_core::ScalarType::Str, self.ctx.achievement_rows()));
             }
+            BindPath::SlotField(field) => {
+                let text = item.and_then(|i| i.slot.as_ref()).map_or_else(String::new, |s| {
+                    s.field(&self.texts, self.theme.widgets.small_text_size, *field)
+                });
+                return Some(Value::Str(text));
+            }
             BindPath::Achievement(field) => {
                 use orbit_ui_data::AchievementField as F;
                 let row = self.ctx.achievement(item.map(|i| &i.value));
@@ -392,6 +404,7 @@ impl DataScreen {
                     value: value.clone(),
                     index,
                     key: None,
+                    slot: None,
                 })
                 .collect(),
             Some(Value::Map(_, map)) => map
@@ -402,6 +415,7 @@ impl DataScreen {
                     value: value.clone(),
                     index,
                     key: Some(k.clone()),
+                    slot: None,
                 })
                 .collect(),
             _ => Vec::new(),
@@ -535,7 +549,7 @@ impl DataScreen {
         }
     }
 
-    fn new_tag(st: &mut Build) -> Tag {
+    pub(super) fn new_tag(st: &mut Build) -> Tag {
         let tag = st.next_tag;
         st.next_tag += 1;
         tag
@@ -543,7 +557,7 @@ impl DataScreen {
 
     /// Adds `def` (and its descendants) under `parent`; returns nothing when
     /// the widget is left out (condition, unsupported binding).
-    fn build(
+    pub(super) fn build(
         &self,
         def: &WidgetDef,
         parent: Option<NodeId>,
@@ -584,6 +598,11 @@ impl DataScreen {
                 if *dim {
                     n = n.dimmed();
                 }
+                if matches!(text, TextRef::Bind(BindPath::SlotField(orbit_ui_data::SlotField::Preview))) {
+                    // The last line of a save takes two lines, like the
+                    // stock card.
+                    n = n.lines(2);
+                }
                 if let TextRef::Bind(bind) = text {
                     let readout = match bind {
                         BindPath::Setting(key) => Some(Readout::Setting(*key)),
@@ -604,12 +623,17 @@ impl DataScreen {
                     Some(Value::Str(path)) => path,
                     _ => String::new(),
                 });
-                let texture = match bound.as_deref().or(asset.as_deref()) {
-                    Some(MENU_BACKGROUND) => self.ctx.background,
-                    // A gallery or project image the host loaded, or
-                    // nothing.
-                    Some(path) => self.ctx.images.get(path).copied(),
-                    None => None,
+                let texture = if matches!(bind, Some(BindPath::SlotField(orbit_ui_data::SlotField::Thumbnail))) {
+                    // The thumbnail of the slot of a card template.
+                    item.and_then(|i| i.slot.as_ref()).and_then(|s| s.view.thumbnail)
+                } else {
+                    match bound.as_deref().or(asset.as_deref()) {
+                        Some(MENU_BACKGROUND) => self.ctx.background,
+                        // A gallery or project image the host loaded, or
+                        // nothing.
+                        Some(path) => self.ctx.images.get(path).copied(),
+                        None => None,
+                    }
                 };
                 if action.is_empty() {
                     Node::image(texture)
@@ -795,30 +819,10 @@ impl DataScreen {
             Some(parent) => st.ui.add(parent, node),
         };
         st.paths.push((id, path.clone()));
-        if let WidgetKind::SaveSlots {
-            mode,
-            columns,
-            rows,
-        } = &def.kind
-        {
-            let columns = (*columns).max(1);
-            let per_page = columns * (*rows).max(1);
-            let page = slots_page(
-                &self.ctx.saves,
-                *mode,
-                self.slots_category,
-                self.slots_page,
-                per_page,
-            );
-            let mut next = st.next_tag;
-            let bound = build_slots(&mut st.ui, id, &self.texts, *mode, columns, &page, &mut || {
-                next += 1;
-                next - 1
-            });
-            st.next_tag = next;
-            for (tag, action) in bound {
-                st.binds.insert(tag, Bound::Slot(action));
-            }
+        if matches!(def.kind, WidgetKind::SaveSlots { .. }) {
+            // The children are the template of a card, built by the list.
+            self.build_slots(def, id, path, st);
+            return;
         }
         if let WidgetKind::Repeat { source, empty, .. } = &def.kind {
             // The children are the template of one row, built per element.
@@ -946,7 +950,25 @@ impl DataScreen {
     fn ask(&mut self, key: &str, on_yes: UiEvent) {
         let message = self.texts.get(key);
         let texts = self.texts.clone();
-        self.confirm.open(&mut self.ui, &texts, &message, on_yes);
+        let (panel, buttons) = {
+            let mut found = (None, None);
+            self.asset.root.walk(&mut |w| {
+                if let WidgetKind::SaveSlots { look, .. } = &w.kind
+                    && found == (None, None)
+                {
+                    found = (look.confirm_style.clone(), look.confirm_button_style.clone());
+                }
+            });
+            found
+        };
+        self.confirm.open_styled(
+            &mut self.ui,
+            &texts,
+            &message,
+            on_yes,
+            panel.as_deref(),
+            buttons.as_deref(),
+        );
     }
 
     fn refresh_readouts(&mut self) {
@@ -1014,6 +1036,8 @@ impl DataScreen {
             UiAction::OpenLoad => Some(UiEvent::OpenLoad),
             UiAction::ResetPreferences => Some(UiEvent::ResetPreferences),
             UiAction::PlaySound(path) => Some(UiEvent::PlaySound(path.clone())),
+            UiAction::PlayMusic(path) => Some(UiEvent::PlayMusic(path.clone())),
+            UiAction::StopMusic => Some(UiEvent::StopMusic),
             UiAction::Custom { name, args } => Some(UiEvent::Custom {
                 name: name.clone(),
                 args: args.clone(),
@@ -1926,5 +1950,186 @@ mod tests {
         );
         s.set_context(c);
         assert!(s.ui().find(2).is_some());
+    }
+
+    // ------------------------------------------------ editable save slots
+
+    /// `(rect, text, font size)` of every node, in tree order.
+    fn dump(s: &mut DataScreen) -> Vec<([f32; 4], String, Option<f32>)> {
+        let count = s.ui().nodes.len();
+        (0..count)
+            .map(|i| {
+                let rect = s.ui().node_rect(NodeId(i));
+                let (text, size) = match &s.ui().nodes[i].kind {
+                    crate::widgets::Kind::Label(l) => (l.text.clone(), l.size),
+                    crate::widgets::Kind::Button(b) => (b.label.clone(), None),
+                    _ => (String::new(), None),
+                };
+                (rect, text, size)
+            })
+            .collect()
+    }
+
+    fn templated(mode: &str, columns: usize, theme: &Theme, template: bool) -> DataScreen {
+        let mut asset = from_ron(&format!(
+            "(id: \"slots\", root: (kind: Stack(dir: Vertical), children: [\
+             (kind: SaveSlots(mode: {mode}, columns: {columns}, rows: 2))]))"
+        ))
+        .unwrap();
+        if template {
+            asset.root.children[0].children = orbit_ui_data::default_slot_card(&theme.widgets);
+        }
+        let mut c = ctx();
+        c.saves = crate::asset::sample_saves();
+        DataScreen::new(asset, theme, &Texts::builtin("en"), c)
+    }
+
+    #[test]
+    fn the_default_card_template_lays_out_exactly_like_the_stock_card() {
+        let mut big = Theme::default();
+        big.widgets.text_size = 36.0;
+        big.widgets.small_text_size = 26.0;
+        for theme in [Theme::default(), big] {
+            for mode in ["Load", "Save"] {
+                for columns in 1..=4 {
+                    let stock = dump(&mut templated(mode, columns, &theme, false));
+                    let custom = dump(&mut templated(mode, columns, &theme, true));
+                    assert!(stock.len() > 20, "cards were built");
+                    assert_eq!(stock, custom, "{mode} with {columns} columns");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_default_card_template_keeps_the_same_tags_and_actions() {
+        let theme = Theme::default();
+        let mut stock = templated("Save", 3, &theme, false);
+        let mut custom = templated("Save", 3, &theme, true);
+        // The card (tag 1) and its delete button (tag 2) of the stock list.
+        for tag in 1..=12 {
+            assert_eq!(
+                stock.ui().find(tag).is_some(),
+                custom.ui().find(tag).is_some(),
+                "tag {tag}"
+            );
+        }
+        assert_eq!(click(&mut stock, 3), click(&mut custom, 3));
+        assert_eq!(click(&mut stock, 1).len(), click(&mut custom, 1).len());
+    }
+
+    fn custom_card(card: &str, look: &str) -> DataScreen {
+        let asset = from_ron(&format!(
+            "(id: \"slots\", root: (kind: Stack(dir: Vertical), children: [\
+             (kind: SaveSlots(mode: Load, columns: 2, rows: 2, look: ({look})), children: [{card}])]))"
+        ))
+        .unwrap();
+        let mut c = ctx();
+        let mut saves = crate::asset::sample_saves();
+        // Slot 1 is used, with every field.
+        let used = &mut saves[0].slots[0];
+        used.date = "2026-03-10 21:00".into();
+        used.play_time = "2h 05m".into();
+        used.chapter = "The bridge".into();
+        used.thumbnail = Some(orbit_render2d::TextureId::placeholder());
+        c.saves = saves;
+        DataScreen::new(asset, &Theme::default(), &Texts::builtin("en"), c)
+    }
+
+    fn texts_of(s: &mut DataScreen) -> Vec<String> {
+        dump(s).into_iter().map(|(_, t, _)| t).filter(|t| !t.is_empty()).collect()
+    }
+
+    #[test]
+    fn slot_fields_and_state_conditions_drive_a_custom_card() {
+        let card = "(kind: Stack(dir: Vertical), children: [\
+            (kind: Label(text: Bind(SlotField(Number)))),\
+            (kind: Label(text: Bind(SlotField(Chapter))), visible: SlotUsed),\
+            (kind: Label(text: Bind(SlotField(PlayTime))), visible: SlotUsed),\
+            (kind: Label(text: Bind(SlotField(Date)))),\
+            (kind: Label(text: Bind(SlotField(Status))), visible: Not(SlotUsed)),\
+            (kind: Label(text: Literal(\"empty!\")), visible: SlotEmpty),\
+            (kind: Label(text: Literal(\"locked!\")), visible: SlotLocked),\
+            (kind: Image(bind: Some(SlotField(Thumbnail))), visible: SlotUsed),\
+        ])";
+        let mut s = custom_card(card, "");
+        let texts = texts_of(&mut s);
+        // Slot 1 (used) comes after the three tabs: number, chapter, play
+        // time, date.
+        assert_eq!(&texts[3..7], ["1", "The bridge", "2h 05m", "2026-03-10 21:00"], "{texts:?}");
+        // Slot 2 (empty): number, status, the empty marker.
+        assert!(texts.windows(3).any(|w| w == ["2", "Empty", "empty!"]), "{texts:?}");
+        // Slot 4 (incompatible).
+        assert!(texts.iter().any(|t| t == "locked!") && texts.iter().any(|t| t == "Incompatible save"), "{texts:?}");
+        assert_eq!(texts.iter().filter(|t| *t == "empty!").count(), 1, "{texts:?}");
+        // The thumbnail of the used slot reaches the image.
+        let thumbs = s
+            .ui()
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.kind, crate::widgets::Kind::Image { texture: Some(_), .. }))
+            .count();
+        assert_eq!(thumbs, 1);
+    }
+
+    #[test]
+    fn a_custom_card_keeps_picking_and_deleting_working() {
+        let mut s = custom_card("(kind: Label(text: Literal(\"x\")))", "");
+        // Card 0 of the load list is a tag-free label inside: the card is tag
+        // 1 (after the 3 tabs: 1..=3).
+        let tab_count = 3;
+        let first_card = tab_count + 1;
+        assert_eq!(click(&mut s, first_card), vec![UiEvent::LoadSlot(manual(0))]);
+        click(&mut s, first_card + 1);
+        assert!(s.ui().has_modal(), "delete asks first");
+    }
+
+    #[test]
+    fn card_styles_depend_on_the_state_and_the_layout_options_apply() {
+        let look = "card_style: Some(\"used\"), empty_style: Some(\"blank\"), tab_style: Some(\"tab\"), \
+                    pager_style: Some(\"pg\"), delete_style: Some(\"del\"), card_height: Some(200.0), column_gap: Some(40.0)";
+        let mut s = custom_card("(kind: Label(text: Literal(\"x\")))", look);
+        let styles: Vec<Option<String>> = s.ui().nodes.iter().map(|n| n.style.clone()).collect();
+        let count = |name: &str| styles.iter().filter(|s| s.as_deref() == Some(name)).count();
+        // Slots: Used, Empty, Used, Incompatible (4 on the page, 2 columns).
+        assert_eq!(count("tab"), 3, "three category tabs");
+        assert_eq!(count("del"), 4);
+        assert_eq!(count("blank"), 1);
+        assert_eq!(count("used"), 3, "used and incompatible fall back to the card style");
+        // The card height and the column gap are applied.
+        let rects = dump(&mut s);
+        let cards: Vec<&[f32; 4]> = s
+            .ui()
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.style.as_deref() == Some("used") || n.style.as_deref() == Some("blank"))
+            .map(|(i, _)| &rects[i].0)
+            .collect();
+        assert_eq!(cards[0][3], 200.0);
+        assert!((cards[1][0] - (cards[0][0] + cards[0][2] + 40.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_confirm_dialog_takes_the_look_styles() {
+        let look = "confirm_style: Some(\"dlg\"), confirm_button_style: Some(\"yn\")";
+        let mut s = custom_card("(kind: Label(text: Literal(\"x\")))", look);
+        click(&mut s, 5); // delete of the first card
+        let styles: Vec<Option<String>> = s.ui().nodes.iter().map(|n| n.style.clone()).collect();
+        assert_eq!(styles.iter().filter(|s| s.as_deref() == Some("dlg")).count(), 1);
+        assert_eq!(styles.iter().filter(|s| s.as_deref() == Some("yn")).count(), 2);
+    }
+
+    #[test]
+    fn music_actions_become_events() {
+        let asset = from_ron(
+            "(id: \"m\", root: (kind: Stack(dir: Vertical), children: [\
+             (kind: Button(text: Literal(\"a\"), action: [PlayMusic(\"assets/m.ogg\")])),\
+             (kind: Button(text: Literal(\"b\"), action: [StopMusic]))]))",
+        )
+        .unwrap();
+        let mut s = DataScreen::new(asset, &Theme::default(), &Texts::builtin("en"), ctx());
+        assert_eq!(click(&mut s, 1), vec![UiEvent::PlayMusic("assets/m.ogg".into())]);
+        assert_eq!(click(&mut s, 2), vec![UiEvent::StopMusic]);
     }
 }

@@ -117,6 +117,9 @@ pub struct MusicOptions {
     /// Fade-out applied to the track being replaced (zero = cut). Use the same
     /// value as `fade_in` for a crossfade.
     pub fade_out_previous: Duration,
+    /// Linear volume of this track (`1.0` = unchanged), on top of the music
+    /// bus.
+    pub volume: f32,
 }
 
 impl Default for MusicOptions {
@@ -125,6 +128,7 @@ impl Default for MusicOptions {
             looping: true,
             fade_in: Duration::ZERO,
             fade_out_previous: Duration::ZERO,
+            volume: 1.0,
         }
     }
 }
@@ -136,6 +140,7 @@ impl MusicOptions {
             looping: true,
             fade_in: d,
             fade_out_previous: d,
+            volume: 1.0,
         }
     }
 }
@@ -347,6 +352,9 @@ impl AudioEngine {
                 let mut data = sound.data.clone();
                 if options.looping {
                     data = data.loop_region(..);
+                }
+                if (options.volume - 1.0).abs() > 1e-3 {
+                    data = data.volume(gain_to_db(options.volume.clamp(0.0, 4.0)));
                 }
                 if !options.fade_in.is_zero() {
                     data = data.fade_in_tween(tween(options.fade_in));

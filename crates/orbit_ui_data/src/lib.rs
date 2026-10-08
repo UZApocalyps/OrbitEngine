@@ -12,6 +12,7 @@ mod bundle;
 mod coverage;
 mod layout;
 pub mod migrate;
+mod slots;
 mod sound;
 mod theme;
 mod transition;
@@ -21,10 +22,11 @@ mod widget;
 pub use access::{
     AA_COMPONENT, AA_TEXT, ContrastIssue, TEXT_SCALE_RANGE, clamp_text_scale, contrast_ratio, luminance,
 };
-pub use action::{AchievementField, BindPath, SettingKey, UiAction};
+pub use action::{AchievementField, BindPath, SettingKey, SlotField, UiAction};
 pub use bundle::{SYSTEM_SCREENS, SplashContent, SplashDef, UiBundle};
 pub use layout::{Align, Anchor, Dir, PanelKind, Size};
 pub use coverage::{describe_chars, language_missing_chars, missing_chars};
+pub use slots::default_slot_card;
 pub use sound::UiSound;
 pub use transition::{ScreenFx, ScreenTransition, ScreenTransitionKind};
 pub use theme::{
@@ -34,6 +36,6 @@ pub use theme::{
 };
 pub use validate::{Issue, Severity, scene_issues, validate, validate_with_vars, variable_issues};
 pub use widget::{
-    Cond, LayoutDef, MAX_REPEAT_ITEMS, ScreenAsset, SlotsMode, TextRef, UI_VERSION, WidgetDef, WidgetKind, from_ron,
-    to_ron,
+    Cond, LayoutDef, MAX_REPEAT_ITEMS, OverGame, ScreenAsset, ScreenMusic, SlotsLook, SlotsMode, TextRef, UI_VERSION,
+    WidgetDef, WidgetKind, from_ron, to_ron,
 };

@@ -162,6 +162,7 @@ impl KindTag {
                 mode: orbit_ui::SlotsMode::Save,
                 columns: 3,
                 rows: 2,
+                look: orbit_ui::SlotsLook::default(),
             },
             Self::Repeat => {
                 // The row template: one label showing the element.
@@ -225,6 +226,13 @@ fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
 /// Adds `def` as the last child of the widget at `parent`; when that widget
 /// cannot hold children, right after it instead. Returns the new widget's
 /// path. `None` for an unknown path.
+/// Whether `def` can hold children: the container kinds, and a save slot
+/// list that has a card template (its children).
+pub fn holds_children(def: &WidgetDef) -> bool {
+    KindTag::of(&def.kind).is_container()
+        || (matches!(def.kind, WidgetKind::SaveSlots { .. }) && !def.children.is_empty())
+}
+
 pub fn add_child(
     screen: &mut ScreenAsset,
     parent: &[usize],
@@ -235,7 +243,7 @@ pub fn add_child(
         def.id = unique_widget_id(screen, kind.name());
     }
     let target = get(&screen.root, parent)?;
-    if KindTag::of(&target.kind).is_container() {
+    if holds_children(target) {
         let node = get_mut(&mut screen.root, parent)?;
         node.children.push(def);
         let mut path = parent.to_vec();
@@ -312,7 +320,7 @@ pub fn move_to(
     if from.is_empty() || into.starts_with(from) {
         return None;
     }
-    if !KindTag::of(&get(&screen.root, into)?.kind).is_container() {
+    if !holds_children(get(&screen.root, into)?) {
         return None;
     }
     let moved = remove(screen, from)?;
@@ -456,6 +464,7 @@ fn blank_screen() -> ScreenAsset {
         hud: false,
         transition_in: None,
         transition_out: None,
+        music: None,
         on_cancel: vec![UiAction::Close],
         root,
     }
@@ -1032,6 +1041,27 @@ mod tests {
         let p2 = add_child(&mut s, &[], KindTag::Button.default_widget()).unwrap();
         assert_ne!(get(&s.root, &p).unwrap().id, get(&s.root, &p2).unwrap().id);
         assert!(add_child(&mut s, &[9], KindTag::Label.default_widget()).is_none());
+    }
+
+    #[test]
+    fn a_save_slot_list_holds_children_only_with_a_card_template() {
+        let mut s = blank_screen();
+        let slots = add_child(&mut s, &[], KindTag::SaveSlots.default_widget()).unwrap();
+        // Stock card: a widget added "into" it lands after it.
+        let p = add_child(&mut s, &slots, KindTag::Label.default_widget()).unwrap();
+        assert_eq!(p.len(), 1);
+        assert!(get(&s.root, &slots).unwrap().children.is_empty());
+        assert!(!holds_children(get(&s.root, &slots).unwrap()));
+        // With the stock card written as a template, it is a container.
+        let widgets = orbit_ui::Theme::default().widgets;
+        get_mut(&mut s.root, &slots).unwrap().children = orbit_ui::default_slot_card(&widgets);
+        assert!(holds_children(get(&s.root, &slots).unwrap()));
+        let p = add_child(&mut s, &slots, KindTag::Label.default_widget()).unwrap();
+        assert_eq!(&p[..slots.len()], &slots[..]);
+        assert_eq!(get(&s.root, &slots).unwrap().children.len(), 2);
+        // Moving a widget into the template works too.
+        let moved = move_to(&mut s, &p, &[slots[0], 0], 0);
+        assert!(moved.is_some());
     }
 
     #[test]

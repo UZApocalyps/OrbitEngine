@@ -64,10 +64,12 @@ fn issues_json_with_story(cx: &ToolCx<'_>, bundle: &UiBundle) -> Vec<Json> {
             .map(|v| v.initial.value_type())
     };
     let mut out = issues_json(bundle);
+    let root = cx.sandbox.root().to_path_buf();
     let extra = bundle
         .story_issues(story)
         .into_iter()
-        .chain(bundle.variable_issues(&ty_of));
+        .chain(bundle.variable_issues(&ty_of))
+        .chain(bundle.missing_music_issues(&|path| root.join(path).is_file()));
     out.extend(extra.map(|i| {
         json!({
             "severity": if i.severity == Severity::Error { "error" } else { "warning" },
@@ -230,6 +232,7 @@ pub fn list_ui(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
             json!({
                 "id": s.id, "modal": s.modal, "hud": s.hud, "system_role": role,
                 "transition_in": tr(&s.transition_in), "transition_out": tr(&s.transition_out),
+                "music": s.music.as_ref().map(|m| &m.asset),
             })
         })
         .collect();
@@ -457,6 +460,124 @@ pub fn write_ui_dialogue(cx: &mut ToolCx<'_>, a: WriteDialogueArgs) -> Result<St
     }
     let issues = commit(cx, &b)?;
     out(json!({"written": true, "issues": issues}))
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScreenMusicArgs {
+    /// Screen id.
+    screen: String,
+    /// The music as RON, every field optional: `(asset: "assets/music/menu.ogg",
+    /// looping: true, volume: 1.0, fade_in_ms: 500, fade_out_ms: 500,
+    /// keep_if_same: true, resume_game_music: true, over_game: Replace | Duck,
+    /// duck_volume: 0.3)`. `over_game` only matters over a running game: Replace
+    /// plays the track instead of the game's music (put back on close when
+    /// `resume_game_music`), Duck keeps the game's music at `duck_volume` and plays
+    /// no track. Omit to remove the screen's music.
+    music: Option<String>,
+}
+
+pub fn set_ui_screen_music(cx: &mut ToolCx<'_>, a: ScreenMusicArgs) -> Result<String, ToolError> {
+    let music = match &a.music {
+        Some(text) => Some(
+            ron::from_str::<orbit_ui_data::ScreenMusic>(text)
+                .map_err(|e| ToolError::invalid(format!("music RON: {e}")))?,
+        ),
+        None => None,
+    };
+    let mut b = load(cx)?;
+    let screen = b
+        .screens
+        .iter_mut()
+        .find(|s| s.id == a.screen)
+        .ok_or_else(|| ToolError::not_found(format!("no screen `{}`", a.screen)))?;
+    screen.music = music;
+    let issues = commit(cx, &b)?;
+    let missing = {
+        let root = cx.sandbox.root().to_path_buf();
+        b.missing_music_issues(&|p| root.join(p).is_file())
+            .into_iter()
+            .filter(|i| i.screen == a.screen)
+            .map(|i| i.message)
+            .collect::<Vec<_>>()
+    };
+    out(json!({"screen": a.screen, "music": a.music, "issues": issues, "missing": missing}))
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SlotCardArgs {
+    /// Screen id.
+    screen: String,
+    /// Id of the SaveSlots widget (default: the first one of the screen).
+    widget: Option<String>,
+    /// `default`: write the stock card as an editable widget tree (the children of
+    /// the SaveSlots widget, built once per slot; the look stays identical until
+    /// edited). Inside it, `Bind(SlotField(Title | Number | Timestamp | Date |
+    /// PlayTime | Chapter | Preview | Status | Thumbnail))` shows a slot field (bind
+    /// an Image to Thumbnail) and `visible: SlotEmpty | SlotUsed | SlotLocked` tells
+    /// the states apart. `stock`: remove the template (back to the stock card).
+    /// Omit to leave the template as it is.
+    template: Option<String>,
+    /// The styles and sizes as RON `(card_style: Some("card"), empty_style: .., locked_style: ..,
+    /// tab_style: .., pager_style: .., delete_style: .., confirm_style: .., confirm_button_style: ..,
+    /// card_height: Some(170.0), column_gap: Some(24.0), row_gap: Some(18.0))`; replaces the
+    /// whole look. Hover / pressed / focus looks come from the styles.
+    look: Option<String>,
+}
+
+pub fn set_ui_save_slots(cx: &mut ToolCx<'_>, a: SlotCardArgs) -> Result<String, ToolError> {
+    let look = match &a.look {
+        Some(text) => Some(
+            ron::from_str::<orbit_ui_data::SlotsLook>(text)
+                .map_err(|e| ToolError::invalid(format!("look RON: {e}")))?,
+        ),
+        None => None,
+    };
+    let template = match a.template.as_deref() {
+        None => None,
+        Some("default") => Some(true),
+        Some("stock") => Some(false),
+        Some(other) => {
+            return Err(ToolError::invalid(format!(
+                "template must be `default` or `stock`, not `{other}`"
+            )));
+        }
+    };
+    fn find<'a>(
+        w: &'a mut orbit_ui_data::WidgetDef,
+        id: Option<&str>,
+    ) -> Option<&'a mut orbit_ui_data::WidgetDef> {
+        let is_match = matches!(w.kind, orbit_ui_data::WidgetKind::SaveSlots { .. })
+            && id.is_none_or(|id| w.id == id);
+        if is_match {
+            return Some(w);
+        }
+        w.children.iter_mut().find_map(|c| find(c, id))
+    }
+    let mut b = load(cx)?;
+    let widgets = b.theme.as_ref().map(|t| t.widgets.clone()).unwrap_or_default();
+    let screen = b
+        .screens
+        .iter_mut()
+        .find(|s| s.id == a.screen)
+        .ok_or_else(|| ToolError::not_found(format!("no screen `{}`", a.screen)))?;
+    let w = find(&mut screen.root, a.widget.as_deref())
+        .ok_or_else(|| ToolError::not_found(format!("no SaveSlots widget in `{}`", a.screen)))?;
+    if let Some(look) = look
+        && let orbit_ui_data::WidgetKind::SaveSlots { look: slot_look, .. } = &mut w.kind
+    {
+        *slot_look = look;
+    }
+    match template {
+        Some(true) => w.children = orbit_ui_data::default_slot_card(&widgets),
+        Some(false) => w.children.clear(),
+        None => {}
+    }
+    let templated = !w.children.is_empty();
+    let id = w.id.clone();
+    let issues = commit(cx, &b)?;
+    out(json!({"screen": a.screen, "widget": id, "templated": templated, "issues": issues}))
 }
 
 pub fn set_ui_widget_style(cx: &mut ToolCx<'_>, a: WidgetStyleArgs) -> Result<String, ToolError> {
