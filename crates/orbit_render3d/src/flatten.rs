@@ -18,6 +18,9 @@ pub struct DrawItem {
     /// Resolved material (default PBR white when the reference is missing).
     pub material: MaterialDef,
     pub world: Mat4,
+    /// Top-level scene node the draw comes from (the instance node for
+    /// prefab contents): the key of its [`orbit_scene::Rig`] pose.
+    pub owner: Option<orbit_scene::Node3dId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +68,7 @@ pub fn flatten(
         &[&scene.materials],
         &math::IDENTITY,
         0,
+        None,
         &mut out,
     );
     out
@@ -82,6 +86,7 @@ impl Ctx<'_> {
         materials: &[&[MaterialDef]],
         root: &Mat4,
         depth: usize,
+        owner: Option<orbit_scene::Node3dId>,
         out: &mut FlatScene,
     ) {
         let index: HashMap<_, _> = nodes.iter().enumerate().map(|(i, n)| (n.id, i)).collect();
@@ -91,6 +96,7 @@ impl Ctx<'_> {
                 continue; // hidden (itself or an ancestor)
             };
             let node = &nodes[i];
+            let owner = owner.or(Some(node.id));
             match &node.kind {
                 Node3dKind::Empty => {}
                 Node3dKind::Mesh {
@@ -113,6 +119,7 @@ impl Ctx<'_> {
                             primitive,
                             material,
                             world: w,
+                            owner,
                         });
                     }
                 }
@@ -132,6 +139,7 @@ impl Ctx<'_> {
                         primitive: 0,
                         material,
                         world: w,
+                        owner,
                     });
                 }
                 Node3dKind::Light(light) => out.lights.push(WorldLight {
@@ -157,7 +165,7 @@ impl Ctx<'_> {
                     let mut mats: Vec<&[MaterialDef]> =
                         vec![&prefab.material_overrides, &prefab.materials];
                     mats.extend_from_slice(materials);
-                    self.walk(&prefab.nodes, &mats, &w, depth + 1, out);
+                    self.walk(&prefab.nodes, &mats, &w, depth + 1, owner, out);
                 }
             }
         }
@@ -295,6 +303,19 @@ mod tests {
         assert_eq!(flat.lights.len(), 1);
         assert_eq!(flat.lights[0].direction, [0.0, 0.0, -1.0]);
         assert_eq!(flat.cameras[0].name, "main");
+        // Prefab contents are owned by their instance (its rig poses them).
+        assert!(flat.draws.iter().all(|d| d.owner == Some(scene.nodes[0].id)));
+    }
+
+    #[test]
+    fn top_level_meshes_own_their_draws() {
+        let root = mesh_node("a", None, &["m"]);
+        let child = mesh_node("b", Some(&root), &["m"]);
+        let mut scene = Scene3d::new("s");
+        scene.nodes = vec![root.clone(), child.clone()];
+        let flat = flatten(&scene, &HashMap::new(), &meshes);
+        let owners: Vec<_> = flat.draws.iter().map(|d| d.owner).collect();
+        assert!(owners.contains(&Some(root.id)) && owners.contains(&Some(child.id)));
     }
 
     #[test]

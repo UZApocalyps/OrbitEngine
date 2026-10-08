@@ -52,7 +52,9 @@ fn quad() -> MeshAsset {
             uvs: vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
             tangents: vec![],
             indices: vec![0, 1, 2, 0, 2, 3],
+            ..Default::default()
         }],
+        ..Default::default()
     }
 }
 
@@ -126,6 +128,59 @@ fn renderer(device: &wgpu::Device, queue: &wgpu::Queue) -> Renderer3d {
     let mut r = Renderer3d::new(device, queue);
     r.upload_mesh(device, &quad());
     r
+}
+
+/// A skinned mesh is drawn through the pose of its scene node's rig, and a
+/// pose change is picked up on the next render (CPU skinning cache).
+#[test]
+fn skinned_mesh_follows_the_rig_pose() {
+    use orbit_scene::skin::{IDENTITY, Joint, Skeleton};
+    let (device, queue) = gpu_or_skip!();
+    let mut r = Renderer3d::new(&device, &queue);
+    let mut mesh = quad();
+    mesh.name = "skinquad".into();
+    mesh.primitives[0].joints = vec![[0, 0, 0, 0]; 4];
+    mesh.primitives[0].weights = vec![[1.0, 0.0, 0.0, 0.0]; 4];
+    mesh.skin = Some(Skeleton {
+        joints: vec![Joint {
+            name: "root".into(),
+            parent: None,
+            rest: orbit_scene::Transform::IDENTITY,
+            base: IDENTITY,
+            inverse_bind: IDENTITY,
+        }],
+    });
+    r.upload_mesh(&device, &mesh);
+    let mut scene = scene_with_camera();
+    let node = Node3d::new(
+        "hero",
+        None,
+        Node3dKind::Mesh {
+            mesh: MeshRef("skinquad".into()),
+            materials: vec![MaterialRef("grey".into())],
+        },
+    );
+    let id = node.id;
+    scene.nodes.push(node);
+    scene.materials.push(unlit("grey", [0.5, 0.5, 0.5, 1.0]));
+
+    let px = render(&device, &queue, &mut r, &scene);
+    assert_near(pixel(&px, SIZE / 2, SIZE / 2), [188, 188, 188, 255], 2);
+    // Root bone moved out of the view: the background shows.
+    scene.rig_mut(id).pose.set(
+        "root",
+        orbit_scene::Transform {
+            translation: [10.0, 0.0, 0.0],
+            ..orbit_scene::Transform::IDENTITY
+        },
+    );
+    let px = render(&device, &queue, &mut r, &scene);
+    assert_near(pixel(&px, SIZE / 2, SIZE / 2), [0, 0, 255, 255], 0);
+    // Back to rest.
+    scene.rig_mut(id).pose = Default::default();
+    let px = render(&device, &queue, &mut r, &scene);
+    assert_near(pixel(&px, SIZE / 2, SIZE / 2), [188, 188, 188, 255], 2);
+    assert_eq!(r.last_draw_count(), 1);
 }
 
 #[test]
