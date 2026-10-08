@@ -264,6 +264,10 @@ impl Viewer<'_> {
     /// Menu entries shared by the block menu.
     fn block_menu(&mut self, node: &ViewNode, ui: &mut Ui) {
         let id = node.id;
+        if ui.button(ui.t("common.edit")).clicked() {
+            self.events.push(GraphEvent::Edit(id));
+            ui.close();
+        }
         if ui.button(ui.t("graph.menu.open")).clicked() {
             self.events.push(GraphEvent::Open(id));
             ui.close();

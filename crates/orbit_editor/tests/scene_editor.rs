@@ -825,3 +825,25 @@ fn editing_a_5000_node_scene_keeps_each_edit_cheap() {
     );
     assert!(times[10] < Duration::from_millis(250), "{:?}", times[10]);
 }
+
+/// "Modifier" (context menu / double click) selects the element and brings
+/// the inspector forward, even when its tab was closed.
+#[test]
+fn edit_action_selects_and_opens_the_inspector() {
+    let (mut core, ctx, _dir) = new_project("edit-action");
+    let ids = with_ctx(&mut core, |c| edit::insert_kind(c, "Say")).unwrap();
+    let node = ids[0];
+    with_ctx(&mut core, |c| c.clear_selection());
+    let inspector = orbit_editor::builtin::panels::INSPECTOR.to_owned();
+    core.dock.retain_tabs(|t| *t != inspector);
+    assert!(!orbit_editor::dock::open_panels(&core.dock).contains(&inspector));
+    with_ctx(&mut core, |c| {
+        orbit_editor::builtin::reveal::edit_node(c, node)
+    });
+    frames(&mut core, &ctx, 3);
+    assert_eq!(
+        with_ctx(&mut core, |c| c.selection()),
+        Some(Selection::Node(node))
+    );
+    assert!(orbit_editor::dock::open_panels(&core.dock).contains(&inspector));
+}

@@ -338,6 +338,24 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         &mut drag,
     );
 
+    // "Modifier": the shown character's node in the inspector.
+    if let Some(node) = show {
+        if response.double_clicked() && drag.is_none() {
+            super::reveal::edit_node(ctx, node);
+        }
+        response.context_menu(|ui| {
+            let label = format!(
+                "{}  {}",
+                egui_phosphor::regular::SLIDERS_HORIZONTAL,
+                ui.t("common.edit")
+            );
+            if ui.button(label).clicked() {
+                super::reveal::edit_node(ctx, node);
+                ui.close();
+            }
+        });
+    }
+
     ctx.state_mut().scene_view.interacting = drag.is_some();
     ui.data_mut(|data| match &drag {
         Some(d) => {

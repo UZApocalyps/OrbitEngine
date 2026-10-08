@@ -141,6 +141,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     // What a click did this frame, applied after the list borrows the story.
     let mut clicked: Option<Selection> = None;
     let mut play_from: Option<NodeId> = None;
+    let mut edit: Option<NodeId> = None;
     let mut toggled: Option<orbit_core::SceneId> = None;
 
     // A reveal (problem, search hit, palette) selected something: scroll to it.
@@ -266,7 +267,21 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
                             play_from = Some(node.id);
                         }
                     }
+                    if response.double_clicked() {
+                        edit = Some(node.id);
+                    }
                     response.context_menu(|ui| {
+                        if ui
+                            .button(format!(
+                                "{}  {}",
+                                icons::SLIDERS_HORIZONTAL,
+                                ui.t("common.edit")
+                            ))
+                            .clicked()
+                        {
+                            edit = Some(node.id);
+                            ui.close();
+                        }
                         if ui
                             .button(format!(
                                 "{}  {}",
@@ -333,6 +348,9 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
 
     if let Some(selection) = clicked {
         ctx.select(selection);
+    }
+    if let Some(id) = edit {
+        super::reveal::edit_node(ctx, id);
     }
     if let Some(id) = play_from {
         ctx.select(Selection::Node(id));

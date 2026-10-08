@@ -20,6 +20,13 @@ pub fn reveal(ctx: &mut EditorContext<'_>, location: Location) {
     ctx.request(EditorRequest::ShowPanel(panel.to_owned()));
 }
 
+/// "Modifier": selects the node and brings the inspector forward (shown
+/// from its home area when closed), the selection feeding its fields.
+pub fn edit_node(ctx: &mut EditorContext<'_>, id: orbit_core::NodeId) {
+    ctx.select(orbit_editor_api::Selection::Node(id));
+    ctx.request(EditorRequest::ShowPanel(panels::INSPECTOR.to_owned()));
+}
+
 /// Where a location is, for the user: `Prologue · Réplique`, `Clara`...
 pub fn describe(ctx: &EditorContext<'_>, location: &Location) -> String {
     let Some(story) = ctx.story() else {

@@ -72,6 +72,8 @@ pub enum GraphEvent {
     Select(Vec<BlockId>),
     /// Double click: open in the scene editor.
     Open(BlockId),
+    /// "Modifier": select the block and open the inspector.
+    Edit(BlockId),
     PlayFrom(BlockId),
     /// Show a node (the one a validation finding is about).
     Reveal(orbit_core::NodeId),

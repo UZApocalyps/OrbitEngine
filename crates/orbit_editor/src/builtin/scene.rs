@@ -349,6 +349,8 @@ enum RowAction {
     },
     /// Right click: the row joins the selection if it is not in it.
     ContextSelect(NodeId),
+    /// "Modifier": select and open the inspector.
+    Edit(NodeId),
     StartEdit(NodeId),
     SetText {
         id: NodeId,
@@ -1576,8 +1578,12 @@ fn draw_row(
             });
         }
     }
-    if response.double_clicked() && matches!(node.kind, NodeKind::Say { .. }) {
-        actions.push(RowAction::StartEdit(node.id));
+    if response.double_clicked() {
+        if matches!(node.kind, NodeKind::Say { .. }) {
+            actions.push(RowAction::StartEdit(node.id));
+        } else if !matches!(node.kind, NodeKind::JumpScene { .. }) && !editing {
+            actions.push(RowAction::Edit(node.id));
+        }
     }
     if !editing {
         response.context_menu(|ui| row_menu(ui, node, actions));
@@ -1608,6 +1614,12 @@ fn menu_item(ui: &mut Ui, label: String) -> bool {
 }
 
 fn row_menu(ui: &mut Ui, node: &Node, actions: &mut Vec<RowAction>) {
+    if menu_item(
+        ui,
+        format!("{}  {}", icons::SLIDERS_HORIZONTAL, ui.t("common.edit")),
+    ) {
+        actions.push(RowAction::Edit(node.id));
+    }
     if matches!(node.kind, NodeKind::Say { .. })
         && menu_item(
             ui,
@@ -1955,6 +1967,10 @@ fn apply_actions(
                 if !ctx.selected_nodes().contains(&id) {
                     ctx.select(Selection::Node(id));
                 }
+                shared.borrow_mut().clicked_here = true;
+            }
+            RowAction::Edit(id) => {
+                super::reveal::edit_node(ctx, id);
                 shared.borrow_mut().clicked_here = true;
             }
             RowAction::StartEdit(id) => {

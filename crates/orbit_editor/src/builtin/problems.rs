@@ -10,7 +10,7 @@ use std::rc::Rc;
 use egui::{Align2, FontId, Ui};
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, Level, Location, PanelDef,
-    Plugin, PluginManifest, Problem, icons,
+    Plugin, PluginManifest, Problem, UiText, icons,
 };
 
 use super::ids;
@@ -201,6 +201,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, cache: &mut ListCache) {
         ui.set_opacity(0.5);
     }
     let mut clicked: Option<Location> = None;
+    let mut edit: Option<orbit_core::NodeId> = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show_rows(ui, ROW_HEIGHT, shown.len(), |ui, range| {
@@ -256,9 +257,20 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, cache: &mut ListCache) {
                     if response.clicked() {
                         clicked = problem.location.clone();
                     }
+                    if let Some(orbit_editor_api::Location::Node(id)) = &problem.location {
+                        response.context_menu(|ui| {
+                            if ui.button(ui.t("common.edit")).clicked() {
+                                edit = Some(*id);
+                                ui.close();
+                            }
+                        });
+                    }
                 }
             }
         });
+    if let Some(id) = edit {
+        super::reveal::edit_node(ctx, id);
+    }
     if let Some(location) = clicked {
         reveal(ctx, location);
     }

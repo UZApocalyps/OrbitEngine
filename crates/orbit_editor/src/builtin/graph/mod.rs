@@ -1043,6 +1043,10 @@ fn handle_with(ctx: &mut EditorContext<'_>, model: &GraphModel, event: GraphEven
                 },
             );
         }
+        GraphEvent::Edit(block) => {
+            select_block(ctx, model, block);
+            ctx.request(EditorRequest::ShowPanel(super::panels::INSPECTOR.to_owned()));
+        }
         GraphEvent::Reveal(node) => super::reveal::reveal(ctx, Location::Node(node)),
         GraphEvent::PlayFrom(block) => {
             select_block(ctx, model, block);
