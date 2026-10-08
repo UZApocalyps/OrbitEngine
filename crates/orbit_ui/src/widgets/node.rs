@@ -69,10 +69,14 @@ pub enum Kind {
         /// (Left / Right still step through them).
         popup: bool,
     },
-    /// Vertical list showing the children from `first` while they fit.
+    /// A list showing its rows (units: one per child of a vertical list,
+    /// one per row of a grid) from `first` while they fit. Layout keeps
+    /// `shown` (units in view) and `total` (units) current.
     ScrollList {
         first: usize,
         shown: usize,
+        total: usize,
+        mode: ListMode,
     },
     Image {
         texture: Option<TextureId>,
@@ -81,6 +85,18 @@ pub enum Kind {
         /// actions): activating it emits `Activated(tag)`.
         clickable: bool,
     },
+}
+
+/// How a [`Kind::ScrollList`] handles rows that do not fit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListMode {
+    /// The `ScrollList` widget: a vertical list, scrollbar always reserved.
+    Legacy,
+    /// A generated list (`Repeat`): scrolls by row, laid out like a plain
+    /// container while everything fits.
+    Scroll,
+    /// Whole pages of rows, with a pager footer as last child.
+    Pages,
 }
 
 impl Kind {
@@ -195,6 +211,10 @@ pub struct Node {
     pub col_span: usize,
     pub row_span: usize,
     pub enabled: bool,
+    /// Pager footer of a paged list (its last child): the page label text,
+    /// `{page}` and `{pages}` filled in by layout. Holds `[previous button,
+    /// label, next button]`.
+    pub footer: Option<String>,
     // --- computed by layout ---
     pub(crate) rect: [f32; 4],
     pub(crate) pref: [f32; 2],
@@ -222,6 +242,7 @@ impl Node {
             col_span: 1,
             row_span: 1,
             enabled: true,
+            footer: None,
             rect: [0.0; 4],
             pref: [0.0; 2],
             visible: true,
@@ -326,8 +347,39 @@ impl Node {
     }
 
     pub fn scroll_list(tag: Tag) -> Self {
-        let mut n = Self::base(Kind::ScrollList { first: 0, shown: 0 });
+        let mut n = Self::base(Kind::ScrollList {
+            first: 0,
+            shown: 0,
+            total: 0,
+            mode: ListMode::Legacy,
+        });
         n.tag = tag;
+        n
+    }
+
+    /// A generated list: rows in `dir` (`Vertical` or `Grid`) that scroll,
+    /// or page when `paged` (then add a [`Node::pager`] last).
+    pub fn collection(tag: Tag, dir: Dir, paged: bool) -> Self {
+        let mut n = Self::base(Kind::ScrollList {
+            first: 0,
+            shown: 0,
+            total: 0,
+            mode: if paged { ListMode::Pages } else { ListMode::Scroll },
+        });
+        n.tag = tag;
+        n.dir = dir;
+        n
+    }
+
+    /// The footer of a paged list; `template` is the page label (`{page}`,
+    /// `{pages}`). Children: previous button, label, next button.
+    pub fn pager(template: impl Into<String>) -> Self {
+        let mut n = Self::hbox();
+        n.footer = Some(template.into());
+        n.width = Size::Fill(1.0);
+        n.main = Align::Center;
+        n.cross = Align::Center;
+        n.gap = 24.0;
         n
     }
 

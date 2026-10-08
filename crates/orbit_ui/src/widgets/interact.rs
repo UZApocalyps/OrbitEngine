@@ -1,7 +1,7 @@
 //! Focus, hover, pointer and keyboard handling of a [`Ui`].
 
 use super::Ui;
-use super::node::{Anchor, Dir, Kind, Node, NodeId, PanelKind, Size, Tag};
+use super::node::{Anchor, Dir, Kind, ListMode, Node, NodeId, PanelKind, Size, Tag};
 use crate::input::{UiInput, UiSound};
 
 /// Tag of the first row of a dropdown popup (row `i` is `POPUP_TAG + i`).
@@ -68,7 +68,12 @@ impl Ui {
         }
         // A list without interactive rows is focusable itself (keyboard
         // scrolling).
-        if matches!(n.kind, Kind::ScrollList { .. }) && out.len() == start && n.visible {
+        // (A generated list only when it has rows out of view.)
+        if let Kind::ScrollList { shown, total, mode, .. } = n.kind
+            && out.len() == start
+            && n.visible
+            && (mode == ListMode::Legacy || shown < total)
+        {
             out.push(id);
         }
     }
@@ -472,7 +477,16 @@ impl Ui {
         }
         // Rows of a scroll list: walk its interactive rows (hidden ones
         // included) so the list scrolls along with the focus.
-        if !horizontal && let Some((list, _)) = self.list_ancestor(id) {
+        if !horizontal
+            && let Some((list, idx)) = self.list_ancestor(id)
+            && !matches!(self.nodes[list.0].kind, Kind::ScrollList { mode: ListMode::Legacy, .. })
+        {
+            // A generated list (rows, grid rows, pages): cross the edge of
+            // what is in view onto the next / previous row.
+            if self.list_step(list, idx, sign) {
+                return;
+            }
+        } else if !horizontal && let Some((list, _)) = self.list_ancestor(id) {
             let mut rows = Vec::new();
             for &c in &self.nodes[list.0].children.clone() {
                 self.collect_focusable(c, false, &mut rows);
@@ -606,14 +620,29 @@ impl Ui {
         let Some((list, idx)) = self.list_ancestor(id) else {
             return;
         };
-        let (first, shown) = match self.nodes[list.0].kind {
-            Kind::ScrollList { first, shown } => (first, shown),
+        let (first, shown, mode) = match self.nodes[list.0].kind {
+            Kind::ScrollList { first, shown, mode, .. } => (first, shown, mode),
             _ => return,
         };
-        let new_first = if idx < first {
-            idx
-        } else if idx >= first + shown {
-            self.first_for_tail(list, idx)
+        // The rows (units) the child covers; the pager footer covers none.
+        let (row, rows) = if mode == ListMode::Legacy {
+            (idx, 1)
+        } else {
+            match self.list_units(list).cells.get(idx) {
+                Some(c) => (c.row, c.rows),
+                None => return,
+            }
+        };
+        let new_first = if mode == ListMode::Pages {
+            let page = self.page_size(list);
+            if row >= first && row < first + shown {
+                return;
+            }
+            row / page * page
+        } else if row < first {
+            row
+        } else if row + rows > first + shown {
+            self.first_for_tail(list, row + rows - 1)
         } else {
             return;
         };
@@ -623,23 +652,95 @@ impl Ui {
         self.layout();
     }
 
-    /// Scrolls a list by `delta` items. `false` when it cannot move.
+    /// Rows a page of the paged list holds (at least 1).
+    fn page_size(&self, list: NodeId) -> usize {
+        let gap = self.nodes[list.0].gap;
+        self.list_units(list)
+            .fit(0, self.list_avail(list), gap)
+            .max(1)
+    }
+
+    /// Scrolls a list by `delta` rows, or a paged list by `delta.signum()`
+    /// pages. `false` when it cannot move.
     pub(crate) fn scroll_by(&mut self, list: NodeId, delta: i32) -> bool {
-        let count = self.nodes[list.0].children.len();
-        if count == 0 {
-            return false;
-        }
-        let max_first = self.first_for_tail(list, count - 1);
-        let Kind::ScrollList { first, .. } = &mut self.nodes[list.0].kind else {
+        let Kind::ScrollList { first, total, mode, .. } = self.nodes[list.0].kind else {
             return false;
         };
-        let new = (*first as i32 + delta).clamp(0, max_first as i32) as usize;
-        if new == *first {
+        if total == 0 {
             return false;
         }
-        *first = new;
+        let new = if mode == ListMode::Pages {
+            let page = self.page_size(list);
+            let last_page = ((total - 1) / page) as i32;
+            ((first / page) as i32 + delta.signum()).clamp(0, last_page) as usize * page
+        } else {
+            let max_first = self.first_for_tail(list, total - 1);
+            (first as i32 + delta).clamp(0, max_first as i32) as usize
+        };
+        if new == first {
+            return false;
+        }
+        if let Kind::ScrollList { first, .. } = &mut self.nodes[list.0].kind {
+            *first = new;
+        }
         self.layout();
         true
+    }
+
+    /// Moves the focus from the item `idx` of a generated list onto the
+    /// next (`sign > 0`) or previous row when the current one is at the edge
+    /// of what is in view and more rows lie beyond (scrolling or turning the
+    /// page). `false` when the focus should move spatially instead.
+    fn list_step(&mut self, list: NodeId, idx: usize, sign: i32) -> bool {
+        let Kind::ScrollList { first, shown, total, .. } = self.nodes[list.0].kind else {
+            return false;
+        };
+        let units = self.list_units(list);
+        let Some(&cell) = units.cells.get(idx) else {
+            return false;
+        };
+        let down = sign > 0;
+        let at_edge = if down {
+            cell.row + cell.rows >= first + shown && first + shown < total
+        } else {
+            cell.row <= first && first > 0
+        };
+        if !at_edge {
+            return false;
+        }
+        let items: Vec<NodeId> = self.nodes[list.0]
+            .children
+            .iter()
+            .copied()
+            .filter(|c| self.nodes[c.0].footer.is_none())
+            .collect();
+        let mut unit = if down { first + shown } else { first - 1 } as i32;
+        while unit >= 0 && (unit as usize) < total {
+            let u = unit as usize;
+            let mut best: Option<(usize, NodeId)> = None;
+            for (i, c) in units.cells.iter().enumerate() {
+                let covers = if down { c.row == u } else { c.row + c.rows - 1 == u };
+                if !covers {
+                    continue;
+                }
+                let mut found = Vec::new();
+                self.collect_focusable(items[i], false, &mut found);
+                let Some(&target) = found.first() else {
+                    continue;
+                };
+                let dist = c.col.abs_diff(cell.col);
+                if best.is_none_or(|(d, _)| dist < d) {
+                    best = Some((dist, target));
+                }
+            }
+            if let Some((_, target)) = best {
+                self.focus = Some(target);
+                self.reveal(target);
+                return true;
+            }
+            unit += sign;
+        }
+        false
     }
 
     /// Remembers the scroll list under a pressed pointer (when it has rows
@@ -648,11 +749,12 @@ impl Ui {
         self.list_drag = None;
         let mut found = None;
         for (i, n) in self.nodes.iter().enumerate() {
-            if let Kind::ScrollList { first, shown } = n.kind
+            if let Kind::ScrollList { first, shown, total, mode } = n.kind
                 && n.visible
                 && n.enabled
                 && contains(n.rect, p)
-                && shown < n.children.len()
+                && mode != ListMode::Pages
+                && shown < total
             {
                 found = Some((NodeId(i), p[1], first, false));
             }
@@ -676,7 +778,7 @@ impl Ui {
             self.list_drag = Some((list, y0, first0, true));
         }
         let (rect_h, first, shown) = match self.nodes[list.0].kind {
-            Kind::ScrollList { first, shown } => (self.nodes[list.0].rect[3], first, shown),
+            Kind::ScrollList { first, shown, .. } => (self.nodes[list.0].rect[3], first, shown),
             _ => return false,
         };
         let pitch = (rect_h / shown.max(1) as f32).max(24.0);
@@ -737,6 +839,75 @@ impl Ui {
                 _ => 1,
             };
             self.scroll_by(NodeId(i), dir * shown);
+        }
+    }
+
+    /// Where each generated list (scrolling or paged) is scrolled to, by tag:
+    /// kept across a rebuild of the screen.
+    pub(crate) fn list_offsets(&self) -> Vec<(Tag, usize)> {
+        self.nodes
+            .iter()
+            .filter_map(|n| match n.kind {
+                Kind::ScrollList { first, mode, .. } if mode != ListMode::Legacy && first > 0 => {
+                    Some((n.tag, first))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Scrolls the generated lists back to `offsets` (layout clamps them).
+    pub(crate) fn restore_list_offsets(&mut self, offsets: &[(Tag, usize)]) {
+        for n in &mut self.nodes {
+            if let Kind::ScrollList { first, mode, .. } = &mut n.kind
+                && *mode != ListMode::Legacy
+                && let Some((_, f)) = offsets.iter().find(|(t, _)| *t == n.tag)
+            {
+                *first = *f;
+            }
+        }
+        self.laid_out = false;
+    }
+
+    /// Turns the paged list `tag` one page forward (`dir > 0`) or back, or
+    /// scrolls a scrolling one by `dir` rows. `false` when it cannot move.
+    /// A pager button that gets disabled by the move hands its focus on.
+    pub fn scroll_page(&mut self, tag: Tag, dir: i32) -> bool {
+        self.ensure_layout();
+        let Some(list) = self.find(tag) else {
+            return false;
+        };
+        let moved = self.scroll_by(list, dir);
+        if let Some(f) = self.focus
+            && !self.nodes[f.0].enabled
+            && let Some(parent) = self.nodes[f.0].parent
+        {
+            let next = self.nodes[parent.0]
+                .children
+                .iter()
+                .copied()
+                .find(|c| self.nodes[c.0].kind.is_interactive() && self.nodes[c.0].enabled);
+            if next.is_some() {
+                self.focus = next;
+            }
+        }
+        moved
+    }
+
+    /// `(page, pages)` (from 0 and in all) of the list `tag`: the page in
+    /// view of a paged list; for a scrolling one the rows scrolled past and
+    /// in all.
+    pub fn list_position(&mut self, tag: Tag) -> Option<(usize, usize)> {
+        self.ensure_layout();
+        let id = self.find(tag)?;
+        let Kind::ScrollList { first, total, mode, .. } = self.nodes[id.0].kind else {
+            return None;
+        };
+        if mode == ListMode::Pages && total > 0 {
+            let page = self.page_size(id);
+            Some((first / page, total.div_ceil(page)))
+        } else {
+            Some((first, total))
         }
     }
 

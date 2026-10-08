@@ -7,13 +7,13 @@ use orbit_render2d::TextureId;
 
 use orbit_ui_data::{BindPath, SettingKey, UiAction};
 use super::slots::{SlotAction, SlotCtx};
-use orbit_ui_data::{Cond, ScreenAsset, SlotsMode, TextRef, WidgetDef, WidgetKind};
+use orbit_ui_data::{Cond, Overflow, ScreenAsset, SlotsMode, TextRef, WidgetDef, WidgetKind};
 use crate::input::UiInput;
 use crate::screens::{Confirm, Screen};
 use crate::texts::Texts;
 use crate::theme::{Style, Theme};
 use crate::view::{AudioBus, CategoryView, PrefsView, SkipMode, SlotState, UiEvent};
-use crate::widgets::{Dir, DrawCtx, Node, NodeId, PanelKind, Tag, Ui, WidgetEvent};
+use crate::widgets::{Dir, DrawCtx, Kind, ListMode, Node, NodeId, PanelKind, Size, Tag, Ui, WidgetEvent};
 use orbit_text::TextAlign;
 
 /// Name of the image asset standing for the title background of the game.
@@ -197,7 +197,17 @@ pub(super) enum Bound {
         values: Vec<Value>,
     },
     Slot(SlotAction),
+    /// A pager button of a paged `Repeat`: turns the page of the list with
+    /// this tag (`-1` previous, `1` next).
+    ListPage {
+        list: Tag,
+        dir: i32,
+    },
 }
+
+/// Tags of the generated lists (`LIST_TAG + widget index`), below the
+/// dropdown popup tags.
+const LIST_TAG: Tag = 0x2000_0000;
 
 /// A label kept in sync with a setting or a story variable.
 #[derive(Clone, Debug)]
@@ -477,6 +487,8 @@ impl DataScreen {
         theme.styles.extend(std::mem::take(&mut st.styles));
         st.ui.set_theme(theme);
         st.ui.set_images(self.ctx.images.clone());
+        // A rebuilt list stays scrolled where it was.
+        st.ui.restore_list_offsets(&self.ui.list_offsets());
         st.ui.layout();
         st.ui.focus_first();
         if let Some(tag) = focus {
@@ -574,7 +586,17 @@ impl DataScreen {
         let item = item.as_ref();
         let node = match &def.kind {
             WidgetKind::Panel { kind, dir } => Node::panel(*kind, *dir),
-            WidgetKind::Stack { dir } | WidgetKind::Repeat { dir, .. } => Node::container(*dir),
+            WidgetKind::Stack { dir } => Node::container(*dir),
+            WidgetKind::Repeat { dir, overflow, .. } => match (overflow, dir) {
+                // A vertical or grid list that scrolls / pages when its
+                // rows do not fit (a plain container while they do).
+                (Overflow::Scroll | Overflow::Pages, Dir::Vertical | Dir::Grid(_)) => {
+                    // Tagged apart from the controls, whose numbering stays
+                    // what it was.
+                    Node::collection(LIST_TAG + index as Tag, *dir, *overflow == Overflow::Pages)
+                }
+                _ => Node::container(*dir),
+            },
             WidgetKind::Grid { columns } => Node::grid(*columns),
             WidgetKind::Button { text, action } => {
                 let tag = Self::new_tag(st);
@@ -779,6 +801,35 @@ impl DataScreen {
         self.finish(node, def, parent, path, index, st);
     }
 
+    /// Adds the pager (previous button, page label, next button) as the last
+    /// child of the paged list `list`.
+    fn build_pager(&self, list: NodeId, st: &mut Build) {
+        let list_tag = st.ui.node(list).tag;
+        // Layout fills in `{page}` and `{pages}`.
+        let template = self
+            .texts
+            .format("ui.save.page", &[("page", "{page}"), ("pages", "{pages}")]);
+        let footer = st.ui.add(list, Node::pager(template.clone()));
+        let button = |st: &mut Build, key: &str, dir: i32| {
+            let tag = Self::new_tag(st);
+            st.binds.insert(tag, Bound::ListPage { list: list_tag, dir });
+            st.ui.add(
+                footer,
+                Node::button(tag, self.texts.get(key))
+                    .small()
+                    .w(Size::Fixed(200.0)),
+            );
+        };
+        button(st, "ui.save.prev_page", -1);
+        st.ui.add(
+            footer,
+            Node::label(template)
+                .w(Size::Fixed(220.0))
+                .text_align(TextAlign::Center),
+        );
+        button(st, "ui.save.next_page", 1);
+    }
+
     /// Applies layout, style and conditions to `node`, adds it to the tree
     /// and builds the children of `def`.
     fn finish(
@@ -824,7 +875,10 @@ impl DataScreen {
             self.build_slots(def, id, path, st);
             return;
         }
-        if let WidgetKind::Repeat { source, empty, .. } = &def.kind {
+        if let WidgetKind::Repeat {
+            source, empty, ..
+        } = &def.kind
+        {
             // The children are the template of one row, built per element.
             let outer = st.items.last().cloned();
             let rows = self.repeat_items(source, outer.as_ref());
@@ -843,6 +897,12 @@ impl DataScreen {
                     path.pop();
                 }
                 st.items.pop();
+            }
+            if matches!(
+                st.ui.node(id).kind,
+                Kind::ScrollList { mode: ListMode::Pages, .. }
+            ) {
+                self.build_pager(id, st);
             }
             return;
         }
@@ -1109,6 +1169,9 @@ impl Screen for DataScreen {
                         }
                     }
                     Some(Bound::Slot(action)) => self.run_slot(tag, action, &mut out),
+                    Some(Bound::ListPage { list, dir }) => {
+                        self.ui.scroll_page(list, dir);
+                    }
                     _ => {}
                 },
                 WidgetEvent::SliderChanged(tag, unit) => {
@@ -1934,6 +1997,70 @@ mod tests {
             click(&mut s, 1),
             vec![remove("key"), UiEvent::BackWith(Value::from("key"))]
         );
+    }
+
+    fn overflow_screen(overflow: &str, n: usize) -> DataScreen {
+        let src = format!(
+            r#"(id: "many", root: (kind: Stack(dir: Vertical), children: [
+            (kind: Repeat(source: Var("bag"), dir: Grid(2), overflow: {overflow}),
+             layout: (width: Fixed(700.0), height: Fixed(330.0), gap: 10.0),
+             children: [
+                (kind: Button(text: Bind(Item), action: [CloseWith(Item)]),
+                 layout: (width: Fixed(300.0), height: Fixed(100.0))),
+            ]),
+        ]))"#
+        );
+        let mut c = ctx();
+        let names: Vec<String> = (0..n).map(|i| format!("item{i}")).collect();
+        c.vars.insert(
+            "bag".into(),
+            Value::list(orbit_core::ScalarType::Str, names.iter().map(|s| Value::from(s.as_str()))),
+        );
+        DataScreen::new(from_ron(&src).unwrap(), &Theme::default(), &Texts::builtin("en"), c)
+    }
+
+    #[test]
+    fn a_paged_repeat_gets_a_pager_that_turns_the_pages() {
+        // 9 items on 2 columns = 5 rows; 2 rows per page: 3 pages.
+        let mut s = overflow_screen("Pages", 9);
+        // Tags: the items 1..=9, then Previous (10) and Next (11).
+        let visible = |s: &mut DataScreen, tag: Tag| {
+            let ui = s.ui();
+            let id = ui.find(tag).unwrap();
+            ui.node(id).is_visible()
+        };
+        assert!(visible(&mut s, 1) && visible(&mut s, 4) && !visible(&mut s, 5));
+        assert_eq!(click(&mut s, 11), vec![]);
+        assert!(!visible(&mut s, 1) && visible(&mut s, 5) && visible(&mut s, 8) && !visible(&mut s, 9));
+        // An unrelated rebuild keeps the page.
+        let mut c = s.ctx.clone();
+        c.can_save = true;
+        s.set_context(c);
+        assert!(!visible(&mut s, 1) && visible(&mut s, 5));
+        assert_eq!(click(&mut s, 10), vec![]);
+        assert!(visible(&mut s, 1));
+        // A visible item still acts.
+        assert_eq!(click(&mut s, 2), vec![UiEvent::BackWith(Value::from("item1"))]);
+    }
+
+    #[test]
+    fn a_scrolling_repeat_scrolls_and_off_leaves_the_rows_alone() {
+        let mut s = overflow_screen("Scroll", 9);
+        let visible = |s: &mut DataScreen, tag: Tag| {
+            let ui = s.ui();
+            let id = ui.find(tag).unwrap();
+            ui.node(id).is_visible()
+        };
+        // 330 high: three 100-high rows fit (320), the 4th does not.
+        assert!(visible(&mut s, 6) && !visible(&mut s, 7));
+        s.handle(UiInput::PointerMove([20.0, 20.0]));
+        s.handle(UiInput::Scroll(-1.0));
+        assert!(!visible(&mut s, 1) && visible(&mut s, 7));
+        // `Off` lays every row out (and the default is Scroll).
+        let mut s = overflow_screen("Off", 9);
+        assert!(visible(&mut s, 9));
+        let default_src = from_ron(r#"(id: "x", root: (kind: Repeat(source: Var("bag"))))"#).unwrap();
+        assert!(matches!(default_src.root.kind, WidgetKind::Repeat { overflow: Overflow::Scroll, .. }));
     }
 
     #[test]

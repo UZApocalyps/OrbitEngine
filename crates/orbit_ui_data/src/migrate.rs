@@ -28,7 +28,14 @@ pub fn read_version(source: &str) -> Result<u32, String> {
 pub type Step = fn(&str) -> Result<String, String>;
 
 /// Steps indexed by source version: `STEPS[0]` migrates v1 -> v2.
-const STEPS: &[Step] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9];
+const STEPS: &[Step] = &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10];
+
+/// v9 -> v10 (list overflow): `WidgetKind::Repeat::overflow`, defaulting to
+/// `Scroll` (rows that do not fit scroll instead of leaving the room).
+/// Optional, so a document only changes its version number.
+fn v9_to_v10(source: &str) -> Result<String, String> {
+    Ok(bump_version(source, 9, 10))
+}
 
 /// v8 -> v9 (menu music & editable save slots): `ScreenAsset::music`,
 /// `SaveSlots::look` (and its children as the card template),
@@ -165,19 +172,19 @@ mod tests {
     #[test]
     fn v1_documents_are_stamped_with_the_new_version() {
         let out = migrate(1, "(ui_version: 1, id: \"a\")").unwrap();
-        assert_eq!(out, "(ui_version: 9, id: \"a\")");
+        assert_eq!(out, "(ui_version: 10, id: \"a\")");
         let out = migrate(2, "(ui_version: 2, id: \"a\")").unwrap();
-        assert_eq!(out, "(ui_version: 9, id: \"a\")");
+        assert_eq!(out, "(ui_version: 10, id: \"a\")");
         let out = migrate(3, "(ui_version: 3, id: \"a\")").unwrap();
-        assert_eq!(out, "(ui_version: 9, id: \"a\")");
+        assert_eq!(out, "(ui_version: 10, id: \"a\")");
         let out = migrate(4, "(ui_version: 4, id: \"a\")").unwrap();
-        assert_eq!(out, "(ui_version: 9, id: \"a\")");
+        assert_eq!(out, "(ui_version: 10, id: \"a\")");
         let out = migrate(5, "(ui_version: 5, id: \"a\")").unwrap();
-        assert_eq!(out, "(ui_version: 9, id: \"a\")");
+        assert_eq!(out, "(ui_version: 10, id: \"a\")");
         let out = migrate(6, "(ui_version: 6, id: \"a\")").unwrap();
-        assert_eq!(out, "(ui_version: 9, id: \"a\")");
+        assert_eq!(out, "(ui_version: 10, id: \"a\")");
         let out = migrate(8, "(ui_version: 8, id: \"a\")").unwrap();
-        assert_eq!(out, "(ui_version: 9, id: \"a\")");
+        assert_eq!(out, "(ui_version: 10, id: \"a\")");
         // A document without the field is already current.
         assert_eq!(migrate(1, "(id: \"a\")").unwrap(), "(id: \"a\")");
     }

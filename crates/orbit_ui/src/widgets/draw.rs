@@ -7,7 +7,7 @@ use orbit_text::{DrawParams, TextAlign, TextEngine, TextRenderer};
 
 use super::Ui;
 use super::layout::LINE_HEIGHT;
-use super::node::{ButtonKind, Kind, Node, NodeId, PanelKind, TextCache, escape_markup};
+use super::node::{ButtonKind, Kind, ListMode, Node, NodeId, PanelKind, TextCache, escape_markup};
 use crate::paint::Painter;
 use crate::theme::{Fill, Style, TextAlignment, Theme, WidgetState, resolve_style, tint};
 
@@ -524,9 +524,8 @@ impl Drawer<'_, '_, '_> {
                     self.quad(rect, w.button.disabled, layer, 0.0);
                 }
             }
-            Kind::ScrollList { first, shown } => {
-                let total = self.nodes[id.0].children.len();
-                if *shown < total {
+            Kind::ScrollList { first, shown, total, mode } => {
+                if *shown < *total && *mode != ListMode::Pages {
                     let l = &w.list;
                     let pad = self.nodes[id.0].pad;
                     let track = [
@@ -536,9 +535,9 @@ impl Drawer<'_, '_, '_> {
                         (rect[3] - 2.0 * pad[1]).max(0.0),
                     ];
                     self.quad(track, l.bar_track, layer, 0.0);
-                    let frac = *shown as f32 / total as f32;
+                    let frac = *shown as f32 / *total as f32;
                     let thumb_h = (track[3] * frac).max(24.0).min(track[3]);
-                    let span = (total - shown).max(1) as f32;
+                    let span = (*total - *shown).max(1) as f32;
                     let thumb_y = track[1] + (track[3] - thumb_h) * (*first as f32 / span).min(1.0);
                     self.quad(
                         [track[0], thumb_y, l.bar_width, thumb_h],
@@ -555,7 +554,13 @@ impl Drawer<'_, '_, '_> {
         self.nodes[id.0].cache = cache;
         // Rows of a scroll list never paint outside the list (long text,
         // glows, borders).
-        let clip_list = matches!(self.nodes[id.0].kind, Kind::ScrollList { .. });
+        let clip_list = matches!(
+            self.nodes[id.0].kind,
+            Kind::ScrollList { mode: ListMode::Legacy, .. }
+        ) || matches!(
+            self.nodes[id.0].kind,
+            Kind::ScrollList { shown, total, .. } if shown < total
+        );
         if clip_list {
             self.ctx.scene.push_clip(rect);
         }

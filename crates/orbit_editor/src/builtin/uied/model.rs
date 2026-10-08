@@ -170,6 +170,7 @@ impl KindTag {
                     source: BindPath::Var(String::new()),
                     dir: Dir::Vertical,
                     empty: None,
+                    overflow: orbit_ui::Overflow::Scroll,
                 });
                 let mut row = Self::Label.default_widget();
                 row.kind = WidgetKind::Label {
@@ -1375,6 +1376,7 @@ mod tests {
             source: BindPath::Var("items".into()),
             dir: Dir::Vertical,
             empty: Some(TextRef::Literal("Nothing".into())),
+            overflow: orbit_ui::Overflow::Scroll,
         };
         rep.children.push(WidgetDef::new(WidgetKind::Button {
             text: TextRef::Bind(BindPath::ItemKey),

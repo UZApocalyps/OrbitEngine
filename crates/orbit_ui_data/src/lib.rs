@@ -36,6 +36,6 @@ pub use theme::{
 };
 pub use validate::{Issue, Severity, scene_issues, validate, validate_with_vars, variable_issues};
 pub use widget::{
-    Cond, LayoutDef, MAX_REPEAT_ITEMS, OverGame, ScreenAsset, ScreenMusic, SlotsLook, SlotsMode, TextRef, UI_VERSION,
+    Cond, LayoutDef, MAX_REPEAT_ITEMS, OverGame, Overflow, ScreenAsset, ScreenMusic, SlotsLook, SlotsMode, TextRef, UI_VERSION,
     WidgetDef, WidgetKind, from_ron, to_ron,
 };

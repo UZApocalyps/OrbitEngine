@@ -1,6 +1,6 @@
 //! Measure / arrange pass. Pure arithmetic, no GPU.
 
-use super::node::{Align, Dir, Kind, Node, NodeId, Size, estimate_text_width};
+use super::node::{Align, Dir, Kind, ListMode, Node, NodeId, Size, estimate_text_width};
 use super::{CANVAS, Ui};
 
 /// Line height multiplier of `orbit_text` styles.
@@ -53,11 +53,19 @@ impl Ui {
     /// Preferred size of a subtree (children first).
     fn measure(&mut self, id: NodeId) -> [f32; 2] {
         let children = self.nodes[id.0].children.clone();
-        let prefs: Vec<[f32; 2]> = children.iter().map(|&c| self.measure(c)).collect();
-        let spans: Vec<[usize; 2]> = children
+        let mut prefs: Vec<[f32; 2]> = children.iter().map(|&c| self.measure(c)).collect();
+        let mut spans: Vec<[usize; 2]> = children
             .iter()
             .map(|c| [self.nodes[c.0].col_span, self.nodes[c.0].row_span])
             .collect();
+        // The pager footer of a paged list is not one of its rows.
+        let footer_h = match children.last() {
+            Some(c) if self.nodes[c.0].footer.is_some() => {
+                spans.pop();
+                prefs.pop().map(|p| p[1])
+            }
+            _ => None,
+        };
         let node = &self.nodes[id.0];
         let w = &self.theme.widgets;
         let flow = |dir: Dir, gap: f32| -> [f32; 2] {
@@ -119,15 +127,27 @@ impl Ui {
                 w.button.height,
             ],
             Kind::Image { .. } => [0.0, 0.0],
-            Kind::ScrollList { .. } => {
+            Kind::ScrollList { mode: ListMode::Legacy, .. } => {
                 let [cw, ch] = flow(Dir::Vertical, node.gap);
                 [cw + w.list.bar_width, ch]
+            }
+            Kind::ScrollList { .. } => {
+                let [cw, ch] = flow(node.dir, node.gap);
+                match footer_h {
+                    Some(fh) => [cw, ch + fh + node.gap],
+                    None => [cw, ch],
+                }
             }
             Kind::Container | Kind::Panel(_) => flow(node.dir, node.gap),
         };
         let has_children = !prefs.is_empty();
         let padded = |c: f32, p: f32| {
-            if has_children || matches!(node.kind, Kind::Container | Kind::Panel(_)) {
+            if has_children
+                || matches!(
+                    node.kind,
+                    Kind::Container | Kind::Panel(_) | Kind::ScrollList { mode: ListMode::Scroll | ListMode::Pages, .. }
+                )
+            {
                 c + 2.0 * p
             } else {
                 c
@@ -157,7 +177,7 @@ impl Ui {
             (rect[2] - m[0] - m[2]).max(0.0),
             (rect[3] - m[1] - m[3]).max(0.0),
         ];
-        let (children, pad, gap, dir, main, cross, is_list) = {
+        let (mut children, pad, gap, dir, main, cross, list) = {
             let n = &mut self.nodes[id.0];
             n.rect = rect;
             n.visible = visible;
@@ -168,7 +188,10 @@ impl Ui {
                 n.dir,
                 n.main,
                 n.cross,
-                matches!(n.kind, Kind::ScrollList { .. }),
+                match n.kind {
+                    Kind::ScrollList { mode, .. } => Some(mode),
+                    _ => None,
+                },
             )
         };
         if children.is_empty() {
@@ -180,9 +203,29 @@ impl Ui {
             (rect[2] - 2.0 * pad[0]).max(0.0),
             (rect[3] - 2.0 * pad[1]).max(0.0),
         ];
-        if is_list {
-            self.arrange_list(id, &children, inner, gap, visible);
-            return;
+        match list {
+            Some(ListMode::Legacy) => {
+                self.arrange_list(id, &children, inner, gap, visible);
+                return;
+            }
+            Some(mode) => {
+                let footer = match children.last() {
+                    Some(&c) if self.nodes[c.0].footer.is_some() => children.pop(),
+                    _ => None,
+                };
+                if children.is_empty() {
+                    if let Some(f) = footer {
+                        self.arrange(f, [0.0; 4], false);
+                    }
+                    self.set_list(id, 0, 0, 0);
+                    return;
+                }
+                if self.arrange_collection(id, mode, &children, footer, inner, visible) {
+                    return;
+                }
+                // Everything fits: a plain container (below).
+            }
+            None => {}
         }
         if let Dir::Grid(cols) = dir {
             self.arrange_grid(&children, inner, gap, cols.max(1), main, cross, visible);
@@ -377,21 +420,230 @@ impl Ui {
             y += h + gap;
             shown += 1;
         }
-        if let Kind::ScrollList { shown: s, .. } = &mut self.nodes[id.0].kind {
-            *s = shown;
+        self.set_list(id, first, shown, children.len());
+    }
+
+    /// Sets what layout knows about a list: units scrolled past, in view,
+    /// and in all.
+    fn set_list(&mut self, id: NodeId, f: usize, s: usize, t: usize) {
+        if let Kind::ScrollList { first, shown, total, .. } = &mut self.nodes[id.0].kind {
+            (*first, *shown, *total) = (f, s, t);
         }
     }
 
-    /// Smallest `first` index such that items `first..=last` fit in the
+    /// The rows of a list: one unit per child of a vertical list, one per
+    /// grid row.
+    pub(crate) fn list_units(&self, list: NodeId) -> Units {
+        let n = &self.nodes[list.0];
+        let items: Vec<NodeId> = n
+            .children
+            .iter()
+            .copied()
+            .filter(|c| self.nodes[c.0].footer.is_none())
+            .collect();
+        let legacy = matches!(n.kind, Kind::ScrollList { mode: ListMode::Legacy, .. });
+        match n.dir {
+            Dir::Grid(cols) if !legacy => {
+                let prefs: Vec<[f32; 2]> = items.iter().map(|c| self.nodes[c.0].pref).collect();
+                let spans: Vec<[usize; 2]> = items
+                    .iter()
+                    .map(|c| [self.nodes[c.0].col_span, self.nodes[c.0].row_span])
+                    .collect();
+                let cells = grid_place(&spans, cols);
+                let (cw, heights) = grid_tracks(&prefs, &cells, n.gap);
+                let mut fill_c = vec![false; cw.len()];
+                for (cell, &ch) in cells.iter().zip(&items) {
+                    if matches!(self.nodes[ch.0].width, Size::Fill(_)) {
+                        fill_c[cell.col..cell.col + cell.cols].fill(true);
+                    }
+                }
+                Units { heights, cells, cw, fill_c }
+            }
+            _ => Units {
+                heights: items.iter().map(|c| self.nodes[c.0].pref[1]).collect(),
+                cells: (0..items.len())
+                    .map(|row| GridCell { col: 0, row, cols: 1, rows: 1 })
+                    .collect(),
+                cw: Vec::new(),
+                fill_c: Vec::new(),
+            },
+        }
+    }
+
+    /// Height the rows of a list have: its inner height, less the pager.
+    pub(crate) fn list_avail(&self, list: NodeId) -> f32 {
+        let n = &self.nodes[list.0];
+        let mut avail = (n.rect[3] - 2.0 * n.pad[1]).max(0.0);
+        if matches!(n.kind, Kind::ScrollList { mode: ListMode::Pages, .. })
+            && let Some(f) = n.children.last().filter(|c| self.nodes[c.0].footer.is_some())
+        {
+            avail = (avail - self.nodes[f.0].pref[1] - n.gap).max(0.0);
+        }
+        avail
+    }
+
+    /// Lays out a `Scroll` / `Pages` list whose rows (`items`) do not fit;
+    /// `false` (nothing placed) when they all fit.
+    fn arrange_collection(
+        &mut self,
+        id: NodeId,
+        mode: ListMode,
+        items: &[NodeId],
+        footer: Option<NodeId>,
+        inner: [f32; 4],
+        visible: bool,
+    ) -> bool {
+        let (gap, main, cross) = {
+            let n = &self.nodes[id.0];
+            (n.gap, n.main, n.cross)
+        };
+        let units = self.list_units(id);
+        let total = units.heights.len();
+        let content = units.heights.iter().sum::<f32>() + gap * total.saturating_sub(1) as f32;
+        if content <= inner[3] + 0.5 {
+            self.set_list(id, 0, total, total);
+            if let Some(f) = footer {
+                self.arrange(f, [0.0; 4], false);
+            }
+            return false;
+        }
+        let paged = mode == ListMode::Pages;
+        let fh = footer.map_or(0.0, |f| self.nodes[f.0].pref[1]);
+        let avail = if paged { (inner[3] - fh - gap).max(0.0) } else { inner[3] };
+        let page = units.fit(0, avail, gap).max(1);
+        let mut first = match self.nodes[id.0].kind {
+            Kind::ScrollList { first, .. } => first,
+            _ => 0,
+        };
+        first = if paged {
+            let last_page = (total - 1) / page * page;
+            (first / page * page).min(last_page)
+        } else {
+            first.min(units.first_for_tail(total - 1, avail, gap))
+        };
+        let shown = units.fit(first, avail, gap).min(total - first);
+        self.set_list(id, first, shown, total);
+
+        let width = if paged {
+            inner[2]
+        } else {
+            (inner[2] - self.theme.widgets.list.bar_width - 8.0).max(0.0)
+        };
+        let grid = matches!(self.nodes[id.0].dir, Dir::Grid(_));
+        let mut cw = units.cw.clone();
+        if grid {
+            spread(&mut cw, &units.fill_c, width, gap);
+        }
+        let mut xs = Vec::with_capacity(cw.len());
+        let mut x = inner[0];
+        for w in &cw {
+            xs.push(x);
+            x += w + gap;
+        }
+        let mut ys = vec![0.0f32; total];
+        let mut y = inner[1];
+        for (slot, h) in ys.iter_mut().zip(&units.heights).skip(first).take(shown) {
+            *slot = y;
+            y += h + gap;
+        }
+        for (cell, &ch) in units.cells.iter().zip(items) {
+            if cell.row < first || cell.row >= first + shown {
+                self.arrange(ch, [0.0; 4], false);
+                continue;
+            }
+            let end = (cell.row + cell.rows).min(first + shown);
+            let height = units.heights[cell.row..end].iter().sum::<f32>()
+                + gap * (end - cell.row - 1) as f32;
+            let area = if grid {
+                let w = cw[cell.col..cell.col + cell.cols].iter().sum::<f32>()
+                    + gap * (cell.cols - 1) as f32;
+                [xs[cell.col], ys[cell.row], w, height]
+            } else {
+                [inner[0], ys[cell.row], width, height]
+            };
+            let rect = self.place_in(ch, area, main, cross);
+            self.arrange(ch, rect, visible);
+        }
+        if let Some(f) = footer {
+            if paged {
+                self.update_pager(f, first / page, total.div_ceil(page));
+                self.arrange(f, [inner[0], inner[1] + inner[3] - fh, inner[2], fh], visible);
+            } else {
+                self.arrange(f, [0.0; 4], false);
+            }
+        }
+        true
+    }
+
+    /// Fills the page label of a pager footer and enables / disables its
+    /// buttons for page `current` (from 0) of `pages`.
+    fn update_pager(&mut self, footer: NodeId, current: usize, pages: usize) {
+        let kids = self.nodes[footer.0].children.clone();
+        let Some(template) = self.nodes[footer.0].footer.clone() else {
+            return;
+        };
+        if let [prev, label, next] = kids[..] {
+            self.nodes[prev.0].enabled = current > 0;
+            self.nodes[next.0].enabled = current + 1 < pages;
+            let text = template
+                .replace("{page}", &(current + 1).to_string())
+                .replace("{pages}", &pages.to_string());
+            if let Kind::Label(l) = &mut self.nodes[label.0].kind
+                && l.text != text
+            {
+                l.text = text;
+            }
+        }
+    }
+
+    /// Smallest `first` unit such that units `first..=last` fit in the
     /// list viewport (used to show the tail of a list).
     pub(crate) fn first_for_tail(&self, list: NodeId, last: usize) -> usize {
-        let n = &self.nodes[list.0];
-        let avail = (n.rect[3] - 2.0 * n.pad[1]).max(0.0);
+        let gap = self.nodes[list.0].gap;
+        self.list_units(list)
+            .first_for_tail(last, self.list_avail(list), gap)
+    }
+}
+
+/// The rows ("units") of a list, as scrolling sees them.
+pub(crate) struct Units {
+    /// Height of each unit.
+    pub heights: Vec<f32>,
+    /// Where each item sits (`row` is its first unit).
+    pub cells: Vec<GridCell>,
+    /// Grid column widths and which of them stretch (empty for a vertical
+    /// list).
+    cw: Vec<f32>,
+    fill_c: Vec<bool>,
+}
+
+impl Units {
+    /// How many units from `start` fit in `avail` (at least one while any
+    /// is left).
+    pub fn fit(&self, start: usize, avail: f32, gap: f32) -> usize {
+        let mut y = 0.0;
+        let mut n = 0;
+        for h in self.heights.iter().skip(start) {
+            let next = if n == 0 { *h } else { y + gap + h };
+            if n > 0 && next > avail + 0.5 {
+                break;
+            }
+            y = next;
+            n += 1;
+        }
+        n
+    }
+
+    /// Smallest first unit such that `first..=last` fit in `avail`.
+    pub fn first_for_tail(&self, last: usize, avail: f32, gap: f32) -> usize {
+        if self.heights.is_empty() {
+            return 0;
+        }
+        let last = last.min(self.heights.len() - 1);
         let mut used = 0.0;
         let mut first = last;
         loop {
-            let h = self.nodes[n.children[first].0].pref[1];
-            let need = used + h + if used > 0.0 { n.gap } else { 0.0 };
+            let need = used + self.heights[first] + if used > 0.0 { gap } else { 0.0 };
             if need > avail + 0.5 && first < last {
                 return first + 1;
             }

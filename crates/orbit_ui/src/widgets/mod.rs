@@ -19,7 +19,7 @@ pub use interact::WidgetEvent;
 #[cfg(test)]
 pub(crate) use interact::POPUP_TAG;
 pub use node::{
-    Align, Anchor, ButtonData, ButtonKind, Dir, Kind, LabelData, NO_TAG, Node, NodeId, PanelKind,
+    Align, Anchor, ButtonData, ButtonKind, Dir, Kind, LabelData, ListMode, NO_TAG, Node, NodeId, PanelKind,
     Size, Tag, ellipsize, escape_markup, estimate_lines, estimate_text_width,
 };
 

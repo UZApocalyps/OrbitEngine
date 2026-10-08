@@ -671,3 +671,167 @@ fn layout_types_round_trip_through_ron() {
     let back: (Size, Dir, Align, Anchor, PanelKind) = ron::from_str(&text).unwrap();
     assert_eq!(back, (Size::Fill(2.0), Dir::Grid(3), Align::Stretch, anchor, PanelKind::Dim));
 }
+
+// ---------------------------------------------- generated lists (Repeat)
+
+/// A 3-column grid list of `n` buttons (tags 100..) 200 x 100 with gaps of
+/// 10, in a 640-wide, `h`-high room: 2 rows fit in 250.
+fn grid_list(n: u32, h: f32, paged: bool) -> Ui {
+    let mut ui = ui();
+    let list = ui.add_root(
+        Node::collection(1, Dir::Grid(3), paged)
+            .fixed(640.0, h)
+            .gap(10.0),
+    );
+    for i in 0..n {
+        ui.add(list, Node::button(100 + i, "x").fixed(200.0, 100.0));
+    }
+    if paged {
+        let footer = ui.add(list, Node::pager("{page}/{pages}"));
+        ui.add(footer, Node::button(900, "<").small());
+        ui.add(footer, Node::label("").fixed(100.0, 30.0));
+        ui.add(footer, Node::button(901, ">").small());
+    }
+    ui.layout();
+    ui
+}
+
+fn state(ui: &Ui) -> (usize, usize, usize) {
+    match ui.node(ui.find(1).unwrap()).kind {
+        Kind::ScrollList { first, shown, total, .. } => (first, shown, total),
+        _ => panic!("not a list"),
+    }
+}
+
+#[test]
+fn a_generated_list_that_fits_is_laid_out_like_a_plain_grid() {
+    let mut list = grid_list(7, 400.0, false);
+    // 3 rows of 100 + 2 gaps = 320 <= 400: everything in view, no bar.
+    assert_eq!(state(&list), (0, 3, 3));
+    let mut plain = ui();
+    let root = plain.add_root(Node::container(Dir::Grid(3)).fixed(640.0, 400.0).gap(10.0));
+    for i in 0..7 {
+        plain.add(root, Node::button(100 + i, "x").fixed(200.0, 100.0));
+    }
+    plain.layout();
+    for tag in 100..107 {
+        assert_eq!(list.rect_of(tag), plain.rect_of(tag), "button {tag}");
+    }
+    // It is not a focus stop of its own (nothing to scroll).
+    assert!(!list.focus_order().contains(&1));
+}
+
+#[test]
+fn an_overflowing_grid_list_scrolls_by_row_and_clamps_the_offset() {
+    // 13 buttons = 5 rows; 2 fit (210 <= 250).
+    let mut ui = grid_list(13, 250.0, false);
+    assert_eq!(state(&ui), (0, 2, 5));
+    assert!(ui.node(ui.find(105).unwrap()).is_visible());
+    assert!(!ui.node(ui.find(106).unwrap()).is_visible());
+    let y0 = ui.rect_of(100).unwrap()[1];
+    ui.handle(UiInput::PointerMove([10.0, 10.0]));
+    ui.handle(UiInput::Scroll(-1.0));
+    assert_eq!(ui.scroll_first(1), Some(1));
+    assert_eq!(ui.rect_of(103).unwrap()[1], y0);
+    assert!(!ui.node(ui.find(100).unwrap()).is_visible());
+    // Far past the end: clamped so the last row ends the view.
+    for _ in 0..20 {
+        ui.handle(UiInput::Scroll(-1.0));
+    }
+    assert_eq!(state(&ui), (3, 2, 5));
+    assert!(ui.node(ui.find(112).unwrap()).is_visible());
+    // And back to the top.
+    for _ in 0..20 {
+        ui.handle(UiInput::Scroll(1.0));
+    }
+    assert_eq!(ui.scroll_first(1), Some(0));
+}
+
+#[test]
+fn a_paged_list_counts_pages_and_turns_them() {
+    // 5 rows, 2 per page (the footer takes room): 3 pages.
+    let mut ui = grid_list(13, 300.0, true);
+    assert_eq!(ui.list_position(1), Some((0, 3)));
+    assert_eq!(state(&ui).1, 2);
+    assert!(ui.node(ui.find(900).unwrap()).is_visible());
+    assert!(!ui.node(ui.find(900).unwrap()).enabled);
+    assert!(ui.node(ui.find(901).unwrap()).enabled);
+    assert!(ui.scroll_page(1, 1));
+    assert_eq!(ui.list_position(1), Some((1, 3)));
+    assert!(ui.node(ui.find(106).unwrap()).is_visible());
+    assert!(!ui.node(ui.find(100).unwrap()).is_visible());
+    assert!(ui.scroll_page(1, 1));
+    // The last page has one row only; going on is refused.
+    assert_eq!(state(&ui), (4, 1, 5));
+    assert!(!ui.scroll_page(1, 1));
+    assert!(!ui.node(ui.find(901).unwrap()).enabled);
+    assert!(ui.scroll_page(1, -1));
+    assert_eq!(ui.list_position(1), Some((1, 3)));
+}
+
+#[test]
+fn a_paged_list_that_fits_has_a_single_page_and_no_pager() {
+    let mut ui = grid_list(5, 300.0, true);
+    assert_eq!(ui.list_position(1), Some((0, 1)));
+    assert!(!ui.node(ui.find(900).unwrap()).is_visible());
+    assert!(!ui.scroll_page(1, 1));
+}
+
+#[test]
+fn keyboard_focus_scrolls_a_grid_list_row_by_row() {
+    let mut ui = grid_list(13, 250.0, false);
+    ui.set_focus_tag(103);
+    // Row 1 is the last in view: Down scrolls on to row 2, same column.
+    ui.handle(UiInput::Down);
+    assert_eq!(ui.focused_tag(), Some(106));
+    assert_eq!(ui.scroll_first(1), Some(1));
+    ui.handle(UiInput::Down);
+    assert_eq!(ui.focused_tag(), Some(109));
+    // Up from the top row of the view reveals the row above.
+    ui.handle(UiInput::Up);
+    assert_eq!(ui.focused_tag(), Some(106));
+    ui.handle(UiInput::Up);
+    assert_eq!(ui.focused_tag(), Some(103));
+    ui.handle(UiInput::Up);
+    assert_eq!(ui.focused_tag(), Some(100));
+    assert_eq!(ui.scroll_first(1), Some(0));
+}
+
+#[test]
+fn keyboard_focus_crosses_pages() {
+    let mut ui = grid_list(13, 300.0, true);
+    ui.set_focus_tag(104);
+    // Row 1 ends page 0: Down turns to page 1, same column (row 2).
+    ui.handle(UiInput::Down);
+    assert_eq!(ui.focused_tag(), Some(107));
+    assert_eq!(ui.list_position(1), Some((1, 3)));
+    // Up from the top of page 1 goes back to the end of page 0.
+    ui.handle(UiInput::Up);
+    assert_eq!(ui.focused_tag(), Some(104));
+    assert_eq!(ui.list_position(1), Some((0, 3)));
+    // PageDown and the wheel turn pages too.
+    ui.handle(UiInput::PageDown);
+    assert_eq!(ui.list_position(1), Some((1, 3)));
+    ui.handle(UiInput::PointerMove([10.0, 10.0]));
+    ui.handle(UiInput::Scroll(1.0));
+    assert_eq!(ui.list_position(1), Some((0, 3)));
+}
+
+#[test]
+fn the_page_label_follows_and_focus_leaves_a_disabled_pager_button() {
+    let mut ui = grid_list(13, 300.0, true);
+    let label = |ui: &Ui| {
+        let footer = ui.find(900).and_then(|b| ui.node(b).parent).unwrap();
+        let kids = ui.node(footer).children.clone();
+        match &ui.node(kids[1]).kind {
+            Kind::Label(l) => l.text.clone(),
+            _ => String::new(),
+        }
+    };
+    assert_eq!(label(&ui), "1/3");
+    ui.scroll_page(1, 1);
+    assert_eq!(label(&ui), "2/3");
+    ui.set_focus_tag(901);
+    ui.scroll_page(1, 1);
+    assert_eq!(ui.focused_tag(), Some(900));
+}

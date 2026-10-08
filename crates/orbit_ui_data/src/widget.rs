@@ -10,7 +10,7 @@ use crate::layout::{Align, Anchor, Dir, PanelKind, Size};
 use crate::transition::ScreenTransition;
 
 /// Current version of the screen document format.
-pub const UI_VERSION: u32 = 9;
+pub const UI_VERSION: u32 = 10;
 
 fn default_version() -> u32 {
     UI_VERSION
@@ -279,6 +279,27 @@ impl SlotsLook {
     }
 }
 
+/// What a generated list (`Repeat`) does when its rows do not fit the room
+/// it has (`ui_version` 10).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Overflow {
+    /// Scrolls by row: mouse wheel, drag, keyboard / gamepad focus and a
+    /// scrollbar. Draws exactly like a plain container while everything fits.
+    #[default]
+    Scroll,
+    /// One page of rows at a time, with previous / next buttons and a page
+    /// counter below (also PageUp / PageDown and the wheel).
+    Pages,
+    /// Neither: the rows are laid out in full and may leave the room.
+    Off,
+}
+
+impl Overflow {
+    pub fn is_scroll(&self) -> bool {
+        *self == Overflow::Scroll
+    }
+}
+
 fn three() -> usize {
     3
 }
@@ -394,6 +415,11 @@ pub enum WidgetKind {
         dir: Dir,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         empty: Option<TextRef>,
+        /// What happens when the rows do not fit (`ui_version` 10): scroll
+        /// (default), pages, or nothing. Only a `Vertical` or `Grid` list
+        /// overflows; give the widget a `Fill` or `Fixed` height.
+        #[serde(default, skip_serializing_if = "Overflow::is_scroll")]
+        overflow: Overflow,
     },
 }
 

@@ -7,7 +7,7 @@ use orbit_core::{Condition, Expr, Operand};
 use orbit_editor_api::varwidgets::{self, VarInfo};
 use orbit_editor_api::{Translator, icons};
 use orbit_ui::{
-    AchievementField, Align, Anchor, BindPath, Cond, Dir, LayoutDef, PanelKind, SettingKey, Size, SlotField, Style,
+    AchievementField, Align, Anchor, BindPath, Cond, Dir, LayoutDef, Overflow, PanelKind, SettingKey, Size, SlotField, Style,
     TextRef, UiAction, WidgetDef, WidgetKind,
 };
 
@@ -1207,7 +1207,7 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
             }
         }
         WidgetKind::ScrollList => {}
-        WidgetKind::Repeat { source, dir, empty } => {
+        WidgetKind::Repeat { source, dir, empty, overflow } => {
             row(ui, &env.t("uied.repeat_source"), |ui| {
                 // 0 variable, 1 parameter, 2 gallery, 3 scene replay.
                 let kind = match source {
@@ -1297,6 +1297,27 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
                 _ => {}
             }
             row(ui, &env.t("uied.dir"), |ui| dir_editor(ui, env, "dir", dir));
+            // What happens when the rows do not fit (a vertical or grid
+            // list only).
+            if matches!(dir, Dir::Vertical | Dir::Grid(_)) {
+                row(ui, &env.t("uied.overflow"), |ui| {
+                    pick(
+                        ui,
+                        "repeat_overflow",
+                        overflow,
+                        &[
+                            (Overflow::Scroll, env.v("overflow_scroll")),
+                            (Overflow::Pages, env.v("overflow_pages")),
+                            (Overflow::Off, env.v("overflow_off")),
+                        ],
+                    );
+                });
+                ui.label(
+                    RichText::new(env.t("uied.overflow_tip"))
+                        .small()
+                        .color(weak(ui)),
+                );
+            }
             row(ui, &env.t("uied.repeat_empty"), |ui| {
                 ui.vertical(|ui| {
                     optional(ui, empty, TextRef::Literal(String::new()), |ui, t| {
