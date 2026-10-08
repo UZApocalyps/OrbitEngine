@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+web-time.workspace = true
 accesskit.workspace = true
 orbit_core.workspace = true
 orbit_anim.workspace = true

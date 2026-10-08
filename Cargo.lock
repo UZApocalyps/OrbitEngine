@@ -3432,6 +3432,7 @@ dependencies = [
  "orbit_vm",
  "pollster 1.0.1",
  "thiserror 2.0.21",
+ "web-time",
 ]
 
 [[package]]

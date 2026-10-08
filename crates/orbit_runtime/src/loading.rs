@@ -658,7 +658,9 @@ pub fn finish_loading_budget(
     pending: &mut Vec<PendingAsset>,
     budget: std::time::Duration,
 ) -> (usize, Vec<String>) {
-    let started = std::time::Instant::now();
+    // `web_time`: `std::time::Instant::now()` panics on wasm32 (the web
+    // player stopped at the first scene load).
+    let started = web_time::Instant::now();
     let mut finished = 0;
     let mut failures = Vec::new();
     let mut i = 0;
