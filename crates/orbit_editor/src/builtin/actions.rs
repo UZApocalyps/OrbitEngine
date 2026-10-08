@@ -47,7 +47,8 @@ impl EditorPlugin for CorePlugin {
             })
             .icon(icons::DOWNLOAD_SIMPLE)
             .category("category.file")
-            .menu("file", 105),
+            .menu("file", 105)
+            .menu_group("menu.exchange"),
         );
         reg.action(
             ActionDef::new("open", "action.open_project", |c| {

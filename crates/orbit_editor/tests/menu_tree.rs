@@ -70,6 +70,6 @@ fn other_menus_stay_short() {
         assert!(top.len() <= 8, "{menu} has {} entries: {top:?}", top.len());
     }
     // Nothing was dropped by the grouping.
-    assert_eq!(reg.menu_actions("file").len(), 11);
+    assert_eq!(reg.menu_actions("file").len(), 12);
     assert_eq!(reg.menu_actions("edit").len(), 21);
 }
