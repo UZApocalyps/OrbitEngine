@@ -2,8 +2,10 @@
 //!
 //! Node ids are mapped by name path (`root/arm/hand`) so that [`reimport`]
 //! keeps the ULIDs, visibility and material overrides of a previous import.
-//! Animations, skins, morph targets and glTF cameras/lights are ignored with
-//! a warning. Tangent generation (mikktspace) is not done yet: tangents are
+//! Skins become the [`Skeleton`](crate::skin::Skeleton) of the skinned mesh
+//! (joint-only nodes are not imported as scene nodes) and the animations
+//! targeting them its [`Clip`](crate::skin::Clip)s; morph targets and glTF
+//! cameras/lights are ignored with a warning. Tangent generation (mikktspace) is not done yet: tangents are
 //! only carried when present in the file.
 
 use std::collections::{HashMap, HashSet};
@@ -203,15 +205,6 @@ fn import_document(
     images: &[gltf::image::Data],
 ) -> Result<Imported, String> {
     let mut warnings = Vec::new();
-    if doc.animations().len() > 0 {
-        warnings.push(format!(
-            "{} animation(s) ignored",
-            doc.animations().len()
-        ));
-    }
-    if doc.skins().len() > 0 {
-        warnings.push(format!("{} skin(s) ignored", doc.skins().len()));
-    }
 
     // Textures.
     let mut textures = Vec::new();
@@ -324,6 +317,7 @@ fn import_document(
 
     // Meshes.
     let mut meshes = Vec::new();
+    let mut mesh_pos: HashMap<usize, usize> = HashMap::new();
     let mut mesh_info: HashMap<usize, Option<(MeshRef, Vec<MaterialRef>)>> = HashMap::new();
     let mut used = HashSet::new();
     for mesh in doc.meshes() {
@@ -356,6 +350,8 @@ fn import_document(
                 None => (0..positions.len() as u32).collect(),
             };
             prims.push(PrimitiveData {
+                joints: r.read_joints(0).map(|j| j.into_u16().collect()).unwrap_or_default(),
+                weights: r.read_weights(0).map(|w| w.into_f32().collect()).unwrap_or_default(),
                 normals: r.read_normals().map(|n| n.collect()).unwrap_or_default(),
                 uvs: r
                     .read_tex_coords(0)
@@ -377,9 +373,11 @@ fn import_document(
             mesh_info.insert(mesh.index(), None);
         } else {
             mesh_info.insert(mesh.index(), Some((MeshRef(mname.clone()), mats)));
+            mesh_pos.insert(mesh.index(), meshes.len());
             meshes.push(MeshAsset {
                 name: mname,
                 primitives: prims,
+                ..Default::default()
             });
         }
     }
@@ -392,11 +390,15 @@ fn import_document(
         .default_scene()
         .or_else(|| doc.scenes().next())
         .ok_or("glTF contains no scene")?;
+    let skinning = skins::attach(doc, &scene, buffers, &mut meshes, &mesh_pos, &mut warnings);
     let mut nodes: Vec<Node3d> = Vec::new();
     let mut sibling_names: HashMap<Option<Node3dId>, HashSet<String>> = HashMap::new();
     let mut stack: Vec<(gltf::Node, Option<Node3dId>)> =
         scene.nodes().map(|n| (n, None)).collect::<Vec<_>>().into_iter().rev().collect();
     while let Some((n, parent)) = stack.pop() {
+        if skinning.skipped.contains(&n.index()) {
+            continue; // a bone: lives in the mesh skeleton
+        }
         let base = n
             .name()
             .map(str::to_owned)
@@ -414,9 +416,6 @@ fn import_document(
         };
         if n.camera().is_some() {
             warnings.push(format!("node `{name}`: glTF camera ignored"));
-        }
-        if n.skin().is_some() {
-            warnings.push(format!("node `{name}`: skin ignored, mesh rendered unskinned"));
         }
         let (t, r, s) = n.transform().decomposed();
         let len = r.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -449,6 +448,200 @@ fn import_document(
         textures,
         warnings,
     })
+}
+
+/// glTF skins and animations -> mesh skeletons and clips.
+mod skins {
+    use std::collections::{HashMap, HashSet};
+
+    use crate::MeshAsset;
+    use crate::skin::{
+        Channel, ChannelPath, Clip, IDENTITY, Interpolation, Joint, Mat4, Skeleton, decompose,
+        inverse_affine, mat_mul,
+    };
+
+    pub(super) struct Skinning {
+        /// Joint nodes without any mesh below them: not imported as nodes.
+        pub skipped: HashSet<usize>,
+    }
+
+    pub(super) fn attach(
+        doc: &gltf::Document,
+        scene: &gltf::Scene,
+        buffers: &[gltf::buffer::Data],
+        meshes: &mut [MeshAsset],
+        mesh_pos: &HashMap<usize, usize>,
+        warnings: &mut Vec<String>,
+    ) -> Skinning {
+        let mut skipped = HashSet::new();
+        if doc.skins().len() == 0 {
+            if doc.animations().len() > 0 {
+                warnings.push(format!(
+                    "{} animation(s) ignored (only skeletal animations are imported)",
+                    doc.animations().len()
+                ));
+            }
+            return Skinning { skipped };
+        }
+        // Parents and global matrices of the scene nodes.
+        let mut parent: HashMap<usize, usize> = HashMap::new();
+        let mut global: HashMap<usize, Mat4> = HashMap::new();
+        let mut stack: Vec<(gltf::Node, Mat4)> = scene.nodes().map(|n| (n, IDENTITY)).collect();
+        while let Some((n, p)) = stack.pop() {
+            let g = mat_mul(&p, &n.transform().matrix());
+            global.insert(n.index(), g);
+            for c in n.children() {
+                parent.insert(c.index(), n.index());
+                stack.push((c, g));
+            }
+        }
+        let has_mesh_below = |root: &gltf::Node| {
+            let mut s = vec![root.clone()];
+            while let Some(n) = s.pop() {
+                if n.mesh().is_some() {
+                    return true;
+                }
+                s.extend(n.children());
+            }
+            false
+        };
+        let mut used_animations = HashSet::new();
+        let mut skinned_meshes = HashSet::new();
+        for node in doc.nodes() {
+            let (Some(skin), Some(mesh)) = (node.skin(), node.mesh()) else {
+                continue;
+            };
+            let Some(&pos) = mesh_pos.get(&mesh.index()) else { continue };
+            if !skinned_meshes.insert(mesh.index()) {
+                warnings.push(format!(
+                    "mesh `{}` is skinned by several nodes: the first skin is used",
+                    meshes[pos].name
+                ));
+                continue;
+            }
+            let Some(mesh_global) = global.get(&node.index()) else {
+                continue; // not in the default scene
+            };
+            let to_mesh = inverse_affine(mesh_global).unwrap_or(IDENTITY);
+            let joints_nodes: Vec<gltf::Node> = skin.joints().collect();
+            let index_of: HashMap<usize, usize> = joints_nodes
+                .iter()
+                .enumerate()
+                .map(|(i, j)| (j.index(), i))
+                .collect();
+            let ibms: Vec<Mat4> = skin
+                .reader(|b| Some(&buffers[b.index()]))
+                .read_inverse_bind_matrices()
+                .map(|m| m.collect())
+                .unwrap_or_default();
+            let mut names = HashSet::new();
+            let mut joints = Vec::with_capacity(joints_nodes.len());
+            for (i, j) in joints_nodes.iter().enumerate() {
+                // Nearest ancestor that is also a joint.
+                let mut up = parent.get(&j.index()).copied();
+                while let Some(p) = up {
+                    if index_of.contains_key(&p) {
+                        break;
+                    }
+                    up = parent.get(&p).copied();
+                }
+                let jparent = up.and_then(|p| index_of.get(&p).copied());
+                let base = match jparent {
+                    Some(_) => IDENTITY,
+                    None => {
+                        let pg = parent
+                            .get(&j.index())
+                            .and_then(|p| global.get(p))
+                            .copied()
+                            .unwrap_or(IDENTITY);
+                        mat_mul(&to_mesh, &pg)
+                    }
+                };
+                let base_name = j
+                    .name()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("joint{i}"));
+                let name = super::unique(&mut names, base_name);
+                joints.push(Joint {
+                    name,
+                    parent: jparent,
+                    rest: decompose(&j.transform().matrix()),
+                    base,
+                    inverse_bind: ibms.get(i).copied().unwrap_or(IDENTITY),
+                });
+                if !has_mesh_below(j) {
+                    skipped.insert(j.index());
+                }
+            }
+            // Animations driving these joints.
+            let mut clips = Vec::new();
+            for anim in doc.animations() {
+                let mut channels = Vec::new();
+                let mut duration = 0f32;
+                for ch in anim.channels() {
+                    let Some(&joint) = index_of.get(&ch.target().node().index()) else {
+                        continue;
+                    };
+                    let path = match ch.target().property() {
+                        gltf::animation::Property::Translation => ChannelPath::Translation,
+                        gltf::animation::Property::Rotation => ChannelPath::Rotation,
+                        gltf::animation::Property::Scale => ChannelPath::Scale,
+                        gltf::animation::Property::MorphTargetWeights => continue,
+                    };
+                    let interp = ch.sampler().interpolation();
+                    let reader = ch.reader(|b| Some(&buffers[b.index()]));
+                    let (Some(times), Some(outputs)) = (reader.read_inputs(), reader.read_outputs())
+                    else {
+                        continue;
+                    };
+                    let times: Vec<f32> = times.collect();
+                    use gltf::animation::util::ReadOutputs;
+                    let mut values: Vec<[f32; 4]> = match outputs {
+                        ReadOutputs::Translations(t) => t.map(|v| [v[0], v[1], v[2], 0.0]).collect(),
+                        ReadOutputs::Scales(s) => s.map(|v| [v[0], v[1], v[2], 0.0]).collect(),
+                        ReadOutputs::Rotations(r) => r.into_f32().collect(),
+                        ReadOutputs::MorphTargetWeights(_) => continue,
+                    };
+                    if interp == gltf::animation::Interpolation::CubicSpline {
+                        // (in-tangent, value, out-tangent) triplets: keep the values.
+                        values = values.chunks_exact(3).map(|c| c[1]).collect();
+                    }
+                    duration = times.iter().copied().fold(duration, f32::max);
+                    channels.push(Channel {
+                        joint,
+                        path,
+                        interpolation: if interp == gltf::animation::Interpolation::Step {
+                            Interpolation::Step
+                        } else {
+                            Interpolation::Linear
+                        },
+                        times,
+                        values,
+                    });
+                }
+                if !channels.is_empty() {
+                    used_animations.insert(anim.index());
+                    clips.push(Clip {
+                        name: anim
+                            .name()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| format!("animation{}", anim.index())),
+                        duration,
+                        channels,
+                    });
+                }
+            }
+            meshes[pos].skin = Some(Skeleton { joints });
+            meshes[pos].clips = clips;
+        }
+        let ignored = doc.animations().len() - used_animations.len();
+        if ignored > 0 {
+            warnings.push(format!(
+                "{ignored} animation(s) ignored (only skeletal animations are imported)"
+            ));
+        }
+        Skinning { skipped }
+    }
 }
 
 /// Name path of each node (`root/arm/hand`), in node order.

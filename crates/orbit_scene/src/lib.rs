@@ -11,6 +11,7 @@ pub mod omesh;
 pub mod pack3d;
 pub mod quality;
 pub mod shapes;
+pub mod skin;
 mod validate;
 
 #[cfg(feature = "ktx2")]
@@ -23,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 pub use orbit_core::Node3dId;
 pub use assets::{MeshAsset, PrimitiveData, TextureAsset};
+pub use skin::{NamedPose, Pose, PoseClip, Rig};
 pub use shapes::Shape;
 pub use validate::{Issue, Severity, validate, validate_prefab};
 
@@ -282,9 +284,28 @@ pub struct Scene3d {
     pub nodes: Vec<Node3d>,
     pub materials: Vec<MaterialDef>,
     pub environment: Environment,
+    /// Poses of rigged nodes (absent in files without any).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rigs: Vec<Rig>,
 }
 
 impl Scene3d {
+    /// The pose state of `node`, if any.
+    pub fn rig(&self, node: Node3dId) -> Option<&Rig> {
+        self.rigs.iter().find(|r| r.node == node)
+    }
+
+    /// The pose state of `node`, created on demand.
+    pub fn rig_mut(&mut self, node: Node3dId) -> &mut Rig {
+        match self.rigs.iter().position(|r| r.node == node) {
+            Some(i) => &mut self.rigs[i],
+            None => {
+                self.rigs.push(Rig::new(node));
+                self.rigs.last_mut().expect("just pushed")
+            }
+        }
+    }
+
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             scene3d_version: SCENE3D_VERSION,
@@ -293,6 +314,7 @@ impl Scene3d {
             nodes: Vec::new(),
             materials: Vec::new(),
             environment: Environment::default(),
+            rigs: Vec::new(),
         }
     }
 
