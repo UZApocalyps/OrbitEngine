@@ -42,6 +42,7 @@ mod compile;
 mod error;
 mod native;
 mod pakbuild;
+mod peicon;
 pub mod plugins;
 mod project;
 mod report;
@@ -299,6 +300,7 @@ pub fn export_many(
                 };
                 let written = native::export(
                     &prepared.pak,
+                    prepared.compiled.icon.as_deref(),
                     profile,
                     *native,
                     &template,
