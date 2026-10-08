@@ -233,7 +233,7 @@ const GROUP_EDIT: &str = "menu.panels/menu.panels.edit";
 const GROUP_ASSETS: &str = "menu.panels/menu.panels.assets";
 const GROUP_TOOLS: &str = "menu.panels/menu.panels.tools";
 pub(crate) const GROUP_DIAG: &str = "menu.panels/menu.panels.diag";
-const GROUP_OTHER: &str = "menu.panels/menu.panels.other";
+const GROUP_OTHER: &str = "menu.panels/menu.panels.misc";
 
 /// Menu group of a panel's "Show" action. Panels from plugins that are not
 /// listed fall in "Other".
