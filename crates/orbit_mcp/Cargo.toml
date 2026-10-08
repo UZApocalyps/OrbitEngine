@@ -14,7 +14,8 @@ orbit_anim.workspace = true
 orbit_assets.workspace = true
 orbit_dsl.workspace = true
 orbit_ui_data.workspace = true
-orbit_scene = { path = "../orbit_scene", default-features = false }
+# glTF import: reads the skeleton of rigged models for the pose ops.
+orbit_scene = { path = "../orbit_scene", default-features = false, features = ["gltf-import"] }
 ron.workspace = true
 orbit_plugin_api.workspace = true
 orbit_vm.workspace = true
