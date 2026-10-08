@@ -20,6 +20,7 @@ orbit_project.workspace = true
 orbit_script.workspace = true
 orbit_export.workspace = true
 orbit_i18n.workspace = true
+orbit_renpy.workspace = true
 
 [dev-dependencies]
 serde_json = "1"

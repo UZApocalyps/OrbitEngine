@@ -128,6 +128,9 @@ pub enum EditorRequest {
     ConvertStory,
     /// Opens the "new project" dialog.
     NewProjectDialog,
+    /// Imports a Ren'Py game into a new project (folder pickers, then a
+    /// background task; the project opens when done).
+    ImportRenpy,
     Save,
     CloseProject,
     Quit,

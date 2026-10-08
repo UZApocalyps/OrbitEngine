@@ -5,6 +5,7 @@
 //! * `orbit mcp --project <dir|file.orbit>` (MCP server over stdio, see `orbit_mcp`; `--force` takes a project the editor holds)
 //! * `orbit i18n export|import|stale|accept|stamp` (PO/CSV, stale translations)
 //! * `orbit build` and `orbit export <target>` (see `orbit_export`)
+//! * `orbit import-renpy <game_dir> <out_dir>` (see `orbit_renpy`)
 //!
 //! The logic lives in [`run`], which takes its streams as parameters so it can
 //! be tested without spawning a process.
@@ -49,8 +50,27 @@ USAGE:
         Protocol on stdout: nothing else is printed there.
         Refused while the editor (or another `orbit mcp`) holds the project
         (.orbit/lock): use the editor's live MCP instead, or --force.
+    orbit import-renpy <renpy_dir> <out_dir>
+        Convert a Ren'Py game (its folder or its game/ folder: .rpy scripts,
+        images, audio, tl/ translations) into a new project in <out_dir>
+        (absent or empty). Unsupported statements are listed in
+        <out_dir>/import-report.md. Exit code 1 when the story does not validate.
 {export_usage}{i18n_usage}    orbit help
 ";
+
+/// `orbit import-renpy <renpy_dir> <out_dir>`.
+fn import_renpy_cmd(args: &[String], out: &mut dyn Write) -> Result<u8, String> {
+    let [source, dest] = args else {
+        return Err("usage: orbit import-renpy <renpy_dir> <out_dir>".into());
+    };
+    let report = orbit_renpy::import(Path::new(source), Path::new(dest), &|_, _| {})?;
+    let _ = writeln!(out, "imported into {}: {}", dest, report.summary());
+    for e in &report.validation_errors {
+        let _ = writeln!(out, "error: {e}");
+    }
+    let _ = writeln!(out, "report: {}", Path::new(dest).join(orbit_renpy::REPORT_FILE).display());
+    Ok(u8::from(!report.validation_errors.is_empty()))
+}
 
 /// The help text (the export commands are documented next to their code).
 fn usage() -> String {
@@ -73,6 +93,7 @@ pub fn run(
         Some("build") => export_cmd::build_cmd(&args[1..], out, err),
         Some("export") => export_cmd::export_cmd(&args[1..], out, err),
         Some("i18n") => i18n_cmd::i18n_cmd(&args[1..], out, err),
+        Some("import-renpy") => import_renpy_cmd(&args[1..], out),
         Some("help" | "--help" | "-h") | None => {
             let _ = write!(out, "{}", usage());
             Ok(0)

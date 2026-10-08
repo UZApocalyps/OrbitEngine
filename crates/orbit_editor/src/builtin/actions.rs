@@ -42,6 +42,14 @@ impl EditorPlugin for CorePlugin {
             .menu("file", 100),
         );
         reg.action(
+            ActionDef::new("import_renpy", "action.import_renpy", |c| {
+                c.request(EditorRequest::ImportRenpy);
+            })
+            .icon(icons::DOWNLOAD_SIMPLE)
+            .category("category.file")
+            .menu("file", 105),
+        );
+        reg.action(
             ActionDef::new("open", "action.open_project", |c| {
                 c.request(EditorRequest::PickOpenProject);
             })
