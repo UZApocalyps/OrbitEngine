@@ -591,6 +591,20 @@ fn row_text(ui: &Ui, rect: egui::Rect, x: f32, icon: &str, text: &str, color: Co
     );
 }
 
+/// The music (and sound) files of the project: what a screen can play.
+fn musics_of(ctx: &EditorContext<'_>) -> Vec<String> {
+    ctx.story()
+        .map(|s| {
+            s.assets
+                .assets
+                .iter()
+                .filter(|a| matches!(a.kind, AssetKind::Music | AssetKind::Sound))
+                .map(|a| a.path.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn sounds_of(ctx: &EditorContext<'_>) -> Vec<String> {
     ctx.story()
         .map(|s| {
@@ -679,6 +693,7 @@ fn screens_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
     let scenes = story_scenes(ctx);
     let theme_copy = st.doc.as_ref().and_then(|d| d.bundle.theme.clone());
     let sounds = sounds_of(ctx);
+    let musics = musics_of(ctx);
     let lookup = style_ed::ImageLookup::new(ctx);
     let env = Env {
         tr: &tr,
@@ -691,6 +706,7 @@ fn screens_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         curves: &curves,
         theme: theme_copy.as_ref(),
         sounds: &sounds,
+        musics: &musics,
         lookup: &lookup,
     };
     let enable_card = st
@@ -881,14 +897,14 @@ fn screens_and_tree(ui: &mut Ui, st: &mut State, tr: &Translator) {
                 });
         });
     });
-    let tree: Vec<(WidgetPath, usize, String, KindTag)> = st
+    let tree: Vec<(WidgetPath, usize, String, KindTag, bool)> = st
         .screen()
         .map(|s| {
             model::all_paths(&s.root)
                 .into_iter()
                 .filter_map(|(p, depth)| {
                     let w = model::get(&s.root, &p)?;
-                    Some((p, depth, widget_label(w), KindTag::of(&w.kind)))
+                    Some((p, depth, widget_label(w), KindTag::of(&w.kind), model::holds_children(w)))
                 })
                 .collect()
         })
@@ -899,7 +915,7 @@ fn screens_and_tree(ui: &mut Ui, st: &mut State, tr: &Translator) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            for (path, depth, label, kind) in &tree {
+            for (path, depth, label, kind, holds) in &tree {
                 let selected = *path == st.widget;
                 let (rect, resp) = item_row(ui, selected);
                 row_text(
@@ -926,7 +942,7 @@ fn screens_and_tree(ui: &mut Ui, st: &mut State, tr: &Translator) {
                 }
                 if let Some(from) = resp.dnd_release_payload::<WidgetPath>() {
                     // Into a container, else right after the row.
-                    let (into, index) = if kind.is_container() {
+                    let (into, index) = if *holds {
                         (path.clone(), usize::MAX)
                     } else {
                         match path.split_last() {
@@ -1074,6 +1090,7 @@ fn properties(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, env: &En
         &env.tr.t("uied.transition_out"),
         &mut screen.transition_out,
     );
+    props::music_editor(ui, &env, &mut screen.music);
     ui.label(RichText::new(env.tr.t("uied.on_cancel")).small().color(weak(ui)));
     props::actions_editor(ui, env, "cancel", &mut screen.on_cancel);
     let path = st.widget.clone();
@@ -1128,6 +1145,7 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         .map(|p| p.root.join(&p.story_file));
     let theme_copy = st.doc.as_ref().and_then(|d| d.bundle.theme.clone());
     let sounds = sounds_of(ctx);
+    let musics = musics_of(ctx);
     let lookup = style_ed::ImageLookup::new(ctx);
     let env = Env {
         tr: &tr,
@@ -1140,6 +1158,7 @@ fn theme_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
         curves: &curves,
         theme: theme_copy.as_ref(),
         sounds: &sounds,
+        musics: &musics,
         lookup: &lookup,
     };
     let contrast = st
@@ -1936,6 +1955,9 @@ fn diagnostics(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             .and_then(|v| orbit_editor_api::varwidgets::type_of(v, n))
     };
     let mut issues: Vec<Issue> = doc.diagnostics_with(&ty_of, vars.is_some());
+    if let Some(root) = ctx.project_info().map(|p| p.root.clone()) {
+        issues.extend(doc.bundle.missing_music_issues(&|path| root.join(path).is_file()));
+    }
     if ctx.story().is_some() {
         let scenes = story_scenes(ctx);
         let known = |key: &str| scenes.iter().any(|(id, name)| id == key || name == key);

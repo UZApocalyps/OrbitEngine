@@ -494,6 +494,78 @@ impl UiSoundBank {
     }
 }
 
+/// The music files of the screens (`ScreenAsset::music`, `PlayMusic`
+/// actions), loaded the first time one is asked for: a track that is not
+/// decoded yet starts when it is. Keeps at most a few decoded tracks.
+#[derive(Default)]
+struct UiMusicBank {
+    handles: HashMap<String, AssetHandle<PcmAudio>>,
+    sounds: HashMap<String, Sound>,
+    /// The track waiting for its file.
+    pending: Option<(String, MusicOptions)>,
+}
+
+impl UiMusicBank {
+    /// Decoded tracks kept besides the one playing.
+    const KEPT: usize = 2;
+
+    fn play(&mut self, loader: &AssetLoader, audio: &mut AudioEngine, path: String, options: MusicOptions) {
+        if !self.sounds.contains_key(&path) && !self.handles.contains_key(&path) {
+            self.handles.insert(path.clone(), loader.load_audio(&path));
+        }
+        self.pending = Some((path, options));
+        self.update(audio);
+    }
+
+    /// Starts the waiting track once its file is decoded.
+    fn update(&mut self, audio: &mut AudioEngine) {
+        let Some((path, options)) = self.pending.take() else {
+            return;
+        };
+        if !self.sounds.contains_key(&path) {
+            let Some(handle) = self.handles.get(&path) else {
+                return;
+            };
+            match handle.poll() {
+                AssetPoll::Ready(pcm) => match Sound::from_pcm(&pcm) {
+                    Ok(decoded) => {
+                        if self.sounds.len() > Self::KEPT {
+                            let old: Vec<String> = self.sounds.keys().filter(|k| **k != path).cloned().collect();
+                            for key in old.into_iter().take(self.sounds.len() - Self::KEPT) {
+                                self.sounds.remove(&key);
+                                self.handles.remove(&key);
+                            }
+                        }
+                        self.sounds.insert(path.clone(), decoded);
+                    }
+                    Err(err) => {
+                        log::warn!("ui music `{path}`: {err}");
+                        self.handles.remove(&path);
+                        return;
+                    }
+                },
+                AssetPoll::Loading => {
+                    self.pending = Some((path, options));
+                    return;
+                }
+                AssetPoll::Failed(err) => {
+                    log::warn!("ui music `{path}` is not available: {err}");
+                    self.handles.remove(&path);
+                    return;
+                }
+            }
+        }
+        if let Some(sound) = self.sounds.get(&path) {
+            audio.play_music(sound, options);
+        }
+    }
+
+    /// Forgets the waiting track (something else took over the music).
+    fn cancel(&mut self) {
+        self.pending = None;
+    }
+}
+
 /// The storage of saves, preferences and persistent data. Falls back to memory
 /// (nothing survives the session) when the real one is unavailable.
 fn open_storage(config: &RuntimeConfig, game_id: &str) -> (Box<dyn Storage>, bool) {
@@ -566,6 +638,11 @@ pub struct Runtime {
     screens_language: String,
     boot_texts: Texts,
     ui_sounds: UiSoundBank,
+    /// Music of the screens, and the factors on the music bus: the player's
+    /// volume and the ducking of a menu over the game.
+    ui_music: UiMusicBank,
+    music_volume: f32,
+    music_duck: f32,
     host_requests: Vec<HostRequest>,
     /// Set when hosted by an editor (see [`Runtime::new_embedded`]).
     embedded: Option<embedded::Embedded>,
@@ -710,6 +787,9 @@ impl Runtime {
             screens_language: boot_language.clone(),
             boot_texts: Texts::builtin(&boot_language),
             ui_sounds,
+            ui_music: UiMusicBank::default(),
+            music_volume: 1.0,
+            music_duck: 1.0,
             host_requests: Vec::new(),
             embedded: embedded.map(embedded::Embedded::new),
             overlay: None,
@@ -1106,11 +1186,15 @@ impl Runtime {
         for effect in effects {
             match effect {
                 Effect::Audio(command) => {
+                    if matches!(command, AudioCommand::PlayMusic { .. } | AudioCommand::StopMusic { .. }) {
+                        self.ui_music.cancel();
+                    }
                     if let Some(command) = self.filter_audio(command) {
                         play_command(&mut self.audio, &self.store, &story, command);
                     }
                 }
                 Effect::UiSound(sound) => self.ui_sounds.play(sound, &mut self.audio),
+                Effect::UiMusic(op) => self.apply_ui_music(op),
                 Effect::SetVolume(bus, volume) => self.set_volume(bus, volume),
                 Effect::SetFullscreen(on) => {
                     self.host_requests.push(HostRequest::SetFullscreen(on))
@@ -1139,7 +1223,48 @@ impl Runtime {
                 embedded.master = volume;
                 self.apply_embedded_volume();
             }
+            _ if bus == AudioBus::Music => {
+                self.music_volume = volume;
+                self.audio.set_bus_volume(Bus::Music, volume * self.music_duck);
+            }
             _ => self.audio.set_bus_volume(bus_of(bus), volume),
+        }
+    }
+
+    /// Carries out an operation of the music of the screens.
+    pub(crate) fn apply_ui_music(&mut self, op: crate::ui_music::MusicOp) {
+        use crate::ui_music::MusicOp;
+        let ms = |ms: u32| Duration::from_millis(u64::from(ms));
+        match op {
+            MusicOp::Play {
+                path,
+                looping,
+                volume,
+                fade_in_ms,
+                fade_out_prev_ms,
+            } => {
+                // The editor must not mistake it for the track of the game.
+                if let Some(embedded) = self.embedded.as_mut() {
+                    embedded.music = None;
+                }
+                let options = MusicOptions {
+                    looping,
+                    fade_in: ms(fade_in_ms),
+                    fade_out_previous: ms(fade_out_prev_ms),
+                    volume,
+                };
+                self.ui_music.play(&self.assets_loader, &mut self.audio, path, options);
+            }
+            MusicOp::Duck(level) => {
+                self.music_duck = level;
+                self.audio.set_bus_volume(Bus::Music, self.music_volume * level);
+            }
+            MusicOp::Stop { fade_out_ms } => {
+                self.ui_music.cancel();
+                self.audio.stop_music(ms(fade_out_ms));
+            }
+            // The shell resolves it (it knows the game's music).
+            MusicOp::RestoreGame { .. } => {}
         }
     }
 
@@ -2158,6 +2283,7 @@ fn play_command(audio: &mut AudioEngine, store: &AssetStore, story: &Story, comm
                         looping,
                         fade_in: fade,
                         fade_out_previous: fade,
+                        volume: 1.0,
                     },
                 );
             }
@@ -2190,6 +2316,7 @@ impl App for Runtime {
         }
         self.time += dt_secs;
         self.audio.update();
+        self.ui_music.update(&mut self.audio);
         self.poll_opening();
         self.poll_fonts();
         if let Some(watcher) = &mut self.watcher

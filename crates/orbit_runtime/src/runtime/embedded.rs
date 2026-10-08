@@ -191,6 +191,10 @@ pub(super) struct ScreenPreview {
     pick: Option<(String, Vec<usize>)>,
     /// Widget the editor has selected (outlined).
     highlight: Option<Vec<usize>>,
+    /// The music of the screens on the stack (`ui_version` 9) and the
+    /// operations the runtime has not carried out yet.
+    music: crate::ui_music::UiMusic,
+    music_ops: Vec<crate::ui_music::MusicOp>,
 }
 
 /// Seconds a toast of the preview needs to show and fade.
@@ -230,7 +234,21 @@ impl ScreenPreview {
             texts,
             pick: None,
             highlight: None,
+            music: crate::ui_music::UiMusic::default(),
+            music_ops: Vec::new(),
         })
+    }
+
+    /// Asks the music state machine what the stack of screens wants.
+    fn sync_music(&mut self) {
+        let (bundle, stock) = (&self.bundle, &self.stock);
+        let found = self.nav.stack().iter().rev().find_map(|id| {
+            let asset = bundle.screen(id).or_else(|| stock.screen(id))?;
+            Some((asset.id.clone(), asset.music.clone()?))
+        });
+        let wanted = found.as_ref().map(|(screen, music)| crate::ui_music::Wanted { screen, music });
+        let ops = self.music.sync(wanted, false);
+        self.music_ops.extend(ops);
     }
 
     /// The editor sent a new version of the bundle: the stack stays, the
@@ -249,6 +267,7 @@ impl ScreenPreview {
         self.theme = theme;
         self.texts = texts;
         self.show();
+        self.sync_music();
     }
 
     /// Builds the screen on top of the stack. When it no longer exists the
@@ -277,6 +296,18 @@ impl ScreenPreview {
         let events = self.screen.handle(input);
         let mut changed = false;
         for event in events {
+            // Music buttons act on the preview's own music.
+            match &event {
+                orbit_ui::UiEvent::PlayMusic(path) => {
+                    let op = self.music.manual_play(path, false);
+                    self.music_ops.push(op);
+                }
+                orbit_ui::UiEvent::StopMusic => {
+                    let op = self.music.manual_stop();
+                    self.music_ops.push(op);
+                }
+                _ => {}
+            }
             let (bundle, stock) = (&self.bundle, &self.stock);
             let step = self
                 .nav
@@ -294,6 +325,7 @@ impl ScreenPreview {
         } else {
             self.screen.set_context(self.nav.context("Preview"));
         }
+        self.sync_music();
     }
 }
 
@@ -316,7 +348,7 @@ pub(super) struct Embedded {
     notices: Vec<Notice>,
     last_error: Option<String>,
     /// The music the game started (not to restart it at every hot reload).
-    music: Option<orbit_core::AssetId>,
+    pub(super) music: Option<orbit_core::AssetId>,
     dirty: bool,
     /// Bumped when the story or an asset file was swapped: what a still
     /// image of the stage (see [`Runtime::render_stage_to_target`]) shows may
@@ -850,7 +882,10 @@ impl Runtime {
 
     pub(super) fn apply_embedded_volume(&mut self) {
         let emb = self.emb();
-        let volume = if emb.muted || emb.status != PlayStatus::Playing {
+        // A UI preview is heard (its screens' music) even though the game is
+        // not playing; the editor's mute still silences it.
+        let audible = emb.status == PlayStatus::Playing || emb.ui_preview.is_some();
+        let volume = if emb.muted || !audible {
             0.0
         } else {
             emb.master
@@ -1183,6 +1218,18 @@ impl Runtime {
     ) -> Result<(), String> {
         let mut images = super::bundle_images(bundle, &self.store);
         images.extend(super::theme_images(&self.ctx.theme, &self.store));
+        // The music state moves to the new preview when it is a screen too;
+        // otherwise the music stops.
+        let carried = match self.embedded.as_mut().and_then(|e| e.ui_preview.as_mut()) {
+            Some(UiPreview::Screen(p)) => Some(std::mem::take(&mut p.music)),
+            _ => None,
+        };
+        let carried = if matches!(target, UiPreviewTarget::Screen(_)) {
+            carried
+        } else {
+            self.stop_preview_music(carried);
+            None
+        };
         let preview = match target {
             UiPreviewTarget::Dialogue {
                 speaker,
@@ -1218,13 +1265,23 @@ impl Runtime {
                     self.embedded.as_mut().and_then(|e| e.ui_preview.as_mut())
                     && p.nav.top() == id
                 {
+                    // `carried` took the state out: put it back.
+                    if let Some(music) = carried {
+                        p.music = music;
+                    }
                     p.update_bundle(bundle, theme, texts, &vars, images);
                     let emb = self.emb_mut();
                     emb.ui_settle = UI_SETTLE;
                     emb.dirty = true;
+                    self.drain_preview_music();
                     return Ok(());
                 }
-                UiPreview::Screen(Box::new(ScreenPreview::new(bundle, id, theme, texts, &vars, images)?))
+                let mut p = ScreenPreview::new(bundle, id, theme, texts, &vars, images)?;
+                if let Some(music) = carried {
+                    p.music = music;
+                }
+                p.sync_music();
+                UiPreview::Screen(Box::new(p))
             }
             UiPreviewTarget::Splashes => {
                 let state = SplashState::new(&bundle.splashes);
@@ -1236,7 +1293,29 @@ impl Runtime {
         emb.ui_preview = Some(preview);
         emb.ui_settle = UI_SETTLE;
         emb.dirty = true;
+        self.drain_preview_music();
+        self.apply_embedded_volume();
         Ok(())
+    }
+
+    /// Carries out the music operations the screen preview collected.
+    fn drain_preview_music(&mut self) {
+        let ops = match self.embedded.as_mut().and_then(|e| e.ui_preview.as_mut()) {
+            Some(UiPreview::Screen(p)) => std::mem::take(&mut p.music_ops),
+            _ => Vec::new(),
+        };
+        for op in ops {
+            self.apply_ui_music(op);
+        }
+    }
+
+    /// The preview no longer shows screens: stops their music.
+    fn stop_preview_music(&mut self, state: Option<crate::ui_music::UiMusic>) {
+        if let Some(mut music) = state {
+            for op in music.sync(None, false) {
+                self.apply_ui_music(op);
+            }
+        }
     }
 
     /// Id of the screen the UI preview shows (it follows the navigation).
@@ -1270,9 +1349,14 @@ impl Runtime {
     /// Back to the game.
     pub fn clear_ui_preview(&mut self) {
         let emb = self.emb_mut();
-        if emb.ui_preview.take().is_some() {
+        let old = emb.ui_preview.take();
+        if old.is_some() {
             emb.dirty = true;
         }
+        if let Some(UiPreview::Screen(p)) = old {
+            self.stop_preview_music(Some(p.music));
+        }
+        self.apply_embedded_volume();
     }
 
     pub fn has_ui_preview(&self) -> bool {
@@ -1329,6 +1413,7 @@ impl Runtime {
                 p.handle(input);
                 emb.ui_settle = if p.toasts.is_empty() { UI_SETTLE } else { TOAST_SETTLE };
                 emb.dirty = true;
+                self.drain_preview_music();
             }
             (Some(UiPreview::Dialogue(p)), InputAction::Ui(input)) => {
                 use orbit_ui::Screen as _;

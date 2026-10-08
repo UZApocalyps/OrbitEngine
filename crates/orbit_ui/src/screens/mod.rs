@@ -96,7 +96,23 @@ impl Confirm {
 
     /// Opens the dialog; "Yes" emits `on_yes`.
     pub(crate) fn open(&mut self, ui: &mut Ui, texts: &Texts, message: &str, on_yes: UiEvent) {
+        self.open_styled(ui, texts, message, on_yes, None, None);
+    }
+
+    /// [`Confirm::open`] with theme styles for the dialog panel and for its
+    /// Yes / No buttons (`ui_version` 9).
+    pub(crate) fn open_styled(
+        &mut self,
+        ui: &mut Ui,
+        texts: &Texts,
+        message: &str,
+        on_yes: UiEvent,
+        panel_style: Option<&str>,
+        button_style: Option<&str>,
+    ) {
         let theme = ui.theme().clone();
+        let panel_style = panel_style.map(str::to_owned);
+        let button_style = button_style.map(str::to_owned);
         let (yes, no) = (texts.get("ui.confirm.yes"), texts.get("ui.confirm.no"));
         let message = message.to_owned();
         ui.open_modal(|ui| {
@@ -105,14 +121,15 @@ impl Confirm {
                 root,
                 Node::panel(PanelKind::Dim, crate::widgets::Dir::Stack).fill(),
             );
-            let panel = ui.add(
-                root,
-                Node::panel(PanelKind::Normal, crate::widgets::Dir::Vertical)
-                    .w(Size::Fixed(780.0))
-                    .pad(50.0, 44.0)
-                    .gap(36.0)
-                    .align(Align::Start, Align::Stretch),
-            );
+            let mut panel_node = Node::panel(PanelKind::Normal, crate::widgets::Dir::Vertical)
+                .w(Size::Fixed(780.0))
+                .pad(50.0, 44.0)
+                .gap(36.0)
+                .align(Align::Start, Align::Stretch);
+            if let Some(name) = &panel_style {
+                panel_node = panel_node.style(name.clone());
+            }
+            let panel = ui.add(root, panel_node);
             ui.add(
                 panel,
                 Node::label(message)
@@ -124,8 +141,13 @@ impl Confirm {
                 panel,
                 Node::hbox().gap(30.0).align(Align::Center, Align::Start),
             );
-            ui.add(row, Node::button(T_YES, yes).w(Size::Fixed(260.0)));
-            ui.add(row, Node::button(T_NO, no).w(Size::Fixed(260.0)));
+            for (tag, text) in [(T_YES, yes), (T_NO, no)] {
+                let mut button = Node::button(tag, text).w(Size::Fixed(260.0));
+                if let Some(name) = &button_style {
+                    button = button.style(name.clone());
+                }
+                ui.add(row, button);
+            }
             root
         });
         // Safe default: the question starts on "No".

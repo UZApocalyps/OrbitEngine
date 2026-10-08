@@ -441,6 +441,7 @@ mod tests {
             thumbnail: None,
             timestamp: "2026-01-02 10:00".into(),
             preview: "Hello there".into(),
+            ..SlotView::empty(SlotId { category, index })
         }
     }
 

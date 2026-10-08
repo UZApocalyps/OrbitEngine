@@ -147,6 +147,7 @@ fn fake_slots(textures: &HashMap<&'static str, TextureId>) -> Vec<CategoryView> 
             .flatten(),
         timestamp: format!("2026-10-{:02} 18:{:02}", 1 + index % 28, (index * 7) % 60),
         preview: previews[index as usize % previews.len()].to_owned(),
+        ..SlotView::empty(SlotId { category, index })
     };
     let manual = (0..30)
         .map(|i| {
@@ -409,6 +410,8 @@ impl Ready {
                 UiEvent::OpenScreen(_)
                 | UiEvent::ReplaceScreen(_)
                 | UiEvent::PlaySound(_)
+                | UiEvent::PlayMusic(_)
+                | UiEvent::StopMusic
                 | UiEvent::Custom { .. }
                 | UiEvent::VarOp(_)
                 | UiEvent::SceneGoto(_)

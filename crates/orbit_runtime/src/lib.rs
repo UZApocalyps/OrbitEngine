@@ -57,6 +57,7 @@ mod shell;
 mod splash;
 mod splash_draw;
 pub mod stage;
+mod ui_music;
 
 pub use achievements::{AchievementEvent, AchievementHook, SharedAchievementHook, achievement_icon_paths};
 pub use director::{AudioCommand, Director, Flow, Line, StageTransition};

@@ -71,6 +71,6 @@ pub use orbit_ui_data::{AA_COMPONENT, AA_TEXT, ContrastIssue, TEXT_SCALE_RANGE, 
 pub use orbit_ui_data::{describe_chars, language_missing_chars};
 pub use asset::{
     AchievementField, AchievementRow, BindPath, Cond, DataContext, DataScreen, Issue, LayoutDef, ScreenAsset, Severity, SlotsMode, NavStep, PreviewNav,
-    SettingKey, SplashContent, SplashDef, TextRef, UI_VERSION, UiAction, UiBundle, WidgetDef,
-    WidgetKind, validate, validate_with_vars,
+    OverGame, ScreenMusic, SettingKey, SlotField, SlotsLook, SplashContent, SplashDef, TextRef, UI_VERSION, UiAction, UiBundle,
+    WidgetDef, WidgetKind, default_slot_card, validate, validate_with_vars,
 };

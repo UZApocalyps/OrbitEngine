@@ -208,12 +208,21 @@ pub fn validate(screen: &ScreenAsset, theme: Option<&Theme>) -> Vec<Issue> {
     if screen.hud && screen.pauses_game {
         out.push(Issue::warning(sid, "", "a HUD never pauses the game: `pauses_game` is ignored"));
     }
+    if let Some(m) = &screen.music {
+        if m.asset.trim().is_empty() && m.over_game != crate::widget::OverGame::Duck {
+            out.push(Issue::warning(sid, "", "the screen music has no audio file"));
+        }
+        if !(0.0..=1.0).contains(&m.volume) || !(0.0..=1.0).contains(&m.duck_volume) {
+            out.push(Issue::error(sid, "", "music volumes must be between 0 and 1"));
+        }
+    }
     for t in [&screen.transition_in, &screen.transition_out].into_iter().flatten() {
         if !t.duration.is_finite() || t.duration < 0.0 {
             out.push(Issue::error(sid, "", "a transition duration must be a number of seconds, 0 or more"));
         }
     }
     check_items(sid, &screen.root, false, 1, &mut out);
+    check_slot_conds(sid, &screen.root, false, 1, &mut out);
     for action in &screen.on_cancel {
         if action_uses_item(action) {
             out.push(Issue::warning(sid, "", "on_cancel uses the element of a row, outside a generated list it has no value"));
@@ -238,6 +247,31 @@ pub fn validate(screen: &ScreenAsset, theme: Option<&Theme>) -> Vec<Issue> {
         check_widget(sid, w, theme, &mut out);
     });
     out
+}
+
+/// `Cond::Slot*` outside the card template of a `SaveSlots` widget.
+fn check_slot_conds(sid: &str, w: &WidgetDef, inside: bool, depth: usize, out: &mut Vec<Issue>) {
+    if depth > MAX_DEPTH {
+        return;
+    }
+    fn slot(c: &Cond) -> bool {
+        match c {
+            Cond::SlotEmpty | Cond::SlotUsed | Cond::SlotLocked => true,
+            Cond::Not(c) => slot(c),
+            _ => false,
+        }
+    }
+    if !inside && (slot(&w.visible) || slot(&w.enabled)) {
+        out.push(Issue::warning(
+            sid,
+            &w.id,
+            "a slot condition outside the card template of a save slot list is always false",
+        ));
+    }
+    let inside = inside || matches!(w.kind, WidgetKind::SaveSlots { .. });
+    for c in &w.children {
+        check_slot_conds(sid, c, inside, depth + 1, out);
+    }
 }
 
 /// Whether an action reads the element of a generated row.
@@ -275,7 +309,7 @@ fn check_items(sid: &str, w: &WidgetDef, inside: bool, depth: usize, out: &mut V
             out.push(Issue::warning(sid, wid, "uses the element of a row outside a generated list: it has no value there"));
         }
     }
-    let mut inside = inside;
+    let mut inside = inside || matches!(w.kind, WidgetKind::SaveSlots { .. });
     if let WidgetKind::Repeat { source, .. } = &w.kind {
         match source {
             BindPath::Var(name) if name.trim().is_empty() => {
@@ -321,6 +355,9 @@ fn check_action(sid: &str, wid: &str, action: &UiAction, out: &mut Vec<Issue>) {
     match action {
         UiAction::Open(id) | UiAction::Replace(id) if id.trim().is_empty() => {
             out.push(Issue::error(sid, wid, "Open / Replace needs a screen id"));
+        }
+        UiAction::PlayMusic(path) if path.trim().is_empty() => {
+            out.push(Issue::error(sid, wid, "PlayMusic needs an audio file"));
         }
         UiAction::SceneGoto(scene) if scene.trim().is_empty() => {
             out.push(Issue::error(sid, wid, "SceneGoto needs a scene"));
@@ -379,11 +416,42 @@ fn check_widget(sid: &str, w: &WidgetDef, theme: Option<&Theme>, out: &mut Vec<I
                 check_action(sid, wid, a, out);
             }
         }
-        WidgetKind::SaveSlots { columns, rows, .. } => {
+        WidgetKind::SaveSlots { columns, rows, look, .. } => {
             if *columns == 0 || *rows == 0 {
                 out.push(Issue::error(sid, wid, "the save slots need at least one column and one row"));
             } else if columns * rows > MAX_SLOTS_PER_PAGE {
                 out.push(Issue::error(sid, wid, format!("at most {MAX_SLOTS_PER_PAGE} slots per page")));
+            }
+            if let Some(theme) = theme {
+                for name in look.styles().filter(|n| !theme.styles.contains_key(*n)) {
+                    out.push(Issue::warning(sid, wid, format!("unknown style `{name}`")));
+                }
+            }
+            let mut controls = false;
+            for child in &w.children {
+                child.walk(&mut |c| {
+                    controls |= matches!(
+                        c.kind,
+                        WidgetKind::Button { .. }
+                            | WidgetKind::Toggle { .. }
+                            | WidgetKind::Slider { .. }
+                            | WidgetKind::Dropdown { .. }
+                            | WidgetKind::SaveSlots { .. }
+                    ) || matches!(&c.kind, WidgetKind::Image { action, .. } if !action.is_empty());
+                });
+            }
+            if controls {
+                out.push(Issue::warning(
+                    sid,
+                    wid,
+                    "the card is the button: controls inside a card template cannot be used on their own",
+                ));
+            }
+            if look.card_height.is_some_and(|h| !(40.0..=1080.0).contains(&h)) {
+                out.push(Issue::error(sid, wid, "the card height must be between 40 and 1080"));
+            }
+            if [look.column_gap, look.row_gap].into_iter().flatten().any(|g| !(0.0..=400.0).contains(&g)) {
+                out.push(Issue::error(sid, wid, "the gaps between cards must be between 0 and 400"));
             }
         }
         WidgetKind::Label { text, .. } => check_text(sid, wid, text, out),

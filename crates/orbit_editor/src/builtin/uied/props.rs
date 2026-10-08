@@ -7,7 +7,7 @@ use orbit_core::{Condition, Expr, Operand};
 use orbit_editor_api::varwidgets::{self, VarInfo};
 use orbit_editor_api::{Translator, icons};
 use orbit_ui::{
-    AchievementField, Align, Anchor, BindPath, Cond, Dir, LayoutDef, PanelKind, SettingKey, Size, Style,
+    AchievementField, Align, Anchor, BindPath, Cond, Dir, LayoutDef, PanelKind, SettingKey, Size, SlotField, Style,
     TextRef, UiAction, WidgetDef, WidgetKind,
 };
 
@@ -36,6 +36,8 @@ pub struct Env<'a> {
     pub theme: Option<&'a orbit_ui::Theme>,
     /// Audio assets of the project (paths), for style sounds.
     pub sounds: &'a [String],
+    /// Music (and sound) files of the project, for screen music.
+    pub musics: &'a [String],
     /// Thumbnails of the image assets.
     pub lookup: &'a super::style_ed::ImageLookup,
 }
@@ -250,6 +252,9 @@ fn cond_editor(ui: &mut Ui, env: &Env, salt: &str, cond: &mut Cond) {
         (Cond::Item, "item_set"),
         (Cond::Unlocked, "unlocked"),
         (Cond::HasAchievements, "has_achievements"),
+        (Cond::SlotEmpty, "slot_empty"),
+        (Cond::SlotUsed, "slot_used"),
+        (Cond::SlotLocked, "slot_locked"),
     ];
     let vars_index = names.len();
     let mut index = match &base {
@@ -354,11 +359,25 @@ fn bind_tag(bind: &BindPath) -> usize {
         BindPath::ReplayScenes(_) => 7,
         BindPath::Achievements => 8,
         BindPath::Achievement(_) => 9,
+        BindPath::SlotField(_) => 10,
     }
 }
 
 /// `contextual`: also offer the values only a screen has (the item, index
 /// or key of a generated row, a screen parameter): for texts.
+/// The fields a save slot card template can show.
+const SLOT_FIELDS: [(SlotField, &str); 9] = [
+    (SlotField::Title, "slot_title"),
+    (SlotField::Number, "slot_number"),
+    (SlotField::Timestamp, "slot_timestamp"),
+    (SlotField::Date, "slot_date"),
+    (SlotField::PlayTime, "slot_play_time"),
+    (SlotField::Chapter, "slot_chapter"),
+    (SlotField::Preview, "slot_preview"),
+    (SlotField::Status, "slot_status"),
+    (SlotField::Thumbnail, "slot_thumbnail"),
+];
+
 fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath, contextual: bool) {
     let tag = bind_tag(bind);
     let mut new = tag;
@@ -369,6 +388,7 @@ fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath, contextu
         options.push((4, env.v("item_key")));
         options.push((5, env.v("param")));
         options.push((9, env.v("achievement")));
+        options.push((10, env.v("slot_field")));
     }
     pick(ui, (salt, "kind"), &mut new, &options);
     if new != tag {
@@ -379,6 +399,7 @@ fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath, contextu
             3 => BindPath::ItemIndex,
             4 => BindPath::ItemKey,
             9 => BindPath::Achievement(AchievementField::Title),
+            10 => BindPath::SlotField(SlotField::Title),
             _ => BindPath::Param(String::new()),
         };
     }
@@ -397,6 +418,13 @@ fn bind_editor(ui: &mut Ui, env: &Env, salt: &str, bind: &mut BindPath, contextu
                 (AchievementField::Progress, env.v("ach_progress")),
             ];
             pick(ui, (salt, "ach_field"), field, &options);
+        }
+        BindPath::SlotField(field) => {
+            let options: Vec<(SlotField, String)> = SLOT_FIELDS
+                .iter()
+                .map(|(f, name)| (*f, env.v(name)))
+                .collect();
+            pick(ui, (salt, "slot_field"), field, &options);
         }
         BindPath::Param(name) => {
             ui.add(
@@ -455,6 +483,141 @@ fn text_ref_editor(ui: &mut Ui, env: &Env, salt: &str, text: &mut TextRef) {
             ui.add(egui::TextEdit::singleline(s).desired_width(f32::INFINITY));
         }
         TextRef::Bind(bind) => bind_editor(ui, env, &format!("{salt}b"), bind, true),
+    }
+}
+
+/// The styles and sizes of a `SaveSlots` list (`ui_version` 9).
+fn slots_look_editor(ui: &mut Ui, env: &Env, look: &mut orbit_ui::SlotsLook) {
+    ui.collapsing(env.t("uied.slots_look"), |ui| {
+        let styles: [(&str, &mut Option<String>); 8] = [
+            ("uied.slots_card_style", &mut look.card_style),
+            ("uied.slots_empty_style", &mut look.empty_style),
+            ("uied.slots_locked_style", &mut look.locked_style),
+            ("uied.slots_tab_style", &mut look.tab_style),
+            ("uied.slots_pager_style", &mut look.pager_style),
+            ("uied.slots_delete_style", &mut look.delete_style),
+            ("uied.slots_confirm_style", &mut look.confirm_style),
+            ("uied.slots_confirm_button_style", &mut look.confirm_button_style),
+        ];
+        for (key, slot) in styles {
+            row(ui, &env.t(key), |ui| style_slot_combo(ui, env, key, slot));
+        }
+        for (key, value, default) in [
+            ("uied.slots_card_height", &mut look.card_height, 170.0),
+            ("uied.slots_column_gap", &mut look.column_gap, 24.0),
+            ("uied.slots_row_gap", &mut look.row_gap, 18.0),
+        ] {
+            row(ui, &env.t(key), |ui| {
+                optional(ui, value, default, |ui, v| {
+                    ui.add(DragValue::new(v).range(0.0..=1080.0).speed(1.0));
+                });
+            });
+        }
+        ui.label(RichText::new(env.t("uied.slots_look_tip")).small().color(weak(ui)));
+    });
+}
+
+/// A combo of the theme's styles for an optional style name.
+fn style_slot_combo(ui: &mut Ui, env: &Env, salt: &str, slot: &mut Option<String>) {
+    let mut name = slot.clone().unwrap_or_default();
+    let text = if name.is_empty() {
+        env.t("uied.none")
+    } else {
+        name.clone()
+    };
+    ComboBox::from_id_salt(("slot_style", salt))
+        .selected_text(text)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut name, String::new(), env.t("uied.none"));
+            for s in env.styles {
+                ui.selectable_value(&mut name, s.clone(), s);
+            }
+            if !name.is_empty() && !env.styles.contains(&name) {
+                ui.label(RichText::new(&name).color(ui.visuals().error_fg_color));
+            }
+        });
+    *slot = (!name.is_empty()).then_some(name);
+}
+
+/// A combo of the project's audio files for a music path.
+pub(super) fn music_file_picker(
+    ui: &mut Ui,
+    env: &Env,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    path: &mut String,
+) {
+    let text = if path.is_empty() {
+        env.t("uied.none")
+    } else {
+        path.clone()
+    };
+    ComboBox::from_id_salt(salt)
+        .selected_text(text)
+        .width(160.0)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(path, String::new(), env.t("uied.none"));
+            for s in env.musics {
+                ui.selectable_value(path, s.clone(), s);
+            }
+            // A file the project no longer lists stays visible.
+            if !path.is_empty() && !env.musics.contains(path) {
+                ui.label(RichText::new(path.as_str()).color(ui.visuals().error_fg_color));
+            }
+        });
+}
+
+/// The music of a screen (`ui_version` 9): a track, fades, volume, what
+/// happens over a running game.
+pub(super) fn music_editor(ui: &mut Ui, env: &Env, value: &mut Option<orbit_ui::ScreenMusic>) {
+    use orbit_ui::{OverGame, ScreenMusic};
+    ui.horizontal(|ui| {
+        let mut on = value.is_some();
+        if ui.checkbox(&mut on, env.t("uied.music")).changed() {
+            *value = on.then(ScreenMusic::default);
+        }
+    });
+    let Some(m) = value else { return };
+    row(ui, &env.t("uied.music_file"), |ui| music_file_picker(ui, env, "screen_music", &mut m.asset));
+    if !m.asset.is_empty() && !env.musics.contains(&m.asset) {
+        ui.label(
+            RichText::new(format!("{}  {}", icons::WARNING, env.t("uied.music_missing")))
+                .small()
+                .color(ui.visuals().warn_fg_color),
+        );
+    }
+    row(ui, &env.t("uied.music_volume"), |ui| {
+        ui.add(egui::Slider::new(&mut m.volume, 0.0..=1.0).max_decimals(2));
+    });
+    row(ui, &env.t("uied.music_fades"), |ui| {
+        ui.add(DragValue::new(&mut m.fade_in_ms).range(0..=10_000).speed(10.0).suffix(" ms"))
+            .on_hover_text(env.t("uied.music_fade_in"));
+        ui.add(DragValue::new(&mut m.fade_out_ms).range(0..=10_000).speed(10.0).suffix(" ms"))
+            .on_hover_text(env.t("uied.music_fade_out"));
+    });
+    ui.checkbox(&mut m.looping, env.t("uied.music_loop"));
+    ui.checkbox(&mut m.keep_if_same, env.t("uied.music_keep_same"))
+        .on_hover_text(env.t("uied.music_keep_same_tip"));
+    row(ui, &env.t("uied.music_over_game"), |ui| {
+        pick(
+            ui,
+            "music_over_game",
+            &mut m.over_game,
+            &[
+                (OverGame::Replace, env.v("music_replace")),
+                (OverGame::Duck, env.v("music_duck")),
+            ],
+        );
+    });
+    match m.over_game {
+        OverGame::Replace => {
+            ui.checkbox(&mut m.resume_game_music, env.t("uied.music_resume"))
+                .on_hover_text(env.t("uied.music_resume_tip"));
+        }
+        OverGame::Duck => {
+            row(ui, &env.t("uied.music_duck_level"), |ui| {
+                ui.add(egui::Slider::new(&mut m.duck_volume, 0.0..=1.0).max_decimals(2));
+            });
+        }
     }
 }
 
@@ -568,7 +731,7 @@ fn eligible_editor(ui: &mut Ui, env: &Env, list: &mut Vec<String>, candidates: &
 
 // ---------------------------------------------------------------- actions
 
-const ACTION_NAMES: [&str; 18] = [
+const ACTION_NAMES: [&str; 20] = [
     "game_new",
     "game_continue",
     "game_quit",
@@ -587,6 +750,8 @@ const ACTION_NAMES: [&str; 18] = [
     "scene_goto",
     "var_set",
     "replay_scene",
+    "play_music",
+    "stop_music",
 ];
 
 fn action_index(a: &UiAction) -> usize {
@@ -609,6 +774,8 @@ fn action_index(a: &UiAction) -> usize {
         UiAction::SceneGoto(_) => 15,
         UiAction::VarSet(_) => 16,
         UiAction::ReplayScene(_) => 17,
+        UiAction::PlayMusic(_) => 18,
+        UiAction::StopMusic => 19,
     }
 }
 
@@ -634,6 +801,8 @@ fn action_from_index(i: usize, vars: &[VarInfo]) -> UiAction {
         },
         15 => UiAction::SceneGoto(String::new()),
         17 => UiAction::ReplayScene(Operand::Item),
+        18 => UiAction::PlayMusic(String::new()),
+        19 => UiAction::StopMusic,
         _ => UiAction::VarSet(varwidgets::blank_op(vars)),
     }
 }
@@ -655,6 +824,7 @@ fn action_editor(ui: &mut Ui, env: &Env, salt: &str, action: &mut UiAction) {
         UiAction::PlaySound(path) => {
             ui.add(egui::TextEdit::singleline(path).desired_width(140.0));
         }
+        UiAction::PlayMusic(path) => music_file_picker(ui, env, (salt, "music"), path),
         UiAction::SceneGoto(scene) => scene_editor(ui, env, salt, scene),
         UiAction::ReplayScene(o) => replay_target_editor(ui, env, salt, o),
         UiAction::Custom { name, args } => {
@@ -1140,7 +1310,7 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
                     .color(weak(ui)),
             );
         }
-        WidgetKind::SaveSlots { mode, columns, rows } => {
+        WidgetKind::SaveSlots { mode, columns, rows, look } => {
             row(ui, &env.t("uied.slots_mode"), |ui| {
                 pick(
                     ui,
@@ -1158,6 +1328,30 @@ pub fn widget_editor(ui: &mut Ui, env: &Env, w: &mut WidgetDef, is_root: bool) {
             row(ui, &env.t("uied.rows"), |ui| {
                 ui.add(DragValue::new(rows).range(1..=8));
             });
+            slots_look_editor(ui, env, look);
+            // The card template is the widget's children: a button writes
+            // the stock card as a tree to edit, another goes back to it.
+            ui.add_space(4.0);
+            if w.children.is_empty() {
+                ui.label(RichText::new(env.t("uied.slots_stock_card")).small().color(weak(ui)));
+                if ui
+                    .button(env.t("uied.slots_customize"))
+                    .on_hover_text(env.t("uied.slots_customize_tip"))
+                    .clicked()
+                {
+                    let widgets = env.theme.map(|t| t.widgets.clone()).unwrap_or_default();
+                    w.children = orbit_ui::default_slot_card(&widgets);
+                }
+            } else {
+                ui.label(RichText::new(env.t("uied.slots_template")).small().color(weak(ui)));
+                if ui
+                    .button(env.t("uied.slots_reset"))
+                    .on_hover_text(env.t("uied.slots_reset_tip"))
+                    .clicked()
+                {
+                    w.children.clear();
+                }
+            }
         }
     }
 
@@ -1308,7 +1502,7 @@ mod tests {
         for i in 0..ACTION_NAMES.len() {
             assert_eq!(action_index(&action_from_index(i, &[])), i);
         }
-        assert_eq!(ACTION_NAMES.len(), 18);
+        assert_eq!(ACTION_NAMES.len(), 20);
         for (key, name) in SETTINGS {
             assert_eq!(setting_name(key), name);
         }

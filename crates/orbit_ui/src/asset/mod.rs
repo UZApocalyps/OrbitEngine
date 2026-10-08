@@ -17,9 +17,10 @@ mod screen;
 mod slots;
 
 pub use orbit_ui_data::{
-    AchievementField, BindPath, Cond, Issue, LayoutDef, SYSTEM_SCREENS, ScreenAsset, SettingKey, Severity, SlotsMode,
-    SplashContent, SplashDef, TextRef, UI_VERSION, UiAction, UiBundle, WidgetDef, WidgetKind,
-    from_ron, migrate, scene_issues, to_ron, validate, validate_with_vars, variable_issues,
+    AchievementField, BindPath, Cond, Issue, LayoutDef, OverGame, SYSTEM_SCREENS, ScreenAsset, ScreenMusic,
+    SettingKey, Severity, SlotField, SlotsLook, SlotsMode, SplashContent, SplashDef, TextRef, UI_VERSION, UiAction,
+    UiBundle, WidgetDef, WidgetKind, default_slot_card, from_ron, migrate, scene_issues, to_ron, validate,
+    validate_with_vars, variable_issues,
 };
 pub use preview::{NavStep, PreviewNav, sample_saves};
 pub use screen::{AchievementRow, DataContext, DataScreen};

@@ -112,6 +112,58 @@ fn bad_input_is_refused_without_writing() {
     assert!(!dir.join("ui").exists() || fs::read_dir(dir.join("ui")).unwrap().next().is_none());
 }
 
+/// `ui_version` 9: screen music and editable save slots through MCP.
+#[test]
+fn screen_music_and_save_slot_cards_through_mcp() {
+    let (dir, mut h) = host("music");
+    h.call_tool(
+        "write_ui_screen",
+        json!({"ron": "(id: \"load\", root: (kind: Stack(dir: Vertical), children: [\
+                 (id: \"slots\", kind: SaveSlots(mode: Load)),\
+                 (id: \"jingle\", kind: Button(text: Literal(\"J\"), action: [PlayMusic(\"assets/music/j.ogg\"), StopMusic]))]))"}),
+    )
+    .unwrap();
+    // The music: a missing file is a warning, not an error.
+    let r = json_of(
+        h.call_tool(
+            "set_ui_screen_music",
+            json!({"screen": "load", "music": "(asset: \"assets/music/menu.ogg\", volume: 0.5, over_game: Duck)"}),
+        )
+        .unwrap(),
+    );
+    assert!(r["missing"].as_array().unwrap().len() >= 2, "{r}");
+    let list = json_of(h.call_tool("list_ui", json!({})).unwrap());
+    assert_eq!(list["screens"][0]["music"], "assets/music/menu.ogg");
+    let text = fs::read_to_string(dir.join("ui/load.screen.ron")).unwrap();
+    assert!(text.contains("music:") && text.contains("Duck"), "{text}");
+    assert!(
+        h.call_tool("set_ui_screen_music", json!({"screen": "load", "music": "(volume: 3.0)"}))
+            .is_err(),
+        "a volume above 1 is an error"
+    );
+    assert!(h.call_tool("set_ui_screen_music", json!({"screen": "nope"})).is_err());
+    h.call_tool("set_ui_screen_music", json!({"screen": "load"})).unwrap();
+    assert!(!fs::read_to_string(dir.join("ui/load.screen.ron")).unwrap().contains("music:"));
+
+    // The save slots card.
+    let r = json_of(
+        h.call_tool(
+            "set_ui_save_slots",
+            json!({"screen": "load", "template": "default",
+                   "look": "(card_style: Some(\"card\"), card_height: Some(200.0))"}),
+        )
+        .unwrap(),
+    );
+    assert_eq!(r["templated"], true);
+    let text = fs::read_to_string(dir.join("ui/load.screen.ron")).unwrap();
+    assert!(text.contains("SlotField(Thumbnail)") && text.contains("SlotEmpty"), "{text}");
+    assert!(text.contains("card_height"), "{text}");
+    let r = json_of(h.call_tool("set_ui_save_slots", json!({"screen": "load", "template": "stock"})).unwrap());
+    assert_eq!(r["templated"], false);
+    assert!(h.call_tool("set_ui_save_slots", json!({"screen": "load", "template": "wat"})).is_err());
+    assert!(h.call_tool("set_ui_save_slots", json!({"screen": "load", "widget": "jingle"})).is_err());
+}
+
 /// `ui_version` 8: image-state styles, the dialogue box section and
 /// applying a style to a widget, through the MCP tools.
 #[test]
