@@ -334,6 +334,33 @@ impl EditCamera {
             (r / (self.fov_y * 0.5).sin() * 1.1).clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
     }
 
+    /// Looks at the target from a fixed direction (keeps target and distance).
+    pub fn set_view(&mut self, view: ViewPreset) {
+        let lim = std::f32::consts::FRAC_PI_2 - 0.01;
+        let half_pi = std::f32::consts::FRAC_PI_2;
+        let (yaw, pitch) = match view {
+            ViewPreset::Front => (0.0, 0.0),
+            ViewPreset::Back => (std::f32::consts::PI, 0.0),
+            ViewPreset::Right => (half_pi, 0.0),
+            ViewPreset::Left => (-half_pi, 0.0),
+            ViewPreset::Top => (0.0, lim),
+            ViewPreset::Bottom => (0.0, -lim),
+        };
+        self.yaw = yaw;
+        self.pitch = pitch;
+    }
+
+    /// Puts the edit camera where a scene camera (world matrix `w`) is,
+    /// looking the same way.
+    pub fn look_through(&mut self, w: &Mat4) {
+        let eye = [w[3][0], w[3][1], w[3][2]];
+        let fwd = math::normalize(math::transform_vector(w, [0.0, 0.0, -1.0]));
+        self.target = add(eye, scale(fwd, self.distance));
+        self.yaw = (-fwd[0]).atan2(-fwd[2]);
+        let lim = std::f32::consts::FRAC_PI_2 - 0.01;
+        self.pitch = (-fwd[1]).asin().clamp(-lim, lim);
+    }
+
     pub fn camera3d(&self) -> orbit_render3d::Camera3d {
         orbit_render3d::Camera3d {
             world: self.world(),
@@ -342,6 +369,43 @@ impl EditCamera {
             far: 20000.0,
         }
     }
+}
+
+/// Fixed viewpoints of the edit camera.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewPreset {
+    Front,
+    Back,
+    Right,
+    Left,
+    Top,
+    Bottom,
+}
+
+/// The 8 corners of a camera frustum drawn `length` deep (clamped to the
+/// camera range): the near rectangle then the far one, each
+/// bottom-left, bottom-right, top-right, top-left, in world space.
+pub fn frustum_corners(
+    def: &orbit_scene::CameraDef,
+    world: &Mat4,
+    aspect: f32,
+    length: f32,
+) -> [Vec3; 8] {
+    let near = def.near.max(1e-3);
+    let far = length.clamp(near, def.far.max(near));
+    let half = |d: f32| match def.projection {
+        orbit_scene::Projection::Perspective { fov_y } => d * (fov_y * 0.5).tan(),
+        orbit_scene::Projection::Orthographic { height } => height * 0.5,
+    };
+    let mut out = [[0.0; 3]; 8];
+    for (k, d) in [near, far].into_iter().enumerate() {
+        let hh = half(d);
+        let hw = hh * aspect;
+        for (c, (x, y)) in [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)].into_iter().enumerate() {
+            out[k * 4 + c] = math::transform_point(world, [x, y, -d]);
+        }
+    }
+    out
 }
 
 // ----------------------------------------------------------------- gizmo
@@ -448,6 +512,60 @@ mod tests {
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-3
+    }
+
+    #[test]
+    fn view_presets_look_along_the_axes() {
+        let mut cam = EditCamera::default();
+        cam.target = [1.0, 2.0, 3.0];
+        cam.set_view(ViewPreset::Front);
+        let e = cam.eye();
+        assert!(close(e[0], 1.0) && close(e[1], 2.0) && e[2] > 3.0, "{e:?}");
+        cam.set_view(ViewPreset::Right);
+        assert!(cam.eye()[0] > 1.0 + cam.distance * 0.99);
+        cam.set_view(ViewPreset::Top);
+        assert!(cam.eye()[1] > 2.0 + cam.distance * 0.99);
+        // The rendering stays finite even straight from above.
+        let vp = cam.camera3d().view_proj(1.0);
+        assert!(vp.iter().flatten().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn looking_through_a_camera_matches_its_direction() {
+        let rot = quat_from_euler_deg([-20.0, 35.0, 0.0]);
+        let w = math::from_trs([2.0, 1.0, 4.0], rot, [1.0; 3]);
+        let mut cam = EditCamera::default();
+        cam.look_through(&w);
+        let e = cam.eye();
+        assert!(len(math::sub(e, [2.0, 1.0, 4.0])) < 1e-3, "{e:?}");
+        let fwd = math::transform_vector(&w, [0.0, 0.0, -1.0]);
+        let mine = math::normalize(math::sub(cam.target, e));
+        assert!(math::dot(fwd, mine) > 0.9999);
+    }
+
+    #[test]
+    fn frustum_corners_follow_fov_aspect_and_range() {
+        let def = orbit_scene::CameraDef {
+            name: "c".into(),
+            projection: orbit_scene::Projection::Perspective {
+                fov_y: 90f32.to_radians(),
+            },
+            near: 0.5,
+            far: 10.0,
+        };
+        let c = frustum_corners(&def, &math::IDENTITY, 2.0, 4.0);
+        // Far plane 4 deep: half height 4 (90 degrees), half width 8.
+        assert!(close(c[6][0], 8.0) && close(c[6][1], 4.0) && close(c[6][2], -4.0), "{:?}", c[6]);
+        assert!(close(c[0][2], -0.5) && close(c[0][1], -0.5));
+        // Clamped to the camera range.
+        let c = frustum_corners(&def, &math::IDENTITY, 1.0, 100.0);
+        assert!(close(c[4][2], -10.0));
+        let ortho = orbit_scene::CameraDef {
+            projection: orbit_scene::Projection::Orthographic { height: 2.0 },
+            ..def
+        };
+        let c = frustum_corners(&ortho, &math::IDENTITY, 1.0, 3.0);
+        assert!(close(c[2][1], 1.0) && close(c[6][1], 1.0));
     }
 
     #[test]

@@ -101,6 +101,7 @@ impl Shape {
         MeshAsset {
             name: self.mesh_key(),
             primitives: vec![self.primitive()],
+            ..Default::default()
         }
     }
 

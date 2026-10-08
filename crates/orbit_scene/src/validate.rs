@@ -42,6 +42,28 @@ pub fn validate(scene: &Scene3d) -> Vec<Issue> {
             out.push(err(&n.name, format!("duplicate camera name `{}`", c.name)));
         }
     }
+    let node_ids: HashSet<Node3dId> = scene.nodes.iter().map(|n| n.id).collect();
+    for (k, rig) in scene.rigs.iter().enumerate() {
+        let path = format!("rigs[{k}]");
+        if !node_ids.contains(&rig.node) {
+            out.push(Issue {
+                severity: Severity::Warning,
+                path: path.clone(),
+                message: "pose of a node that no longer exists (ignored)".into(),
+            });
+        }
+        let poses = std::iter::once(&rig.pose)
+            .chain(rig.poses.iter().map(|p| &p.pose))
+            .chain(rig.clips.iter().flat_map(|c| c.keys.iter().map(|k| &k.pose)));
+        for pose in poses {
+            for j in &pose.joints {
+                let t = &j.transform;
+                if !(finite(&t.translation) && finite(&t.rotation) && finite(&t.scale)) {
+                    out.push(err(&path, format!("bone `{}`: NaN or infinity in the pose", j.joint)));
+                }
+            }
+        }
+    }
     out
 }
 

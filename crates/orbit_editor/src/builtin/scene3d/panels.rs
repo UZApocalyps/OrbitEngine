@@ -84,6 +84,7 @@ pub(super) fn hierarchy(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<Ref
             for id in roots {
                 tree_row(ui, ctx, st, id, 0, &mut action);
             }
+            models_list(ui, ctx, st);
             // Drop zone: dropping here moves a node to the root.
             let (rect, resp) =
                 ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
@@ -119,6 +120,47 @@ pub(super) fn hierarchy(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<Ref
     if ui.ui_contains_pointer() && !ui.ctx().egui_wants_keyboard_input() {
         st.undo_redo_keys(ui);
     }
+}
+
+/// The imported models: drag one onto the viewport (or click +) to place
+/// an instance.
+fn models_list(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
+    if st.lib.prefabs.is_empty() {
+        return;
+    }
+    let mut names: Vec<String> = st.lib.prefabs.keys().cloned().collect();
+    names.sort();
+    ui.add_space(6.0);
+    egui::CollapsingHeader::new(RichText::new(ctx.t("s3d.models")).small().strong())
+        .id_salt("s3d_models")
+        .default_open(true)
+        .show(ui, |ui| {
+            for name in names {
+                let rigged = st.lib.prefabs[&name].nodes.iter().any(|n| match &n.kind {
+                    Node3dKind::Mesh { mesh, .. } => {
+                        st.lib.meshes.get(&mesh.0).is_some_and(|m| m.skin.is_some())
+                    }
+                    _ => false,
+                });
+                ui.horizontal(|ui| {
+                    let icon = if rigged { icons::PERSON_SIMPLE } else { icons::PACKAGE };
+                    let resp = ui
+                        .dnd_drag_source(
+                            egui::Id::new(("s3d_model_drag", &name)),
+                            super::ModelDrag(name.clone()),
+                            |ui| ui.label(format!("{icon}  {name}")),
+                        )
+                        .response
+                        .on_hover_text(ctx.t("s3d.model_drag_hint"));
+                    let _ = resp;
+                    if ui.small_button(icons::PLUS).on_hover_text(ctx.t("s3d.model_add")).clicked()
+                        && let Some(doc) = st.doc.as_mut()
+                    {
+                        st.selected = Some(doc.add_prefab_instance(&name, None));
+                    }
+                });
+            }
+        });
 }
 
 enum Action {
@@ -309,7 +351,7 @@ fn tree_row(
 
 // -------------------------------------------------------------- inspector
 
-fn drag3(ui: &mut Ui, label: &str, v: &mut [f32; 3], speed: f64, suffix: &str) -> bool {
+pub(super) fn drag3(ui: &mut Ui, label: &str, v: &mut [f32; 3], speed: f64, suffix: &str) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label(RichText::new(label).color(weak(ui)));
@@ -411,17 +453,22 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, id: 
             if camera_editor(ui, ctx, &mut c) {
                 doc.edit_node(id, "camera", |n| n.kind = Node3dKind::Camera(c.clone()));
             }
-            if ui.button(ctx.t("s3d.view_from_camera")).clicked()
-                && let Some(w) = doc.world_matrix(id)
-            {
-                // Put the edit camera where the scene camera is.
-                let eye = [w[3][0], w[3][1], w[3][2]];
-                let fwd = math::normalize(math::transform_vector(&w, [0.0, 0.0, -1.0]));
-                let dist = st.cam.distance;
-                st.cam.target = geom::add(eye, geom::scale(fwd, dist));
-                st.cam.yaw = (-fwd[0]).atan2(-fwd[2]);
-                st.cam.pitch = (-fwd[1]).asin();
-            }
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(ctx.t("s3d.view_from_camera")).clicked()
+                    && let Some(w) = doc.world_matrix(id)
+                {
+                    // Put the edit camera where the scene camera is.
+                    st.cam.look_through(&w);
+                }
+                if ui
+                    .button(ctx.t("s3d.align_camera_short"))
+                    .on_hover_text(ctx.t("s3d.align_camera"))
+                    .clicked()
+                {
+                    let w = st.cam.world();
+                    doc.align_to(id, &w);
+                }
+            });
         }
         Node3dKind::Mesh { mesh, materials } => {
             section_title(ui, &ctx.t("s3d.mesh"));
@@ -495,6 +542,7 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State, id: 
         }
         Node3dKind::Empty => {}
     }
+    super::rig::inspector(ui, ctx, st, id);
 }
 
 /// Kind and parameters of a procedural shape. Returns whether it changed.

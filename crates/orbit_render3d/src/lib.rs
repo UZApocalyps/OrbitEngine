@@ -390,7 +390,14 @@ pub struct Renderer3d {
     // M6-06 post-process.
     post: Option<post::PostPipelines>,
     hdr_targets: Option<post::HdrTargets>,
+    // Rigged meshes: CPU copies of the skinned meshes, and the posed
+    // versions currently uploaded (cache keyed by mesh + pose hash).
+    skinned: HashMap<String, MeshAsset>,
+    posed: std::collections::HashSet<String>,
 }
+
+/// Uploaded posed meshes kept around before unused ones are evicted.
+const POSED_CACHE: usize = 32;
 
 impl Renderer3d {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
@@ -613,6 +620,8 @@ impl Renderer3d {
             cubes: HashMap::new(),
             post: None,
             hdr_targets: None,
+            skinned: HashMap::new(),
+            posed: std::collections::HashSet::new(),
         }
     }
 
@@ -698,6 +707,19 @@ impl Renderer3d {
     /// Uploads (or replaces) a mesh, keyed by its name (`MeshRef`).
     pub fn upload_mesh(&mut self, device: &wgpu::Device, mesh: &MeshAsset) {
         use wgpu::util::DeviceExt;
+        if mesh.skin.is_some() {
+            // Drawn through its posed copies; drop those of a previous upload.
+            self.skinned.insert(mesh.name.clone(), mesh.clone());
+            let prefix = format!("{}#pose", mesh.name);
+            let stale: Vec<String> =
+                self.posed.iter().filter(|k| k.starts_with(&prefix)).cloned().collect();
+            for k in stale {
+                self.posed.remove(&k);
+                self.meshes.remove(&k);
+            }
+        } else {
+            self.skinned.remove(&mesh.name);
+        }
         let primitives = mesh
             .primitives
             .iter()
@@ -773,6 +795,39 @@ impl Renderer3d {
         }
     }
 
+    /// Points the draws of skinned meshes at a copy deformed by the pose of
+    /// their [`orbit_scene::Rig`] (the rest pose without one), skinning and
+    /// uploading it on first use. A still pose costs nothing per frame.
+    pub fn apply_poses(&mut self, device: &wgpu::Device, scene: &Scene3d, flat: &mut FlatScene) {
+        if self.skinned.is_empty() {
+            return;
+        }
+        let mut used = std::collections::HashSet::new();
+        for draw in &mut flat.draws {
+            let Some(mesh) = self.skinned.get(&draw.mesh) else { continue };
+            let rest = orbit_scene::Pose::default();
+            let pose = draw
+                .owner
+                .and_then(|o| scene.rig(o))
+                .map_or(&rest, |r| &r.pose);
+            let key = format!("{}#pose{:016x}", draw.mesh, pose.hash64());
+            if !self.meshes.contains_key(&key) {
+                let posed = orbit_scene::skin::skin_mesh(mesh, pose, key.clone());
+                self.upload_mesh(device, &posed);
+                self.posed.insert(key.clone());
+            }
+            used.insert(key.clone());
+            draw.mesh = key;
+        }
+        if self.posed.len() > POSED_CACHE {
+            let stale: Vec<String> = self.posed.difference(&used).cloned().collect();
+            for k in stale {
+                self.posed.remove(&k);
+                self.meshes.remove(&k);
+            }
+        }
+    }
+
     /// Flattens `scene` with the registered prefabs and uploaded meshes.
     pub fn flatten(&self, scene: &Scene3d) -> FlatScene {
         let meshes = |name: &str| self.meshes.get(name).map(Vec::len);
@@ -792,6 +847,7 @@ impl Renderer3d {
     ) -> Result<(), Render3dError> {
         self.ensure_shapes(device, scene);
         let mut flat = self.flatten(scene);
+        self.apply_poses(device, scene, &mut flat);
         let camera = match camera {
             CameraSelect::View(c) => c,
             CameraSelect::First => {

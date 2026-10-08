@@ -275,8 +275,26 @@ fn environment_json(e: &Environment) -> Json {
 }
 
 fn scene_json(scene: &Scene3d) -> Json {
+    let rigs: Vec<Json> = scene
+        .rigs
+        .iter()
+        .map(|r| {
+            let node = scene.nodes.iter().find(|n| n.id == r.node).map(|n| n.name.clone());
+            json!({
+                "node": node,
+                "posed_bones": r.pose.joints.iter().map(|j| json!({
+                    "joint": j.joint,
+                    "rotation_euler_deg": euler_deg(j.transform.rotation).map(f),
+                    "translation": j.transform.translation.map(f),
+                })).collect::<Vec<_>>(),
+                "saved_poses": r.poses.iter().map(|p| &p.name).collect::<Vec<_>>(),
+                "clips": r.clips.iter().map(|c| json!({"name": c.name, "keys": c.keys.len(), "looping": c.looping})).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
     json!({
         "name": scene.name,
+        "rigs": rigs,
         "nodes": scene.nodes.iter().map(|n| node_json(scene, n)).collect::<Vec<_>>(),
         "cameras": scene.cameras().map(|(n, c)| json!({"node": n.name, "camera_name": c.name})).collect::<Vec<_>>(),
         "materials": scene.materials.iter().map(material_json).collect::<Vec<_>>(),
@@ -568,6 +586,28 @@ pub enum Op {
         ambient_intensity: Option<f32>,
         fog: Option<FogSpec>,
     },
+    /// Pose one bone of a rigged character (a prefab instance or mesh node
+    /// whose glTF has a skin). Only the given fields change; the others keep
+    /// the current pose (the bone's rest transform the first time). Bone
+    /// names: `read_scene3d` (`rigs`) or the model's glTF joints.
+    SetBonePose {
+        node: NodeRef,
+        joint: String,
+        /// Euler angles in degrees, relative to the parent bone.
+        rotation_euler_deg: Option<[f32; 3]>,
+        rotation: Option<[f32; 4]>,
+        translation: Option<[f32; 3]>,
+        scale: Option<[f32; 3]>,
+    },
+    /// Back to the rest pose: one bone, or the whole character without
+    /// `joint`.
+    ResetPose { node: NodeRef, joint: Option<String> },
+    /// Store the current pose of a character under a name (replaces one of
+    /// the same name).
+    SavePose { node: NodeRef, name: String },
+    /// Make a saved pose the current pose.
+    ApplyPose { node: NodeRef, name: String },
+    RemovePose { node: NodeRef, name: String },
 }
 
 // ------------------------------------------------------------------- ops
@@ -825,8 +865,146 @@ fn texture_slot(slot: &mut Option<TextureSlot>, name: Option<String>) {
 }
 
 /// Applies one edit. Returns the id of the node it created, if any.
+#[cfg(test)]
 fn apply(scene: &mut Scene3d, op: Op) -> Result<Option<(String, String)>, ToolError> {
+    apply_in(scene, op, None)
+}
+
+/// The skeleton posed by node `i`: the first skinned mesh of its model,
+/// imported from `<dir>/models`.
+fn skeleton_of(
+    scene: &Scene3d,
+    i: usize,
+    dir: Option<&Path>,
+) -> Result<orbit_scene::skin::Skeleton, ToolError> {
+    let node = &scene.nodes[i];
+    let models = dir
+        .map(|d| d.join("models"))
+        .ok_or_else(|| ToolError::invalid("the models folder of the scene is unknown"))?;
+    let candidates: Vec<PathBuf> = match &node.kind {
+        Node3dKind::Prefab(p) => ["glb", "gltf"]
+            .iter()
+            .map(|e| models.join(format!("{}.{e}", p.0)))
+            .filter(|p| p.is_file())
+            .collect(),
+        Node3dKind::Mesh { .. } => model_stems(dir.unwrap_or(Path::new(".")))
+            .into_iter()
+            .flat_map(|s| ["glb", "gltf"].map(|e| models.join(format!("{s}.{e}"))))
+            .filter(|p| p.is_file())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let want_mesh = match &node.kind {
+        Node3dKind::Mesh { mesh, .. } => Some(mesh.0.clone()),
+        _ => None,
+    };
+    for path in candidates {
+        let Ok(imp) = orbit_scene::import::import_gltf_file(&path) else {
+            continue;
+        };
+        if let Some(skel) = imp
+            .meshes
+            .into_iter()
+            .filter(|m| want_mesh.as_ref().is_none_or(|w| &m.name == w))
+            .find_map(|m| m.skin)
+        {
+            return Ok(skel);
+        }
+    }
+    Err(ToolError::invalid(format!(
+        "node `{}` has no rigged (skinned) model",
+        node.name
+    )))
+}
+
+fn apply_in(
+    scene: &mut Scene3d,
+    op: Op,
+    dir: Option<&Path>,
+) -> Result<Option<(String, String)>, ToolError> {
     match op {
+        Op::SetBonePose {
+            node,
+            joint,
+            rotation_euler_deg,
+            rotation,
+            translation,
+            scale,
+        } => {
+            let i = find_node(scene, &node)?;
+            let id = scene.nodes[i].id;
+            let base = match scene.rig(id).and_then(|r| r.pose.get(&joint)) {
+                Some(t) => *t,
+                None => {
+                    let skel = skeleton_of(scene, i, dir)?;
+                    let j = skel.index_of(&joint).ok_or_else(|| {
+                        let names: Vec<&str> = skel.joints.iter().map(|j| j.name.as_str()).collect();
+                        ToolError::not_found(format!(
+                            "no bone `{joint}` (bones: {})",
+                            names.join(", ")
+                        ))
+                    })?;
+                    skel.joints[j].rest
+                }
+            };
+            let mut t = base;
+            apply_transform(&mut t, translation, rotation_euler_deg, rotation, scale)?;
+            scene.rig_mut(id).pose.set(&joint, t);
+        }
+        Op::ResetPose { node, joint } => {
+            let id = scene.nodes[find_node(scene, &node)?].id;
+            let rig = scene.rig_mut(id);
+            match joint {
+                Some(j) => rig.pose.reset(&j),
+                None => rig.pose = Default::default(),
+            }
+        }
+        Op::SavePose { node, name } => {
+            if name.trim().is_empty() {
+                return Err(ToolError::invalid("a pose needs a name"));
+            }
+            let id = scene.nodes[find_node(scene, &node)?].id;
+            let rig = scene.rig_mut(id);
+            let pose = rig.pose.clone();
+            match rig.poses.iter_mut().find(|p| p.name == name) {
+                Some(p) => p.pose = pose,
+                None => rig.poses.push(orbit_scene::NamedPose { name, pose }),
+            }
+        }
+        Op::ApplyPose { node, name } => {
+            let id = scene.nodes[find_node(scene, &node)?].id;
+            let rig = scene.rig_mut(id);
+            let pose = rig
+                .poses
+                .iter()
+                .find(|p| p.name == name)
+                .map(|p| p.pose.clone())
+                .ok_or_else(|| ToolError::not_found(format!("no saved pose `{name}`")))?;
+            rig.pose = pose;
+        }
+        Op::RemovePose { node, name } => {
+            let id = scene.nodes[find_node(scene, &node)?].id;
+            let rig = scene.rig_mut(id);
+            let before = rig.poses.len();
+            rig.poses.retain(|p| p.name != name);
+            if rig.poses.len() == before {
+                return Err(ToolError::not_found(format!("no saved pose `{name}`")));
+            }
+        }
+        op => return apply_scene_op(scene, op),
+    }
+    // Rigs of removed nodes and empty rigs are not kept.
+    scene.rigs.retain(|r| !r.pose.is_rest() || !r.poses.is_empty() || !r.clips.is_empty());
+    Ok(None)
+}
+
+fn apply_scene_op(scene: &mut Scene3d, op: Op) -> Result<Option<(String, String)>, ToolError> {
+    match op {
+        Op::SetBonePose { .. }
+        | Op::ResetPose { .. }
+        | Op::SavePose { .. }
+        | Op::ApplyPose { .. }
+        | Op::RemovePose { .. } => unreachable!("pose ops are handled by apply_in"),
         Op::AddNode {
             name,
             parent,
@@ -1176,7 +1354,7 @@ pub fn apply_ops(
     }
     let mut created = Vec::new();
     for (n, op) in ops.into_iter().enumerate() {
-        match apply(scene, op) {
+        match apply_in(scene, op, dir) {
             Ok(Some((id, name))) => created.push(json!({"id": id, "name": name})),
             Ok(None) => {}
             Err(e) => {
@@ -1184,6 +1362,9 @@ pub fn apply_ops(
             }
         }
     }
+    // Poses of removed nodes go with them.
+    let ids: std::collections::HashSet<Node3dId> = scene.nodes.iter().map(|n| n.id).collect();
+    scene.rigs.retain(|r| ids.contains(&r.node));
     let issues = issues_json(scene, dir);
     let errors = errors_of(&issues);
     if !errors.is_empty() {
@@ -1551,5 +1732,48 @@ mod tests {
         assert!(matches!(s.environment.background, Background::Sky(_)));
         apply(&mut s, op(json!({"op": "set_environment", "sky_texture": ""}))).unwrap();
         assert!(matches!(s.environment.background, Background::Color(_)));
+    }
+
+    #[test]
+    fn pose_ops_pose_save_apply_and_reset_bones() {
+        let mut s = scene();
+        let hero = Node3d::new("Hero", None, Node3dKind::Prefab(PrefabRef("hero".into())));
+        let id = hero.id;
+        s.nodes.push(hero);
+        // A bone already posed: only the given fields change.
+        s.rig_mut(id).pose.set(
+            "arm",
+            Transform {
+                translation: [0.0, 1.0, 0.0],
+                ..Transform::IDENTITY
+            },
+        );
+        apply_ops(
+            &mut s,
+            vec![
+                op(json!({"op": "set_bone_pose", "node": "Hero", "joint": "arm", "rotation_euler_deg": [0.0, 0.0, 90.0]})),
+                op(json!({"op": "save_pose", "node": "Hero", "name": "wave"})),
+                op(json!({"op": "reset_pose", "node": "Hero"})),
+            ],
+            None,
+        )
+        .unwrap();
+        let rig = s.rig(id).unwrap();
+        assert!(rig.pose.is_rest());
+        let saved = rig.poses[0].pose.get("arm").unwrap();
+        assert_eq!(saved.translation, [0.0, 1.0, 0.0]);
+        assert!((euler_deg(saved.rotation)[2] - 90.0).abs() < 1e-3);
+        apply(&mut s, op(json!({"op": "apply_pose", "node": "Hero", "name": "wave"}))).unwrap();
+        assert!(s.rig(id).unwrap().pose.get("arm").is_some());
+        assert!(scene_json(&s)["rigs"][0]["saved_poses"][0] == "wave");
+        // Unknown bones need the model: a clear error, nothing applied.
+        let err = apply(&mut s, op(json!({"op": "set_bone_pose", "node": "Hero", "joint": "leg", "rotation": [0.0, 0.0, 0.0, 1.0]})))
+            .unwrap_err();
+        assert!(err.message.contains("models"), "{}", err.message);
+        assert!(apply(&mut s, op(json!({"op": "remove_pose", "node": "Hero", "name": "nope"}))).is_err());
+        apply(&mut s, op(json!({"op": "remove_pose", "node": "Hero", "name": "wave"}))).unwrap();
+        // Removing the node drops its pose data.
+        apply_ops(&mut s, vec![op(json!({"op": "remove_node", "node": "Hero"}))], None).unwrap();
+        assert!(s.rigs.is_empty());
     }
 }
