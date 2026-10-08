@@ -8,6 +8,14 @@
 
     // ---- actions of the core plugin
     "action.new_project": "New project…",
+    "action.import_renpy": "Import from Ren'Py…",
+    "renpy.pick_source": "Ren'Py game folder (or its game/ folder)",
+    "renpy.pick_parent": "Folder that will contain the imported project",
+    "renpy.task": "Importing the Ren'Py game",
+    "renpy.done": "Ren'Py import: {summary}",
+    "renpy.report_title": "Ren'Py import report",
+    "renpy.report_note": "This report is also saved as import-report.md in the new project.",
+    "renpy.open_from_new": "Import from Ren'Py…",
     "action.open_project": "Open a project…",
     "action.open_story": "Open a story (.orbit, .ron)…",
     "action.convert_story": "Convert story to .orbit",

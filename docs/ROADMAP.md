@@ -448,7 +448,7 @@ Architecture : [ADR 0009](adr/0009-architecture-editeur.md) (statut Accepté). P
 ### Backlog « plus tard »
 - Animation 3D : clips glTF, travelling de caméra, pistes caméra dans la timeline.
 - C# (ou plugins WASM), desktop uniquement.
-- Import de scripts `.rpy` Ren'Py.
+- ~~Import de scripts `.rpy` Ren'Py.~~ **Fait** : crate `orbit_renpy` (éditeur / CLI uniquement, jamais dans le runtime) ; *Fichier > Importer depuis Ren'Py…* et `orbit import-renpy <dossier> <sortie>`. Convertit labels → scènes, menus, conditions, variables, dialogues, show / hide / scene / with, musique / sons, images (convention de nommage Ren'Py), traductions `tl/` ; le reste est listé dans `import-report.md`.
 - WebGPU comme backend web optionnel.
 
 ---

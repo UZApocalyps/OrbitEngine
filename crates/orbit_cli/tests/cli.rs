@@ -296,3 +296,32 @@ fn run_text_without_save_dir_keeps_everything_in_memory() {
     let r = orbit(&["run-text", demo, "--save-dir"], "");
     assert_eq!(r.code, 2);
 }
+
+#[test]
+fn import_renpy_creates_a_valid_project() {
+    let dir = temp_dir("renpy");
+    let game = dir.join("mygame").join("game");
+    std::fs::create_dir_all(game.join("images")).unwrap();
+    std::fs::write(
+        game.join("script.rpy"),
+        "define e = Character(\"Eileen\")
+label start:
+    scene bg room
+    e \"Hi!\"
+    return
+",
+    )
+    .unwrap();
+    std::fs::write(game.join("images").join("bg room.png"), b"png").unwrap();
+    let out_dir = dir.join("project");
+    let out = orbit(
+        &["import-renpy", dir.join("mygame").to_str().unwrap(), out_dir.to_str().unwrap()],
+        "",
+    );
+    assert_eq!(out.code, 0, "{}{}", out.out, out.err);
+    assert!(out.out.contains("1 scenes"), "{}", out.out);
+    let v = orbit(&["validate", out_dir.to_str().unwrap(), "--check-files"], "");
+    assert_eq!(v.code, 0, "{}{}", v.out, v.err);
+    assert_eq!(orbit(&["import-renpy", "only-one"], "").code, 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}

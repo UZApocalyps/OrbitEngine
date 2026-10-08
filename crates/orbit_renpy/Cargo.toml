@@ -1,0 +1,19 @@
+[package]
+name = "orbit_renpy"
+description = "Ren'Py import (editor / CLI only): converts a Ren'Py game folder (.rpy scripts, images, audio, tl/) into a new OrbitEngine project. Never linked into the runtime, the player or the web build."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_core.workspace = true
+orbit_project.workspace = true
+orbit_i18n.workspace = true
+
+[dev-dependencies]
+orbit_dsl.workspace = true
+
+[lints]
+workspace = true

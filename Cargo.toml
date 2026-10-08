@@ -24,6 +24,7 @@ orbit_editor_api = { path = "crates/orbit_editor_api" }
 orbit_pak = { path = "crates/orbit_pak" }
 orbit_export = { path = "crates/orbit_export" }
 orbit_dsl = { path = "crates/orbit_dsl" }
+orbit_renpy = { path = "crates/orbit_renpy" }
 orbit_profile = { path = "crates/orbit_profile" }
 
 # --- story/vm ---

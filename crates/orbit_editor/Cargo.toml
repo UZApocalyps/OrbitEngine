@@ -34,6 +34,7 @@ orbit_assets.workspace = true
 orbit_audio.workspace = true
 orbit_export.workspace = true
 orbit_i18n.workspace = true
+orbit_renpy.workspace = true
 orbit_mcp.workspace = true
 orbit_ui.workspace = true
 orbit_render3d.workspace = true

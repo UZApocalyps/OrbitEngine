@@ -109,6 +109,10 @@ pub enum Dialog {
         meta: RecoveryMeta,
     },
     NewProject(NewProjectForm),
+    /// The report of a Ren'Py import (Markdown).
+    ImportReport {
+        text: String,
+    },
     /// The story file changed on disk (another tool, another editor).
     /// `conflict`: the open project also has unsaved edits.
     ExternalChange {
@@ -150,6 +154,8 @@ pub struct EditorCore {
     saving: Option<(u64, TaskHandle<crate::session::SaveSnapshot>)>,
     /// The project being opened in the background: its path, the job.
     opening: Option<(PathBuf, TaskHandle<LoadedProject>)>,
+    /// The Ren'Py import running in the background.
+    importing: Option<TaskHandle<orbit_renpy::ImportReport>>,
     /// Bumped when files of the asset folders changed (the preview reloads).
     pub asset_epoch: u64,
     /// The live MCP server and its command queue (M4).
@@ -247,6 +253,7 @@ impl EditorCore {
             story_changed_on_disk: false,
             saving: None,
             opening: None,
+            importing: None,
             asset_epoch: 0,
             mcp: crate::live::LiveService::default(),
         };
@@ -408,6 +415,69 @@ impl EditorCore {
                 self.state.push_toast(Level::Error, e);
                 self.forget(&path);
             }
+            Err(e) => self.state.push_toast(Level::Error, format!("{e:?}")),
+        }
+    }
+
+    /// Converts the Ren'Py game in `source` into a new project folder of
+    /// `parent` (named after the game), in the background.
+    pub fn start_renpy_import(&mut self, source: &Path, parent: &Path) {
+        if self.importing.is_some() {
+            return;
+        }
+        let game_name = source
+            .file_name()
+            .filter(|n| *n != "game")
+            .or_else(|| source.parent().and_then(Path::file_name))
+            .map_or_else(|| "renpy".to_owned(), |n| n.to_string_lossy().into_owned());
+        let base = crate::storage::folder_name(&game_name);
+        let base = if base.is_empty() { "renpy".to_owned() } else { base };
+        let free = |p: &Path| !p.exists() || p.read_dir().is_ok_and(|mut d| d.next().is_none());
+        let mut dest = parent.join(&base);
+        for n in 2..100 {
+            if free(&dest) {
+                break;
+            }
+            dest = parent.join(format!("{base}-{n}"));
+        }
+        let source = source.to_owned();
+        let title = self.state.t("renpy.task");
+        let label = title.clone();
+        let job = self.state.spawn_task(title, None, move |p| {
+            orbit_renpy::import(&source, &dest, &|fraction, _| p.set(fraction, label.clone()))
+                .map_err(TaskError::Failed)
+        });
+        self.importing = Some(job);
+    }
+
+    /// Opens the project of a finished Ren'Py import and shows its report.
+    fn poll_import(&mut self) {
+        let Some(job) = self.importing.as_mut() else {
+            return;
+        };
+        let Some(outcome) = job.poll() else {
+            return;
+        };
+        self.importing = None;
+        match outcome {
+            Ok(report) => {
+                let summary = report.summary();
+                let level = if report.validation_errors.is_empty() {
+                    Level::Info
+                } else {
+                    Level::Warn
+                };
+                let message = self.state.tf("renpy.done", &[("summary", &summary)]);
+                self.state.push_toast(level, message);
+                self.open_project_in_background(&report.project);
+                if self.dialog.is_none() {
+                    self.dialog = Some(Dialog::ImportReport {
+                        text: report.to_markdown(),
+                    });
+                }
+            }
+            Err(TaskError::Cancelled) => {}
+            Err(TaskError::Failed(e)) => self.state.push_toast(Level::Error, e),
             Err(e) => self.state.push_toast(Level::Error, format!("{e:?}")),
         }
     }
@@ -901,6 +971,21 @@ impl EditorCore {
                     self.open_project_in_background(&path);
                 }
             }
+            EditorRequest::ImportRenpy => {
+                self.mcp.set_busy(Some("the \"import Ren'Py\" file dialog is open".into()));
+                let source = rfd::FileDialog::new()
+                    .set_title(self.state.t("renpy.pick_source"))
+                    .pick_folder();
+                let parent = source.as_ref().and_then(|_| {
+                    rfd::FileDialog::new()
+                        .set_title(self.state.t("renpy.pick_parent"))
+                        .pick_folder()
+                });
+                self.mcp.set_busy(None);
+                if let (Some(source), Some(parent)) = (source, parent) {
+                    self.start_renpy_import(&source, &parent);
+                }
+            }
             EditorRequest::NewProjectDialog => {
                 let parent = std::env::current_dir()
                     .ok()
@@ -1038,6 +1123,7 @@ impl EditorCore {
         }
         self.poll_save(false);
         self.poll_open();
+        self.poll_import();
         {
             orbit_profile::scope!("after frame: watcher");
             self.poll_watcher(ctx);

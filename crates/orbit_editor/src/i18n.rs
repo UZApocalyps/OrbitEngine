@@ -24,7 +24,7 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
     (
         "host",
         &[
-            "host", "status", "dialog", "palette", "dock", "welcome", "action", "lang", "time",
+            "host", "status", "dialog", "palette", "dock", "welcome", "action", "lang", "time", "renpy",
             "project", "problem",
         ],
         include_str!("../locales/en/host.ron"),

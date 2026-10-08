@@ -3108,6 +3108,7 @@ dependencies = [
  "orbit_i18n",
  "orbit_mcp",
  "orbit_project",
+ "orbit_renpy",
  "orbit_save",
  "orbit_script",
  "orbit_vm",
@@ -3169,6 +3170,7 @@ dependencies = [
  "orbit_project",
  "orbit_render2d",
  "orbit_render3d",
+ "orbit_renpy",
  "orbit_runtime",
  "orbit_save",
  "orbit_scene",
@@ -3392,6 +3394,16 @@ dependencies = [
  "orbit_scene",
  "pollster 1.0.1",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "orbit_renpy"
+version = "0.3.1"
+dependencies = [
+ "orbit_core",
+ "orbit_dsl",
+ "orbit_i18n",
+ "orbit_project",
 ]
 
 [[package]]
