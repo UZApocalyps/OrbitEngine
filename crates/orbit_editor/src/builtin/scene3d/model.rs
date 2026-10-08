@@ -608,11 +608,26 @@ impl SceneDoc {
     }
 
     pub fn add_prefab_instance(&mut self, prefab: &str, parent: Option<Node3dId>) -> Node3dId {
-        let node = Node3d::new(
+        self.add_prefab_instance_at(prefab, parent, [0.0; 3])
+    }
+
+    /// Adds a prefab instance at world position `at` (one undo step).
+    pub fn add_prefab_instance_at(
+        &mut self,
+        prefab: &str,
+        parent: Option<Node3dId>,
+        at: [f32; 3],
+    ) -> Node3dId {
+        let parent = parent.filter(|p| self.node(*p).is_some());
+        let mut node = Node3d::new(
             self.unique_name(prefab),
-            parent.filter(|p| self.node(*p).is_some()),
+            parent,
             Node3dKind::Prefab(PrefabRef(prefab.to_owned())),
         );
+        if at != [0.0; 3] {
+            let pw = parent.and_then(|p| self.world_matrix(p)).unwrap_or(math::IDENTITY);
+            node.transform = moved_local(&node.transform, &pw, at);
+        }
         let id = node.id;
         self.edit(None, |s| s.nodes.push(node));
         id
@@ -655,7 +670,72 @@ impl SceneDoc {
                 break;
             }
         }
-        self.edit(None, |s| s.nodes.retain(|n| !doomed.contains(&n.id)));
+        self.edit(None, |s| {
+            s.nodes.retain(|n| !doomed.contains(&n.id));
+            s.rigs.retain(|r| !doomed.contains(&r.node));
+        });
+        true
+    }
+
+    /// World bounds of a node and its descendants (markers excluded unless
+    /// the subtree has nothing else).
+    pub fn subtree_bounds(&self, id: Node3dId, lib: &ModelLib, marker_half: f32) -> Option<Bounds> {
+        let mut out: Option<Bounds> = None;
+        let mut stack = vec![id];
+        let mut guard = 0;
+        while let Some(cur) = stack.pop() {
+            guard += 1;
+            if guard > 100_000 {
+                break;
+            }
+            if let Some(n) = self.node(cur)
+                && lib.kind_bounds(&n.kind).is_some()
+                && let Some(b) = self.world_bounds(cur, lib, marker_half)
+            {
+                match &mut out {
+                    Some(o) => o.union(&b),
+                    None => out = Some(b),
+                }
+            }
+            stack.extend(self.children(Some(cur)));
+        }
+        out.or_else(|| self.world_bounds(id, lib, marker_half))
+    }
+
+    /// Moves a node vertically so that its subtree rests on the ground
+    /// (`y = 0`). Returns false when nothing moved.
+    pub fn snap_to_ground(&mut self, id: Node3dId, lib: &ModelLib) -> bool {
+        let (Some(b), Some(node), Some(w)) = (
+            self.subtree_bounds(id, lib, 0.0),
+            self.node(id).cloned(),
+            self.world_matrix(id),
+        ) else {
+            return false;
+        };
+        let dy = -b.min[1];
+        if dy.abs() < 1e-5 {
+            return false;
+        }
+        let pos = [w[3][0], w[3][1] + dy, w[3][2]];
+        let t = moved_local(&node.transform, &self.parent_world(id), pos);
+        self.set_transform(id, "ground", t);
+        true
+    }
+
+    /// Places node `id` so that its world matrix becomes `world` (rotation
+    /// and position; its scale is kept). Used by "align camera to view".
+    pub fn align_to(&mut self, id: Node3dId, world: &Mat4) -> bool {
+        let Some(node) = self.node(id).cloned() else {
+            return false;
+        };
+        let inv = math::inverse(&self.parent_world(id)).unwrap_or(math::IDENTITY);
+        let local = decompose(&math::mul(&inv, world));
+        let t = Transform {
+            translation: local.translation,
+            rotation: local.rotation,
+            scale: node.transform.scale,
+        };
+        self.set_transform(id, "align", t);
         true
     }
 
@@ -687,7 +767,20 @@ impl SceneDoc {
             copies.push(n);
         }
         let root = copies.first()?.id;
-        self.edit(None, |s| s.nodes.extend(copies));
+        let rigs: Vec<orbit_scene::Rig> = self
+            .scene
+            .rigs
+            .iter()
+            .filter_map(|r| {
+                let mut r = r.clone();
+                r.node = *map.get(&r.node)?;
+                Some(r)
+            })
+            .collect();
+        self.edit(None, |s| {
+            s.nodes.extend(copies);
+            s.rigs.extend(rigs);
+        });
         Some(root)
     }
 
@@ -919,6 +1012,7 @@ pub fn preview_sphere(name: &str) -> MeshAsset {
     MeshAsset {
         name: name.to_owned(),
         primitives: vec![p],
+        ..Default::default()
     }
 }
 
@@ -1284,5 +1378,58 @@ mod tests {
         assert!(world_in(&nodes, ia).is_none());
         b.parent = Some(Node3dId::new());
         assert!(world_in(&[b], ib).is_none());
+    }
+
+    #[test]
+    fn snap_to_ground_rests_the_subtree_on_y0() {
+        let mut doc = SceneDoc::new("s");
+        let lib = ModelLib::default();
+        let cube = doc.add_shape("cube", None);
+        doc.set_transform(
+            cube,
+            "t",
+            Transform {
+                translation: [1.0, 5.0, 0.0],
+                ..Transform::IDENTITY
+            },
+        );
+        assert!(doc.snap_to_ground(cube, &lib));
+        let b = doc.subtree_bounds(cube, &lib, 0.0).unwrap();
+        assert!(close(b.min[1], 0.0), "{b:?}");
+        assert!(close(doc.node(cube).unwrap().transform.translation[0], 1.0));
+        assert!(!doc.snap_to_ground(cube, &lib), "already on the ground");
+        assert!(doc.undo());
+    }
+
+    #[test]
+    fn align_to_puts_a_camera_on_the_view() {
+        let mut doc = SceneDoc::new("s");
+        let cam = doc.scene().cameras().next().unwrap().0.id;
+        let mut edit = geom::EditCamera::default();
+        edit.target = [1.0, 0.0, -2.0];
+        let w = edit.world();
+        assert!(doc.align_to(cam, &w));
+        let got = doc.world_matrix(cam).unwrap();
+        for c in 0..4 {
+            for r in 0..3 {
+                assert!(close(got[c][r], w[c][r]), "{got:?} vs {w:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn rigs_follow_duplicate_and_delete() {
+        let mut doc = SceneDoc::new("s");
+        let id = doc.add_prefab_instance_at("hero", None, [2.0, 0.0, 1.0]);
+        assert_eq!(doc.node(id).unwrap().transform.translation, [2.0, 0.0, 1.0]);
+        doc.edit(None, |s| s.rig_mut(id).pose.set("arm", Transform::IDENTITY));
+        let copy = doc.duplicate_node(id).unwrap();
+        assert_eq!(doc.scene().rig(copy).unwrap().pose, doc.scene().rig(id).unwrap().pose);
+        doc.delete_node(id);
+        assert!(doc.scene().rig(id).is_none());
+        assert!(doc.scene().rig(copy).is_some());
+        // Saved and reloaded with the poses.
+        let text = orbit_scene::to_ron(doc.scene()).unwrap();
+        assert_eq!(&orbit_scene::from_ron(&text).unwrap(), doc.scene());
     }
 }

@@ -19,7 +19,9 @@ use orbit_scene::{MeshAsset, Prefab, Scene3d, TextureAsset};
 pub const MAIN: usize = 0;
 /// Slot of the material preview sphere.
 pub const MATERIAL: usize = 1;
-const SLOTS: usize = 2;
+/// Slot of the game camera preview (picture-in-picture of the viewport).
+pub const CAMERA: usize = 2;
+const SLOTS: usize = 3;
 
 /// Imported assets the scene refers to.
 #[derive(Default)]
