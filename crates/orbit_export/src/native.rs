@@ -5,11 +5,9 @@
 //! the trailer of its own file (see `orbit_pak::trailer`), so the result is a
 //! single executable that can be moved and renamed freely.
 //!
-//! The icon of the `.exe` file itself (Explorer, the desktop) stays the
-//! OrbitEngine one: rewriting the resources of a compiled executable needs
-//! unsafe Win32 calls or a resource compiler, neither of which the exporter
-//! has. The *window* icon (title bar, task bar while the game runs) is the
-//! game's own, read from the pak.
+//! The icon of the Windows `.exe` itself (Explorer, the desktop) is written
+//! into the PE resources of the template copy (`peicon`); the window icon is
+//! read from the pak by the player.
 
 use std::fs::File;
 use std::io::Write;
@@ -81,6 +79,7 @@ pub(crate) struct Written {
 /// Writes the archive of `target` (Windows or Linux) into `out_dir`.
 pub(crate) fn export(
     pak: &BuiltPak,
+    icon: Option<&[u8]>,
     profile: &ExportProfile,
     target: ExportTarget,
     template: &Path,
@@ -88,7 +87,15 @@ pub(crate) fn export(
     rep: &mut Reporter<'_>,
 ) -> Result<Written> {
     rep.step(0.0, &format!("Reading the {} player template", target.id()));
-    let player = std::fs::read(template).map_err(ExportError::io(template))?;
+    let mut player = std::fs::read(template).map_err(ExportError::io(template))?;
+    if let (ExportTarget::Windows, Some(icon)) = (target, icon) {
+        match crate::peicon::set_icon(&player, icon) {
+            Ok(patched) => player = patched,
+            Err(e) => rep.warn(format!(
+                "could not set the .exe icon ({e}); the OrbitEngine icon is kept"
+            )),
+        }
+    }
     std::fs::create_dir_all(out_dir).map_err(ExportError::io(out_dir))?;
     let output = out_dir.join(archive_name(profile, target));
     let folder = file_safe(&profile.game_name);
