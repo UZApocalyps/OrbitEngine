@@ -47,6 +47,7 @@ impl EditorPlugin for ProfilerPlugin {
                 c.request(EditorRequest::ShowPanel(super::panels::HITCHES.to_owned()));
             })
             .icon(icons::GAUGE)
+            .menu_group(super::GROUP_DIAG)
             .category("category.view")
             .menu("view", 128),
         );

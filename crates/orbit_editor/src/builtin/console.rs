@@ -34,6 +34,7 @@ impl EditorPlugin for ConsolePlugin {
                 c.state_mut().console.clear();
             })
             .icon(icons::BROOM)
+            .menu_group(super::GROUP_DIAG)
             .category("category.view")
             .menu("view", 200),
         );

@@ -144,6 +144,7 @@ impl EditorPlugin for ScenePlugin {
                 .icon(icons::PLUS_CIRCLE)
                 .category("category.edit")
                 .shortcut(Modifiers::COMMAND, egui::Key::I)
+                .menu_group("menu.edit.insert")
                 .menu("edit", 205)
                 .enabled(|c| c.story().is_some_and(|s| !s.scenes.is_empty())),
             );
@@ -170,6 +171,7 @@ impl EditorPlugin for ScenePlugin {
                 })
                 .icon(icon)
                 .category("category.edit")
+                .menu_group("menu.edit.insert")
                 .menu("edit", order)
                 .enabled(|c| c.story().is_some_and(|s| !s.scenes.is_empty())),
             );
@@ -185,6 +187,7 @@ impl EditorPlugin for ScenePlugin {
                 })
                 .icon(icons::PENCIL_SIMPLE)
                 .category("category.edit")
+                .menu_group("menu.edit.insert")
                 .menu("edit", 204)
                 .enabled(|c| matches!(c.selection(), Some(Selection::Node(_)))),
             );
@@ -198,6 +201,7 @@ impl EditorPlugin for ScenePlugin {
             .icon(icons::COPY_SIMPLE)
             .category("category.edit")
             .shortcut(Modifiers::COMMAND, Key::D)
+            .menu_group("menu.edit.blocks")
             .menu("edit", 220)
             .enabled(has_nodes_selected),
         );
@@ -208,6 +212,7 @@ impl EditorPlugin for ScenePlugin {
             .icon(icons::COPY)
             .category("category.edit")
             .shortcut(Modifiers::COMMAND, Key::C)
+            .menu_group("menu.edit.blocks")
             .menu("edit", 230)
             .enabled(has_nodes_selected),
         );
@@ -216,6 +221,7 @@ impl EditorPlugin for ScenePlugin {
                 .icon(icons::SCISSORS)
                 .category("category.edit")
                 .shortcut(Modifiers::COMMAND, Key::X)
+                .menu_group("menu.edit.blocks")
                 .menu("edit", 231)
                 .enabled(has_nodes_selected),
         );
@@ -224,6 +230,7 @@ impl EditorPlugin for ScenePlugin {
                 .icon(icons::CLIPBOARD_TEXT)
                 .category("category.edit")
                 .shortcut(Modifiers::COMMAND, Key::V)
+                .menu_group("menu.edit.blocks")
                 .menu("edit", 232)
                 .enabled(edit::can_paste),
         );
@@ -231,6 +238,7 @@ impl EditorPlugin for ScenePlugin {
             ActionDef::new("select_all", "scene.action.select_all", edit::select_all)
                 .category("category.edit")
                 .shortcut(Modifiers::COMMAND, Key::A)
+                .menu_group("menu.edit.blocks")
                 .menu("edit", 240)
                 .enabled(|c| c.story().is_some_and(|s| !s.scenes.is_empty())),
         );
@@ -239,6 +247,7 @@ impl EditorPlugin for ScenePlugin {
                 .icon(icons::ARROW_UP)
                 .category("category.edit")
                 .shortcut(Modifiers::ALT, Key::ArrowUp)
+                .menu_group("menu.edit.blocks")
                 .menu("edit", 250)
                 .enabled(has_nodes_selected),
         );
@@ -247,6 +256,7 @@ impl EditorPlugin for ScenePlugin {
                 .icon(icons::ARROW_DOWN)
                 .category("category.edit")
                 .shortcut(Modifiers::ALT, Key::ArrowDown)
+                .menu_group("menu.edit.blocks")
                 .menu("edit", 251)
                 .enabled(has_nodes_selected),
         );
@@ -254,6 +264,7 @@ impl EditorPlugin for ScenePlugin {
             ActionDef::new("new_scene", "scene.action.new_scene", edit::new_scene)
                 .icon(icons::FOLDER_PLUS)
                 .category("category.scene")
+                .menu_group("menu.edit.scenes")
                 .menu("edit", 300)
                 .enabled(|c| c.has_project()),
         );
@@ -271,6 +282,7 @@ impl EditorPlugin for ScenePlugin {
                 .icon(icons::PENCIL_SIMPLE)
                 .category("category.scene")
                 .shortcut(Modifiers::NONE, Key::F2)
+                .menu_group("menu.edit.scenes")
                 .menu("edit", 301)
                 .enabled(|c| c.story().is_some_and(|s| !s.scenes.is_empty())),
             );
@@ -283,6 +295,7 @@ impl EditorPlugin for ScenePlugin {
             })
             .icon(icons::FOLDER_MINUS)
             .category("category.scene")
+            .menu_group("menu.edit.scenes")
             .menu("edit", 302)
             .enabled(|c| c.story().is_some_and(|s| !s.scenes.is_empty())),
         );

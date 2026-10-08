@@ -198,7 +198,9 @@ impl ActionDef {
         self
     }
 
-    /// Puts the menu entry in a submenu titled by this text key.
+    /// Puts the menu entry in a submenu titled by this text key. A `/`
+    /// nests submenus (`"menu.panels/menu.panels.story"`); entries sharing
+    /// a path are grouped, the first one places the submenu.
     pub fn menu_group(mut self, group: impl Into<String>) -> Self {
         self.menu_group = Some(group.into());
         self

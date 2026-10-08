@@ -61,6 +61,7 @@ impl EditorPlugin for ExportPlugin {
             })
             .icon(icons::EXPORT)
             .category("category.file")
+            .menu_group("menu.exchange")
             .menu("file", 300)
             .enabled(|c| c.has_project()),
         );

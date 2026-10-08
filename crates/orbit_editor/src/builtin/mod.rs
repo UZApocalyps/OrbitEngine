@@ -227,6 +227,44 @@ impl PanelActions {
     }
 }
 
+/// Submenu (text keys joined by `/`) of the "Panels" menu for each area.
+const GROUP_STORY: &str = "menu.panels/menu.panels.story";
+const GROUP_EDIT: &str = "menu.panels/menu.panels.edit";
+const GROUP_ASSETS: &str = "menu.panels/menu.panels.assets";
+const GROUP_TOOLS: &str = "menu.panels/menu.panels.tools";
+pub(crate) const GROUP_DIAG: &str = "menu.panels/menu.panels.diag";
+const GROUP_OTHER: &str = "menu.panels/menu.panels.other";
+
+/// Menu group of a panel's "Show" action. Panels from plugins that are not
+/// listed fall in "Other".
+fn panel_group(panel_id: &str) -> &'static str {
+    match panel_id {
+        "orbit.welcome.welcome" | "orbit.scene.scene" | "orbit.graph.graph"
+        | "orbit.sceneview.sceneview" | "orbit.textview.textview" | "orbit.preview.preview" => {
+            GROUP_STORY
+        }
+        "orbit.inspector.inspector"
+        | "orbit.characters.characters"
+        | "orbit.variables.variables"
+        | "orbit.curves.curves"
+        | "orbit.scripts.scripts"
+        | "orbit.translations.translations"
+        | "orbit.achievements.achievements" => GROUP_EDIT,
+        "orbit.library.library" | "orbit.explorer.explorer" | "orbit.search.search" => GROUP_ASSETS,
+        "orbit.console.console"
+        | "orbit.problems.problems"
+        | "orbit.profiler.profiler"
+        | "orbit.profiler.hitches" => GROUP_DIAG,
+        "orbit.ui.editor"
+        | "orbit.timeline.timeline"
+        | "orbit.export.export"
+        | "orbit.assistant.assistant"
+        | "orbit.manual.manual" => GROUP_TOOLS,
+        id if id.starts_with("orbit.rig.") || id.starts_with("orbit.scene3d.") => GROUP_TOOLS,
+        _ => GROUP_OTHER,
+    }
+}
+
 impl Plugin for PanelActions {
     fn manifest(&self) -> PluginManifest {
         PluginManifest::new("orbit.core.views", "Panel views", "0.1.0")
@@ -236,6 +274,7 @@ impl Plugin for PanelActions {
 impl EditorPlugin for PanelActions {
     fn register_ui(&self, registry: &mut EditorRegistry) {
         for (n, (panel_id, title, icon)) in self.panels.iter().enumerate() {
+            let group = panel_group(panel_id);
             let panel_id = panel_id.clone();
             let title = title.clone();
             registry.action(
@@ -248,6 +287,7 @@ impl EditorPlugin for PanelActions {
                 )
                 .label_with(move |ctx| ctx.tf("action.show_panel", &[("panel", &ctx.t(&title))]))
                 .icon(icon)
+                .menu_group(group)
                 .category("category.view")
                 .menu("view", 300 + n as i32),
             );

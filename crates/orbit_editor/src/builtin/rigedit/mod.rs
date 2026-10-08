@@ -148,6 +148,7 @@ impl EditorPlugin for RigPlugin {
                 ctx.request(EditorRequest::ShowWorkspace(rig_workspace()));
             })
             .icon(icons::BONE)
+            .menu_group("menu.rig")
             .category("category.tools")
             .menu("tools", 165),
         );
@@ -160,6 +161,7 @@ impl EditorPlugin for RigPlugin {
                 }
             })
             .icon(icons::USER_SQUARE)
+            .menu_group("menu.rig")
             .category("category.tools")
             .menu("tools", 166),
         );
@@ -172,6 +174,7 @@ impl EditorPlugin for RigPlugin {
                 }
             })
             .icon(icons::STACK)
+            .menu_group("menu.rig")
             .category("category.tools")
             .menu("tools", 167),
         );
@@ -184,6 +187,7 @@ impl EditorPlugin for RigPlugin {
                 }
             })
             .icon(icons::STACK)
+            .menu_group("menu.rig")
             .category("category.tools")
             .menu("tools", 168),
         );
@@ -196,6 +200,7 @@ impl EditorPlugin for RigPlugin {
                 }
             })
             .icon(icons::COPY)
+            .menu_group("menu.rig")
             .category("category.tools")
             .menu("tools", 169),
         );
@@ -208,6 +213,7 @@ impl EditorPlugin for RigPlugin {
                 }
             })
             .icon(icons::FILM_STRIP)
+            .menu_group("menu.rig")
             .category("category.tools")
             .menu("tools", 170),
         );
@@ -220,6 +226,7 @@ impl EditorPlugin for RigPlugin {
                 }
             })
             .icon(icons::CROSSHAIR)
+            .menu_group("menu.rig")
             .category("category.tools")
             .menu("tools", 171),
         );

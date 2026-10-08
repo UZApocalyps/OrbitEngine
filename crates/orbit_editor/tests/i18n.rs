@@ -181,7 +181,9 @@ fn every_registered_text_is_a_key_in_both_languages() {
         check("action label", &action.def.id, &action.def.label);
         check("action category", &action.def.id, &action.def.category);
         if let Some(group) = &action.def.menu_group {
-            check("action menu group", &action.def.id, group);
+            for key in group.split('/') {
+                check("action menu group", &action.def.id, key);
+            }
         }
     }
     for menu in reg.menus() {

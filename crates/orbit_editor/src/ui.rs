@@ -271,47 +271,12 @@ fn menu_bar(
             for menu in registry.menus() {
                 ui.menu_button(ectx.t(&menu.label), |ui| {
                     ui.set_min_width(260.0);
-                    let mut last_group: Option<i32> = None;
-                    let actions = registry.menu_actions(&menu.id);
-                    let mut placed: Vec<&str> = Vec::new();
-                    for action in &actions {
-                        if crate::builtin::hidden_experimental(&action.plugin_id) {
-                            continue;
-                        }
-                        let order = action.def.menu.as_ref().map_or(0, |m| m.order);
-                        let group = order.div_euclid(100);
-                        if let Some(submenu) = action.def.menu_group.as_deref() {
-                            if placed.contains(&submenu) {
-                                continue;
-                            }
-                            placed.push(submenu);
-                        }
-                        if last_group.is_some_and(|g| g != group) {
-                            ui.separator();
-                        }
-                        last_group = Some(group);
-                        match action.def.menu_group.as_deref() {
-                            Some(submenu) => {
-                                ui.menu_button(ectx.t(submenu), |ui| {
-                                    for item in actions
-                                        .iter()
-                                        .filter(|a| a.def.menu_group.as_deref() == Some(submenu))
-                                    {
-                                        if menu_item(ui, ectx, item) {
-                                            clicked.push(item.def.id.clone());
-                                            ui.close();
-                                        }
-                                    }
-                                });
-                            }
-                            None => {
-                                if menu_item(ui, ectx, action) {
-                                    clicked.push(action.def.id.clone());
-                                    ui.close();
-                                }
-                            }
-                        }
-                    }
+                    let actions: Vec<&RegisteredAction> = registry
+                        .menu_actions(&menu.id)
+                        .into_iter()
+                        .filter(|a| !crate::builtin::hidden_experimental(&a.plugin_id))
+                        .collect();
+                    menu_level(ui, ectx, &actions, 0, &mut clicked);
                 });
             }
 
@@ -349,6 +314,64 @@ fn menu_bar(
 }
 
 /// One entry of a menu; `true` when clicked.
+/// Submenu path of an action: the `/`-separated keys of its `menu_group`.
+fn group_path(action: &RegisteredAction) -> Vec<&str> {
+    action
+        .def
+        .menu_group
+        .as_deref()
+        .map(|g| g.split('/').collect())
+        .unwrap_or_default()
+}
+
+/// Draws one level of a menu: the actions whose group path ends here as
+/// items, and one submenu per distinct next key (placed where its first
+/// entry sits), recursively.
+fn menu_level(
+    ui: &mut Ui,
+    ectx: &EditorContext<'_>,
+    actions: &[&RegisteredAction],
+    depth: usize,
+    clicked: &mut Vec<String>,
+) {
+    let mut last_group: Option<i32> = None;
+    let mut placed: Vec<&str> = Vec::new();
+    for action in actions {
+        let path = group_path(action);
+        let sub = path.get(depth).copied();
+        if let Some(key) = sub {
+            if placed.contains(&key) {
+                continue;
+            }
+            placed.push(key);
+        }
+        let order = action.def.menu.as_ref().map_or(0, |m| m.order);
+        let group = order.div_euclid(100);
+        if last_group.is_some_and(|g| g != group) {
+            ui.separator();
+        }
+        last_group = Some(group);
+        match sub {
+            Some(key) => {
+                let children: Vec<&RegisteredAction> = actions
+                    .iter()
+                    .copied()
+                    .filter(|a| group_path(a).get(depth) == Some(&key))
+                    .collect();
+                ui.menu_button(ectx.t(key), |ui| {
+                    menu_level(ui, ectx, &children, depth + 1, clicked);
+                });
+            }
+            None => {
+                if menu_item(ui, ectx, action) {
+                    clicked.push(action.def.id.clone());
+                    ui.close();
+                }
+            }
+        }
+    }
+}
+
 fn menu_item(ui: &mut Ui, ectx: &EditorContext<'_>, action: &RegisteredAction) -> bool {
     let label = match &action.def.menu_label {
         Some(text) => ectx.t(text),

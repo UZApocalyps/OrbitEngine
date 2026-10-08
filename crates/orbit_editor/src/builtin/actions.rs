@@ -185,6 +185,7 @@ impl EditorPlugin for CorePlugin {
             })
             .checked(|_| orbit_core::experimental::enabled_3d())
             .icon(icons::CUBE)
+            .menu_group("menu.options")
             .category("category.view")
             .menu("view", 125),
         );
@@ -200,6 +201,7 @@ impl EditorPlugin for CorePlugin {
             })
             .checked(|c| c.state().validation.auto)
             .icon(icons::CHECK_CIRCLE)
+            .menu_group("menu.options")
             .category("category.view")
             .menu("view", 126),
         );
@@ -217,6 +219,7 @@ impl EditorPlugin for CorePlugin {
                 c.request(EditorRequest::ResetLayout);
             })
             .icon(icons::LAYOUT)
+            .menu_group("menu.layout")
             .category("category.view")
             .menu("view", 120),
         );
