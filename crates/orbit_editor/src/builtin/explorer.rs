@@ -39,6 +39,7 @@ impl EditorPlugin for ExplorerPlugin {
                 .icon(icons::CHAT_TEXT)
                 .category("category.edit")
                 .shortcut(Modifiers::COMMAND, Key::Enter)
+                .menu_group("menu.edit.insert")
                 .menu("edit", 200)
                 .enabled(|c| c.story().is_some_and(|s| !s.scenes.is_empty())),
         );
@@ -49,6 +50,7 @@ impl EditorPlugin for ExplorerPlugin {
             .icon(icons::TRASH)
             .category("category.edit")
             .shortcut(Modifiers::NONE, Key::Delete)
+            .menu_group("menu.edit.blocks")
             .menu("edit", 210)
             .enabled(|c| matches!(c.selection(), Some(Selection::Node(_)))),
         );

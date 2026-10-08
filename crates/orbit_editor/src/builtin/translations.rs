@@ -46,6 +46,7 @@ impl EditorPlugin for TranslationsPlugin {
             })
             .icon(icons::EXPORT)
             .category("category.file")
+            .menu_group("menu.exchange")
             .menu("file", 330)
             .enabled(|c| c.has_project()),
         );
@@ -55,6 +56,7 @@ impl EditorPlugin for TranslationsPlugin {
             })
             .icon(icons::EXPORT)
             .category("category.file")
+            .menu_group("menu.exchange")
             .menu("file", 331)
             .enabled(|c| c.has_project()),
         );
@@ -62,6 +64,7 @@ impl EditorPlugin for TranslationsPlugin {
             ActionDef::new("import", "transl.menu_import", |c| import_dialog(c))
                 .icon(icons::DOWNLOAD_SIMPLE)
                 .category("category.file")
+                .menu_group("menu.exchange")
                 .menu("file", 332)
                 .enabled(|c| c.has_project()),
         );
