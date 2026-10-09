@@ -791,6 +791,7 @@ pub const NODE_KIND_TOOLS: &[(&str, &str)] = &[
     ("StopParticles", "add_command type=stop_particles"),
     ("Script", "add_command type=script"),
     ("Unlock", "add_command type=unlock"),
+    ("Hotspots", "add_hotspots"),
 ];
 
 #[derive(Deserialize, JsonSchema)]
@@ -2898,7 +2899,16 @@ pub fn builtin_tools() -> Vec<ToolDef> {
     tools.extend(rig_tool_defs());
     tools.extend(script_tool_defs());
     tools.extend(voice_tool_defs());
+    tools.extend(hotspot_tool_defs());
     tools
+}
+
+fn hotspot_tool_defs() -> Vec<ToolDef> {
+    use crate::hotspot_tools as h;
+    vec![
+        def::<h::AddHotspotsArgs>("add_hotspots", "Add a hotspot map (point & click)", "Add a point & click navigation node: clickable zones drawn over the background (rect [x,y,w,h], ellipse [cx,cy,rx,ry] or polygon [[x,y],...], in screen fractions 0-1, origin top-left). The story waits until the player clicks a zone, then jumps to its label (create the labels first with add_command type=label). Zones glow on hover / keyboard focus and show their tooltip; `condition` hides a zone, `enabled` dims it. Saves, rollback and keyboard/gamepad work like a choice.", Kind::Edit, h::add_hotspots),
+        def::<h::EditHotspotsArgs>("edit_hotspots", "Edit a hotspot map", "Change a hotspot map: its background and style, update zones by index (shape, tooltip, target, condition, enabled, hover image or sound, own style; omitted fields keep their value, \"\" clears an optional one), remove zones and append new ones. One undoable change.", Kind::Edit, h::edit_hotspots),
+    ]
 }
 
 fn voice_tool_defs() -> Vec<ToolDef> {
