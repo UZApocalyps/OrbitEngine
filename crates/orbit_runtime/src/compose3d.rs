@@ -657,6 +657,67 @@ mod tests {
         assert_eq!((a2, b2), (a, b));
     }
 
+    /// Regression: a 2D story showing a 3D scene run from its project
+    /// folder (the editor preview) has no packed `3d/index.ron`, so the
+    /// loaded library is empty and only the scene's background was drawn.
+    /// With the host's models (fallback library) the object is seen
+    /// through the scene camera.
+    #[cfg(feature = "3d")]
+    #[test]
+    fn a_folder_project_draws_its_models_through_the_camera() {
+        use orbit_scene::{MaterialDef, MaterialRef, MeshAsset, MeshRef, Node3d, Node3dKind, PrimitiveData};
+        let mut r = gpu_or_skip!();
+        let mut f = fixture(&mut r);
+        let mut scene = blue_room();
+        let mut m = MaterialDef::new("white");
+        m.unlit = true;
+        m.base_color = [1.0, 1.0, 1.0, 1.0];
+        scene.materials.push(m);
+        scene.nodes.push(Node3d::new(
+            "panel",
+            None,
+            Node3dKind::Mesh {
+                mesh: MeshRef("quad".into()),
+                materials: vec![MaterialRef("white".into())],
+            },
+        ));
+        f.store.insert_scene3d(SCENE3D, scene);
+        // As loaded from a folder: no packed models.
+        f.store.library3d = Some(std::sync::Arc::new(crate::library3d::Library3d::default()));
+        let stage = StageState {
+            background: None,
+            bg_layers: Vec::new(),
+            characters: Vec::new(),
+            scene3d: Some(crate::stage::Stage3d {
+                scene: f.scene3d,
+                camera: Some("front".into()),
+            }),
+        };
+        let mut layer = Layer3d::default();
+        layer.begin_frame();
+        let out = render(&mut r, &mut layer, &f, &stage);
+        assert!(blueish(pixel(&out, 960, 540)), "without models: background only");
+
+        f.store.set_library3d_fallback(Some(crate::library3d::Library3d {
+            meshes: vec![MeshAsset {
+                name: "quad".into(),
+                primitives: vec![PrimitiveData {
+                    positions: vec![[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]],
+                    normals: vec![[0.0, 0.0, 1.0]; 4],
+                    uvs: vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+                    tangents: vec![],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                }],
+            }],
+            ..Default::default()
+        }));
+        layer.begin_frame();
+        let out = render(&mut r, &mut layer, &f, &stage);
+        let centre = pixel(&out, 960, 540);
+        assert!(centre[0] > 200 && centre[1] > 200 && centre[2] > 200, "object {centre:?}");
+        assert!(blueish(pixel(&out, 20, 20)), "background around it");
+    }
+
     /// End to end (ADR 0014 addendum "Blobs 3D dans le pak"): the frozen
     /// 3D pak written by `orbit_export` (game pack version 4, a glTF model
     /// shipped as `.omesh` + KTX2, a procedural cube) is loaded through the

@@ -420,9 +420,17 @@ impl State {
                 doc.path.as_deref(),
             )
         };
+        // The models stay with the scene (`models/` next to it): copied
+        // when the scene moves into `assets/`.
+        let source = doc.path.clone();
         if let Err(e) = doc.save_as(&target.abs) {
             ctx.error(ctx.tf("s3d.save_failed", &[("error", &e)]));
             return None;
+        }
+        if let Some(source) = source.filter(|_| !target.in_place)
+            && let Err(e) = crate::assets::copy_scene3d_models(&source, &target.abs)
+        {
+            ctx.error(ctx.tf("s3d.save_failed", &[("error", &e)]));
         }
         let rel = target.rel.clone();
         let declared = ctx.ops_or_toast(|p| {

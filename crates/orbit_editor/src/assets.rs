@@ -965,6 +965,30 @@ mod tests {
     )"#;
 
     #[test]
+    fn a_3d_scene_added_to_the_project_brings_its_models() {
+        // Regression: "Add to project" saved the scene under `assets/3d`
+        // but left its `models/` behind, so the story showed the scene's
+        // background only (preview and export).
+        let dir = std::env::temp_dir().join(format!("orbit_assets_s3d_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("models/scene.files")).unwrap();
+        fs::write(dir.join("scene.scene3d.ron"), b"()").unwrap();
+        fs::write(dir.join("models/scene.gltf"), b"{}").unwrap();
+        fs::write(dir.join("models/scene.files/scene.bin"), b"bin").unwrap();
+        let to = dir.join("assets/3d/scene.scene3d.ron");
+        fs::create_dir_all(dir.join("assets/3d/models")).unwrap();
+        fs::write(dir.join("assets/3d/models/scene.gltf"), b"kept").unwrap();
+        let n = copy_scene3d_models(&dir.join("scene.scene3d.ron"), &to).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(fs::read(dir.join("assets/3d/models/scene.files/scene.bin")).unwrap(), b"bin");
+        assert_eq!(fs::read(dir.join("assets/3d/models/scene.gltf")).unwrap(), b"kept");
+        // Same folder, or no models: nothing to do.
+        assert_eq!(copy_scene3d_models(&to, &to).unwrap(), 0);
+        assert_eq!(copy_scene3d_models(&dir.join("none/x.scene3d.ron"), &to).unwrap(), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn rig_assets_live_in_assets_rigs_and_are_linted() {
         assert_eq!(asset_dir(AssetKind::Rig), "assets/rigs");
         let dir = std::env::temp_dir().join(format!("orbit_assets_rig_{}", std::process::id()));
@@ -1101,6 +1125,42 @@ pub fn plan_scene3d_target(
         abs,
         in_place: false,
     }
+}
+
+/// Copies the `models/` folder next to the 3D scene `from` to the one next
+/// to `to` (sub-folders included, files already there kept): a scene finds
+/// its models in that folder, so a scene saved elsewhere without them shows
+/// its background only. Returns how many files were copied.
+pub fn copy_scene3d_models(from: &Path, to: &Path) -> Result<usize, String> {
+    let (Some(src), Some(dst)) = (from.parent(), to.parent()) else {
+        return Ok(0);
+    };
+    let (src, dst) = (src.join("models"), dst.join("models"));
+    if !src.is_dir() {
+        return Ok(0);
+    }
+    if let (Ok(a), Ok(b)) = (fs::canonicalize(&src), fs::canonicalize(&dst))
+        && a == b
+    {
+        return Ok(0);
+    }
+    fn copy(src: &Path, dst: &Path, count: &mut usize) -> Result<(), String> {
+        fs::create_dir_all(dst).map_err(|e| format!("{}: {e}", dst.display()))?;
+        for entry in fs::read_dir(src).map_err(|e| format!("{}: {e}", src.display()))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let (from, to) = (entry.path(), dst.join(entry.file_name()));
+            if from.is_dir() {
+                copy(&from, &to, count)?;
+            } else if !to.exists() {
+                fs::copy(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+                *count += 1;
+            }
+        }
+        Ok(())
+    }
+    let mut count = 0;
+    copy(&src, &dst, &mut count)?;
+    Ok(count)
 }
 
 /// Decides where "add to project" puts the rig named `name`: where it is when
