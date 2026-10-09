@@ -36,6 +36,8 @@ orbit_export.workspace = true
 orbit_i18n.workspace = true
 orbit_renpy.workspace = true
 orbit_mcp.workspace = true
+# The AI studio (pitch -> LLM story -> images -> project). Editor only.
+orbit_ai_studio = { workspace = true, optional = true }
 orbit_ui.workspace = true
 orbit_render3d.workspace = true
 orbit_scene = { path = "../orbit_scene" }
@@ -58,6 +60,11 @@ pollster.workspace = true
 serde_json = "1"
 # Constrained Delaunay triangulation for rig meshes (ADR 0013, editor only).
 spade = "2.15"
+
+[features]
+default = ["ai-studio"]
+# The AI studio panel and its MCP tools (`orbit_ai_studio`).
+ai-studio = ["dep:orbit_ai_studio"]
 
 [dev-dependencies]
 hound.workspace = true

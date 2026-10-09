@@ -175,7 +175,10 @@ impl EditorCore {
         extra: Vec<Box<dyn EditorPlugin>>,
     ) -> Self {
         let mut registry = EditorRegistry::new();
-        let shared = builtin::Shared::default();
+        let shared = builtin::Shared {
+            config_dir: options.config_dir.clone(),
+            ..builtin::Shared::default()
+        };
         for plugin in builtin::plugins_with(&shared).iter().chain(extra.iter()) {
             if let Err(e) = registry.install(plugin.as_ref()) {
                 registry.errors.push(e.to_string());
