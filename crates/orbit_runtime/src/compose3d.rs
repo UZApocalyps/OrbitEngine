@@ -707,7 +707,11 @@ mod tests {
                     uvs: vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
                     tangents: vec![],
                     indices: vec![0, 1, 2, 0, 2, 3],
+                    joints: vec![],
+                    weights: vec![],
                 }],
+                skin: None,
+                clips: vec![],
             }],
             ..Default::default()
         }));
