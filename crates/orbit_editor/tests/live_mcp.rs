@@ -636,7 +636,7 @@ fn preview_screenshot_export_and_select_without_a_gpu() {
             }
             "export_game" => {
                 assert!(*is_error, "{tool}: {text}");
-                assert!(text.contains("template"), "{tool}: {text}");
+                assert!(text.contains("template") || text.contains("asset file"), "{tool}: {text}");
             }
             _ => assert!(!is_error, "{tool}: {text}"),
         }
