@@ -70,6 +70,19 @@ struct RawOption {
 }
 
 #[derive(Clone, Debug)]
+struct RawSpot {
+    shape: orbit_core::HotspotShape,
+    text: String,
+    target: Ref,
+    name: String,
+    hover: Option<Ref>,
+    sound: Option<Ref>,
+    style: Option<orbit_core::HotspotStyle>,
+    enabled: Option<Expr>,
+    condition: Option<Expr>,
+}
+
+#[derive(Clone, Debug)]
 enum Raw {
     Label(String),
     Say {
@@ -78,6 +91,11 @@ enum Raw {
         voice: Option<Ref>,
     },
     Unlock(Ref),
+    Hotspots {
+        bg: Option<Ref>,
+        style: orbit_core::HotspotStyle,
+        spots: Vec<RawSpot>,
+    },
     Menu(Vec<RawOption>),
     Jump(Ref),
     JumpScene {
@@ -234,6 +252,7 @@ enum Stmt {
     Option(RawOption),
     Track(RawTrack),
     Layer(RawLayer),
+    Spot(Box<RawSpot>),
 }
 
 type LineError = (usize, String);
@@ -540,6 +559,90 @@ impl LineParser<'_> {
         Ok((e, sprite))
     }
 
+    /// Hotspot style keys (`color`, `fill`, `glow`, `intensity`, `pulse`,
+    /// `idle`, `no_hand`) applied over `style`, as long as there are some.
+    fn hotspot_style(&mut self, mut style: orbit_core::HotspotStyle) -> Result<orbit_core::HotspotStyle, LineError> {
+        loop {
+            if self.eat_word("color") {
+                style.color = self.hex_color()?;
+            } else if self.eat_word("fill") {
+                style.fill_alpha = self.f32()?;
+            } else if self.eat_word("glow") {
+                style.glow_width = self.f32()?;
+            } else if self.eat_word("intensity") {
+                style.intensity = self.f32()?;
+            } else if self.eat_word("pulse") {
+                style.pulse_speed = self.f32()?;
+            } else if self.eat_word("idle") {
+                style.idle_hint = self.f32()?;
+            } else if self.eat_word("no_hand") {
+                style.hand_cursor = false;
+            } else {
+                return Ok(style);
+            }
+        }
+    }
+
+    /// `rect (x, y, w, h)`, `ellipse (cx, cy, rx, ry)` or `poly (x, y) ...`.
+    fn hotspot_shape(&mut self) -> Result<orbit_core::HotspotShape, LineError> {
+        use orbit_core::HotspotShape as S;
+        if self.eat_word("rect") {
+            let [x, y, w, h] = self.quad()?;
+            Ok(S::Rect { x, y, w, h })
+        } else if self.eat_word("ellipse") {
+            let [cx, cy, rx, ry] = self.quad()?;
+            Ok(S::Ellipse { cx, cy, rx, ry })
+        } else if self.eat_word("poly") {
+            let mut points = Vec::new();
+            while matches!(self.peek(), Some(Tok::Sym("("))) {
+                let v = self.vec2()?;
+                points.push((v.x, v.y));
+            }
+            if points.len() < 3 {
+                return self.err("a polygon needs at least 3 points `(x, y)`");
+            }
+            Ok(S::Polygon { points })
+        } else {
+            self.err("expected a shape: `rect (…)`, `ellipse (…)` or `poly (x, y) …`")
+        }
+    }
+
+    /// The rest of a `spot` line.
+    fn spot(&mut self) -> Result<RawSpot, LineError> {
+        let shape = self.hotspot_shape()?;
+        let text = self.string("the tooltip")?;
+        self.expect_sym("->")?;
+        let target = self.reference("a label")?;
+        let mut spot = RawSpot {
+            shape,
+            text,
+            target,
+            name: String::new(),
+            hover: None,
+            sound: None,
+            style: None,
+            enabled: None,
+            condition: None,
+        };
+        loop {
+            if self.eat_word("name") {
+                spot.name = self.name("a hotspot name")?;
+            } else if self.eat_word("hover") {
+                spot.hover = Some(self.reference("an image")?);
+            } else if self.eat_word("sound") {
+                spot.sound = Some(self.reference("a sound")?);
+            } else if self.eat_word("style") {
+                spot.style = Some(self.hotspot_style(orbit_core::HotspotStyle::default())?);
+            } else if self.eat_word("enabled") {
+                spot.enabled = Some(self.expr()?);
+            } else if self.eat_word("if") {
+                spot.condition = Some(self.expr()?);
+            } else {
+                return Ok(spot);
+            }
+        }
+    }
+
     /// `(x, y)`.
     fn vec2(&mut self) -> Result<Vec2, LineError> {
         self.expect_sym("(")?;
@@ -784,6 +887,16 @@ impl LineParser<'_> {
                     }
                     "unlock" => Stmt::Node(Raw::Unlock(self.reference("an achievement")?)),
                     "menu" => Stmt::Node(Raw::Menu(Vec::new())),
+                    "hotspots" => {
+                        let bg = if self.eat_word("bg") {
+                            Some(self.reference("a background image")?)
+                        } else {
+                            None
+                        };
+                        let style = self.hotspot_style(orbit_core::HotspotStyle::default())?;
+                        Stmt::Node(Raw::Hotspots { bg, style, spots: Vec::new() })
+                    }
+                    "spot" => Stmt::Spot(Box::new(self.spot()?)),
                     "jump" => Stmt::Node(Raw::Jump(self.reference("a label")?)),
                     "jump_scene" => {
                         let scene = self.reference("a scene")?;
@@ -1328,6 +1441,22 @@ pub fn parse(text: &str, base: &Story, scope: Scope) -> Result<Story, Vec<Diagno
                     ),
                 }
             }
+            Stmt::Spot(spot) => {
+                if let Some((_, col)) = annotation {
+                    diags.push(line_no, col, "hotspots carry no id");
+                }
+                match scenes.last_mut().and_then(|s| s.nodes.last_mut()) {
+                    Some(PNode {
+                        raw: Raw::Hotspots { spots, .. },
+                        ..
+                    }) if menu_open => spots.push(*spot),
+                    _ => diags.push(
+                        line_no,
+                        1,
+                        "a `spot` must follow `hotspots` or another spot",
+                    ),
+                }
+            }
             Stmt::Layer(layer) => {
                 if let Some((_, col)) = annotation {
                     diags.push(line_no, col, "background layers carry no id");
@@ -1345,7 +1474,10 @@ pub fn parse(text: &str, base: &Story, scope: Scope) -> Result<Story, Vec<Diagno
                 }
             }
             Stmt::Node(raw) => {
-                menu_open = matches!(raw, Raw::Menu(_) | Raw::Timeline { .. } | Raw::BgLayers { .. });
+                menu_open = matches!(
+                    raw,
+                    Raw::Menu(_) | Raw::Timeline { .. } | Raw::BgLayers { .. } | Raw::Hotspots { .. }
+                );
                 let id = match &annotation {
                     None => NodeId::new(),
                     Some((s, col)) => match s.parse::<NodeId>() {
@@ -1578,6 +1710,48 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                 Raw::Unlock(r) => {
                     by_name::<AchievementId>(d, line, r, &names.achievements, "achievement")
                         .map(|achievement| NodeKind::Unlock { achievement })
+                }
+                Raw::Hotspots { bg, style, spots } => {
+                    let old_spots = match old {
+                        Some(NodeKind::Hotspots(map)) => map.hotspots.as_slice(),
+                        _ => &[],
+                    };
+                    let mut ok = true;
+                    let asset = |d: &mut Diags, r: &Option<Ref>| match r {
+                        None => Some(None),
+                        Some(r) => by_name::<AssetId>(d, line, r, &names.assets, "asset").map(Some),
+                    };
+                    let background = asset(d, bg);
+                    ok &= background.is_some();
+                    let mut hotspots = Vec::new();
+                    for (i, sp) in spots.iter().enumerate() {
+                        let target = label_ref(d, line, ps.id, &sp.target);
+                        let hover = asset(d, &sp.hover);
+                        let sound = asset(d, &sp.sound);
+                        match (target, hover, sound) {
+                            (Some(target), Some(hover_image), Some(hover_sound)) => {
+                                hotspots.push(orbit_core::Hotspot {
+                                    name: sp.name.clone(),
+                                    text_id: string_for(old_spots.get(i).map(|h| h.text_id), &sp.text),
+                                    shape: sp.shape.clone(),
+                                    target,
+                                    condition: sp.condition.clone(),
+                                    enabled: sp.enabled.clone(),
+                                    style: sp.style.clone(),
+                                    hover_image,
+                                    hover_sound,
+                                })
+                            }
+                            _ => ok = false,
+                        }
+                    }
+                    ok.then(|| {
+                        NodeKind::Hotspots(orbit_core::HotspotMap {
+                            background: background.flatten(),
+                            hotspots,
+                            style: style.clone(),
+                        })
+                    })
                 }
                 Raw::Menu(options) => {
                     let old_options = match old {

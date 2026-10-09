@@ -1518,3 +1518,58 @@ fn validate_finds_the_demo_assets_above_a_lone_story_file() {
         assert_eq!(report["error_count"], 0, "{path:?}: {report}");
     }
 }
+
+#[test]
+fn hotspot_maps_are_created_edited_and_undone() {
+    let mut f = Fixture::new("hotspots");
+    let (_scene, choice) = build_story(&mut f);
+    let map = f.ok(
+        "add_hotspots",
+        json!({"scene": "intro", "after": id_of(&choice, "/id"), "background": "room",
+               "style": {"color": "#40c0ff", "idle": 0.0},
+               "zones": [
+                 {"name": "door", "tooltip": "The door", "shape": {"rect": [0.1, 0.2, 0.2, 0.6]}, "target": "kind"},
+                 {"tooltip": "Window", "shape": {"polygon": [[0.6, 0.1], [0.9, 0.1], [0.8, 0.4]]},
+                  "target": "done", "condition": "trust > 5"}
+               ]}),
+    );
+    let id = id_of(&map, "/id");
+    assert!(map["summary"].as_str().unwrap().contains("\"The door\" rect"), "{map}");
+    let node: orbit_core::NodeId = id.parse().unwrap();
+    let hotspots = |f: &Fixture| match &f.story().node(node).unwrap().kind {
+        orbit_core::NodeKind::Hotspots(m) => m.clone(),
+        other => panic!("a hotspot map, not {other:?}"),
+    };
+    let m = hotspots(&f);
+    assert_eq!(m.hotspots.len(), 2);
+    assert_eq!(m.style.idle_hint, 0.0);
+    assert!(m.background.is_some());
+
+    // Bad input changes nothing.
+    let err = f.err("edit_hotspots", json!({"node": id, "remove": [0, 1]}));
+    assert_eq!(err.kind, ErrorKind::InvalidArguments, "{err:?}");
+    let err = f.err(
+        "add_hotspots",
+        json!({"scene": "intro", "zones": [{"shape": {"polygon": [[0, 0], [1, 1]]}, "target": "kind"}]}),
+    );
+    assert_eq!(err.kind, ErrorKind::InvalidArguments, "{err:?}");
+    assert_eq!(hotspots(&f), m);
+
+    f.ok(
+        "edit_hotspots",
+        json!({"node": id, "update": [{"index": 0, "shape": {"ellipse": [0.3, 0.5, 0.1, 0.2]}, "enabled": "trust >= 0"}],
+               "remove": [1],
+               "add": [{"tooltip": "Bob", "shape": {"rect": [0.7, 0.5, 0.1, 0.3]}, "target": "done"}]}),
+    );
+    let m = hotspots(&f);
+    assert_eq!(m.hotspots.len(), 2);
+    assert!(matches!(m.hotspots[0].shape, orbit_core::HotspotShape::Ellipse { .. }));
+    assert!(m.hotspots[0].enabled.is_some());
+    assert_eq!(f.story().text(m.hotspots[1].text_id), Some("Bob"));
+    let report = f.ok("validate", json!({}));
+    assert_eq!(report["ok"], true, "{report}");
+    let text = f.call("read_scene", json!({"scene": "intro"})).unwrap();
+    assert!(text.contains("hotspots bg"), "{text}");
+    f.ok("undo", json!({}));
+    assert!(matches!(hotspots(&f).hotspots[0].shape, orbit_core::HotspotShape::Rect { .. }), "undone");
+}

@@ -8,6 +8,7 @@ use orbit_i18n::Localizer;
 use orbit_ui::{Advance, ChoiceMenu, DialogueBox, DialogueStyles, MenuInput, TextBoxTheme, Theme};
 
 use crate::director::{Director, Flow};
+use crate::hotspots::HotspotPlay;
 
 /// Seconds between two lines while skipping (about 14 lines per second).
 const SKIP_INTERVAL: f32 = 0.07;
@@ -91,6 +92,11 @@ pub(crate) struct Game {
     pub director: Director,
     pub dialogue: DialogueBox,
     pub menu: Option<ChoiceMenu>,
+    /// The hotspot map on screen (a `Hotspots` node): drawn over the stage
+    /// instead of the choice menu.
+    pub(crate) hotspots: Option<HotspotPlay>,
+    /// "Show the hotspots" is on (kept from one map to the next).
+    pub show_hotspots: bool,
     /// What the screen reader says of the current line ("speaker: text"),
     /// with the generation it was shown at (a new line, a new key).
     pub spoken: Option<(u64, String)>,
@@ -124,6 +130,8 @@ impl Game {
                 d
             },
             menu: None,
+            hotspots: None,
+            show_hotspots: false,
             spoken: None,
             choice_labels: Vec::new(),
             settings,
@@ -200,7 +208,11 @@ impl Game {
         let by_flow = match self.kind() {
             FlowKind::Waiting | FlowKind::Transition => true,
             FlowKind::Say => !self.dialogue.is_complete() || self.skipping() || self.auto,
-            FlowKind::Choice | FlowKind::Screen | FlowKind::Ended | FlowKind::Failed => false,
+            FlowKind::Choice => self
+                .hotspots
+                .as_ref()
+                .is_some_and(|h| h.is_animated(self.settings.reduced_motion)),
+            FlowKind::Screen | FlowKind::Ended | FlowKind::Failed => false,
         };
         by_flow || self.stage_is_animated()
     }
@@ -282,7 +294,12 @@ impl Game {
                     self.director.skip_timer();
                 }
             }
-            FlowKind::Choice | FlowKind::Screen | FlowKind::Ended | FlowKind::Failed => {}
+            FlowKind::Choice => {
+                if let Some(h) = &mut self.hotspots {
+                    h.update(dt);
+                }
+            }
+            FlowKind::Screen | FlowKind::Ended | FlowKind::Failed => {}
         }
         // Skip stops at every choice and at the end; auto only at the end
         // (it waits on a choice, it never decides).
@@ -355,14 +372,33 @@ impl Game {
                 Flow::Choice(labels) => {
                     self.spoken = None;
                     self.choice_labels = labels.iter().map(|l| orbit_ui::a11y::plain(l)).collect();
-                    self.dialogue.clear();
-                    self.menu = Some(ChoiceMenu::styled(theme, labels));
+                    match self.director.vm().hotspot_choice() {
+                        Some(choice) => {
+                            // A hotspot map: zones over the stage, no menu.
+                            // The textbox keeps the last line, as Ren'Py does.
+                            let tooltips = choice
+                                .map
+                                .hotspots
+                                .iter()
+                                .map(|h| self.director.text(h.text_id))
+                                .collect();
+                            self.menu = None;
+                            self.hotspots =
+                                Some(HotspotPlay::new(choice, tooltips, self.show_hotspots));
+                        }
+                        None => {
+                            self.dialogue.clear();
+                            self.hotspots = None;
+                            self.menu = Some(ChoiceMenu::styled(theme, labels));
+                        }
+                    }
                 }
                 _ => {}
             }
         }
         if self.kind() != FlowKind::Choice {
             self.menu = None;
+            self.hotspots = None;
         }
         if self.kind() != FlowKind::Choice {
             self.choice_labels.clear();
@@ -389,11 +425,11 @@ impl Game {
                 }
             }
             FlowKind::Choice => {
-                if let Some(index) = self
-                    .menu
-                    .as_mut()
-                    .and_then(|m| m.handle(MenuInput::Confirm))
-                {
+                let index = match &mut self.hotspots {
+                    Some(h) => h.confirm(),
+                    None => self.menu.as_mut().and_then(|m| m.handle(MenuInput::Confirm)),
+                };
+                if let Some(index) = index {
                     self.director.choose(index);
                 }
             }
@@ -410,11 +446,11 @@ impl Game {
     pub fn click(&mut self, point: [f32; 2], theme: &Theme) -> InputOutcome {
         if self.kind() == FlowKind::Choice {
             self.interrupt();
-            if let Some(index) = self
-                .menu
-                .as_mut()
-                .and_then(|m| m.handle(MenuInput::Click(point)))
-            {
+            let index = match &mut self.hotspots {
+                Some(h) => h.click(point),
+                None => self.menu.as_mut().and_then(|m| m.handle(MenuInput::Click(point))),
+            };
+            if let Some(index) = index {
                 self.director.choose(index);
             }
             self.sync(theme);
@@ -438,11 +474,61 @@ impl Game {
         if let Some(menu) = &mut self.menu {
             menu.handle(MenuInput::Hover(point));
         }
+        if let Some(h) = &mut self.hotspots {
+            h.pointer(point);
+        }
+    }
+
+    /// A hotspot map is on screen (arrows move between its zones).
+    pub fn on_hotspots(&self) -> bool {
+        self.hotspots.is_some()
+    }
+
+    /// Tab / Shift+Tab, arrows (`(dx, dy)`) on a hotspot map.
+    pub fn hotspot_focus(&mut self, forward: Option<bool>, dir: (f32, f32)) {
+        if let Some(h) = &mut self.hotspots {
+            match forward {
+                Some(f) => h.cycle(f),
+                None => h.direction(dir.0, dir.1),
+            }
+        }
+    }
+
+    /// Toggles the outline of every zone of hotspot maps.
+    pub fn toggle_show_hotspots(&mut self) {
+        self.show_hotspots = !self.show_hotspots;
+        if let Some(h) = &mut self.hotspots {
+            h.show_all = self.show_hotspots;
+        }
+    }
+
+    /// The hover sound of the zone just entered, once.
+    pub fn take_hotspot_sound(&mut self) -> Option<orbit_core::AssetId> {
+        self.hotspots.as_mut().and_then(|h| h.sound.take())
+    }
+
+    /// The pointer should be a hand (over a clickable zone).
+    pub fn wants_hand_cursor(&self) -> bool {
+        self.hotspots.as_ref().is_some_and(HotspotPlay::wants_hand)
     }
 
     /// Up / Down / digit on a choice menu.
     pub fn menu_input(&mut self, input: MenuInput, theme: &Theme) {
         if self.kind() != FlowKind::Choice {
+            return;
+        }
+        if self.hotspots.is_some() {
+            match input {
+                MenuInput::Up => self.hotspot_focus(None, (0.0, -1.0)),
+                MenuInput::Down => self.hotspot_focus(None, (0.0, 1.0)),
+                // Digits pick the n-th clickable zone.
+                MenuInput::Number(n) if n >= 1 => {
+                    self.interrupt();
+                    self.director.choose(n - 1);
+                }
+                _ => {}
+            }
+            self.sync(theme);
             return;
         }
         if matches!(input, MenuInput::Number(_)) {

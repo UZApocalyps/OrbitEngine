@@ -159,6 +159,12 @@ fn all_builtin_insertables() -> Vec<Insertable> {
             "draft.group.logic",
         ),
         item(
+            "Hotspots",
+            "draft.label.hotspots",
+            icons::CURSOR_CLICK,
+            "draft.group.logic",
+        ),
+        item(
             "OpenScreen",
             "draft.label.open_screen",
             icons::BROWSER,
@@ -353,6 +359,49 @@ pub fn drafts_for(
                 NodeDraft::say(speaker, ""),
                 jump_b,
                 end,
+            ]
+        }
+        "Hotspots" => {
+            // A place to explore: the map, two zones, each coming back.
+            let place = fresh_label("lieu");
+            let (a, b) = (fresh_label("zone_a"), fresh_label("zone_b"));
+            let (text_a, text_b) = (StringId::new(), StringId::new());
+            let zone = |text_id, target, x: f32| orbit_core::Hotspot {
+                name: String::new(),
+                text_id,
+                shape: orbit_core::HotspotShape::Rect { x, y: 0.3, w: 0.25, h: 0.4 },
+                target,
+                condition: None,
+                enabled: None,
+                style: None,
+                hover_image: None,
+                hover_sound: None,
+            };
+            let map = NodeDraft {
+                node: orbit_core::Node {
+                    id: orbit_core::NodeId::new(),
+                    kind: NodeKind::Hotspots(orbit_core::HotspotMap {
+                        hotspots: vec![zone(text_a, a.node.id, 0.12), zone(text_b, b.node.id, 0.63)],
+                        ..Default::default()
+                    }),
+                },
+                strings: vec![
+                    (text_a, texts.t("draft.zone_a")),
+                    (text_b, texts.t("draft.zone_b")),
+                ],
+            };
+            let back = |target| NodeDraft::plain(NodeKind::Jump { target });
+            let (back_a, back_b) = (back(place.node.id), back(place.node.id));
+            let speaker = previous_speaker(story, scene, index);
+            vec![
+                place,
+                map,
+                a,
+                NodeDraft::say(speaker, ""),
+                back_a,
+                b,
+                NodeDraft::say(speaker, ""),
+                back_b,
             ]
         }
         "Background" => vec![NodeDraft::plain(NodeKind::Background {

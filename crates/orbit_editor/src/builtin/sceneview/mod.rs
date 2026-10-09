@@ -20,6 +20,7 @@
 //! plumbing and the translation of gestures into project commands.
 
 mod geom;
+mod hotspots;
 
 use egui::{
     Align2, Color32, CornerRadius, CursorIcon, EventFilter, FontId, Id, Key, Pos2, Rect, RichText,
@@ -262,6 +263,11 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         sv.wanted_node = wanted;
     }
     let flags = toolbar(ui, ctx);
+    // On a hotspot map the view draws and edits its zones instead.
+    let hotspot_map = hotspots::selected_map(ctx);
+    if let Some((node, _)) = &hotspot_map {
+        hotspots::toolbar(ui, ctx, *node);
+    }
     ui.add_space(2.0);
 
     let avail = ui.available_size();
@@ -326,17 +332,19 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         ctx.end_merge();
     }
 
-    interact(
-        ui,
-        ctx,
-        &response,
-        &view,
-        &actors,
-        target.as_ref(),
-        &points,
-        flags,
-        &mut drag,
-    );
+    if hotspot_map.is_none() {
+        interact(
+            ui,
+            ctx,
+            &response,
+            &view,
+            &actors,
+            target.as_ref(),
+            &points,
+            flags,
+            &mut drag,
+        );
+    }
 
     // "Modifier": the shown character's node in the inspector.
     if let Some(node) = show {
@@ -381,6 +389,9 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
             scene_view_node_ready: !actors.is_empty() || ctx.state().scene_view.node == wanted,
         },
     );
+    if let Some((node, map)) = &hotspot_map {
+        hotspots::interact_and_paint(ui, ctx, &response, picture, *node, map);
+    }
     status_line(ui, ctx, target.as_ref(), drag.as_ref(), notice.as_deref());
 }
 

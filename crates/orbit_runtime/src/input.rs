@@ -15,6 +15,8 @@ pub enum Hotkey {
     ToggleSkip,
     ToggleAuto,
     ToggleFullscreen,
+    /// Outline every zone of a hotspot map (toggle).
+    ShowHotspots,
 }
 
 /// A logical input, independent of the device that produced it.
@@ -141,6 +143,7 @@ impl InputMapper {
             KeyH => hotkey(Hotkey::History),
             KeyS => hotkey(Hotkey::ToggleSkip),
             KeyA => hotkey(Hotkey::ToggleAuto),
+            KeyV => hotkey(Hotkey::ShowHotspots),
             Digit1 | Numpad1 => number(1),
             Digit2 | Numpad2 => number(2),
             Digit3 | Numpad3 => number(3),

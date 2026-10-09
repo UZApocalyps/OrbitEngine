@@ -644,6 +644,8 @@ pub struct Runtime {
     music_volume: f32,
     music_duck: f32,
     host_requests: Vec<HostRequest>,
+    /// The pointer is a hand (asked of the host when it changes).
+    hand_cursor: bool,
     /// Set when hosted by an editor (see [`Runtime::new_embedded`]).
     embedded: Option<embedded::Embedded>,
     /// The F3 profiler overlay, when shown (development builds only).
@@ -791,6 +793,7 @@ impl Runtime {
             music_volume: 1.0,
             music_duck: 1.0,
             host_requests: Vec::new(),
+            hand_cursor: false,
             embedded: embedded.map(embedded::Embedded::new),
             overlay: None,
             streaming: None,
@@ -1516,6 +1519,15 @@ impl Runtime {
         } else if let Phase::Running(shell) = &mut self.phase {
             shell.input(action);
         }
+        // A hand over the clickable zones of a hotspot map.
+        let hand = match &self.phase {
+            Phase::Running(shell) => shell.game().is_some_and(|g| g.wants_hand_cursor()),
+            _ => false,
+        };
+        if hand != self.hand_cursor {
+            self.hand_cursor = hand;
+            self.host_requests.push(HostRequest::SetHandCursor(hand));
+        }
         self.after_shell();
     }
 
@@ -1641,6 +1653,13 @@ impl Runtime {
                                 Some((&fx, *white)),
                                 &mut scene,
                             );
+                            if let Some(h) = &game.hotspots {
+                                let store = &self.store;
+                                let story = &game.story;
+                                h.draw(&mut scene, *white, game.director.reduced_motion(), |id| {
+                                    store.texture(&story.assets.get(id)?.path)
+                                });
+                            }
                             out.scene(renderer, &scene)?;
                         }
                     }

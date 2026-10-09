@@ -52,7 +52,16 @@
 //! stop particles ["<name>"]                      StopParticles
 //! script "<rhai source>" [branch <name> -> <label-ref> ...] [on_error <label-ref>]   Script
 //! unlock <achievement-ref>                        Unlock (an achievement, by its title)
+//! hotspots [bg <asset-ref>] [<style>]            Hotspots (point & click); zones follow:
+//!     spot <shape> "tooltip" -> <label-ref> [name <name>] [hover <asset-ref>]
+//!         [sound <asset-ref>] [style <style>] [enabled <expr>] [if <expr>]
 //! ```
+//!
+//! A hotspot `<shape>` is `rect (x, y, w, h)`, `ellipse (cx, cy, rx, ry)` or
+//! `poly (x, y) (x, y) (x, y) ...`, in screen fractions (0 to 1). A `<style>`
+//! is any of `color "#rrggbb" fill <f> glow <f> intensity <f> pulse <f>
+//! idle <f> no_hand` (the map prints only what differs from the defaults; a
+//! zone's `style` replaces the map's whole style).
 //!
 //! A Rhai condition is the expression `rhai "<code>"` (`if rhai "…" -> l`,
 //! menu option `… if rhai "…"`). Script sources are one quoted string:
@@ -159,6 +168,8 @@ pub const KEYWORDS: &[&str] = &[
     "background",
     "bezier",
     "rgba",
+    "hotspots",
+    "spot",
 ];
 
 /// A name as written in the DSL: bare when possible, quoted otherwise.
@@ -391,6 +402,48 @@ pub(crate) fn curve(c: &Curve) -> String {
             fmt_f32(p2[1])
         ),
         Curve::Named(name) => quote(name),
+    }
+}
+
+/// The style keys that differ from the defaults, each with a leading space.
+fn hotspot_style(style: &orbit_core::HotspotStyle) -> String {
+    let d = orbit_core::HotspotStyle::default();
+    let mut s = String::new();
+    if style.color != d.color {
+        s.push_str(&format!(" color {}", hex(style.color)));
+    }
+    for (key, v, dv) in [
+        ("fill", style.fill_alpha, d.fill_alpha),
+        ("glow", style.glow_width, d.glow_width),
+        ("intensity", style.intensity, d.intensity),
+        ("pulse", style.pulse_speed, d.pulse_speed),
+        ("idle", style.idle_hint, d.idle_hint),
+    ] {
+        if v != dv {
+            s.push_str(&format!(" {key} {}", fmt_f32(v)));
+        }
+    }
+    if !style.hand_cursor {
+        s.push_str(" no_hand");
+    }
+    s
+}
+
+fn hotspot_shape(shape: &orbit_core::HotspotShape) -> String {
+    use orbit_core::HotspotShape as S;
+    let f = |v: f32| fmt_f32(v);
+    match shape {
+        S::Rect { x, y, w, h } => format!("rect ({}, {}, {}, {})", f(*x), f(*y), f(*w), f(*h)),
+        S::Ellipse { cx, cy, rx, ry } => {
+            format!("ellipse ({}, {}, {}, {})", f(*cx), f(*cy), f(*rx), f(*ry))
+        }
+        S::Polygon { points } => {
+            let pts: Vec<String> = points
+                .iter()
+                .map(|(x, y)| format!("({}, {})", f(*x), f(*y)))
+                .collect();
+            format!("poly {}", pts.join(" "))
+        }
     }
 }
 
@@ -771,6 +824,44 @@ fn write_node(ctx: &Ctx<'_>, scene: SceneId, node: &Node, out: &mut String) {
             s
         }
         NodeKind::CloseScreen { screen } => format!("close screen {}", quote(screen)),
+        NodeKind::Hotspots(map) => {
+            let mut head = String::from("hotspots");
+            if let Some(bg) = map.background {
+                head.push_str(&format!(" bg {}", ctx.asset_ref(bg)));
+            }
+            head.push_str(&hotspot_style(&map.style));
+            out.push_str(&format!("    {head} #@{}\n", node.id));
+            for h in &map.hotspots {
+                let mut line = format!(
+                    "        spot {} {} -> {}",
+                    hotspot_shape(&h.shape),
+                    ctx.text(h.text_id),
+                    label(h.target)
+                );
+                if !h.name.is_empty() {
+                    line.push_str(&format!(" name {}", fmt_name(&h.name)));
+                }
+                if let Some(a) = h.hover_image {
+                    line.push_str(&format!(" hover {}", ctx.asset_ref(a)));
+                }
+                if let Some(a) = h.hover_sound {
+                    line.push_str(&format!(" sound {}", ctx.asset_ref(a)));
+                }
+                if let Some(style) = &h.style {
+                    line.push_str(" style");
+                    line.push_str(&hotspot_style(style));
+                }
+                if let Some(e) = &h.enabled {
+                    line.push_str(&format!(" enabled {}", print_expr(e)));
+                }
+                if let Some(c) = &h.condition {
+                    line.push_str(&format!(" if {}", print_expr(c)));
+                }
+                out.push_str(&line);
+                out.push('\n');
+            }
+            return;
+        }
         NodeKind::BackgroundLayers { layers, transition: t } => {
             out.push_str(&format!("    bg_layers{} #@{}\n", transition(t), node.id));
             for l in layers {

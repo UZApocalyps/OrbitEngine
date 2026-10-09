@@ -166,6 +166,9 @@ pub enum HostRequest {
     Quit,
     /// Draw one more frame (meaningful in [`RedrawMode::OnDemand`]).
     RequestRedraw,
+    /// The mouse cursor becomes a pointing hand (`true`, e.g. over a
+    /// clickable zone) or the default arrow. Ignored on touch screens.
+    SetHandCursor(bool),
 }
 
 /// What an app made of a raw window event, see [`App::window_event`].
@@ -575,6 +578,11 @@ impl Runner {
                 }
                 HostRequest::Quit => event_loop.exit(),
                 HostRequest::RequestRedraw => self.redraw_wanted = true,
+                HostRequest::SetHandCursor(hand) => window.set_cursor(if hand {
+                    winit::window::CursorIcon::Pointer
+                } else {
+                    winit::window::CursorIcon::Default
+                }),
             }
         }
     }

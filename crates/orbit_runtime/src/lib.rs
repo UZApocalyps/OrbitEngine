@@ -43,6 +43,7 @@ pub mod director;
 pub mod format;
 mod game;
 pub mod gamepad_bindings;
+mod hotspots;
 pub mod input;
 #[cfg(feature = "3d")]
 pub mod library3d;

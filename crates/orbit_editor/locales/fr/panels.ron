@@ -177,4 +177,7 @@
     "draft.label.show_scene3d": "Afficher une scène 3D",
     "draft.label.camera3d": "Caméra 3D",
     "draft.label.hide_scene3d": "Masquer la scène 3D",
+    "draft.label.hotspots": "Zones cliquables (point & click)",
+    "draft.zone_a": "Gauche",
+    "draft.zone_b": "Droite",
 }

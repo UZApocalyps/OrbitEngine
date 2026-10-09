@@ -320,6 +320,8 @@ pub(crate) struct Shell {
     /// A data screen has a save slot list: the slots go into its context.
     slots_wanted: bool,
     end_banner: Option<Banner>,
+    /// The tooltip of a hotspot map, laid out (with its text).
+    hotspot_tip: Option<(String, Banner)>,
     menu_background: Option<TextureId>,
     /// Textures of the images the theme refers to (nine-slice fills).
     ui_images: std::collections::HashMap<String, TextureId>,
@@ -496,6 +498,7 @@ impl Shell {
             prefs_timer: None,
             persistent,
             end_banner: None,
+            hotspot_tip: None,
             menu_background: None,
             ui_images: std::collections::HashMap::new(),
             stack: Vec::new(),
@@ -2274,6 +2277,9 @@ impl Shell {
                 self.effects.push(Effect::Audio(command));
             }
             unlocks = game.director.take_unlocks();
+            if let Some(asset) = game.take_hotspot_sound() {
+                self.effects.push(Effect::Audio(AudioCommand::PlaySound { asset }));
+            }
         }
         for id in unlocks {
             self.announce_unlock(id);
@@ -2383,6 +2389,11 @@ impl Shell {
             Hotkey::History => self.apply(UiEvent::OpenHistory),
             Hotkey::ToggleSkip => self.apply(UiEvent::ToggleSkip),
             Hotkey::ToggleAuto => self.apply(UiEvent::ToggleAuto),
+            Hotkey::ShowHotspots => {
+                if let Some(game) = &mut self.game {
+                    game.toggle_show_hotspots();
+                }
+            }
             Hotkey::ToggleFullscreen => {}
         }
     }
@@ -2498,6 +2509,19 @@ impl Shell {
             UiInput::Down => {
                 if let Some(game) = &mut self.game {
                     game.menu_input(MenuInput::Down, &theme);
+                }
+            }
+            // On a hotspot map the arrows and Tab move between the zones.
+            UiInput::Left | UiInput::Right | UiInput::Next | UiInput::Prev
+                if self.game.as_ref().is_some_and(Game::on_hotspots) =>
+            {
+                if let Some(game) = &mut self.game {
+                    match input {
+                        UiInput::Left => game.hotspot_focus(None, (-1.0, 0.0)),
+                        UiInput::Right => game.hotspot_focus(None, (1.0, 0.0)),
+                        UiInput::Next => game.hotspot_focus(Some(true), (0.0, 0.0)),
+                        _ => game.hotspot_focus(Some(false), (0.0, 0.0)),
+                    }
                 }
             }
             UiInput::Left | UiInput::PageUp => self.rollback(),
@@ -2807,6 +2831,18 @@ impl Shell {
                             ctx.white,
                             &self.ui_images,
                         ),
+                        FlowKind::Choice if game.hotspots.is_some() => {
+                            let tip = game
+                                .hotspots
+                                .as_ref()
+                                .and_then(|h| h.tooltip().map(str::to_owned));
+                            Self::draw_hotspot_tooltip(
+                                ctx,
+                                &self.theme,
+                                &mut self.hotspot_tip,
+                                tip.as_deref(),
+                            );
+                        }
                         FlowKind::Choice => {
                             if let Some(menu) = &mut game.menu {
                                 menu.draw(
@@ -2886,6 +2922,32 @@ impl Shell {
             }
         }
         self.toasts.draw(ctx);
+    }
+
+    /// The tooltip of the highlighted zone of a hotspot map: a caption on a
+    /// dark band at the bottom of the screen. The text block is kept while
+    /// the tooltip does not change.
+    fn draw_hotspot_tooltip(
+        ctx: &mut DrawCtx,
+        theme: &Theme,
+        cache: &mut Option<(String, Banner)>,
+        tip: Option<&str>,
+    ) {
+        let Some(tip) = tip else { return };
+        let size = theme.choice.text_size;
+        if cache.as_ref().is_none_or(|(t, _)| t != tip) {
+            *cache = Some((tip.to_owned(), Banner::centered(tip, size, theme.screens.text_color)));
+        }
+        let Some((_, banner)) = cache else { return };
+        let y = CANVAS[1] * 0.86;
+        ctx.scene.push(
+            Sprite2d::new(ctx.white, [0.0, y - size * 0.45], [CANVAS[0], size * 2.3])
+                .anchor([0.0, 0.0])
+                .layer(Layer::UI)
+                .z(-1.0)
+                .tint(tint([0, 0, 0, 120])),
+        );
+        banner.draw(ctx.engine, ctx.text_renderer, ctx.renderer, ctx.scene, y, 1.0);
     }
 
     fn draw_end(&mut self, ctx: &mut DrawCtx) {

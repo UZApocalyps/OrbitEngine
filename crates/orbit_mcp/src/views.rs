@@ -141,6 +141,42 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
         NodeKind::Unlock { achievement } => {
             format!("unlock achievement {}", achievement_label(story, *achievement))
         }
+        NodeKind::Hotspots(map) => {
+            let items: Vec<String> = map
+                .hotspots
+                .iter()
+                .enumerate()
+                .map(|(i, h)| {
+                    let shape = match &h.shape {
+                        orbit_core::HotspotShape::Rect { x, y, w, h } => {
+                            format!("rect({x}, {y}, {w}, {h})")
+                        }
+                        orbit_core::HotspotShape::Ellipse { cx, cy, rx, ry } => {
+                            format!("ellipse({cx}, {cy}, {rx}, {ry})")
+                        }
+                        orbit_core::HotspotShape::Polygon { points } => {
+                            format!("polygon({} points)", points.len())
+                        }
+                    };
+                    let mut s = format!(
+                        "[{i}] {} {shape} -> {}",
+                        quote(story.text(h.text_id).unwrap_or("")),
+                        label_ref(story, h.target)
+                    );
+                    if let Some(c) = &h.condition {
+                        s.push_str(&format!(" if {c}"));
+                    }
+                    if let Some(c) = &h.enabled {
+                        s.push_str(&format!(" enabled {c}"));
+                    }
+                    s
+                })
+                .collect();
+            let bg = map
+                .background
+                .map_or_else(String::new, |a| format!(" bg {}", asset_label(story, a)));
+            format!("hotspots{bg} {}", items.join(" | "))
+        }
         NodeKind::Choice { options } => {
             let items: Vec<String> = options
                 .iter()

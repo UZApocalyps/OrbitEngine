@@ -18,6 +18,7 @@
 pub mod convert;
 pub mod error;
 pub mod host;
+pub mod hotspot_tools;
 pub mod live;
 pub mod live_tools;
 pub use orbit_project::sandbox;

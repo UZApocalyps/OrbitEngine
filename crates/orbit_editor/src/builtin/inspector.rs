@@ -403,6 +403,7 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
         }
         NodeKind::Label { name } => label(ui, ctx, id, &name),
         NodeKind::Choice { options } => choice(ui, ctx, id, &options),
+        NodeKind::Hotspots(map) => super::inspector_hotspots::hotspots(ui, ctx, id, &map),
         NodeKind::Jump { target } => jump(ui, ctx, id, target, true),
         NodeKind::JumpScene { scene, label } => jump_scene(ui, ctx, id, scene, label),
         NodeKind::Call { label } => jump(ui, ctx, id, label, false),

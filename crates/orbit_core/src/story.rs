@@ -304,6 +304,11 @@ pub enum NodeKind {
     Unlock {
         achievement: AchievementId,
     },
+    /// Point & click navigation (imagemap): clickable zones over the
+    /// background. For the VM it is a [`NodeKind::Choice`] whose options are
+    /// the visible hotspots (same waiting state, saves, rollback); the host
+    /// draws zones instead of a menu. Appended last.
+    Hotspots(crate::hotspot::HotspotMap),
 }
 
 /// A named output of a [`NodeKind::Script`].
@@ -337,6 +342,7 @@ impl NodeKind {
                 ..
             } => std::iter::once(*then_target).chain(*else_target).collect(),
             NodeKind::Choice { options } => options.iter().map(|o| o.target).collect(),
+            NodeKind::Hotspots(map) => map.hotspots.iter().map(|h| h.target).collect(),
             NodeKind::Script {
                 branches, on_error, ..
             } => branches
@@ -361,6 +367,7 @@ impl NodeKind {
         match self {
             NodeKind::Say { text_id, .. } => vec![*text_id],
             NodeKind::Choice { options } => options.iter().map(|o| o.text_id).collect(),
+            NodeKind::Hotspots(map) => map.hotspots.iter().map(|h| h.text_id).collect(),
             _ => Vec::new(),
         }
     }
