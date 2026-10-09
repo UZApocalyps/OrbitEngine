@@ -497,6 +497,25 @@ impl Cx<'_> {
                 NodeKind::Choice { options } if options.is_empty() => {
                     self.errors.push(ValidationError::EmptyChoice(id));
                 }
+                NodeKind::Hotspots(map) => {
+                    if map.hotspots.is_empty() {
+                        self.errors.push(ValidationError::EmptyChoice(id));
+                    }
+                    if map.hotspots.iter().any(|h| !h.shape.is_valid()) {
+                        self.stage_problem(id, "a hotspot has an empty or invalid shape");
+                    }
+                    if let Some(bg) = map.background {
+                        self.check_asset(Some(id), bg, AssetKind::Image);
+                    }
+                    for h in &map.hotspots {
+                        if let Some(a) = h.hover_image {
+                            self.check_asset(Some(id), a, AssetKind::Image);
+                        }
+                        if let Some(a) = h.hover_sound {
+                            self.check_asset(Some(id), a, AssetKind::Sound);
+                        }
+                    }
+                }
                 NodeKind::JumpScene { scene, label } => match story.scene(*scene) {
                     None => self.errors.push(ValidationError::UnknownScene {
                         node: id,
@@ -821,8 +840,19 @@ impl Cx<'_> {
                         check_expr(&mut errors, &mut warnings, node.id, condition, true)
                     }
                 }
-                NodeKind::Choice { options } => {
-                    for c in options.iter().filter_map(|o| o.condition.as_ref()) {
+                NodeKind::Choice { .. } | NodeKind::Hotspots(_) => {
+                    let conditions: Vec<&Expr> = match &node.kind {
+                        NodeKind::Choice { options } => {
+                            options.iter().filter_map(|o| o.condition.as_ref()).collect()
+                        }
+                        NodeKind::Hotspots(map) => map
+                            .hotspots
+                            .iter()
+                            .flat_map(|h| h.condition.iter().chain(&h.enabled))
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    for c in conditions {
                         rhai_misplaced(&mut errors, node.id, c, true);
                         if let Expr::Rhai(code) = c {
                             if code.trim().is_empty() {
@@ -893,6 +923,7 @@ impl Cx<'_> {
                 n.kind,
                 NodeKind::Say { .. }
                     | NodeKind::Choice { .. }
+                    | NodeKind::Hotspots(_)
                     | NodeKind::Wait { .. }
                     | NodeKind::OpenScreen { wait: true, .. }
             )
@@ -934,8 +965,8 @@ impl Cx<'_> {
                     }
                     v
                 }
-                NodeKind::Choice { options } => {
-                    options.iter().filter_map(|o| target(o.target)).collect()
+                NodeKind::Choice { .. } | NodeKind::Hotspots(_) => {
+                    node.kind.targets().into_iter().filter_map(target).collect()
                 }
                 NodeKind::Call { label } => {
                     let mut v: Vec<usize> = target(*label).into_iter().collect();
@@ -982,6 +1013,7 @@ impl Cx<'_> {
                     NodeKind::Jump { .. }
                         | NodeKind::JumpScene { .. }
                         | NodeKind::Choice { .. }
+                        | NodeKind::Hotspots(_)
                         | NodeKind::End
                         | NodeKind::Return
                         | NodeKind::If {

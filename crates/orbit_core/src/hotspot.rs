@@ -268,6 +268,14 @@ fn point_in_polygon(points: &[(f32, f32)], x: f32, y: f32) -> bool {
 }
 
 impl HotspotMap {
+    /// Every asset the map uses: its background, hover images and sounds.
+    pub fn assets(&self) -> Vec<AssetId> {
+        self.background
+            .into_iter()
+            .chain(self.hotspots.iter().flat_map(|h| h.hover_image.into_iter().chain(h.hover_sound)))
+            .collect()
+    }
+
     /// The topmost hotspot among `candidates` (indices into `hotspots`)
     /// containing the point: the last one in drawing order.
     pub fn hit(&self, candidates: &[usize], x: f32, y: f32) -> Option<usize> {
@@ -358,6 +366,65 @@ impl HotspotMap {
             .map(|(_, i)| i)
             .or_else(|| self.next_focus(candidates, Some(cur), dx + dy >= 0.0))
     }
+}
+
+/// Triangles (indices into `points`) filling a simple polygon, by ear
+/// clipping (concave shapes work; O(n²), fine for a few dozen vertices).
+/// A degenerate or self-intersecting outline gives what it can.
+pub fn triangulate(points: &[(f32, f32)]) -> Vec<u32> {
+    let n = points.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    let area: f32 = (0..n)
+        .map(|i| {
+            let (a, b) = (points[i], points[(i + 1) % n]);
+            a.0 * b.1 - b.0 * a.1
+        })
+        .sum();
+    let ccw = area > 0.0;
+    let mut idx: Vec<usize> = (0..n).collect();
+    let mut out = Vec::with_capacity((n - 2) * 3);
+    let cross = |a: (f32, f32), b: (f32, f32), c: (f32, f32)| {
+        (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+    };
+    let mut guard = 0;
+    while idx.len() > 3 && guard < n * n {
+        guard += 1;
+        let m = idx.len();
+        let mut clipped = false;
+        for k in 0..m {
+            let (ia, ib, ic) = (idx[(k + m - 1) % m], idx[k], idx[(k + 1) % m]);
+            let (a, b, c) = (points[ia], points[ib], points[ic]);
+            let turn = cross(a, b, c);
+            if (turn > 0.0) != ccw || turn == 0.0 {
+                continue; // reflex or flat corner
+            }
+            let inside = idx.iter().any(|&j| {
+                if j == ia || j == ib || j == ic {
+                    return false;
+                }
+                let p = points[j];
+                let (d1, d2, d3) = (cross(a, b, p), cross(b, c, p), cross(c, a, p));
+                if ccw { d1 >= 0.0 && d2 >= 0.0 && d3 >= 0.0 } else { d1 <= 0.0 && d2 <= 0.0 && d3 <= 0.0 }
+            });
+            if inside {
+                continue;
+            }
+            out.extend([ia as u32, ib as u32, ic as u32]);
+            idx.remove(k);
+            clipped = true;
+            break;
+        }
+        if !clipped {
+            // Self-intersecting: fan the rest.
+            break;
+        }
+    }
+    for k in 1..idx.len().saturating_sub(1) {
+        out.extend([idx[0] as u32, idx[k] as u32, idx[k + 1] as u32]);
+    }
+    out
 }
 
 /// Pulse factor in `0..1` of an outline at `time` seconds.
@@ -456,6 +523,24 @@ mod tests {
         assert_eq!(map.directional_focus(&all, Some(1), 0.0, 1.0), Some(3));
         // Filtered candidates are skipped.
         assert_eq!(map.next_focus(&[1, 3], Some(1), true), Some(3));
+    }
+
+    #[test]
+    fn triangulation_covers_a_concave_polygon() {
+        let l = [(0.0, 0.0), (0.2, 0.0), (0.2, 0.3), (0.5, 0.3), (0.5, 0.5), (0.0, 0.5)];
+        let tris = triangulate(&l);
+        assert_eq!(tris.len(), (l.len() - 2) * 3);
+        let area = |t: &[u32]| {
+            let (a, b, c) = (l[t[0] as usize], l[t[1] as usize], l[t[2] as usize]);
+            ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)).abs() * 0.5
+        };
+        let total: f32 = tris.chunks(3).map(area).sum();
+        assert!((total - (0.2 * 0.3 + 0.5 * 0.2)).abs() < 1e-5, "{total}");
+        // Clockwise works too.
+        let mut cw = l.to_vec();
+        cw.reverse();
+        assert_eq!(triangulate(&cw).len(), 12);
+        assert!(triangulate(&l[..2]).is_empty());
     }
 
     #[test]

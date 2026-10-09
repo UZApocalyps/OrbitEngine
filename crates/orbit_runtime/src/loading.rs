@@ -123,6 +123,11 @@ pub fn scene_asset_paths(story: &Story, scene: usize) -> Vec<String> {
                     add(layer.asset);
                 }
             }
+            NodeKind::Hotspots(map) => {
+                for asset in map.assets() {
+                    add(asset);
+                }
+            }
             NodeKind::Particles(emitter) => {
                 if let Some(sprite) = emitter.sprite {
                     add(sprite);

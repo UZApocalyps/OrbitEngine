@@ -510,7 +510,7 @@ impl Director {
 
     // ------------------------------------------------------------------
 
-    fn text(&self, id: StringId) -> String {
+    pub(crate) fn text(&self, id: StringId) -> String {
         self.loc.text(id).to_owned()
     }
 

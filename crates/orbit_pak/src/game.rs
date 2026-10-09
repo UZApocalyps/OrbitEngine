@@ -172,7 +172,15 @@ impl GamePack {
 
     fn encode(&self, version: u32) -> Result<Vec<u8>, PackError> {
         let v16 = self.uses_v16();
-        let v17 = orbit_core::uses_v17(&self.story.achievements);
+        // Hotspot maps are newer than every legacy layout: an older player
+        // must refuse the pack ("too new") rather than misread it.
+        let v17 = orbit_core::uses_v17(&self.story.achievements)
+            || self
+                .story
+                .scenes
+                .iter()
+                .flat_map(|s| &s.nodes)
+                .any(|n| matches!(n.kind, orbit_core::NodeKind::Hotspots(_)));
         let version = if v17 {
             PACK_VERSION
         } else if v16 {
