@@ -36,6 +36,7 @@ pub fn kind_key(kind: &NodeKind) -> String {
         NodeKind::HideScene3d { .. } => "HideScene3d".into(),
         NodeKind::Script { .. } => "Script".into(),
         NodeKind::Unlock { .. } => "Unlock".into(),
+        NodeKind::Hotspots(_) => "Hotspots".into(),
         NodeKind::Custom {
             plugin_id, kind, ..
         } => format!("{plugin_id}.{kind}"),
@@ -75,6 +76,7 @@ pub fn kind_label(texts: &Translator, kind: &NodeKind) -> String {
         NodeKind::HideScene3d { .. } => "node.kind.hide_scene3d",
         NodeKind::Script { .. } => "node.kind.script",
         NodeKind::Unlock { .. } => "node.kind.unlock",
+        NodeKind::Hotspots(_) => "node.kind.hotspots",
     })
 }
 
@@ -110,6 +112,7 @@ pub fn kind_icon(kind: &NodeKind) -> &'static str {
         NodeKind::HideScene3d { .. } => icons::EYE_SLASH,
         NodeKind::Script { .. } => icons::CODE,
         NodeKind::Unlock { .. } => icons::TROPHY,
+        NodeKind::Hotspots(_) => icons::CURSOR_CLICK,
     }
 }
 
@@ -131,6 +134,7 @@ pub fn kind_color(kind: &NodeKind) -> egui::Color32 {
             Color32::from_rgb(176, 124, 236)
         }
         NodeKind::Choice { .. }
+        | NodeKind::Hotspots(_)
         | NodeKind::SetVar { .. }
         | NodeKind::If { .. }
         | NodeKind::Script { .. } => {
@@ -256,6 +260,7 @@ pub fn summary(texts: &Translator, story: &Story, node: &Node) -> String {
             )
         }
         NodeKind::Choice { options } => texts.plural("node.summary.options", options.len(), &[]),
+        NodeKind::Hotspots(map) => texts.plural("node.summary.hotspots", map.hotspots.len(), &[]),
         NodeKind::Jump { target } => format!("→ {}", label_name(story, *target)),
         NodeKind::JumpScene { scene, label } => {
             let name = story.scene(*scene).map_or("?", |s| s.name.as_str());

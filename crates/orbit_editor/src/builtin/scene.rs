@@ -1084,6 +1084,10 @@ fn describe(texts: &orbit_editor_api::Translator, story: &Story, node: &Node) ->
             texts.t("scene.row.choice"),
             texts.tn("scene.row.options", options.len(), &[]),
         ),
+        NodeKind::Hotspots(map) => (
+            texts.t("scene.row.hotspots"),
+            texts.tn("node.summary.hotspots", map.hotspots.len(), &[]),
+        ),
         NodeKind::Jump { target } => (texts.t("scene.row.jump"), label(*target)),
         NodeKind::JumpScene { scene, label: l } => {
             let name = story.scene(*scene).map_or("?", |s| s.name.as_str());
