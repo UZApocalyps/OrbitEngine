@@ -448,7 +448,7 @@ Architecture : [ADR 0009](adr/0009-architecture-editeur.md) (statut Accepté). P
 ### Backlog « plus tard »
 - Animation 3D : clips glTF, travelling de caméra, pistes caméra dans la timeline.
 - C# (ou plugins WASM), desktop uniquement.
-- ~~Import de scripts `.rpy` Ren'Py.~~ **Fait** : crate `orbit_renpy` (éditeur / CLI uniquement, jamais dans le runtime) ; *Fichier > Importer depuis Ren'Py…* et `orbit import-renpy <dossier> <sortie>`. Convertit labels → scènes, menus, conditions, variables, dialogues, show / hide / scene / with, musique / sons, images (convention de nommage Ren'Py), traductions `tl/` ; le reste est listé dans `import-report.md`.
+- ~~Import de scripts `.rpy` Ren'Py.~~ **Fait** : crate `orbit_renpy` (éditeur / CLI uniquement, jamais dans le runtime) ; *Fichier > Importer depuis Ren'Py…* et `orbit import-renpy <dossier> <sortie>`. Convertit labels → scènes, menus, conditions, variables, dialogues, show / hide / scene / with, musique / sons, images (convention de nommage Ren'Py), traductions `tl/` ; le reste est listé dans `import-report.md`. Palier 1 : transitions (couleur de `Fade`, `time_warp`, approximations signalées), positions et ATL simple → positions de scène + timelines, images de script (`Solid`, `Composite` / `ConditionSwitch` / `layeredimage` au mieux, animations d'images), styles de personnage (`what_color`, `what_prefix`…), screens de navigation (`imagemap`, `imagebutton` → `Hotspots`, `textbutton` → choix), `extend` / `{nw}`, succès, variables persistantes, appels `renpy.*` courants ; remarques répétées regroupées dans le rapport.
 - WebGPU comme backend web optionnel.
 
 ---

@@ -100,7 +100,9 @@ translate french strings:
 "##;
 
 fn temp(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("orbit_renpy_{name}_{}", std::process::id()));
+    // Under the target dir, not the system temp dir.
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("orbit_renpy_{name}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     dir
 }

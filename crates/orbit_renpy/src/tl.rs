@@ -83,6 +83,7 @@ pub fn translate(
     lang_name: &str,
     sources: &[String],
     index: &HashMap<String, Vec<StringId>>,
+    wrappers: &HashMap<StringId, (String, String)>,
 ) -> LangResult {
     let (tag, display) = language(lang_name);
     let mut t = Translation::new(tag, display);
@@ -93,7 +94,12 @@ pub fn translate(
         Some(ids) => {
             let converted = text::convert(translated, &mut TextNotes::default());
             for id in ids {
-                t.entries.insert(*id, converted.clone());
+                // The speaker's style (`what_prefix`, `what_color`...).
+                let text = match wrappers.get(id) {
+                    Some((before, after)) => format!("{before}{converted}{after}"),
+                    None => converted.clone(),
+                };
+                t.entries.insert(*id, text);
             }
             matched += 1;
         }
@@ -172,7 +178,9 @@ mod tests {
         index.insert("Hello!".to_owned(), vec![a]);
         index.insert("Yes".to_owned(), vec![b]);
         let src = "# game/script.rpy:3\ntranslate french start_1234abcd:\n\n    # e \"Hello!\"\n    e \"Bonjour !\"\n\ntranslate french strings:\n\n    # game/script.rpy:9\n    old \"Yes\"\n    new \"Oui\"\n    old \"Gone\"\n    new \"Parti\"\n";
-        let r = translate("french", &[src.to_owned()], &index);
+        let mut wrappers = HashMap::new();
+        wrappers.insert(b, ("\"".to_owned(), "\"".to_owned()));
+        let r = translate("french", &[src.to_owned()], &index, &wrappers);
         assert_eq!(r.translation.lang, "fr");
         assert_eq!(
             r.translation.entries.get(&a).map(String::as_str),
@@ -180,7 +188,7 @@ mod tests {
         );
         assert_eq!(
             r.translation.entries.get(&b).map(String::as_str),
-            Some("Oui")
+            Some("\"Oui\"")
         );
         assert_eq!((r.matched, r.unmatched), (2, 1));
     }

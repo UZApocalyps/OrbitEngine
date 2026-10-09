@@ -1,0 +1,132 @@
+scene start
+  Label start
+  Background
+  PlayMusic
+  Show happy Left None
+  Say "{color=#ffeedd}Welcome to the {b}sample{/b} game!{/color}"
+  Show default Left None
+  Timeline
+  Say "\"{i}Hello there.{w=0.5} Nice big day.{/i}\""
+  Show happy Custom("midleft") None
+  Show happy Free { x: 0.3, y: 1.0 } None
+  Show happy Free { x: 0.55, y: 1.0 } Some(0.8)
+  Show happy Free { x: 0.5, y: 0.75 } None
+  Show happy Free { x: 1.2, y: 1.0 } None
+  Show default Left None
+  Timeline
+  Show happy Free { x: 0.65, y: 1.0 } Some(1.2)
+  Timeline
+  Show happy Free { x: 0.65, y: 1.0 } None
+  Say "{color=#ffeedd}Let me show you around the place.{/color}"
+  Say "{color=#ffeedd}Wait for it...\nThere!{/color}"
+  Say "{color=#ffeedd}This line has a voice.{/color}"
+  Wait
+  Wait
+  Script
+  PlayMusic
+  StopMusic
+  PlaySound
+  Unlock
+  SetVar
+  SetVar
+  If
+  Jump
+  Label if_2_1
+  Say "\"{i}We met before!{/i}\""
+  Jump
+  Label if_2_end
+  Say "An NVL line."
+  Say "Narration in NVL mode."
+  Say "I am your guide."
+  Show default Center None
+  Show default Center None
+  Show default Center None
+  Show hat Free { x: 0.65, y: 1.0 } None
+  Show default Center None
+  Hide
+  Hide
+  Hide
+  Hide
+  Hide
+  Hide
+  Background
+  Background
+  Background
+  Effect
+  JumpScene
+scene town
+  Label town
+  Background
+  Say "You arrive in town."
+  Hotspots
+  Label screen_1_1
+  JumpScene
+  Label screen_1_2
+  Call
+  Jump
+  Label screen_1_3
+  JumpScene
+  Label screen_1_4
+  Jump
+  Label screen_1_end
+  Jump
+scene kitchen
+  Label kitchen
+  Background
+  Say "The kitchen."
+  Choice
+  Label menu_1_1
+  JumpScene
+  Label menu_1_2
+  Hotspots
+  Label screen_2_1
+  JumpScene
+  Label screen_2_2
+  SetVar
+  JumpScene
+  Label screen_2_end
+  Jump
+  Label menu_1_end
+  JumpScene
+scene garden
+  Label garden
+  Background
+  Say "The garden."
+  Unlock
+  Return
+scene ending
+  Label ending
+  PlayMusic
+  Choice
+  Label screen_1_1
+  JumpScene
+  Label screen_1_2
+  JumpScene
+  Label screen_1_end
+  Say "The end."
+  End
+unsupported:
+  definitions.rpy:57: transform with parameters (not converted): `transform shaky(amount):`
+  definitions.rpy:64: init python block: 1 statement(s) not converted (functions, classes, imports...): `init python:`
+  script.rpy:33: Python statement: `$ renpy.notify("Saved!")`
+  gui.rpy:10: `style` statements skipped (the look of the interface is set in the UI editor) (3 times, first here)
+  screens.rpy:3: `style` statements skipped (the look of the interface is set in the UI editor) (3 times, first here)
+  screens.rpy:6: standard Ren'Py interface screens skipped (say, menus, save/load...: the engine has its own, made in the UI editor) (6 times, first here)
+warnings:
+  definitions.rpy:7: character `g`: ctc, ctc_position ignored
+  definitions.rpy:17: image `eileen hat`: `Composite` layers are not composited, its first layer stands for it (1 layer(s) dropped)
+  definitions.rpy:18: image `lamp`: `ConditionSwitch` keeps its default picture (1 condition(s) not evaluated)
+  definitions.rpy:29: layered image `augustina`: layers are not composited, its base layer stands for it (3 attribute(s) not shown)
+  side images (`side eileen`...) are not shown: the engine has no side image next to the text box
+  script.rpy:21: ATL: crop not converted
+  script.rpy:29: `pause` without a duration waits 1 second (no click-to-continue pause)
+  script.rpy:40: `persistent.met_lucy` is never declared: declared as a persistent flag (false)
+  script.rpy:87: `show screen town_buttons`: shown as a navigation step, the story waits for a click
+  definitions.rpy:5: NVL mode (NVL characters, `nvl clear`): the engine has no NVL page, these lines are shown in the normal text box (5 times, first here)
+  definitions.rpy:11: transition `ImageDissolve` approximated by a dissolve
+  definitions.rpy:12: transition `MoveTransition` approximated by a dissolve
+  script.rpy:9: text tag `{size}` has no equivalent and was removed
+  script.rpy:28: `window show / hide / auto` ignored (the engine shows the text box while a line is displayed) (3 times, first here)
+  script.rpy:55: transition `pixellate` approximated by a dissolve
+  script.rpy:60: transition `moveinright` approximated by a dissolve
+  script.rpy:102: image button pictures are not drawn (the engine draws a glowing zone over the background) (2 times, first here)

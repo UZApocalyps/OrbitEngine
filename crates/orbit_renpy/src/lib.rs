@@ -4,7 +4,10 @@
 //!
 //! [`import`] reads `game/*.rpy` (the common script subset: characters,
 //! variables, labels, jumps, calls, menus, conditions, Python assignments,
-//! dialogue, `show` / `hide` / `scene` / `with`, music and sounds, pauses),
+//! dialogue, `show` / `hide` / `scene` / `with`, music and sounds, pauses;
+//! transforms and simple ATL as positions and timelines, script-defined
+//! images, character text styles, navigation screens as hotspots or
+//! choices, achievements, persistent data, the common `renpy.*` calls),
 //! the images (Ren'Py naming: `images/eileen happy.png` is the expression
 //! `happy` of the character `eileen`, `bg room.png` a background), the audio
 //! and the translations of `game/tl/`, and writes a project that validates.
@@ -14,10 +17,12 @@
 //! Labels become scenes (one per top-level label, `start` first); nested and
 //! local labels become labels of their scene.
 
+mod atl;
 mod convert;
 mod lexer;
 mod png;
 mod pyexpr;
+mod screen;
 mod text;
 mod tl;
 
@@ -372,7 +377,8 @@ pub fn import(
     } else {
         title
     };
-    let converted = convert::Conv::new(&title, &sources.scripts, &sources.media).run();
+    let converted =
+        convert::Conv::new(&title, &sources.scripts, &sources.media, Some(game.clone())).run();
     let mut report = ImportReport {
         source: source.to_owned(),
         project: out.to_owned(),
@@ -419,7 +425,7 @@ pub fn import(
     fs::write(out.join(".gitignore"), format!("{STATE_DIR}/\n")).map_err(io(out))?;
 
     for (lang, files) in &sources.tl {
-        let r = tl::translate(lang, files, &converted.text_index);
+        let r = tl::translate(lang, files, &converted.text_index, &converted.wrappers);
         if r.translation.entries.is_empty() {
             continue;
         }
@@ -470,7 +476,7 @@ pub fn convert_scripts(
         .collect();
     let media: Vec<(String, MediaKind)> =
         media.iter().map(|(p, k)| ((*p).to_owned(), *k)).collect();
-    let converted = convert::Conv::new(title, &scripts, &media).run();
+    let converted = convert::Conv::new(title, &scripts, &media, None).run();
     let mut report = ImportReport {
         scripts: scripts.len(),
         labels: converted.labels,
