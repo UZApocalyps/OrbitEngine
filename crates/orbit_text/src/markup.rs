@@ -9,6 +9,8 @@
 //!   `black`, `gray`) ... `{/color}`
 //! * `{b}...{/b}` bold, `{i}...{/i}` italic
 //! * `{w=0.5}` pause of 0.5 s in the typewriter
+//! * `{bubble=speech|thought|shout}` shape of the comic bubble the line is
+//!   shown in (read by the UI, invisible in the text)
 //! * `{{` and `}}` are literal braces
 //!
 //! Malformed or unknown tags are kept as literal text rather than dropped, so
@@ -116,10 +118,15 @@ enum Tag {
     ItalicOpen,
     ItalicClose,
     Wait(f32),
+    /// A display hint for the UI (`{bubble=...}`): no text, no style.
+    Hint,
 }
 
 fn parse_tag(inner: &str) -> Option<Tag> {
     let inner = inner.trim();
+    if let Some(v) = inner.strip_prefix("bubble=") {
+        return matches!(v.trim(), "speech" | "thought" | "shout").then_some(Tag::Hint);
+    }
     if let Some(v) = inner.strip_prefix("color=") {
         return parse_color(v.trim()).map(Tag::ColorOpen);
     }
@@ -207,6 +214,7 @@ pub fn parse_markup(input: &str) -> ParsedText {
                     flush(&mut out, &mut buf, before, &mut graphemes_done);
                     italic = italic.saturating_sub(1);
                 }
+                Tag::Hint => {}
                 Tag::Wait(seconds) => {
                     flush(&mut out, &mut buf, before, &mut graphemes_done);
                     out.pauses.push(Pause {
@@ -274,6 +282,8 @@ mod tests {
     fn escaped_and_malformed_braces_stay_literal() {
         assert_eq!(parse_markup("{{x}}").plain(), "{x}");
         assert_eq!(parse_markup("a {unknown} b").plain(), "a {unknown} b");
+        assert_eq!(parse_markup("{bubble=thought}Hmm...").plain(), "Hmm...");
+        assert_eq!(parse_markup("{bubble=nope}x").plain(), "{bubble=nope}x");
         assert_eq!(parse_markup("open { only").plain(), "open { only");
         assert_eq!(parse_markup("{color=bad}x").plain(), "{color=bad}x");
         assert_eq!(parse_markup("{w=-1}x").plain(), "{w=-1}x");

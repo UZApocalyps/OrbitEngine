@@ -28,6 +28,7 @@ pub use coverage::{describe_chars, language_missing_chars, missing_chars};
 pub use sound::UiSound;
 pub use transition::{ScreenFx, ScreenTransition, ScreenTransitionKind};
 pub use theme::{
+    BubbleCharacter, BubbleKind, BubbleTheme, DialogueMode, NarratorStyle, OffscreenStyle,
     Border, ButtonTheme, CANVAS, ChoiceTheme, ControlTheme, DialogueLayout, Fill, FontRef, ImageFit, ListTheme,
     NamePlate, PanelTheme, QuickMenuTheme, STYLE_FIELDS, ScreenTheme, Shadow, StateColors, StateFills, Style,
     StyleSounds, TextAlignment, TextBoxTheme, Theme, UiSounds, WidgetState, WidgetTheme, anchored, resolve_style,

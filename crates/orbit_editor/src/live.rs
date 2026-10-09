@@ -808,6 +808,7 @@ mod tests {
         let say = PreviewSnapshot {
             flow: Flow::Say(Line {
                 speaker: Some(("Alice".into(), [1, 2, 3])),
+                speaker_id: None,
                 text: "Hi".into(),
                 already_read: false,
                 voice: None,

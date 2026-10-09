@@ -70,6 +70,13 @@ impl TextBlock {
         self.layout.as_ref()
     }
 
+    /// Lays the text out (if needed) and returns its `[width, height]` in
+    /// virtual pixels, e.g. to size a box around it before drawing.
+    pub fn measure(&mut self, engine: &mut TextEngine, renderer: &Renderer2d) -> [f32; 2] {
+        self.ensure_layout(engine, renderer.pixel_ratio());
+        self.layout.as_ref().map_or([0.0, 0.0], |l| [l.width, l.height])
+    }
+
     /// Lays out (if needed) and appends the revealed glyphs to `scene`.
     /// `origin` is the top-left of the box in virtual pixels.
     pub fn draw(
@@ -80,7 +87,17 @@ impl TextBlock {
         scene: &mut Scene,
         params: &DrawParams,
     ) {
-        let scale = renderer.pixel_ratio();
+        self.ensure_layout(engine, renderer.pixel_ratio());
+        if let Some(layout) = &self.layout {
+            let params = DrawParams {
+                revealed: self.typewriter.revealed().min(params.revealed),
+                ..*params
+            };
+            text_renderer.draw(engine, renderer, scene, layout, &params);
+        }
+    }
+
+    fn ensure_layout(&mut self, engine: &mut TextEngine, scale: f32) {
         if self.layout.is_none()
             || (self.laid_scale - scale).abs() > 1e-3
             || self.laid_generation != engine.generation()
@@ -88,13 +105,6 @@ impl TextBlock {
             self.layout = Some(engine.layout(&self.parsed, &self.style, self.box_width, scale));
             self.laid_scale = scale;
             self.laid_generation = engine.generation();
-        }
-        if let Some(layout) = &self.layout {
-            let params = DrawParams {
-                revealed: self.typewriter.revealed().min(params.revealed),
-                ..*params
-            };
-            text_renderer.draw(engine, renderer, scene, layout, &params);
         }
     }
 }

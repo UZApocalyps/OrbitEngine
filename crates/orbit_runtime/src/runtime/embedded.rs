@@ -126,6 +126,30 @@ pub(super) enum UiPreview {
     Dialogue(Box<DialoguePreview>),
 }
 
+/// Where the dialogue preview pretends the speaker stands (bubble mode).
+const PREVIEW_SPEAKER: [f32; 4] = [1180.0, 230.0, 1620.0, 1080.0];
+
+/// A faint head-and-shoulders shape where [`PREVIEW_SPEAKER`] stands.
+fn push_silhouette(scene: &mut Scene, white: TextureId) {
+    let [l, t, r, b] = PREVIEW_SPEAKER;
+    let (cx, w) = ((l + r) * 0.5, r - l);
+    let color = [0.5, 0.5, 0.55, 0.35];
+    let head = w * 0.36;
+    scene.push(
+        orbit_render2d::Sprite2d::new(white, [cx, t], [head, head * 1.2])
+            .anchor([0.5, 0.0])
+            .layer(orbit_render2d::Layer::CHARACTERS)
+            .tint(color),
+    );
+    let top = t + head * 1.3;
+    scene.push(
+        orbit_render2d::Sprite2d::new(white, [cx, top], [w * 0.8, b - top])
+            .anchor([0.5, 0.0])
+            .layer(orbit_render2d::Layer::CHARACTERS)
+            .tint(color),
+    );
+}
+
 /// The dialogue box, choices and quick menu of a theme, drawn by the same
 /// code as in the game (editor "Dialogue box" tab).
 pub(super) struct DialoguePreview {
@@ -148,8 +172,11 @@ impl DialoguePreview {
         // A still picture: the line shown whole, the marker not blinking.
         let mut textbox = theme.textbox.clone();
         textbox.indicator_blink = false;
+        textbox.bubble.pop = 0.0;
         let mut dialogue = orbit_ui::DialogueBox::new(textbox);
         dialogue.set_styles(orbit_ui::DialogueStyles::from_theme(theme));
+        // Bubbles point at a stand-in character (drawn as a silhouette).
+        dialogue.set_speaker_bounds(Some(PREVIEW_SPEAKER));
         let mut menu = None;
         if choices.is_empty() {
             let who = (!speaker.trim().is_empty()).then_some((speaker, [255, 150, 190]));
@@ -1406,6 +1433,9 @@ impl Runtime {
                             &p.images,
                         ),
                         None => {
+                            if p.dialogue.presentation() == orbit_ui::Presentation::Bubble {
+                                push_silhouette(ctx.scene, ctx.white);
+                            }
                             p.dialogue.draw(
                                 ctx.engine,
                                 ctx.text_renderer,

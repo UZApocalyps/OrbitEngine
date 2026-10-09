@@ -33,6 +33,7 @@
 pub mod a11y;
 pub mod asset;
 mod banner;
+pub mod bubble;
 mod choice;
 mod dialogue;
 mod input;
@@ -46,7 +47,7 @@ mod widgets;
 
 pub use banner::{Banner, draw_progress_bar};
 pub use choice::{ChoiceMenu, MenuInput, button_rects, hit_test};
-pub use dialogue::{Advance, DialogueBox, DialogueStyles};
+pub use dialogue::{Advance, DialogueBox, DialogueStyles, Presentation};
 pub use input::{UiInput, UiSound};
 pub use paint::Painter;
 pub use screens::{
@@ -55,6 +56,7 @@ pub use screens::{
 };
 pub use texts::{EN, FR, TextProvider, TextTable, Texts};
 pub use theme::{
+    BubbleCharacter, BubbleKind, BubbleTheme, DialogueMode, NarratorStyle, OffscreenStyle,
     Border, ButtonTheme, ChoiceTheme, ControlTheme, ListTheme, PanelTheme, ScreenTheme, TextBoxTheme,
     DialogueLayout, Fill, FontRef, ImageFit, NamePlate, QuickMenuTheme, Shadow, StateColors, StateFills, Style, StyleSounds,
     TextAlignment, Theme, UiSounds, WidgetState, WidgetTheme, resolve_style, tint,
