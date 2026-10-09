@@ -94,21 +94,42 @@ pub fn diff(base: &Story, target: &Story) -> Result<Vec<Command>, ProjectError> 
         }
     }
 
-    // 3. New nodes, appended to their scene with their final content.
+    // 3. New nodes, appended to their scene with their final content. A new
+    //    node targeting another new node is first inserted as `End`, then
+    //    given its kind once every new node exists: undoing then clears the
+    //    reference before removing its target (a menu before its labels).
+    let mut deferred = Vec::new();
     for scene in &target.scenes {
         for node in &scene.nodes {
             if base.node(node.id).is_none() {
                 let index = scratch.story().scene(scene.id).map_or(0, |s| s.nodes.len());
+                let forward = node
+                    .kind
+                    .targets()
+                    .iter()
+                    .any(|t| base.node(*t).is_none());
+                let mut inserted = node.clone();
+                if forward {
+                    inserted.kind = NodeKind::End;
+                    deferred.push(Command::SetNodeKind {
+                        id: node.id,
+                        kind: node.kind.clone(),
+                        expected_version: None,
+                    });
+                }
                 run(
                     &mut scratch,
                     Command::InsertNode {
                         scene: scene.id,
                         index,
-                        node: node.clone(),
+                        node: inserted,
                     },
                 )?;
             }
         }
+    }
+    for cmd in deferred {
+        run(&mut scratch, cmd)?;
     }
 
     // 4. Changed nodes. A label turning into something else must wait until

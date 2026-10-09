@@ -3064,6 +3064,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit_ai_studio"
+version = "0.2.0"
+dependencies = [
+ "base64 0.22.1",
+ "image",
+ "orbit_core",
+ "orbit_dsl",
+ "orbit_mcp",
+ "orbit_plugin_api",
+ "orbit_project",
+ "ron",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "orbit_anim"
 version = "0.2.0"
 dependencies = [
