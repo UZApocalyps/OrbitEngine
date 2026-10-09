@@ -206,6 +206,21 @@ pub fn sanitize_file_name(name: &str) -> String {
     }
 }
 
+/// The project name of an imported file: [`sanitize_file_name`], keeping
+/// the double extensions the engine recognises files by (`.scene3d.ron`,
+/// `.rig.ron`), which a plain sanitization turned into `scene_scene3d.ron`.
+pub fn import_file_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let lower = base.to_ascii_lowercase();
+    for suffix in [".scene3d.ron", ".rig.ron"] {
+        if lower.len() > suffix.len() && lower.ends_with(suffix) {
+            let stem = sanitize_file_name(&base[..base.len() - suffix.len()]);
+            return format!("{stem}{suffix}");
+        }
+    }
+    sanitize_file_name(base)
+}
+
 /// Files directly under `dir` (names only), for collision checks.
 fn dir_names(dir: &Path) -> HashSet<String> {
     fs::read_dir(dir)
@@ -334,7 +349,7 @@ fn prepare(
         });
     }
 
-    let file_name = sanitize_file_name(
+    let file_name = import_file_name(
         source
             .file_name()
             .and_then(|n| n.to_str())
@@ -346,6 +361,13 @@ fn prepare(
         .map_err(|e| ImportError::Io(e.to_string()))?;
     crate::storage::write_atomic(&dest, &imported.bytes)
         .map_err(|e| ImportError::Io(e.to_string()))?;
+    // A 3D scene finds its models in the `models/` folder next to it: an
+    // import that copied the scene file alone drew only its background.
+    if imported.kind == AssetKind::Scene3d
+        && let Err(e) = copy_scene3d_models(source, &dest)
+    {
+        log::warn!("import: models of {}: {e}", source.display());
+    }
     taken.insert(rel.to_lowercase());
     Ok(Prepared {
         entry: AssetEntry {
@@ -748,6 +770,15 @@ pub enum AssetIssue {
     },
     /// A story command names a camera the 3D scene does not have.
     CameraMissing { asset: AssetId, camera: String },
+    /// A 3D scene places an imported model that is not in the `models/`
+    /// folder next to its file (a copy of the scene made without its
+    /// models): the story shows the scene without it.
+    Scene3dModelMissing {
+        asset: AssetId,
+        path: String,
+        model: String,
+        folder: String,
+    },
     /// A rig file cannot be used (parse or validation error).
     Rig {
         asset: AssetId,
@@ -771,6 +802,7 @@ impl AssetIssue {
             | AssetIssue::Scene3d { asset, .. }
             | AssetIssue::Rig { asset, .. }
             | AssetIssue::RigImageMissing { asset, .. }
+            | AssetIssue::Scene3dModelMissing { asset, .. }
             | AssetIssue::CameraMissing { asset, .. } => *asset,
         }
     }
@@ -809,6 +841,15 @@ impl AssetIssue {
             AssetIssue::CameraMissing { camera, .. } => {
                 texts.tf("asset.issue.camera_missing", &[("camera", camera)])
             }
+            AssetIssue::Scene3dModelMissing {
+                path,
+                model,
+                folder,
+                ..
+            } => texts.tf(
+                "asset.issue.scene3d_model_missing",
+                &[("path", path), ("model", model), ("folder", folder)],
+            ),
         }
     }
 }
@@ -985,7 +1026,28 @@ mod tests {
         // Same folder, or no models: nothing to do.
         assert_eq!(copy_scene3d_models(&to, &to).unwrap(), 0);
         assert_eq!(copy_scene3d_models(&dir.join("none/x.scene3d.ron"), &to).unwrap(), 0);
+        // A model updated next to the source replaces the older copy.
+        let later = SystemTime::now() + std::time::Duration::from_secs(60);
+        fs::write(dir.join("models/scene.gltf"), b"{\"new\":1}").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(dir.join("models/scene.gltf"))
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        assert_eq!(copy_scene3d_models(&dir.join("scene.scene3d.ron"), &to).unwrap(), 1);
+        assert_eq!(fs::read(dir.join("assets/3d/models/scene.gltf")).unwrap(), b"{\"new\":1}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn imported_files_keep_the_double_extensions_of_the_engine() {
+        // Regression: `scene.scene3d.ron` was imported as `scene_scene3d.ron`.
+        assert_eq!(import_file_name("scene.scene3d.ron"), "scene.scene3d.ron");
+        assert_eq!(import_file_name("My Room.Scene3D.ron"), "My_Room.scene3d.ron");
+        assert_eq!(import_file_name("C:\\x\\hero.rig.ron"), "hero.rig.ron");
+        assert_eq!(import_file_name("bg night.png"), "bg_night.png");
+        assert_eq!(import_file_name(".scene3d.ron"), "scene3d.ron");
     }
 
     #[test]
@@ -1128,7 +1190,8 @@ pub fn plan_scene3d_target(
 }
 
 /// Copies the `models/` folder next to the 3D scene `from` to the one next
-/// to `to` (sub-folders included, files already there kept): a scene finds
+/// to `to` (sub-folders included; a file already there is kept unless the
+/// source one is newer, so a re-import updates the models): a scene finds
 /// its models in that folder, so a scene saved elsewhere without them shows
 /// its background only. Returns how many files were copied.
 pub fn copy_scene3d_models(from: &Path, to: &Path) -> Result<usize, String> {
@@ -1149,9 +1212,13 @@ pub fn copy_scene3d_models(from: &Path, to: &Path) -> Result<usize, String> {
         for entry in fs::read_dir(src).map_err(|e| format!("{}: {e}", src.display()))? {
             let entry = entry.map_err(|e| e.to_string())?;
             let (from, to) = (entry.path(), dst.join(entry.file_name()));
+            let newer = || {
+                let modified = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+                matches!((modified(&from), modified(&to)), (Some(a), Some(b)) if a > b)
+            };
             if from.is_dir() {
                 copy(&from, &to, count)?;
-            } else if !to.exists() {
+            } else if !to.exists() || newer() {
                 fs::copy(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
                 *count += 1;
             }
@@ -1239,6 +1306,30 @@ pub fn lint_scene3d(root: &Path, story: &Story) -> Vec<AssetIssue> {
         };
         match orbit_scene::from_ron(&text) {
             Ok(scene) => {
+                // An imported model the `models/` folder next to the file
+                // does not have: the story shows the scene without it.
+                let mut models: Option<HashSet<String>> = None;
+                for node in &scene.nodes {
+                    if let orbit_scene::Node3dKind::Prefab(p) = &node.kind {
+                        let have = models
+                            .get_or_insert_with(|| scene3d_model_names(&root.join(&asset.path)));
+                        if !have.contains(&p.0) {
+                            let folder = asset
+                                .path
+                                .rsplit_once('/')
+                                .map_or_else(|| "models/".to_owned(), |(d, _)| format!("{d}/models/"));
+                            let issue = AssetIssue::Scene3dModelMissing {
+                                asset: asset.id,
+                                path: asset.path.clone(),
+                                model: p.0.clone(),
+                                folder,
+                            };
+                            if !issues.contains(&issue) {
+                                issues.push(issue);
+                            }
+                        }
+                    }
+                }
                 for issue in orbit_scene::validate(&scene) {
                     issues.push(AssetIssue::Scene3d {
                         asset: asset.id,
@@ -1332,4 +1423,81 @@ pub fn shown_scene3d_before(story: &Story, id: orbit_core::NodeId) -> Option<Ass
         }
     }
     None
+}
+
+/// How the 3D scene file open in the 3D editor relates to the story.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Scene3dInStory {
+    /// The file itself is a declared asset: what is edited is what plays.
+    Declared { asset: AssetId, rel: String },
+    /// The story declares **another file** holding the same scene (same
+    /// scene id: an imported copy). Edits to the open file never reach the
+    /// story: the preview shows that copy.
+    Copy { asset: AssetId, rel: String },
+    /// The story does not use this scene.
+    None,
+}
+
+/// Where the 3D scene `scene_id` saved at `file` is in the story (see
+/// [`Scene3dInStory`]). Reads the other declared 3D scene files only when
+/// the file itself is not declared.
+pub fn scene3d_in_story(
+    root: &Path,
+    story: &Story,
+    file: &Path,
+    scene_id: orbit_core::SceneId,
+) -> Scene3dInStory {
+    let scenes = || {
+        story
+            .assets
+            .assets
+            .iter()
+            .filter(|a| a.kind == AssetKind::Scene3d)
+    };
+    let canon = fs::canonicalize(file).ok();
+    let same_file = |rel: &str| {
+        canon
+            .as_ref()
+            .zip(fs::canonicalize(root.join(rel)).ok())
+            .is_some_and(|(a, b)| *a == b)
+    };
+    if let Some(a) = scenes().find(|a| same_file(&a.path)) {
+        return Scene3dInStory::Declared {
+            asset: a.id,
+            rel: a.path.clone(),
+        };
+    }
+    for a in scenes() {
+        let id = fs::read_to_string(root.join(&a.path))
+            .ok()
+            .and_then(|t| orbit_scene::from_ron(&t).ok())
+            .map(|s| s.id);
+        if id == Some(scene_id) {
+            return Scene3dInStory::Copy {
+                asset: a.id,
+                rel: a.path.clone(),
+            };
+        }
+    }
+    Scene3dInStory::None
+}
+
+/// Model names (file stems of `.gltf` / `.glb`) in the `models/` folder
+/// next to the 3D scene file `scene_file`.
+pub fn scene3d_model_names(scene_file: &Path) -> HashSet<String> {
+    let Some(dir) = scene_file.parent().map(|d| d.join("models")) else {
+        return HashSet::new();
+    };
+    let Ok(rd) = fs::read_dir(dir) else {
+        return HashSet::new();
+    };
+    rd.flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "gltf" | "glb"))
+        })
+        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_owned))
+        .collect()
 }

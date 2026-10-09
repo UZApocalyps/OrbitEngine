@@ -136,5 +136,6 @@
     "asset.issue.rig": "Rig « {path} » inutilisable : {detail}",
     "asset.issue.rig_image_missing": "Le rig « {path} » dessine « {image} », qui n'est pas un fichier du projet",
     "asset.issue.camera_missing": "La scène 3D n’a pas de caméra nommée « {camera} »",
+    "asset.issue.scene3d_model_missing": "Scène 3D « {path} » : le modèle « {model} » n’est pas dans « {folder} », l’histoire montre la scène sans lui (ouvrez la scène dans l’éditeur 3D pour mettre à jour la copie de l’histoire)",
 
 }

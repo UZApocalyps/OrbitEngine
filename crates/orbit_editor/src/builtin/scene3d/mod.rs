@@ -200,6 +200,9 @@ pub(super) struct State {
     pip_sent: Option<Sent>,
     press: Option<(Pos2, bool)>,
     next_key: u64,
+    /// Where the open file is in the story, cached per (file, project
+    /// state): reading the declared scene files is not done every frame.
+    in_story: Option<(PathBuf, orbit_editor_api::lazy::DocKey, crate::assets::Scene3dInStory)>,
 }
 
 impl State {
@@ -233,6 +236,7 @@ impl State {
             pip_sent: None,
             press: None,
             next_key: 1,
+            in_story: None,
         }
     }
 
@@ -402,14 +406,57 @@ impl State {
         }
     }
 
+    /// Where the open file is in the story (cached; see
+    /// [`crate::assets::scene3d_in_story`]).
+    pub fn in_story(&mut self, ctx: &EditorContext<'_>) -> crate::assets::Scene3dInStory {
+        use crate::assets::Scene3dInStory;
+        let (Some(root), Some(story), Some(doc)) = (
+            ctx.project_info().map(|p| p.root.clone()),
+            ctx.story(),
+            self.doc.as_ref(),
+        ) else {
+            return Scene3dInStory::None;
+        };
+        let Some(path) = doc.path.clone() else {
+            return Scene3dInStory::None;
+        };
+        let key = ctx.doc_key();
+        if let Some((p, k, found)) = &self.in_story
+            && *p == path
+            && *k == key
+        {
+            return found.clone();
+        }
+        let found = crate::assets::scene3d_in_story(&root, story, &path, doc.scene().id);
+        self.in_story = Some((path, key, found.clone()));
+        found
+    }
+
     /// "Add to project": saves the scene under the project's `assets/3d`
     /// (or where it already is, under `assets/`) and declares it in the
-    /// asset library so stories can show it. Returns the manifest path.
+    /// asset library so stories can show it. A scene the story already has
+    /// (the file itself, or a copy of it imported earlier) is saved over
+    /// that file instead of being declared a second time. Returns the
+    /// manifest path.
     pub fn add_to_project(&mut self, ctx: &mut EditorContext<'_>) -> Option<String> {
+        use crate::assets::Scene3dInStory;
         let Some(root) = ctx.project_info().map(|p| p.root.clone()) else {
             ctx.warn(ctx.t("s3d.no_project"));
             return None;
         };
+        match self.in_story(ctx) {
+            Scene3dInStory::Declared { rel, .. } => {
+                let doc = self.doc.as_mut()?;
+                if let Err(e) = doc.save() {
+                    ctx.error(ctx.tf("s3d.save_failed", &[("error", &e)]));
+                    return None;
+                }
+                self.sync_dirty();
+                return Some(rel);
+            }
+            Scene3dInStory::Copy { .. } => return self.use_story_copy(ctx),
+            Scene3dInStory::None => {}
+        }
         let doc = self.doc.as_mut()?;
         let target = {
             let story = ctx.story()?;
@@ -432,6 +479,7 @@ impl State {
         {
             ctx.error(ctx.tf("s3d.save_failed", &[("error", &e)]));
         }
+        self.in_story = None;
         let rel = target.rel.clone();
         let declared = ctx.ops_or_toast(|p| {
             orbit_project::ops::add_asset(p, orbit_core::AssetKind::Scene3d, &rel)
@@ -442,17 +490,92 @@ impl State {
         Some(target.rel)
     }
 
-    /// Whether the open scene is a declared asset of the project.
-    pub fn in_project(&self, ctx: &EditorContext<'_>) -> bool {
-        let (Some(root), Some(story), Some(path)) = (
-            ctx.project_info().map(|p| p.root.clone()),
-            ctx.story(),
-            self.doc.as_ref().and_then(|d| d.path.clone()),
-        ) else {
-            return false;
+    /// The story plays a **copy** of the open scene (imported earlier):
+    /// saves the scene over that copy, brings the models along (newer files
+    /// replace older ones) and continues editing the copy, so that what is
+    /// edited from now on is what the story shows. Returns its manifest path.
+    pub fn use_story_copy(&mut self, ctx: &mut EditorContext<'_>) -> Option<String> {
+        let crate::assets::Scene3dInStory::Copy { rel, .. } = self.in_story(ctx) else {
+            return None;
         };
-        crate::assets::asset_rel_path(&root, &path)
-            .is_some_and(|rel| story.assets.assets.iter().any(|a| a.path == rel))
+        let root = ctx.project_info().map(|p| p.root.clone())?;
+        let abs = root.join(&rel);
+        let doc = self.doc.as_mut()?;
+        let source = doc.path.clone();
+        if let Err(e) = doc.save_as(&abs) {
+            ctx.error(ctx.tf("s3d.save_failed", &[("error", &e)]));
+            return None;
+        }
+        if let Some(source) = source
+            && let Err(e) = crate::assets::copy_scene3d_models(&source, &abs)
+        {
+            ctx.error(ctx.tf("s3d.save_failed", &[("error", &e)]));
+        }
+        self.in_story = None;
+        self.sync_dirty();
+        ctx.info(ctx.tf("s3d.story_copy_synced", &[("path", &rel)]));
+        Some(rel)
+    }
+
+    /// "Show in the story": makes sure the story has this scene (see
+    /// [`State::add_to_project`]), then selects the `ShowScene3d` that shows
+    /// it (one is inserted after the selected line when there is none) and
+    /// plays the preview from there. Returns that node.
+    pub fn use_in_story(&mut self, ctx: &mut EditorContext<'_>) -> Option<orbit_core::NodeId> {
+        use orbit_core::NodeKind;
+        let rel = self.add_to_project(ctx)?;
+        let story = ctx.story()?;
+        let asset = story.assets.assets.iter().find(|a| a.path == rel)?.id;
+        let existing = story
+            .scenes
+            .iter()
+            .flat_map(|s| &s.nodes)
+            .find(|n| matches!(n.kind, NodeKind::ShowScene3d { scene, .. } if scene == asset))
+            .map(|n| n.id);
+        let node = if let Some(node) = existing {
+            node
+        } else {
+            let after_selection = match ctx.selection() {
+                Some(orbit_editor_api::Selection::Node(id)) => story
+                    .locate(id)
+                    .map(|(si, ni)| (story.scenes[si].id, ni + 1)),
+                _ => None,
+            };
+            let at = after_selection.or_else(|| {
+                let current = ctx.state().current_scene;
+                story
+                    .scenes
+                    .iter()
+                    .find(|s| Some(s.id) == current)
+                    .or_else(|| story.scenes.first())
+                    .map(|s| (s.id, 0))
+            });
+            let Some((scene, index)) = at else {
+                ctx.warn(ctx.t("s3d.use_in_story_no_scene"));
+                return None;
+            };
+            let draft = orbit_project::ops::NodeDraft::plain(NodeKind::ShowScene3d {
+                scene: asset,
+                camera: None,
+                transition: None,
+            });
+            let label = ctx.t("s3d.use_in_story");
+            let ids = ctx.ops_or_toast(|p| {
+                orbit_project::ops::insert_drafts(p, scene, index, vec![draft], &label)
+            })?;
+            *ids.first()?
+        };
+        ctx.reveal(orbit_editor_api::Location::Node(node));
+        ctx.play_from(node);
+        Some(node)
+    }
+
+    /// Whether the open scene is a declared asset of the project.
+    pub fn in_project(&mut self, ctx: &EditorContext<'_>) -> bool {
+        matches!(
+            self.in_story(ctx),
+            crate::assets::Scene3dInStory::Declared { .. }
+        )
     }
 
     /// Imports a PNG / JPEG as a texture of the scene (stored in `models/`
@@ -603,6 +726,7 @@ fn viewport_panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, state: &Rc<RefCell<S
         return;
     }
     toolbar(ui, ctx, st);
+    story_copy_banner(ui, ctx, st);
     ui.separator();
     let avail = ui.available_size();
     let (rect, response) = ui.allocate_exact_size(
@@ -918,6 +1042,29 @@ fn empty_state(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
     });
 }
 
+/// The story plays another file holding this scene (an imported copy):
+/// edits made here never reach it. Says so, with the fix one click away.
+fn story_copy_banner(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
+    let crate::assets::Scene3dInStory::Copy { rel, .. } = st.in_story(ctx) else {
+        return;
+    };
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(icons::WARNING).color(danger(ui)));
+        ui.label(
+            RichText::new(ctx.tf("s3d.story_copy", &[("path", &rel)]))
+                .small()
+                .color(danger(ui)),
+        );
+        if ui
+            .button(ctx.t("s3d.story_copy_fix"))
+            .on_hover_text(ctx.tf("s3d.story_copy_fix_tip", &[("path", &rel)]))
+            .clicked()
+        {
+            st.use_story_copy(ctx);
+        }
+    });
+}
+
 fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
     let (dirty, can_undo, can_redo, name) = st.doc.as_ref().map_or(
         (false, false, false, String::new()),
@@ -966,6 +1113,16 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             .clicked()
         {
             st.add_to_project(ctx);
+        }
+        if ui
+            .add_enabled(
+                ctx.has_project(),
+                egui::Button::new(RichText::new(icons::MONITOR_PLAY).size(15.0)).frame(false),
+            )
+            .on_hover_text(ctx.t("s3d.use_in_story_tip"))
+            .clicked()
+        {
+            st.use_in_story(ctx);
         }
         ui.label(RichText::new(format!("{name}{}", if dirty { " •" } else { "" })).small());
         ui.separator();
@@ -2067,5 +2224,97 @@ mod project_tests {
         st.sync_dirty();
         assert!(!link.scene3d_dirty.get());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// Regression: the scene edited at the project root while the story
+    /// shows an older imported copy of it (`assets/3d/scene_scene3d.ron`,
+    /// without models). The 3D editor sees it, "use the story's file" puts
+    /// the edits and the models into that copy and edits it from then on,
+    /// and "show in the story" selects / inserts the `ShowScene3d`.
+    #[test]
+    fn the_story_copy_of_the_open_scene_is_detected_updated_and_shown() {
+        use crate::assets::Scene3dInStory;
+        use crate::core::{CoreOptions, EditorCore};
+        use orbit_core::NodeKind;
+        let dir = std::env::temp_dir().join(format!("orbit_s3d_story_copy_{}", Node3dId::new()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = crate::storage::create_project(
+            &dir,
+            "Copy",
+            &crate::i18n::translator(orbit_editor_api::Lang::En),
+        )
+        .unwrap();
+        let edited = root.join("scene.scene3d.ron");
+        let scene = crate::testing3d::scene_with_model("hero");
+        crate::testing3d::write_scene_with_models(&edited, &scene, "hero");
+        let stale = "assets/3d/scene_scene3d.ron";
+        std::fs::create_dir_all(root.join("assets/3d")).unwrap();
+        std::fs::copy(&edited, root.join(stale)).unwrap();
+
+        let ectx = egui::Context::default();
+        let mut core = EditorCore::new(CoreOptions::with_language(orbit_editor_api::Lang::En), &ectx);
+        core.open_project(&root);
+        let session = core.session.as_mut().unwrap();
+        let mut ctx = EditorContext::new(Some(&mut session.project), &mut core.state, &core.registry);
+        let asset = ctx
+            .ops(|p| orbit_project::ops::add_asset(p, orbit_core::AssetKind::Scene3d, stale))
+            .unwrap();
+
+        let mut st = State::new(SharedLink::default());
+        st.open_path(&edited, &mut ctx);
+        assert_eq!(st.lib.meshes.len(), 1, "the skinned model loads in the 3D editor");
+        // An edit the copy does not have.
+        st.doc.as_mut().unwrap().add_node(model::NewKind::Empty, None);
+        st.doc.as_mut().unwrap().save().unwrap();
+        let nodes = st.doc.as_ref().unwrap().scene().nodes.len();
+        assert_eq!(
+            st.in_story(&ctx),
+            Scene3dInStory::Copy { asset, rel: stale.into() }
+        );
+        assert!(!st.in_project(&ctx));
+
+        assert_eq!(st.use_story_copy(&mut ctx).as_deref(), Some(stale));
+        assert_eq!(st.doc.as_ref().unwrap().path.as_deref(), Some(root.join(stale).as_path()));
+        let saved = orbit_scene::from_ron(&std::fs::read_to_string(root.join(stale)).unwrap()).unwrap();
+        assert_eq!(saved.nodes.len(), nodes, "the edits reached the story's file");
+        assert!(root.join("assets/3d/models/hero.gltf").is_file(), "with its models");
+        assert!(root.join("assets/3d/models/hero.bin").is_file());
+        assert!(st.in_project(&ctx));
+        // "Add to project" on it now saves in place: no second declaration.
+        assert_eq!(st.add_to_project(&mut ctx).as_deref(), Some(stale));
+        let declared = |ctx: &EditorContext<'_>| {
+            ctx.story()
+                .unwrap()
+                .assets
+                .assets
+                .iter()
+                .filter(|a| a.kind == orbit_core::AssetKind::Scene3d)
+                .count()
+        };
+        assert_eq!(declared(&ctx), 1);
+
+        // "Show in the story": inserted after the selected line, selected.
+        let first = ctx.story().unwrap().scenes[0].nodes[0].id;
+        ctx.select(orbit_editor_api::Selection::Node(first));
+        let node = st.use_in_story(&mut ctx).unwrap();
+        let story = ctx.story().unwrap();
+        assert_eq!(story.locate(node), Some((0, 1)));
+        assert!(matches!(
+            story.scenes[0].nodes[1].kind,
+            NodeKind::ShowScene3d { scene, .. } if scene == asset
+        ));
+        assert_eq!(ctx.selection(), Some(orbit_editor_api::Selection::Node(node)));
+        // Again: the existing command is reused.
+        assert_eq!(st.use_in_story(&mut ctx), Some(node));
+        let shows = ctx
+            .story()
+            .unwrap()
+            .scenes
+            .iter()
+            .flat_map(|s| &s.nodes)
+            .filter(|n| matches!(n.kind, NodeKind::ShowScene3d { .. }))
+            .count();
+        assert_eq!(shows, 1);
+        let _ =std::fs::remove_dir_all(&dir);
     }
 }

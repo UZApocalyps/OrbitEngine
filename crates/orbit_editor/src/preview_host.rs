@@ -1895,4 +1895,172 @@ mod tests {
         let budget = Duration::from_millis(if cfg!(debug_assertions) { 150 } else { 50 });
         assert!(reload <= budget, "the hot reload took {:.1} ms", ms(reload));
     }
+
+    /// The scene view's picture of the stage at `node` (what the preview
+    /// shows at that line), read back as 1920×1080 RGBA.
+    fn stage_pixels(preview: &mut PreviewHost, core: &mut EditorCore, node: orbit_core::NodeId) -> Vec<u8> {
+        preview.load(core, Instant::now());
+        let story = Arc::new(core.story().unwrap().clone());
+        let (source, _) =
+            scene_view::seek_before(&story, node, orbit_vm::SeekLimits::default()).unwrap();
+        let at = scene_view::scene_at(&story, &source, node).unwrap();
+        let stage = scene_view::stage_state(&story, &at.after);
+        assert!(stage.scene3d.is_some(), "the 3D scene is on the stage at that line");
+        let rt = &mut preview.runtime;
+        for _ in 0..2000 {
+            rt.request_stage_assets(&story, &stage);
+            rt.tick(Duration::from_millis(5));
+            if !rt.is_loading() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let target = rt.renderer_mut().create_canvas_target("test stage").unwrap();
+        rt.render_stage_to_target_at(&story, &stage, target, None).unwrap();
+        let r = rt.renderer();
+        let mut readback = r.start_readback(target).unwrap();
+        for _ in 0..10_000 {
+            if let ReadbackStatus::Ready { rgba, .. } = r.poll_readback(&mut readback) {
+                return rgba;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        panic!("read-back timed out");
+    }
+
+    fn px(rgba: &[u8], x: usize, y: usize) -> [u8; 4] {
+        let i = (y * 1920 + x) * 4;
+        [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+    }
+
+    /// Regression ("the scene still does not show my character"): a 3D
+    /// scene edited at the project root (`scene.scene3d.ron` + `models/`)
+    /// was imported into the library as `assets/3d/scene_scene3d.ron`, the
+    /// scene file alone: the story showed that copy, whose `models/` folder
+    /// did not exist, so the preview drew the scene's background without
+    /// the (skinned) character. The import now keeps the `.scene3d.ron`
+    /// name and brings the models; the character is drawn at its place.
+    #[test]
+    fn a_story_showing_a_3d_scene_draws_its_skinned_model_in_the_preview() {
+        use orbit_core::NodeKind;
+        use orbit_project::ops;
+        let Ok(mut gfx) = pollster::block_on(Gfx::headless((64, 64))) else {
+            eprintln!("no GPU adapter: skipping the 3D preview test");
+            return;
+        };
+        gfx.enable_gamma_view();
+        let dir = std::env::temp_dir().join(format!("orbit-preview-s3d-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = crate::storage::create_project(
+            &dir,
+            "Hero",
+            &crate::i18n::translator(orbit_editor_api::Lang::En),
+        )
+        .unwrap();
+        // Edited in the 3D editor, saved at the project root.
+        let edited = root.join("scene.scene3d.ron");
+        let scene = crate::testing3d::scene_with_model("hero");
+        crate::testing3d::write_scene_with_models(&edited, &scene, "hero");
+        // What the library import used to make of it: the file alone.
+        std::fs::create_dir_all(root.join("assets/3d")).unwrap();
+        std::fs::copy(&edited, root.join("assets/3d/scene_scene3d.ron")).unwrap();
+
+        let ctx = egui::Context::default();
+        let mut core = EditorCore::new(
+            crate::core::CoreOptions::with_language(orbit_editor_api::Lang::En),
+            &ctx,
+        );
+        core.open_project(&root);
+        let with_ctx = |core: &mut EditorCore, f: &mut dyn FnMut(&mut orbit_editor_api::EditorContext<'_>)| {
+            let session = core.session.as_mut().unwrap();
+            let mut ectx = orbit_editor_api::EditorContext::new(
+                Some(&mut session.project),
+                &mut core.state,
+                &core.registry,
+            );
+            f(&mut ectx);
+        };
+        let show_then_say = |core: &mut EditorCore, asset: orbit_core::AssetId| -> orbit_core::NodeId {
+            let mut ids = Vec::new();
+            with_ctx(core, &mut |c| {
+                let scene = c.story().unwrap().scenes[0].id;
+                ids = c
+                    .ops(|p| {
+                        ops::insert_drafts(
+                            p,
+                            scene,
+                            0,
+                            vec![
+                                ops::NodeDraft::plain(NodeKind::ShowScene3d {
+                                    scene: asset,
+                                    camera: None,
+                                    transition: None,
+                                }),
+                                ops::NodeDraft::say(None, "Mira! I saved you a seat."),
+                            ],
+                            "test",
+                        )
+                    })
+                    .unwrap();
+            });
+            ids[1]
+        };
+        let mut stale = None;
+        with_ctx(&mut core, &mut |c| {
+            stale = Some(
+                c.ops(|p| {
+                    ops::add_asset(p, orbit_core::AssetKind::Scene3d, "assets/3d/scene_scene3d.ron")
+                })
+                .unwrap(),
+            );
+        });
+        let line = show_then_say(&mut core, stale.unwrap());
+        let mut preview = PreviewHost::new(gfx).unwrap();
+
+        // The stale copy: background only, and the Problems panel says why.
+        let out = stage_pixels(&mut preview, &mut core, line);
+        let (centre, corner) = (px(&out, 960, 540), px(&out, 40, 40));
+        assert!(
+            centre[2] > centre[0] && corner[2] > corner[0],
+            "no model in the copy: blue background only ({centre:?}, {corner:?})"
+        );
+        let issues = crate::assets::lint_scene3d(&root, core.story().unwrap());
+        assert!(
+            issues.iter().any(|i| matches!(
+                i,
+                crate::assets::AssetIssue::Scene3dModelMissing { model, folder, .. }
+                    if model == "hero" && folder == "assets/3d/models/"
+            )),
+            "{issues:?}"
+        );
+
+        // Imported as it should: name kept, models brought along.
+        let report = {
+            let session = core.session.as_mut().unwrap();
+            crate::assets::import_files(
+                &mut session.project,
+                &root,
+                &core.registry.project,
+                std::slice::from_ref(&edited),
+                &crate::i18n::translator(orbit_editor_api::Lang::En),
+            )
+        };
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        let imported = &report.imported[0];
+        assert_eq!(imported.path, "assets/3d/scene.scene3d.ron");
+        assert!(root.join("assets/3d/models/hero.gltf").is_file());
+        assert!(root.join("assets/3d/models/hero.bin").is_file());
+        let line = show_then_say(&mut core, imported.id);
+        core.asset_epoch += 1;
+        let out = stage_pixels(&mut preview, &mut core, line);
+        let (centre, corner) = (px(&out, 960, 540), px(&out, 40, 40));
+        assert_ne!(centre, corner, "the character is drawn over the background");
+        assert!(
+            centre[0] > 120 && centre[0] > centre[1] + 60 && centre[0] > centre[2] + 60,
+            "red model at the centre: {centre:?}"
+        );
+        drop(preview);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

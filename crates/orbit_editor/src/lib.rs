@@ -22,6 +22,8 @@ pub mod logging;
 pub mod palette;
 pub mod perf;
 pub mod preview_host;
+#[cfg(test)]
+pub(crate) mod testing3d;
 pub mod rig_host;
 pub mod scene3d_host;
 pub mod search;
