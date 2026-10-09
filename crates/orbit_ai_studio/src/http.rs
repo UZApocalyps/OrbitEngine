@@ -78,13 +78,22 @@ impl<'a> Request<'a> {
         } else {
             format!("{authority}:80")
         };
-        let addr = host_port
-            .to_socket_addrs()
-            .map_err(|e| format!("{authority}: {e}"))?
-            .next()
-            .ok_or_else(|| format!("{authority}: no address"))?;
-        let mut stream = TcpStream::connect_timeout(&addr, self.timeout.min(Duration::from_secs(15)))
-            .map_err(|e| format!("cannot connect to {authority}: {e}"))?;
+        // `localhost` resolves to ::1 first on Windows while Ollama / ComfyUI
+        // listen on 127.0.0.1 only: try every address, IPv4 first.
+        let mut addrs: Vec<_> = host_port.to_socket_addrs().map_err(|e| format!("{authority}: {e}"))?.collect();
+        addrs.sort_by_key(|a| !a.is_ipv4());
+        let mut last = format!("{authority}: no address");
+        let mut stream = None;
+        for addr in addrs {
+            match TcpStream::connect_timeout(&addr, self.timeout.min(Duration::from_secs(15))) {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(e) => last = format!("cannot connect to {authority}: {e}"),
+            }
+        }
+        let mut stream = stream.ok_or(last)?;
         stream.set_read_timeout(Some(self.timeout)).ok();
         stream.set_write_timeout(Some(self.timeout)).ok();
         let mut head = format!(
