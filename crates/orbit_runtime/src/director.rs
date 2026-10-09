@@ -28,6 +28,8 @@ const MUSIC_SWAP_FADE: f32 = 0.5;
 pub struct Line {
     /// Speaker name and sRGB color; `None` for the narrator.
     pub speaker: Option<(String, [u8; 3])>,
+    /// The speaking character (comic bubbles find its sprite with it).
+    pub speaker_id: Option<CharacterId>,
     pub text: String,
     /// The line was already shown before (this or another playthrough, or a
     /// rollback): candidates for skipping.
@@ -530,6 +532,7 @@ impl Director {
                 string_id,
             } => Flow::Say(Line {
                 speaker: speaker.and_then(|id| self.speaker(id)),
+                speaker_id: *speaker,
                 text: self.text(*string_id),
                 already_read,
                 voice: self.loc.voice(*string_id).or_else(|| self.vm.say_voice(*node)),

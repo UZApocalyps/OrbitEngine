@@ -371,6 +371,7 @@ fn save_then_load_restores_the_screen() {
         b.game().unwrap().director.flow(),
         &Flow::Say(crate::director::Line {
             speaker: None,
+            speaker_id: None,
             text,
             already_read: true,
             voice: None

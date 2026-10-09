@@ -76,7 +76,12 @@ impl Default for PlaySettings {
 }
 
 fn textbox_theme(base: &TextBoxTheme, settings: &PlaySettings) -> TextBoxTheme {
+    let mut bubble = base.bubble.clone();
+    if settings.reduced_motion {
+        bubble.pop = 0.0;
+    }
     TextBoxTheme {
+        bubble,
         chars_per_second: if settings.text_speed > 0.0 {
             settings.text_speed
         } else {
@@ -360,6 +365,8 @@ impl Game {
                         ),
                     ));
                     self.choice_labels.clear();
+                    self.dialogue
+                        .set_speaker_key(line.speaker_id.map(|id| id.to_string()));
                     self.dialogue.set_line(
                         line.speaker.as_ref().map(|(n, c)| (n.as_str(), *c)),
                         &line.text,

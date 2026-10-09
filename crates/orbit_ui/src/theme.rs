@@ -2,6 +2,7 @@
 //! only GPU-side helper and re-exports the data types under their old path.
 
 pub use orbit_ui_data::{
+    BubbleCharacter, BubbleKind, BubbleTheme, DialogueMode, NarratorStyle, OffscreenStyle,
     Border, ButtonTheme, ChoiceTheme, ControlTheme, DialogueLayout, Fill, FontRef, ImageFit, ListTheme, NamePlate,
     PanelTheme, QuickMenuTheme, ScreenTheme, Shadow, StateColors, StateFills, Style, StyleSounds, TextAlignment,
     TextBoxTheme, Theme, UiSounds, WidgetState, WidgetTheme, resolve_style,

@@ -336,6 +336,186 @@ pub struct TextBoxTheme {
     /// An image drawn as the "continue" indicator instead of the diamond.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indicator_image: Option<String>,
+    /// How lines are shown: the classic box (default) or comic speech
+    /// bubbles next to the speaking character. Absent from the file when
+    /// `Box`, so older themes and players are unchanged.
+    #[serde(skip_serializing_if = "DialogueMode::is_box")]
+    pub mode: DialogueMode,
+    /// Look and placement of the speech bubbles (used in `Bubbles` mode).
+    #[serde(skip_serializing_if = "BubbleTheme::is_default")]
+    pub bubble: BubbleTheme,
+}
+
+/// How the dialogue lines are displayed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DialogueMode {
+    /// One box at the bottom of the screen for every line.
+    #[default]
+    Box,
+    /// Character lines in comic speech bubbles next to the speaker; the
+    /// narrator keeps the box (or a caption, see [`BubbleTheme::narrator`]).
+    Bubbles,
+}
+
+impl DialogueMode {
+    pub fn is_box(&self) -> bool {
+        *self == Self::Box
+    }
+}
+
+/// The shape of one bubble, picked per line with a `{bubble=...}` tag
+/// (`speech` when there is none).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BubbleKind {
+    #[default]
+    Speech,
+    /// A cloud with small circles leading to the character.
+    Thought,
+    /// A spiky burst.
+    Shout,
+}
+
+impl BubbleKind {
+    /// The kind a line asks for with a `{bubble=speech|thought|shout}` tag
+    /// (the first valid one wins). The tag itself is invisible: `orbit_text`
+    /// drops it.
+    pub fn of_line(markup: &str) -> Self {
+        let mut rest = markup;
+        while let Some(at) = rest.find("{bubble=") {
+            let tail = &rest[at + "{bubble=".len()..];
+            let Some(end) = tail.find('}') else { break };
+            if let Some(kind) = Self::from_name(tail[..end].trim()) {
+                return kind;
+            }
+            rest = &tail[end..];
+        }
+        Self::Speech
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "speech" => Some(Self::Speech),
+            "thought" => Some(Self::Thought),
+            "shout" => Some(Self::Shout),
+            _ => None,
+        }
+    }
+}
+
+/// How the narrator (lines without a speaker) is shown in `Bubbles` mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NarratorStyle {
+    /// The classic dialogue box, unchanged.
+    #[default]
+    Box,
+    /// A rectangular comic caption at the top of the screen.
+    Caption,
+}
+
+/// What a bubble does when its speaker is not on screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OffscreenStyle {
+    /// A bubble without a tail at the bottom of the screen.
+    #[default]
+    Bubble,
+    /// The classic dialogue box.
+    Box,
+}
+
+/// Per-character overrides of the bubble look (keyed by character id).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BubbleCharacter {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fill: Option<[u8; 4]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border: Option<[u8; 4]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<[u8; 4]>,
+    /// Moves the head point (top-center of the sprite) the bubble points
+    /// at, in canvas pixels (`y` > 0: lower).
+    pub head_offset: [f32; 2],
+}
+
+impl BubbleCharacter {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Look and placement of the comic speech bubbles.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BubbleTheme {
+    pub fill: [u8; 4],
+    pub border: [u8; 4],
+    pub border_width: f32,
+    pub corner_radius: f32,
+    /// Inner margin `[x, y]` between the outline and the text.
+    pub padding: [f32; 2],
+    /// Widest bubble (outline included); the text wraps inside.
+    pub max_width: f32,
+    pub min_width: f32,
+    pub text_size: f32,
+    pub text_color: [u8; 4],
+    /// Font of the text (a name of `Theme::fonts` or a family).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// Shows the speaker name as a small label at the top of the bubble.
+    pub show_name: bool,
+    pub name_size: f32,
+    /// Length and base width of the tail.
+    pub tail_length: f32,
+    pub tail_width: f32,
+    /// Space left between the tail tip and the head.
+    pub gap: f32,
+    /// Distance kept from the edges of the screen.
+    pub margin: f32,
+    /// Duration of the pop-in animation in seconds (0: none).
+    pub pop: f32,
+    /// The outline takes the color of the speaking character.
+    pub speaker_border: bool,
+    pub narrator: NarratorStyle,
+    pub caption_fill: [u8; 4],
+    pub offscreen: OffscreenStyle,
+    /// Overrides by character id.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub characters: BTreeMap<String, BubbleCharacter>,
+}
+
+impl Default for BubbleTheme {
+    fn default() -> Self {
+        Self {
+            fill: [255, 255, 255, 245],
+            border: [20, 20, 28, 255],
+            border_width: 4.0,
+            corner_radius: 30.0,
+            padding: [30.0, 20.0],
+            max_width: 760.0,
+            min_width: 140.0,
+            text_size: 36.0,
+            text_color: [20, 20, 28, 255],
+            font: None,
+            show_name: true,
+            name_size: 26.0,
+            tail_length: 48.0,
+            tail_width: 38.0,
+            gap: 14.0,
+            margin: 24.0,
+            pop: 0.18,
+            speaker_border: false,
+            narrator: NarratorStyle::Box,
+            caption_fill: [255, 243, 196, 245],
+            offscreen: OffscreenStyle::Bubble,
+            characters: BTreeMap::new(),
+        }
+    }
+}
+
+impl BubbleTheme {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 impl TextBoxTheme {
@@ -404,6 +584,8 @@ impl Default for TextBoxTheme {
             name_plate: None,
             speaker_color: true,
             indicator_image: None,
+            mode: DialogueMode::Box,
+            bubble: BubbleTheme::default(),
         }
     }
 }
@@ -1256,6 +1438,38 @@ pub fn resolve_style(styles: &BTreeMap<String, Style>, name: &str) -> Option<Sty
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dialogue_mode_defaults_to_the_box_and_is_not_written() {
+        let old = Theme::from_ron("(textbox: (text_size: 30.0))").unwrap();
+        assert_eq!(old.textbox.mode, DialogueMode::Box);
+        assert!(old.textbox.bubble.is_default());
+        let ron = Theme::default().to_ron().unwrap();
+        assert!(!ron.contains("mode") && !ron.contains("bubble"), "{ron}");
+    }
+
+    #[test]
+    fn bubble_settings_round_trip() {
+        let mut theme = Theme::default();
+        theme.textbox.mode = DialogueMode::Bubbles;
+        theme.textbox.bubble.narrator = NarratorStyle::Caption;
+        theme.textbox.bubble.offscreen = OffscreenStyle::Box;
+        theme.textbox.bubble.corner_radius = 12.0;
+        theme.textbox.bubble.characters.insert(
+            "01HZZZZZZZZZZZZZZZZZZZZZZZ".into(),
+            BubbleCharacter {
+                fill: Some([255, 200, 200, 255]),
+                head_offset: [10.0, 30.0],
+                ..Default::default()
+            },
+        );
+        let back = Theme::from_ron(&theme.to_ron().unwrap()).unwrap();
+        assert_eq!(back, theme);
+        // A partial bubble section keeps the other defaults.
+        let partial = Theme::from_ron("(textbox: (mode: Bubbles, bubble: (tail_length: 10.0)))").unwrap();
+        assert_eq!(partial.textbox.bubble.tail_length, 10.0);
+        assert_eq!(partial.textbox.bubble.fill, BubbleTheme::default().fill);
+    }
 
     #[test]
     fn partial_widget_theme_keeps_the_other_defaults() {

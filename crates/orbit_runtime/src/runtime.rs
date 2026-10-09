@@ -1582,10 +1582,25 @@ impl Runtime {
         match &mut self.phase {
             Phase::Running(shell) => {
                 let mut transitioning = false;
+                let mut speaker_bounds = None;
                 match shell.game() {
                     Some(game) => {
                         let mut scene = Scene::new();
                         let fx = game.director.stage_fx();
+                        if let crate::director::Flow::Say(line) = game.director.flow()
+                            && let Some(id) = line.speaker_id
+                            && game.dialogue.theme().mode == orbit_ui::DialogueMode::Bubbles
+                        {
+                            speaker_bounds = character_bounds(
+                                renderer,
+                                &self.store,
+                                &game.story,
+                                game.director.stage(),
+                                Some(&self.anim_clock),
+                                &fx,
+                                id,
+                            );
+                        }
                         self.anim_clock
                             .set_reduced_motion(game.director.reduced_motion());
                         match game.director.transition() {
@@ -1680,6 +1695,9 @@ impl Runtime {
                         scene: &mut ui_scene,
                         white: *white,
                     };
+                    if let Some(game) = shell.game_mut() {
+                        game.dialogue.set_speaker_bounds(speaker_bounds);
+                    }
                     {
                         orbit_profile::scope!("ui draw");
                         shell.draw_ui(&mut ctx, !transitioning);
@@ -2144,6 +2162,40 @@ fn character_frame(
         size,
         reference: size,
     })
+}
+
+/// `[left, top, right, bottom]` of `id` as [`stage_scene`] draws it (its
+/// picture, or the poster of a rigged expression), animations and camera
+/// included; `None` when it is not on the stage or not loaded. Comic
+/// bubbles point at it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn character_bounds(
+    renderer: &Renderer2d,
+    store: &AssetStore,
+    story: &Story,
+    stage: &StageState,
+    anims: Option<&AnimClock>,
+    fx: &StageFx,
+    id: orbit_core::CharacterId,
+) -> Option<[f32; 4]> {
+    let c = stage.characters.iter().find(|c| c.character == id)?;
+    let reference = match character_frame(renderer, store, story, c, anims) {
+        Some(frame) => frame.reference,
+        None => {
+            let expression = story.character(id)?.expression(&c.expression)?;
+            let texture = story
+                .assets
+                .get(expression.image)
+                .and_then(|a| store.texture(&a.path))?;
+            renderer.texture_size(texture)?
+        }
+    };
+    let placement = character_placement(c, reference);
+    let animated = animate_placement(&placement, id, fx);
+    let w = placement.size[0] * animated.scale[0].abs();
+    let h = placement.size[1] * animated.scale[1].abs();
+    let [x, y] = animated.anchor;
+    Some([x - w * 0.5, y - h, x + w * 0.5, y])
 }
 
 /// Fills `scene` with the stage: opaque black, background (covering the

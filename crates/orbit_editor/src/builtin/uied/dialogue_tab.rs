@@ -7,7 +7,8 @@
 use egui::{ComboBox, DragValue, RichText, ScrollArea, Ui};
 use orbit_editor_api::{EditorContext, EditorRequest, Translator, icons};
 use orbit_ui::{
-    Anchor, ChoiceTheme, Fill, NamePlate, QuickMenuTheme, StateColors, Style, TextBoxTheme, UiBundle,
+    Anchor, BubbleTheme, ChoiceTheme, DialogueMode, Fill, NamePlate, NarratorStyle, OffscreenStyle, QuickMenuTheme,
+    StateColors, Style, TextBoxTheme, UiBundle,
 };
 
 use super::props::{color, num, row};
@@ -174,7 +175,20 @@ pub(super) fn dialogue_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut St
         return;
     };
     let styles: Vec<String> = theme.styles.keys().cloned().collect();
+    let fonts: Vec<String> = theme.fonts.keys().cloned().collect();
     let images = super::images_of(ctx);
+    let characters: Vec<(String, String, [u8; 3])> = ctx
+        .story()
+        .map(|s| {
+            s.characters
+                .iter()
+                .map(|c| {
+                    let name = s.strings.get(c.name_id).unwrap_or("?").to_owned();
+                    (c.id.to_string(), name, [c.color.r, c.color.g, c.color.b])
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     // ---- sample shown by the preview
     card(ui, |ui| {
@@ -224,6 +238,23 @@ pub(super) fn dialogue_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut St
                 let (left, right) = cols.split_at_mut(1);
                 // ---------------- textbox
                 let ui = &mut left[0];
+                section_title(ui, &tr.t("uied.dlg_mode_title"));
+                row(ui, &tr.t("uied.dlg_mode"), |ui| {
+                    let label = |m: DialogueMode| match m {
+                        DialogueMode::Box => tr.t("uied.dlg_mode_box"),
+                        DialogueMode::Bubbles => tr.t("uied.dlg_mode_bubbles"),
+                    };
+                    ComboBox::from_id_salt("dlg_mode")
+                        .selected_text(label(t.mode))
+                        .show_ui(ui, |ui| {
+                            for m in [DialogueMode::Box, DialogueMode::Bubbles] {
+                                ui.selectable_value(&mut t.mode, m, label(m));
+                            }
+                        });
+                });
+                if t.mode == DialogueMode::Bubbles {
+                    ui.label(RichText::new(tr.t("uied.dlg_mode_tip")).small().italics().color(weak(ui)));
+                }
                 section_title(ui, &tr.t("uied.dlg_textbox"));
                 anchor_editor(ui, &tr, "tb", &mut t.anchor, "uied.dlg_fixed_pos");
                 if t.anchor.is_none() {
@@ -354,6 +385,10 @@ pub(super) fn dialogue_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut St
                     row(ui, &tr.t("uied.dlg_spacing"), |ui| num(ui, &mut gap, 0.5));
                     q.gap = (gap != 8.0).then_some(gap);
                 }
+
+                if t.mode == DialogueMode::Bubbles {
+                    bubble_editor(ui, &tr, &mut t.bubble, &fonts, &characters);
+                }
             });
         });
 
@@ -395,6 +430,134 @@ pub(super) fn dialogue_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut St
             doc.edit(edit);
         } else {
             doc.edit_merged("dialogue", edit);
+        }
+    }
+}
+
+/// The "Speech bubbles" section (`Bubbles` mode): look, placement,
+/// narrator and off-screen fallbacks, per-character overrides.
+fn bubble_editor(
+    ui: &mut Ui,
+    tr: &Translator,
+    b: &mut BubbleTheme,
+    fonts: &[String],
+    characters: &[(String, String, [u8; 3])],
+) {
+    section_title(ui, &tr.t("uied.bub_title"));
+    row(ui, &tr.t("uied.bub_colors"), |ui| {
+        color(ui, &mut b.fill);
+        color(ui, &mut b.border);
+    });
+    row(ui, &tr.t("uied.bub_border_width"), |ui| {
+        ui.add(DragValue::new(&mut b.border_width).speed(0.2).range(0.0..=20.0));
+    });
+    row(ui, &tr.t("uied.bub_radius"), |ui| {
+        ui.add(DragValue::new(&mut b.corner_radius).speed(0.5).range(0.0..=200.0));
+    });
+    row(ui, &tr.t("uied.padding"), |ui| {
+        num(ui, &mut b.padding[0], 0.5);
+        num(ui, &mut b.padding[1], 0.5);
+    });
+    row(ui, &tr.t("uied.bub_width"), |ui| {
+        ui.add(DragValue::new(&mut b.min_width).speed(1.0).range(0.0..=1900.0));
+        ui.add(DragValue::new(&mut b.max_width).speed(1.0).range(100.0..=1900.0));
+    });
+    row(ui, &tr.t("uied.font_size"), |ui| num(ui, &mut b.text_size, 0.5));
+    row(ui, &tr.t("uied.dlg_text_color"), |ui| color(ui, &mut b.text_color));
+    row(ui, &tr.t("uied.bub_font"), |ui| {
+        let mut name = b.font.clone().unwrap_or_default();
+        let text = if name.is_empty() { tr.t("uied.none") } else { name.clone() };
+        ComboBox::from_id_salt("bub_font").selected_text(text).show_ui(ui, |ui| {
+            ui.selectable_value(&mut name, String::new(), tr.t("uied.none"));
+            for f in fonts {
+                ui.selectable_value(&mut name, f.clone(), f);
+            }
+        });
+        b.font = (!name.is_empty()).then_some(name);
+    });
+    row(ui, "", |ui| {
+        ui.checkbox(&mut b.show_name, tr.t("uied.bub_show_name"));
+    });
+    if b.show_name {
+        row(ui, &tr.t("uied.bub_name_size"), |ui| num(ui, &mut b.name_size, 0.5));
+    }
+    row(ui, &tr.t("uied.bub_tail"), |ui| {
+        ui.add(DragValue::new(&mut b.tail_length).speed(0.5).range(0.0..=400.0));
+        ui.add(DragValue::new(&mut b.tail_width).speed(0.5).range(2.0..=200.0));
+    });
+    row(ui, &tr.t("uied.bub_gap"), |ui| {
+        ui.add(DragValue::new(&mut b.gap).speed(0.5).range(0.0..=200.0));
+    });
+    row(ui, &tr.t("uied.bub_margin"), |ui| {
+        ui.add(DragValue::new(&mut b.margin).speed(0.5).range(0.0..=300.0));
+    });
+    row(ui, &tr.t("uied.bub_pop"), |ui| {
+        ui.add(DragValue::new(&mut b.pop).speed(0.01).range(0.0..=1.0).suffix(" s"));
+    });
+    row(ui, "", |ui| {
+        ui.checkbox(&mut b.speaker_border, tr.t("uied.bub_speaker_border"));
+    });
+    row(ui, &tr.t("uied.bub_narrator"), |ui| {
+        let label = |n: NarratorStyle| match n {
+            NarratorStyle::Box => tr.t("uied.bub_narrator_box"),
+            NarratorStyle::Caption => tr.t("uied.bub_narrator_caption"),
+        };
+        ComboBox::from_id_salt("bub_narrator").selected_text(label(b.narrator)).show_ui(ui, |ui| {
+            for n in [NarratorStyle::Box, NarratorStyle::Caption] {
+                ui.selectable_value(&mut b.narrator, n, label(n));
+            }
+        });
+    });
+    if b.narrator == NarratorStyle::Caption {
+        row(ui, &tr.t("uied.bub_caption_fill"), |ui| color(ui, &mut b.caption_fill));
+    }
+    row(ui, &tr.t("uied.bub_offscreen"), |ui| {
+        let label = |o: OffscreenStyle| match o {
+            OffscreenStyle::Bubble => tr.t("uied.bub_offscreen_bubble"),
+            OffscreenStyle::Box => tr.t("uied.bub_offscreen_box"),
+        };
+        ComboBox::from_id_salt("bub_offscreen").selected_text(label(b.offscreen)).show_ui(ui, |ui| {
+            for o in [OffscreenStyle::Bubble, OffscreenStyle::Box] {
+                ui.selectable_value(&mut b.offscreen, o, label(o));
+            }
+        });
+    });
+
+    if characters.is_empty() {
+        return;
+    }
+    section_title(ui, &tr.t("uied.bub_characters"));
+    ui.label(RichText::new(tr.t("uied.bub_characters_tip")).small().italics().color(weak(ui)));
+    for (id, name, [r, g, bl]) in characters {
+        let mut entry = b.characters.get(id).cloned().unwrap_or_default();
+        egui::CollapsingHeader::new(RichText::new(name).color(egui::Color32::from_rgb(*r, *g, *bl)))
+            .id_salt(("bub_char", id))
+            .show(ui, |ui| {
+                let opt = |ui: &mut Ui, label: &str, slot: &mut Option<[u8; 4]>, seed: [u8; 4]| {
+                    row(ui, label, |ui| {
+                        let mut on = slot.is_some();
+                        if ui.checkbox(&mut on, "").changed() {
+                            *slot = on.then_some(seed);
+                        }
+                        if let Some(c) = slot {
+                            color(ui, c);
+                        }
+                    });
+                };
+                // A pale version of the character's color reads well behind text.
+                let pale = |c: u8| (c as u16 + 3 * 255).div_ceil(4) as u8;
+                opt(ui, &tr.t("uied.bub_fill"), &mut entry.fill, [pale(*r), pale(*g), pale(*bl), 250]);
+                opt(ui, &tr.t("uied.bub_border"), &mut entry.border, [*r, *g, *bl, 255]);
+                opt(ui, &tr.t("uied.dlg_text_color"), &mut entry.text_color, b.text_color);
+                row(ui, &tr.t("uied.bub_head_offset"), |ui| {
+                    num(ui, &mut entry.head_offset[0], 1.0);
+                    num(ui, &mut entry.head_offset[1], 1.0);
+                });
+            });
+        if entry.is_default() {
+            b.characters.remove(id);
+        } else {
+            b.characters.insert(id.clone(), entry);
         }
     }
 }
