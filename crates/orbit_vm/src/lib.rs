@@ -21,6 +21,8 @@ mod vm;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod hotspot_tests;
 
 #[cfg(test)]
 mod anim_tests;
@@ -41,6 +43,7 @@ mod replay_tests;
 mod achievement_tests;
 
 pub use error::VmError;
+pub use vm::HotspotChoice;
 pub use event::{ChoiceView, PresentationEvent, StepResult};
 pub use history::{
     BacklogEntry, BacklogItem, Checkpoint, DEFAULT_BACKLOG_CAPACITY, DEFAULT_HISTORY_CAPACITY,

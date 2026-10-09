@@ -211,10 +211,11 @@ impl Vm {
             });
         };
         let node = *node;
-        let NodeKind::Choice { options } = &self.node(node)?.kind else {
-            return Err(VmError::UnknownNode(node));
+        let target = match &self.node(node)?.kind {
+            NodeKind::Choice { options } => options[option].target,
+            NodeKind::Hotspots(map) => map.hotspots[option].target,
+            _ => return Err(VmError::UnknownNode(node)),
         };
-        let target = options[option].target;
         if !self.index.contains_key(&target) {
             return Err(VmError::UnknownNode(target));
         }
@@ -304,21 +305,18 @@ impl Vm {
     }
 
     fn choice_result(&self, node: NodeId, visible: &[usize]) -> StepResult {
-        let Ok(orbit_core::Node {
-            kind: NodeKind::Choice { options },
-            ..
-        }) = self.node(node)
-        else {
-            return StepResult::Error(VmError::UnknownNode(node));
+        let text = |i: usize| match self.node(node).map(|n| &n.kind) {
+            Ok(NodeKind::Choice { options }) => options.get(i).map(|o| o.text_id),
+            Ok(NodeKind::Hotspots(map)) => map.hotspots.get(i).map(|h| h.text_id),
+            _ => None,
         };
-        StepResult::Choice {
-            node,
-            options: visible
-                .iter()
-                .map(|&i| ChoiceView {
-                    string_id: options[i].text_id,
-                })
-                .collect(),
+        let options: Option<Vec<ChoiceView>> = visible
+            .iter()
+            .map(|&i| text(i).map(|string_id| ChoiceView { string_id }))
+            .collect();
+        match options {
+            Some(options) => StepResult::Choice { node, options },
+            None => StepResult::Error(VmError::UnknownNode(node)),
         }
     }
 
@@ -369,13 +367,39 @@ impl Vm {
                         already_read,
                     }));
                 }
-                NodeKind::Choice { options } => {
-                    let mut visible = Vec::with_capacity(options.len());
-                    for (i, option) in options.iter().enumerate() {
-                        let shown = match &option.condition {
-                            Some(cond) => self.eval_bool(pc, cond)?,
-                            None => true,
-                        };
+                NodeKind::Choice { .. } | NodeKind::Hotspots(_) => {
+                    let conditions: Vec<[Option<&orbit_core::Expr>; 2]> = match &node.kind {
+                        NodeKind::Choice { options } => {
+                            options.iter().map(|o| [o.condition.as_ref(), None]).collect()
+                        }
+                        NodeKind::Hotspots(map) => {
+                            // A hotspot map may bring its own background
+                            // (as a `Background` node without transition).
+                            if let Some(asset) = map.background
+                                && self.state.scene.background != Some(asset)
+                            {
+                                self.state.scene.background = Some(asset);
+                                self.record_image(asset);
+                                self.state.scene.bg_layers.clear();
+                                self.state.scene.scene3d = None;
+                                self.events.push(PresentationEvent::Background {
+                                    asset,
+                                    transition: None,
+                                });
+                            }
+                            map.hotspots
+                                .iter()
+                                .map(|h| [h.condition.as_ref(), h.enabled.as_ref()])
+                                .collect()
+                        }
+                        _ => Vec::new(),
+                    };
+                    let mut visible = Vec::with_capacity(conditions.len());
+                    for (i, conds) in conditions.iter().enumerate() {
+                        let mut shown = true;
+                        for cond in conds.iter().flatten() {
+                            shown = shown && self.eval_bool(pc, cond)?;
+                        }
                         if shown {
                             visible.push(i);
                         }
@@ -979,6 +1003,50 @@ impl Vm {
         &self.story
     }
 
+    /// The hotspot map the VM waits on (a `Hotspots` node presented as a
+    /// choice), with which zones are clickable and which are shown dimmed.
+    /// `None` when the VM does not wait on a hotspot map.
+    pub fn hotspot_choice(&self) -> Option<HotspotChoice> {
+        let Pending::Choice { node, visible } = &self.state.pending else {
+            return None;
+        };
+        let NodeKind::Hotspots(map) = &self.node(*node).ok()?.kind else {
+            return None;
+        };
+        // Visible but disabled: the condition holds and `enabled` does not.
+        // Read without side effects (no warning; a failing condition hides).
+        let disabled = map
+            .hotspots
+            .iter()
+            .enumerate()
+            .filter(|(i, h)| {
+                !visible.contains(i)
+                    && h.enabled.is_some()
+                    && h.condition.as_ref().is_none_or(|c| self.peek_bool(c))
+            })
+            .map(|(i, _)| i)
+            .collect();
+        Some(HotspotChoice {
+            node: *node,
+            map: map.clone(),
+            active: visible.clone(),
+            disabled,
+        })
+    }
+
+    /// Evaluates a condition without side effects (`false` on any error).
+    fn peek_bool(&self, expr: &orbit_core::Expr) -> bool {
+        let get = |name: &str| self.variable(name).cloned();
+        let value = match expr {
+            orbit_core::Expr::Rhai(code) => match &self.scripts {
+                Some(host) => host.eval(code, &get).ok(),
+                None => None,
+            },
+            _ => expr.eval(&get).ok(),
+        };
+        matches!(value, Some(Value::Bool(true)))
+    }
+
     /// Source-language text of a string id (`None` if the id is unknown).
     pub fn text(&self, id: StringId) -> Option<&str> {
         self.story.text(id)
@@ -1381,6 +1449,9 @@ impl Vm {
             let ok = matches!(
                 self.node(*node).map(|n| &n.kind),
                 Ok(NodeKind::Choice { options }) if visible.iter().all(|&i| i < options.len())
+            ) || matches!(
+                self.node(*node).map(|n| &n.kind),
+                Ok(NodeKind::Hotspots(map)) if visible.iter().all(|&i| i < map.hotspots.len())
             );
             if !ok {
                 return Err(VmError::UnknownNode(*node));
@@ -1520,4 +1591,17 @@ fn build_index(story: &Story) -> HashMap<NodeId, (usize, usize)> {
         }
     }
     index
+}
+
+/// A hotspot map waiting for the player (see [`Vm::hotspot_choice`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct HotspotChoice {
+    /// The `Hotspots` node.
+    pub node: NodeId,
+    pub map: orbit_core::HotspotMap,
+    /// Clickable hotspots (indices into `map.hotspots`); `Vm::choose(i)`
+    /// activates `active[i]`.
+    pub active: Vec<usize>,
+    /// Hotspots shown dimmed: visible, but their `enabled` condition fails.
+    pub disabled: Vec<usize>,
 }
