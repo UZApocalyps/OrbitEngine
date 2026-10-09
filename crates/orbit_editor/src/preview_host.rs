@@ -8,7 +8,7 @@
 //! mapping and the translation of panel input to runtime input.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -318,6 +318,9 @@ pub struct PreviewHost {
     seen_asset_epoch: u64,
     /// `EditorCore::asset_epoch` when the asset files were last stamped.
     asset_stamps_epoch: Option<u64>,
+    /// The `models/` folders last given to the runtime (3D scenes run from
+    /// the project folder) and the asset epoch they were read at.
+    models3d: Option<(Vec<PathBuf>, u64)>,
     /// The scene view's own target and what it was last drawn for.
     scene_target: Option<Target>,
     scene_egui_texture: Option<egui::TextureId>,
@@ -388,6 +391,7 @@ impl PreviewHost {
             scene_frames: 0,
             seen_asset_epoch: 0,
             asset_stamps_epoch: None,
+            models3d: None,
             scene_target: None,
             scene_egui_texture: None,
             scene_cache: None,
@@ -458,6 +462,7 @@ impl PreviewHost {
                 }
             }
         }
+        self.sync_models3d(&root, &story, core.asset_epoch);
         // The project's own screens (`ui/`) are part of what Play shows.
         let ui_dir = session.location.root.join("ui");
         // The shell built below reads `ui/` now: the hot reload compares
@@ -492,6 +497,40 @@ impl PreviewHost {
             let line = core.state.tf("preview.console", &[("text", &head)]);
             core.state.console.push(Level::Warn, line);
         }
+    }
+
+    /// Gives the runtime the models of the story's 3D scenes. A project run
+    /// from its folder has no packed `3d/index.ron`: each scene finds its
+    /// models in the `models/` folder next to it, like in the 3D editor and
+    /// at export. Read again only when the folders or the asset files
+    /// changed; nothing at all for a story without 3D scene.
+    fn sync_models3d(&mut self, root: &Path, story: &orbit_core::Story, epoch: u64) {
+        let mut dirs: Vec<PathBuf> = story
+            .assets
+            .assets
+            .iter()
+            .filter(|a| a.kind == orbit_core::AssetKind::Scene3d)
+            .filter_map(|a| Some(root.join(&a.path).parent()?.join("models")))
+            .collect();
+        dirs.sort();
+        dirs.dedup();
+        if dirs.is_empty() {
+            if self.models3d.take().is_some() {
+                self.runtime.set_library3d_fallback(None);
+            }
+            return;
+        }
+        if self
+            .models3d
+            .as_ref()
+            .is_some_and(|(d, e)| *d == dirs && *e == epoch)
+        {
+            return;
+        }
+        orbit_profile::scope!("preview: 3D models");
+        let lib = models3d_library(&dirs);
+        self.runtime.set_library3d_fallback(Some(lib));
+        self.models3d = Some((dirs, epoch));
     }
 
     /// One step of the preview, between the UI pass and the paint of a
@@ -1407,6 +1446,37 @@ impl PreviewHost {
             )
         )
     }
+}
+
+/// The models, meshes and textures of `dirs` (the first folder wins on a
+/// name clash, like at export).
+fn models3d_library(dirs: &[PathBuf]) -> orbit_runtime::library3d::Library3d {
+    let mut out = orbit_runtime::library3d::Library3d::default();
+    let mut prefabs = std::collections::HashSet::new();
+    let mut meshes = std::collections::HashSet::new();
+    let mut textures = std::collections::HashSet::new();
+    for dir in dirs {
+        let (lib, errors) = crate::builtin::scene3d::model::ModelLib::load_dir(dir);
+        for e in errors {
+            log::warn!("preview: 3D model {e}");
+        }
+        for (name, p) in lib.prefabs {
+            if prefabs.insert(name) {
+                out.prefabs.push(p);
+            }
+        }
+        for (name, m) in lib.meshes {
+            if meshes.insert(name) {
+                out.meshes.push(m);
+            }
+        }
+        for t in lib.textures {
+            if textures.insert(t.name.clone()) {
+                out.textures.push(t);
+            }
+        }
+    }
+    out
 }
 
 /// Which option a selector designates: an index, an exact text (case

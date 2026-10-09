@@ -256,10 +256,15 @@ pub struct AssetStore {
     scenes3d: HashMap<String, Arc<orbit_scene::Scene3d>>,
     /// The packed 3D models (`3d/` pak entries), once loaded.
     #[cfg(feature = "3d")]
-    library3d: Option<Arc<crate::library3d::Library3d>>,
+    pub(crate) library3d: Option<Arc<crate::library3d::Library3d>>,
     /// Set when the 3D models started loading (once per store).
     #[cfg(feature = "3d")]
     library3d_requested: std::sync::atomic::AtomicBool,
+    /// Models supplied by the host when the game runs from its project
+    /// folder (no packed `3d/index.ron`): the editor's preview reads the
+    /// `models/` folders itself. Kept across [`AssetStore::clear`].
+    #[cfg(feature = "3d")]
+    library3d_fallback: Option<Arc<crate::library3d::Library3d>>,
     fonts: HashSet<String>,
     new_fonts: Vec<Vec<u8>>,
     /// Parsed `.rig.ron` skeletons by manifest path (M5B-07). The pictures
@@ -310,7 +315,18 @@ impl AssetStore {
     /// has none). A new `Arc` each time it is (re)loaded.
     #[cfg(feature = "3d")]
     pub fn library3d(&self) -> Option<&Arc<crate::library3d::Library3d>> {
-        self.library3d.as_ref()
+        match (&self.library3d, &self.library3d_fallback) {
+            (Some(packed), _) if !packed.is_empty() => Some(packed),
+            (_, Some(fallback)) => Some(fallback),
+            (packed, None) => packed.as_ref(),
+        }
+    }
+
+    /// Models to use when the game has no packed ones (a project run from
+    /// its folder, see [`AssetStore::library3d`]); `None` removes them.
+    #[cfg(feature = "3d")]
+    pub fn set_library3d_fallback(&mut self, lib: Option<crate::library3d::Library3d>) {
+        self.library3d_fallback = lib.map(Arc::new);
     }
 
     /// Adds (or replaces) a 3D scene under `path` (hosts that build scenes

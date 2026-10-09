@@ -568,6 +568,16 @@ impl Runtime {
         self.assets_loader.root()
     }
 
+    /// The 3D models of a project run from its folder (the preview): a
+    /// folder has no packed `3d/index.ron`, so without them its 3D scenes
+    /// show their background only. Packed models, when there are some, win.
+    #[cfg(feature = "3d")]
+    pub fn set_library3d_fallback(&mut self, lib: Option<crate::library3d::Library3d>) {
+        self.store.set_library3d_fallback(lib);
+        self.emb_mut().dirty = true;
+        self.emb_mut().epoch += 1;
+    }
+
     /// A file of the project changed: its texture or sound is fetched again
     /// the next time a story is loaded. Returns whether the runtime had it.
     pub fn invalidate_asset(&mut self, path: &str) -> bool {
