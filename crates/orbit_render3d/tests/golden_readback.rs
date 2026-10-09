@@ -11,6 +11,13 @@ use orbit_scene::{
 
 const SIZE: u32 = 32;
 
+/// Wgpu devices created concurrently from many test threads can deadlock
+/// (observed on Windows), so GPU tests run one at a time.
+fn gpu_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle().with_env());
@@ -130,6 +137,7 @@ fn renderer(device: &wgpu::Device, queue: &wgpu::Queue) -> Renderer3d {
 
 #[test]
 fn unlit_linear_color_is_srgb_encoded_and_background_clears() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let mut scene = scene_with_camera();
@@ -144,6 +152,7 @@ fn unlit_linear_color_is_srgb_encoded_and_background_clears() {
 
 #[test]
 fn srgb_texture_roundtrips() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     r.add_texture(TextureAsset {
@@ -162,6 +171,7 @@ fn srgb_texture_roundtrips() {
 
 #[test]
 fn depth_buffer_keeps_nearest_surface_regardless_of_order() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let mut scene = scene_with_camera();
@@ -173,6 +183,7 @@ fn depth_buffer_keeps_nearest_surface_regardless_of_order() {
 
 #[test]
 fn alpha_blend_and_mask() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let mut scene = scene_with_camera();
@@ -203,6 +214,7 @@ fn lit_scene(light: Light, light_pos: [f32; 3], rotation: [f32; 4]) -> Scene3d {
 
 #[test]
 fn directional_light_lights_facing_surfaces_only() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let sun = Light::Directional {
@@ -234,6 +246,7 @@ fn directional_light_lights_facing_surfaces_only() {
 
 #[test]
 fn point_light_attenuates_with_range() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let point = |range| Light::Point {
@@ -264,6 +277,7 @@ fn point_light_attenuates_with_range() {
 
 #[test]
 fn missing_camera_is_an_error_and_missing_mesh_is_skipped() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = Renderer3d::new(&device, &queue);
     let mut scene = scene_with_camera();
@@ -360,6 +374,7 @@ fn shadow_scene(shadows: bool, occluder: MaterialDef) -> Scene3d {
 
 #[test]
 fn directional_shadow_darkens_receiver() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let occluder = unlit("occ", [1.0, 0.0, 0.0, 1.0]);
@@ -394,6 +409,7 @@ fn directional_shadow_darkens_receiver() {
 
 #[test]
 fn web_profile_shadow_with_pcf_and_blend_does_not_cast() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let mut web = QualityProfile::web();
@@ -460,6 +476,7 @@ const LOOK_RIGHT: [f32; 4] = [0.0, -H, 0.0, H];
 
 #[test]
 fn cubemap_sky_follows_view_direction() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let faces = std::array::from_fn(|i| face("f", FACE_COLORS[i], 4));
@@ -480,6 +497,7 @@ fn cubemap_sky_follows_view_direction() {
 
 #[test]
 fn cubemap_face_orientation() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     // -Z face: top half red, bottom half green. Looking forward, the top of
@@ -524,6 +542,7 @@ fn cubemap_face_orientation() {
 
 #[test]
 fn equirect_panorama_is_not_mirrored() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     // Right half of the panorama's center (u in 0.5..0.75) red, rest blue:
@@ -558,6 +577,7 @@ fn equirect_panorama_is_not_mirrored() {
 
 #[test]
 fn equirect_sky_is_converted_and_missing_sky_is_black() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     // Top half red sky, bottom half green ground.
@@ -585,6 +605,7 @@ fn equirect_sky_is_converted_and_missing_sky_is_black() {
 
 #[test]
 fn sky_sh_ambient_lights_diffuse_surfaces() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let grey = std::array::from_fn(|_| face("g", [188, 188, 188, 255], 4));
@@ -607,6 +628,7 @@ fn sky_sh_ambient_lights_diffuse_surfaces() {
 
 #[test]
 fn linear_and_exponential_fog() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let mut scene = scene_with_camera();
@@ -657,6 +679,7 @@ fn post_profile(hdr: bool, post: PostSettings) -> QualityProfile {
 
 #[test]
 fn aces_exposure_direct_and_hdr_paths_agree() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let post = PostSettings {
@@ -685,6 +708,7 @@ fn aces_exposure_direct_and_hdr_paths_agree() {
 
 #[test]
 fn bloom_spreads_bright_pixels() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     if !hdr_ok() {
         eprintln!("no Rgba16Float rendering: skipping bloom test");
@@ -730,6 +754,7 @@ fn bloom_spreads_bright_pixels() {
 
 #[test]
 fn vignette_darkens_corners_only() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = renderer(&device, &queue);
     let mut scene = scene_with_camera();
@@ -761,6 +786,7 @@ fn vignette_darkens_corners_only() {
 /// inverted faces would read black) and use their material.
 #[test]
 fn procedural_shapes_render_lit_from_the_front() {
+    let _gpu = gpu_lock();
     let (device, queue) = gpu_or_skip!();
     let mut r = Renderer3d::new(&device, &queue);
     for kind in orbit_scene::shapes::SHAPE_KINDS {
