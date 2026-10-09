@@ -89,7 +89,7 @@ impl OpenAiChat {
     /// `GET {base}/models`: the model ids the server offers (to fill a
     /// picker, and to test the connection).
     pub fn list_models(&self) -> Result<Vec<String>, ProviderError> {
-        let url = join_url(&self.settings.base_url, "models");
+        let url = join_url(&api_base(&self.settings.base_url), "models");
         let json = send_json(&Request::get(&url, Duration::from_secs(20)).bearer(&self.settings.api_key))?;
         Ok(json["data"]
             .as_array()
@@ -118,7 +118,7 @@ impl TextModel for OpenAiChat {
             "max_tokens": self.settings.max_tokens,
             "stream": false,
         });
-        let url = join_url(&self.settings.base_url, "chat/completions");
+        let url = join_url(&api_base(&self.settings.base_url), "chat/completions");
         let timeout = Duration::from_secs(self.settings.timeout_s.max(5));
         let json = send_json(&Request::post_json(&url, &body, timeout).bearer(&self.settings.api_key))?;
         let content = &json["choices"][0]["message"]["content"];
@@ -145,4 +145,23 @@ pub fn strip_think(text: &str) -> String {
         }
     }
     out.trim().to_owned()
+}
+
+/// An OpenAI-compatible base URL: a bare `http://host:port` (as Ollama
+/// prints it) gets the `/v1` the API lives under.
+pub(crate) fn api_base(base: &str) -> String {
+    let b = base.trim().trim_end_matches('/');
+    let after_scheme = b.split_once("://").map_or(b, |(_, rest)| rest);
+    if after_scheme.contains('/') { b.to_owned() } else { format!("{b}/v1") }
+}
+
+#[cfg(test)]
+mod api_base_tests {
+    #[test]
+    fn bare_host_gets_v1() {
+        assert_eq!(super::api_base("http://127.0.0.1:11434"), "http://127.0.0.1:11434/v1");
+        assert_eq!(super::api_base("http://127.0.0.1:11434/"), "http://127.0.0.1:11434/v1");
+        assert_eq!(super::api_base("http://localhost:11434/v1"), "http://localhost:11434/v1");
+        assert_eq!(super::api_base("https://openrouter.ai/api/v1"), "https://openrouter.ai/api/v1");
+    }
 }
