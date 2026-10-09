@@ -23,6 +23,7 @@
 
 pub mod assets;
 pub mod bible;
+pub mod fix;
 pub mod civitai;
 pub mod http;
 pub mod image_gen;

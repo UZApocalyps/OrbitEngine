@@ -71,6 +71,7 @@
     "aistudio.n_characters": "{n} personnages",
     "aistudio.n_locations": "{n} lieux",
     "aistudio.n_scenes": "{n} scènes",
+    "aistudio.bible_autofixed": "Corrigé automatiquement ({n}) : vérifiez, la bible reste modifiable",
     "aistudio.bible_edit_hint": "Vous pouvez modifier la bible (JSON) puis l'appliquer. Une nouvelle bible efface les scripts et les images.",
     "aistudio.apply_edit": "Vérifier et appliquer",
     "aistudio.regenerate": "Régénérer",

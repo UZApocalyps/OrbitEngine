@@ -45,6 +45,8 @@ pub struct PipelineState {
     pub bible: Option<Bible>,
     /// Raw text of the bible, as the user may edit it.
     pub bible_text: String,
+    /// What was repaired automatically in the bible (warnings).
+    pub bible_warnings: Vec<String>,
     /// By scene id.
     pub scripts: BTreeMap<String, SceneScript>,
     pub assets: Vec<AssetJob>,
@@ -63,6 +65,7 @@ impl Default for PipelineState {
             pitch: Pitch::default(),
             bible: None,
             bible_text: String::new(),
+            bible_warnings: Vec::new(),
             scripts: BTreeMap::new(),
             assets: Vec::new(),
             looks: BTreeMap::new(),
@@ -110,7 +113,8 @@ impl PipelineState {
 
     /// Sets the bible from (possibly hand-edited) JSON text.
     pub fn set_bible_text(&mut self, text: &str) -> Result<(), Vec<String>> {
-        let b = bible::parse_bible(text)?;
+        let (b, warnings) = bible::parse_bible_fixed(text)?;
+        self.bible_warnings = warnings;
         self.bible_text = serde_json::to_string_pretty(&b).unwrap_or_else(|_| text.to_owned());
         self.bible = Some(b);
         Ok(())
@@ -168,6 +172,7 @@ pub fn run_bible(
     let out = bible::generate_bible(model, &state.pitch, text.max_repairs, cancelled)?;
     state.bible_text = serde_json::to_string_pretty(&out.value).unwrap_or_default();
     state.bible = Some(out.value);
+    state.bible_warnings = out.warnings;
     // A new bible makes old scripts and pictures meaningless.
     state.scripts.clear();
     state.assets.clear();

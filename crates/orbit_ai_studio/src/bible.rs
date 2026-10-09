@@ -200,11 +200,17 @@ pub fn extract_json(text: &str) -> Option<&str> {
 
 /// Parses and checks an answer.
 pub fn parse_bible(text: &str) -> Result<Bible, Vec<String>> {
+    parse_bible_fixed(text).map(|(b, _)| b)
+}
+
+/// Like [`parse_bible`], also returning what the auto-fix repaired.
+pub fn parse_bible_fixed(text: &str) -> Result<(Bible, Vec<String>), Vec<String>> {
     let json = extract_json(text).ok_or_else(|| vec!["the answer holds no JSON object".to_owned()])?;
-    let bible: Bible =
+    let mut bible: Bible =
         serde_json::from_str(json).map_err(|e| vec![format!("invalid JSON: {e}")])?;
+    let warnings = crate::fix::autofix(&mut bible);
     let errors = check(&bible);
-    if errors.is_empty() { Ok(bible) } else { Err(errors) }
+    if errors.is_empty() { Ok((bible, warnings)) } else { Err(errors) }
 }
 
 /// The user's starting point.
@@ -270,7 +276,8 @@ as ONE JSON object and nothing else (no prose, no markdown). Schema, by example:
 Rules:\n- every id (characters, locations, scenes, variable names) is lowercase_snake_case;\n\
 - `characters[].visual` and `locations[].visual` are concrete visual descriptions for an image generator, in English;\n\
 - scenes are listed in play order, the first one starts the game; `next` lists the scenes a scene can lead to (through choices or directly); endings have `\"ending\": true` and an empty `next`;\n\
-- every scene can be reached from the first one;\n\
+- EVERY scene id listed in any `next` MUST be defined as its own object in `scenes`; never reference a scene you do not define (if unsure, reuse an existing id or an ending);
+\n- every scene can be reached from the first one;\n\
 - variables track the player's choices (booleans or numbers);\n\
 - names, titles, synopsis and summaries are written in {lang}.",
         lang = p.language
@@ -298,6 +305,8 @@ pub struct Attempts<T> {
     pub value: T,
     /// Repairs that were needed (0 when the first answer was fine).
     pub repairs: u32,
+    /// Things fixed automatically (shown as warnings).
+    pub warnings: Vec<String>,
 }
 
 /// Asks for a bible, feeding validation errors back until it is valid or
@@ -315,18 +324,31 @@ pub fn generate_bible(
             return Err(StepError::Provider(ProviderError::Cancelled));
         }
         let answer = model.complete(&messages).map_err(StepError::Provider)?;
-        match parse_bible(&answer) {
-            Ok(value) => return Ok(Attempts { value, repairs }),
+        match parse_bible_fixed(&answer) {
+            Ok((value, warnings)) => return Ok(Attempts { value, repairs, warnings }),
             Err(errors) => {
                 if repairs >= max_repairs {
                     return Err(StepError::Invalid { errors, last: answer });
                 }
                 repairs += 1;
-                messages.push(Message::assistant(answer));
-                messages.push(Message::user(repair_request(&errors, "the corrected, complete JSON object")));
+                messages.push(Message::assistant(answer.clone()));
+                let mut req = repair_request(&errors, "the corrected, complete JSON object");
+                if let Some(ids) = defined_scene_ids(&answer) {
+                    req.push_str(&format!(
+                        "
+The scene ids defined in `scenes` are: {ids}. Every `next` entry must be one of them, or add the missing scene object."
+                    ));
+                }
+                messages.push(Message::user(req));
             }
         }
     }
+}
+
+fn defined_scene_ids(answer: &str) -> Option<String> {
+    let v: Json = serde_json::from_str(extract_json(answer)?).ok()?;
+    let ids: Vec<&str> = v.get("scenes")?.as_array()?.iter().filter_map(|s| s.get("id")?.as_str()).collect();
+    (!ids.is_empty()).then(|| ids.join(", "))
 }
 
 pub(crate) fn repair_request(errors: &[String], what: &str) -> String {

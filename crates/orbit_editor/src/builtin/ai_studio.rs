@@ -928,6 +928,18 @@ fn bible_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi, root: &
     for e in &s.bible_errors {
         ui.colored_label(ui.visuals().error_fg_color, e);
     }
+    if !s.state.bible_warnings.is_empty() {
+        egui::CollapsingHeader::new(
+            RichText::new(ctx.tf("aistudio.bible_autofixed", &[("n", &s.state.bible_warnings.len())]))
+                .color(ui.visuals().warn_fg_color),
+        )
+        .default_open(true)
+        .show(ui, |ui| {
+            for w in &s.state.bible_warnings {
+                ui.label(RichText::new(w).color(weak(ui)));
+            }
+        });
+    }
     ui.horizontal(|ui| {
         if secondary_button(ui, &ctx.t("aistudio.apply_edit")).clicked() {
             let text = s.bible_edit.clone();

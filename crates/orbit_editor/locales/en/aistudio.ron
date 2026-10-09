@@ -71,6 +71,7 @@
     "aistudio.n_characters": "{n} characters",
     "aistudio.n_locations": "{n} locations",
     "aistudio.n_scenes": "{n} scenes",
+    "aistudio.bible_autofixed": "Fixed automatically ({n}): check them, the bible stays editable",
     "aistudio.bible_edit_hint": "You can edit the bible (JSON) and apply it. A new bible clears the scripts and pictures.",
     "aistudio.apply_edit": "Check and apply",
     "aistudio.regenerate": "Regenerate",

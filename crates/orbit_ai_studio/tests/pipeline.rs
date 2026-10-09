@@ -177,7 +177,7 @@ fn bible_repair_loop_feeds_errors_back() {
     let last = &seen[2];
     let feedback = &last.last().unwrap().content;
     assert!(feedback.contains("Bad Id"), "{feedback}");
-    assert!(feedback.contains("unknown location `nowhere`"), "{feedback}");
+   
     assert_eq!(last.iter().filter(|m| m.role == Role::Assistant).count(), 2);
 }
 
@@ -372,4 +372,41 @@ fn mcp_tools_check_scripts() {
     assert!((check.call)(&mut project, &bad.to_string()).is_err());
     let guide = tools.iter().find(|t| t.name == "dsl_guide").unwrap();
     assert!((guide.call)(&mut project, "{}").unwrap().contains("jump_scene"));
+}
+
+fn dangling_bible(next: &str) -> String {
+    format!(
+        r##"{{"title":"T","characters":[{{"id":"mara","name":"Mara","visual":"v"}}],
+        "locations":[{{"id":"hall","visual":"v"}}],
+        "scenes":[
+          {{"id":"a","location":"hall","characters":["mara","ghost"],"next":[{next}]}},
+          {{"id":"talk_to_sophia","location":"hall","characters":["mara"],"next":["b"]}},
+          {{"id":"b","location":"hall","characters":["mara"],"ending":true}}]}}"##
+    )
+}
+
+#[test]
+fn dangling_next_gets_a_stub_scene() {
+    let model = Scripted::new(&[&dangling_bible(r#""keeping_secret""#)]);
+    let out = bible::generate_bible(&model, &Pitch::default(), 0, &never).unwrap();
+    assert_eq!(out.repairs, 0);
+    let b = out.value;
+    let stub = b.scene("keeping_secret").expect("stub");
+    assert_eq!(stub.location, "hall");
+    assert_eq!(stub.next, vec!["talk_to_sophia".to_owned()]);
+    assert!(stub.summary.contains("Continuation of a"));
+    assert!(bible::check(&b).is_empty());
+    assert!(out.warnings.iter().any(|w| w.contains("stub created")));
+    assert!(out.warnings.iter().any(|w| w.contains("ghost")));
+    assert_eq!(b.scene("a").unwrap().characters, vec!["mara".to_owned()]);
+}
+
+#[test]
+fn near_miss_next_is_remapped() {
+    let model = Scripted::new(&[&dangling_bible(r#""Talk-To-Sophia""#)]);
+    let out = bible::generate_bible(&model, &Pitch::default(), 0, &never).unwrap();
+    let b = out.value;
+    assert_eq!(b.scenes.len(), 3, "no stub");
+    assert_eq!(b.scene("a").unwrap().next, vec!["talk_to_sophia".to_owned()]);
+    assert!(bible::check(&b).is_empty());
 }

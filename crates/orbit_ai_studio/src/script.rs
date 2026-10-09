@@ -306,7 +306,7 @@ pub fn generate_scene(
         let answer = model.complete(&messages).map_err(StepError::Provider)?;
         let text = normalize_scene(&answer, &scene.id);
         match check_scene(base, b, &scene.id, &text) {
-            Ok(_) => return Ok(Attempts { value: text, repairs }),
+            Ok(_) => return Ok(Attempts { value: text, repairs, warnings: Vec::new() }),
             Err(errors) => {
                 if repairs >= max_repairs {
                     return Err(StepError::Invalid { errors, last: text });
