@@ -56,6 +56,7 @@ macro_rules! all_chapters {
             chapter!($lang, "12-assistant"),
             chapter!($lang, "13-plugins"),
             chapter!($lang, "14-scripting"),
+            chapter!($lang, "15-ai-studio"),
         ]
     };
 }

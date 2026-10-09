@@ -3,6 +3,8 @@
 //! the editor itself has no privileged UI code.
 
 mod actions;
+#[cfg(feature = "ai-studio")]
+mod ai_studio;
 mod anim_edit;
 mod assistant;
 mod console;
@@ -165,6 +167,8 @@ pub struct Shared {
     pub rig: crate::rig_host::SharedLink,
     /// Link with the GPU host of the animated thumbnails of rigged expressions.
     pub rig_thumbs: crate::rig_host::SharedThumbs,
+    /// Per-user config folder (the AI studio keeps its provider settings there).
+    pub config_dir: Option<std::path::PathBuf>,
 }
 
 /// The built-in plugins, in registration order (menus first, then panels in
@@ -175,7 +179,8 @@ pub fn plugins() -> Vec<Box<dyn EditorPlugin>> {
 
 /// [`plugins`], sharing `shared` with the editor core.
 pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
-    vec![
+    #[allow(unused_mut)]
+    let mut list: Vec<Box<dyn EditorPlugin>> = vec![
         Box::new(actions::CorePlugin),
         Box::new(importers::ImportersPlugin),
         Box::new(welcome::WelcomePlugin),
@@ -205,7 +210,10 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(scene3d::Scene3dPlugin::new(shared.scene3d.clone())),
         Box::new(rigedit::RigPlugin::new(shared.rig.clone())),
         Box::new(SamplePlugin::default()),
-    ]
+    ];
+    #[cfg(feature = "ai-studio")]
+    list.push(Box::new(ai_studio::AiStudioPlugin::new(shared.config_dir.clone())));
+    list
 }
 
 /// Registers, once every panel is known, a "Show: <panel>" action for

@@ -127,6 +127,12 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
         include_str!("../locales/fr/script.ron"),
     ),
     (
+        "aistudio",
+        &["aistudio"],
+        include_str!("../locales/en/aistudio.ron"),
+        include_str!("../locales/fr/aistudio.ron"),
+    ),
+    (
         "manual",
         &["manual", "template"],
         include_str!("../locales/en/manual.ron"),

@@ -48,6 +48,8 @@ pub struct PipelineState {
     /// By scene id.
     pub scripts: BTreeMap<String, SceneScript>,
     pub assets: Vec<AssetJob>,
+    /// Per-character LoRA / seed, by character id.
+    pub looks: BTreeMap<String, assets::CharacterLook>,
     /// Scene names created by the last implementation, if any.
     pub implemented: Vec<String>,
     /// What happened, newest last (shown in the wizard).
@@ -63,6 +65,7 @@ impl Default for PipelineState {
             bible_text: String::new(),
             scripts: BTreeMap::new(),
             assets: Vec::new(),
+            looks: BTreeMap::new(),
             implemented: Vec::new(),
             log: Vec::new(),
         }
@@ -250,7 +253,7 @@ pub fn plan_assets(state: &mut PipelineState, image: &ImageSettings) -> Result<(
         b,
         state.scripts.iter().map(|(k, v)| (k.as_str(), v.text.as_str())),
     );
-    let fresh = assets::plan(b, &used, image, &state.pitch.art_style);
+    let fresh = assets::plan(b, &used, image, &state.pitch.art_style, &state.looks);
     state.assets = assets::merge_plan(&state.assets, fresh);
     Ok(())
 }

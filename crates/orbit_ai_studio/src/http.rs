@@ -149,7 +149,9 @@ impl<'a> Request<'a> {
 
 /// Reads the status line and headers; returns the status, the bytes
 /// consumed and the headers (lowercase names).
-fn read_head<R: BufRead>(mut r: R) -> Result<(u16, usize, Vec<(String, String)>), String> {
+type Head = (u16, usize, Vec<(String, String)>);
+
+fn read_head<R: BufRead>(mut r: R) -> Result<Head, String> {
     let mut consumed = 0;
     let mut line = String::new();
     consumed += r.read_line(&mut line).map_err(|e| e.to_string())?;

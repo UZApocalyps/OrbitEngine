@@ -233,7 +233,7 @@ fn asset_plan_naming_and_seeds() {
     assert_eq!(used["lea"].iter().cloned().collect::<Vec<_>>(), ["neutral", "sad", "surprised"]);
     assert_eq!(used["victor"].iter().cloned().collect::<Vec<_>>(), ["happy", "neutral", "thinking"]);
     let s = ImageSettings::default();
-    let jobs = assets::plan(&b, &used, &s, "");
+    let jobs = assets::plan(&b, &used, &s, "", &BTreeMap::new());
     let paths: Vec<&str> = jobs.iter().map(|j| j.path.as_str()).collect();
     assert!(paths.contains(&"assets/ai/backgrounds/ward.png"));
     assert!(paths.contains(&"assets/ai/characters/lea/surprised.png"));
@@ -246,7 +246,7 @@ fn asset_plan_naming_and_seeds() {
     // A rebuilt plan keeps what is done.
     let mut done = jobs.clone();
     done[0].status = AssetStatus::Generated;
-    let merged = assets::merge_plan(&done, assets::plan(&b, &used, &s, ""));
+    let merged = assets::merge_plan(&done, assets::plan(&b, &used, &s, "", &BTreeMap::new()));
     assert_eq!(merged[0].status, AssetStatus::Generated);
     assert_eq!(merged[1].status, AssetStatus::Pending);
 }

@@ -115,6 +115,18 @@ pub struct ImageSettings {
     /// removal.
     pub remove_sprite_background: bool,
     pub timeout_s: u64,
+    /// Model family the sizes and quality tags were set for.
+    pub preset: crate::sd::SdPreset,
+    /// Prepended to every prompt (`masterpiece, best quality`, Pony scores...).
+    pub quality_tags: String,
+    /// LoRAs applied to every picture (per-character ones add to them).
+    pub loras: Vec<crate::sd::LoraPick>,
+    /// VAE override; empty for the checkpoint's own.
+    pub vae: String,
+    /// Scheduler (`karras`, `normal`...); empty for the backend default.
+    pub scheduler: String,
+    /// CLIP skip (1 = none, 2 for most anime / Pony models).
+    pub clip_skip: u32,
 }
 
 impl Default for ImageSettings {
@@ -143,6 +155,12 @@ impl Default for ImageSettings {
             concurrency: 2,
             remove_sprite_background: true,
             timeout_s: 600,
+            preset: crate::sd::SdPreset::Custom,
+            quality_tags: String::new(),
+            loras: Vec::new(),
+            vae: String::new(),
+            scheduler: String::new(),
+            clip_skip: 1,
         }
     }
 }
@@ -153,6 +171,44 @@ impl Default for ImageSettings {
 pub struct StudioSettings {
     pub text: TextSettings,
     pub image: ImageSettings,
+    pub civitai: CivitaiSettings,
+}
+
+/// Where downloaded models go: the backend's own model folders.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelFolders {
+    /// `ComfyUI/models/checkpoints` or `stable-diffusion-webui/models/Stable-diffusion`.
+    pub checkpoints: String,
+    /// `ComfyUI/models/loras` or `.../models/Lora`.
+    pub loras: String,
+    /// `ComfyUI/models/embeddings` or `.../embeddings`.
+    pub embeddings: String,
+    /// `ComfyUI/models/vae` or `.../models/VAE`.
+    pub vaes: String,
+}
+
+/// Civitai access (optional).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CivitaiSettings {
+    pub base_url: String,
+    /// API token (some downloads require one). User config only.
+    pub api_token: String,
+    /// Show models / previews flagged NSFW in the search results.
+    pub show_nsfw: bool,
+    pub folders: ModelFolders,
+}
+
+impl Default for CivitaiSettings {
+    fn default() -> Self {
+        Self {
+            base_url: "https://civitai.com".to_owned(),
+            api_token: String::new(),
+            show_nsfw: false,
+            folders: ModelFolders::default(),
+        }
+    }
 }
 
 impl StudioSettings {

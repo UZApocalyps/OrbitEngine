@@ -12,11 +12,11 @@ use crate::text::{ProviderError, join_url, send_json};
 
 /// A text-to-image txt2img workflow in ComfyUI **API format** (Workflow >
 /// Export (API) in ComfyUI). String values may hold the placeholders
-/// `{{prompt}}`, `{{negative}}`, `{{model}}`; a value that is exactly
+/// `{{prompt}}`, `{{negative}}`, `{{model}}`, `{{sampler}}`, `{{scheduler}}`; a value that is exactly
 /// `"{{seed}}"`, `"{{width}}"`, `"{{height}}"`, `"{{steps}}"` or `"{{cfg}}"`
 /// becomes a number.
 pub const DEFAULT_COMFY_WORKFLOW: &str = r#"{
-  "3": {"class_type": "KSampler", "inputs": {"seed": "{{seed}}", "steps": "{{steps}}", "cfg": "{{cfg}}", "sampler_name": "euler_ancestral", "scheduler": "normal", "denoise": 1.0, "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}},
+  "3": {"class_type": "KSampler", "inputs": {"seed": "{{seed}}", "steps": "{{steps}}", "cfg": "{{cfg}}", "sampler_name": "{{sampler}}", "scheduler": "{{scheduler}}", "denoise": 1.0, "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}},
   "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "{{model}}"}},
   "5": {"class_type": "EmptyLatentImage", "inputs": {"width": "{{width}}", "height": "{{height}}", "batch_size": 1}},
   "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{prompt}}", "clip": ["4", 1]}},
@@ -33,6 +33,8 @@ pub struct ImageRequest {
     pub width: u32,
     pub height: u32,
     pub seed: u64,
+    /// LoRAs for this picture (global ones and the character's).
+    pub loras: Vec<crate::sd::LoraPick>,
 }
 
 /// Something that turns a prompt into an encoded picture (PNG, JPEG...).
@@ -88,10 +90,18 @@ pub fn fill_workflow(template: &str, req: &ImageRequest, s: &ImageSettings) -> R
                 if let Some(n) = number {
                     *v = n;
                 } else if text.contains("{{") {
+                    let (sampler, karras) = crate::sd::comfy_sampler(&s.sampler);
+                    let scheduler = if !s.scheduler.trim().is_empty() {
+                        s.scheduler.trim().to_owned()
+                    } else {
+                        karras.unwrap_or("normal").to_owned()
+                    };
                     *text = text
-                        .replace("{{prompt}}", &req.prompt)
+                        .replace("{{prompt}}", &crate::sd::full_prompt(s, &req.prompt, &req.loras, false))
                         .replace("{{negative}}", &req.negative)
-                        .replace("{{model}}", &s.model);
+                        .replace("{{model}}", &s.model)
+                        .replace("{{sampler}}", &sampler)
+                        .replace("{{scheduler}}", &scheduler);
                 }
             }
             Json::Array(items) => items.iter_mut().for_each(|i| walk(i, req, s)),
@@ -100,6 +110,7 @@ pub fn fill_workflow(template: &str, req: &ImageRequest, s: &ImageSettings) -> R
         }
     }
     walk(&mut value, req, s);
+    crate::sd::inject_comfy(&mut value, &req.loras, &s.vae, s.clip_skip);
     Ok(value)
 }
 
@@ -180,7 +191,7 @@ impl ImageModel for Automatic1111 {
         }
         let s = &self.settings;
         let mut body = json!({
-            "prompt": req.prompt,
+            "prompt": crate::sd::full_prompt(s, &req.prompt, &req.loras, true),
             "negative_prompt": req.negative,
             "seed": req.seed,
             "width": req.width,
@@ -191,8 +202,21 @@ impl ImageModel for Automatic1111 {
             "batch_size": 1,
             "n_iter": 1,
         });
+        if !s.scheduler.trim().is_empty() {
+            body["scheduler"] = json!(s.scheduler.trim());
+        }
+        let mut over = serde_json::Map::new();
         if !s.model.is_empty() {
-            body["override_settings"] = json!({"sd_model_checkpoint": s.model});
+            over.insert("sd_model_checkpoint".into(), json!(s.model));
+        }
+        if !s.vae.is_empty() {
+            over.insert("sd_vae".into(), json!(s.vae));
+        }
+        if s.clip_skip > 1 {
+            over.insert("CLIP_stop_at_last_layers".into(), json!(s.clip_skip));
+        }
+        if !over.is_empty() {
+            body["override_settings"] = Json::Object(over);
         }
         let url = join_url(&s.base_url, "sdapi/v1/txt2img");
         let json = send_json(&Request::post_json(&url, &body, Duration::from_secs(s.timeout_s.max(10))))?;
@@ -221,8 +245,10 @@ impl ImageModel for OpenAiImages {
             return Err(ProviderError::Cancelled);
         }
         let s = &self.settings;
+        let p = crate::sd::full_prompt(s, &req.prompt, &[], false);
+        let prompt = if req.negative.is_empty() { p } else { format!("{p}\nAvoid: {}", req.negative) };
         let mut body = json!({
-            "prompt": if req.negative.is_empty() { req.prompt.clone() } else { format!("{}\nAvoid: {}", req.prompt, req.negative) },
+            "prompt": prompt,
             "n": 1,
             "size": format!("{}x{}", req.width, req.height),
             "response_format": "b64_json",

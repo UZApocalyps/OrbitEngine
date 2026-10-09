@@ -41,7 +41,20 @@ pub struct AssetJob {
     pub path: String,
     pub prompt: String,
     pub seed: u64,
+    /// The character's own LoRA, if any (global LoRAs come from settings).
+    #[serde(default)]
+    pub loras: Vec<crate::sd::LoraPick>,
     pub status: AssetStatus,
+}
+
+/// Per-character image options, for consistency across expressions.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CharacterLook {
+    /// A character LoRA (trained on that character).
+    pub lora: Option<crate::sd::LoraPick>,
+    /// A fixed seed instead of the derived one.
+    pub seed: Option<u64>,
 }
 
 /// FNV-1a: stable across runs and platforms (unlike `DefaultHasher`).
@@ -71,6 +84,7 @@ pub fn plan(
     used: &BTreeMap<String, BTreeSet<String>>,
     s: &ImageSettings,
     art_style: &str,
+    looks: &BTreeMap<String, CharacterLook>,
 ) -> Vec<AssetJob> {
     let style = if art_style.trim().is_empty() { s.style_prefix.as_str() } else { art_style };
     let mut jobs = Vec::new();
@@ -86,11 +100,14 @@ pub fn plan(
                 "visual novel background, scenery, wide shot, no people, no characters",
             ]),
             seed: s.seed.wrapping_add(stable_hash(&l.id) % 1_000_000),
+            loras: Vec::new(),
             status: AssetStatus::Pending,
         });
     }
     for c in &b.characters {
-        let seed = s.seed.wrapping_add(stable_hash(&c.id) % 1_000_000);
+        let look = looks.get(&c.id).cloned().unwrap_or_default();
+        let seed = look.seed.unwrap_or_else(|| s.seed.wrapping_add(stable_hash(&c.id) % 1_000_000));
+        let loras: Vec<_> = look.lora.into_iter().filter(|l| !l.name.is_empty()).collect();
         let expressions = used.get(&c.id).cloned().unwrap_or_else(|| BTreeSet::from(["neutral".to_owned()]));
         for e in expressions {
             jobs.push(AssetJob {
@@ -106,6 +123,7 @@ pub fn plan(
                     "plain white background, simple background",
                 ]),
                 seed,
+                loras: loras.clone(),
                 status: AssetStatus::Pending,
             });
         }
@@ -117,7 +135,10 @@ pub fn plan(
 /// plan is rebuilt: a resumed step only makes what is missing.
 pub fn merge_plan(old: &[AssetJob], mut new: Vec<AssetJob>) -> Vec<AssetJob> {
     for job in &mut new {
-        if let Some(o) = old.iter().find(|o| o.path == job.path && o.prompt == job.prompt && o.seed == job.seed) {
+        if let Some(o) = old
+            .iter()
+            .find(|o| o.path == job.path && o.prompt == job.prompt && o.seed == job.seed && o.loras == job.loras)
+        {
             job.status = o.status.clone();
         }
     }
@@ -226,6 +247,7 @@ fn make_one(
         width: size.width,
         height: size.height,
         seed: job.seed,
+        loras: s.loras.iter().chain(&job.loras).filter(|l| !l.name.is_empty()).cloned().collect(),
     };
     let bytes = model.generate(&req, cancelled).map_err(|e| e.to_string())?;
     let mut img = image::load_from_memory(&bytes)
