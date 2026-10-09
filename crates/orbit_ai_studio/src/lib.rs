@@ -30,6 +30,7 @@ pub mod implement;
 pub mod mcp;
 pub mod pipeline;
 pub mod script;
+pub mod scan;
 pub mod sd;
 pub mod sha256;
 pub mod settings;

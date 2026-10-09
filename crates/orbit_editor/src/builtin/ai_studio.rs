@@ -17,6 +17,7 @@ use egui::{ComboBox, DragValue, RichText, ScrollArea, TextEdit, Ui};
 use orbit_ai_studio::assets::{AssetKindAi, AssetStatus};
 use orbit_ai_studio::civitai::{self, DownloadOutcome, ModelInfo, ModelType};
 use orbit_ai_studio::pipeline::{self, PipelineState, ScriptStatus};
+use orbit_ai_studio::scan::{self, Choice};
 use orbit_ai_studio::sd::{self, LoraPick, ModelLists, SdPreset};
 use orbit_ai_studio::{
     ImageBackend, ImplementOptions, OpenAiChat, StudioSettings, image_gen, implement,
@@ -39,6 +40,103 @@ enum Tab {
     Script,
     Assets,
     Implement,
+}
+
+/// Selectable models: disk and backend merged.
+#[derive(Default)]
+struct Choices {
+    checkpoints: Vec<Choice>,
+    loras: Vec<Choice>,
+    vaes: Vec<Choice>,
+    embeddings: Vec<Choice>,
+}
+
+/// Strings of the searchable drop-downs.
+#[derive(Clone)]
+struct ComboText {
+    none: String,
+    search: String,
+    use_custom: String,
+    missing: String,
+    disk: String,
+    backend: String,
+}
+
+impl ComboText {
+    fn new(ctx: &EditorContext<'_>, none_key: &str) -> Self {
+        Self {
+            none: ctx.t(none_key),
+            search: ctx.t("aistudio.search"),
+            use_custom: ctx.t("aistudio.use_custom"),
+            missing: ctx.t("aistudio.not_in_list"),
+            disk: ctx.t("aistudio.src_disk"),
+            backend: ctx.t("aistudio.src_backend"),
+        }
+    }
+}
+
+/// Searchable drop-down: filter box, an empty entry, a custom value kept
+/// even when absent from `items` (flagged with a warning). Returns whether
+/// `value` changed.
+fn search_combo(ui: &mut Ui, id: &str, value: &mut String, items: &[Choice], t: &ComboText) -> bool {
+    let mut changed = false;
+    let missing = !value.is_empty() && !items.is_empty() && !items.iter().any(|c| c.name == *value);
+    let shown = if value.is_empty() {
+        t.none.clone()
+    } else if missing {
+        format!("{} {value}", icons::WARNING)
+    } else {
+        value.clone()
+    };
+    let fid = ui.make_persistent_id((id, "filter"));
+    let resp = ComboBox::from_id_salt(id)
+        .width(300.0)
+        .selected_text(shown)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show_ui(ui, |ui| {
+            let mut filter: String = ui.data_mut(|d| d.get_temp(fid)).unwrap_or_default();
+            ui.add(TextEdit::singleline(&mut filter).hint_text(&t.search).desired_width(f32::INFINITY))
+                .request_focus();
+            let needle = filter.trim().to_lowercase();
+            let mut pick: Option<String> = None;
+            ScrollArea::vertical().max_height(300.0).id_salt((id, "list")).show(ui, |ui| {
+                if needle.is_empty() && ui.selectable_label(value.is_empty(), &t.none).clicked() {
+                    pick = Some(String::new());
+                }
+                let mut exact = false;
+                for c in items.iter().filter(|c| needle.is_empty() || c.name.to_lowercase().contains(&needle)) {
+                    exact |= c.name.eq_ignore_ascii_case(filter.trim());
+                    let tag = match (c.on_disk, c.on_backend) {
+                        (true, false) => format!("  [{}]", t.disk),
+                        (false, true) => format!("  [{}]", t.backend),
+                        _ => String::new(),
+                    };
+                    if ui.selectable_label(*value == c.name, format!("{}{tag}", c.name)).clicked() {
+                        pick = Some(c.name.clone());
+                    }
+                }
+                if !needle.is_empty()
+                    && !exact
+                    && ui.button(format!("{} “{}”", t.use_custom, filter.trim())).clicked()
+                {
+                    pick = Some(filter.trim().to_owned());
+                }
+            });
+            if missing {
+                ui.label(RichText::new(format!("{} {}", icons::WARNING, t.missing)).color(ui.visuals().warn_fg_color));
+            }
+            if let Some(p) = pick {
+                *value = p;
+                changed = true;
+                filter.clear();
+                ui.close();
+            }
+            ui.data_mut(|d| d.insert_temp(fid, filter));
+        });
+    if missing {
+        resp.response.on_hover_text(&t.missing);
+    }
+    changed
 }
 
 /// What a background step gives back: the new state and how it ended.
@@ -74,7 +172,16 @@ struct StudioUi {
     text_models: Option<TaskHandle<Vec<String>>>,
     text_model_list: Vec<String>,
     models: Option<TaskHandle<ModelLists>>,
+    /// Lists read from the backend.
     model_lists: ModelLists,
+    /// Disk scan of the model folders.
+    scan: Option<TaskHandle<ModelLists>>,
+    disk_lists: ModelLists,
+    /// A scan was done for the current folders / backend (reset to rescan).
+    scanned: bool,
+    /// Disk + backend, merged (rebuilt when either changes).
+    choices: Choices,
+    detect_msg: String,
     civitai: CivitaiUi,
     replace_scenes: Option<bool>,
 }
@@ -98,9 +205,37 @@ impl StudioUi {
             text_model_list: Vec::new(),
             models: None,
             model_lists: ModelLists::default(),
+            scan: None,
+            disk_lists: ModelLists::default(),
+            scanned: false,
+            choices: Choices::default(),
+            detect_msg: String::new(),
             civitai: CivitaiUi::default(),
             replace_scenes: None,
         }
+    }
+
+    fn rebuild_choices(&mut self) {
+        let (d, b) = (&self.disk_lists, &self.model_lists);
+        self.choices = Choices {
+            checkpoints: scan::merge(&d.checkpoints, &b.checkpoints),
+            loras: scan::merge(&d.loras, &b.loras),
+            vaes: scan::merge(&d.vaes, &b.vaes),
+            embeddings: scan::merge(&d.embeddings, &b.embeddings),
+        };
+    }
+
+    /// Starts a scan of the model folders (no-op while one runs).
+    fn start_scan(&mut self, ctx: &mut EditorContext<'_>) {
+        if self.scan.is_some() {
+            return;
+        }
+        self.scanned = true;
+        let folders = self.settings.civitai.folders.clone();
+        let backend = self.settings.image.backend;
+        self.scan = Some(ctx.state().spawn_task(ctx.t("aistudio.rescan"), None, move |_| {
+            Ok(scan::scan_folders(&folders, backend))
+        }));
     }
 
     fn save_settings(&self) {
@@ -210,14 +345,28 @@ fn poll(s: &mut StudioUi, ctx: &mut EditorContext<'_>) {
     {
         s.models = None;
         match r {
-            Ok(lists) => s.model_lists = lists,
+            Ok(lists) => {
+                s.model_lists = lists;
+                s.rebuild_choices();
+            }
             Err(TaskError::Failed(e)) => s.message = Some((false, e)),
             Err(e) => s.message = Some((false, format!("{e:?}"))),
         }
     }
+    if let Some(h) = &mut s.scan
+        && let Some(r) = h.poll()
+    {
+        s.scan = None;
+        if let Ok(lists) = r {
+            s.disk_lists = lists;
+            s.rebuild_choices();
+        }
+    }
 }
 
-fn poll_civitai(c: &mut CivitaiUi, ui: &Ui) {
+/// Returns true when a download just ended (the folders changed).
+fn poll_civitai(c: &mut CivitaiUi, ui: &Ui) -> bool {
+    let mut downloaded = false;
     if let Some(h) = &mut c.search
         && let Some(r) = h.poll()
     {
@@ -241,11 +390,13 @@ fn poll_civitai(c: &mut CivitaiUi, ui: &Ui) {
         && let Some(r) = h.poll()
     {
         c.download = None;
+        downloaded = true;
         c.message = match r {
             Ok(m) | Err(TaskError::Failed(m)) => m,
             Err(e) => format!("{e:?}"),
         };
     }
+    downloaded
 }
 
 // -------------------------------------------------------------------- panel
@@ -260,7 +411,17 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi) {
         s.loaded_root = Some(root.clone());
     }
     poll(s, ctx);
-    poll_civitai(&mut s.civitai, ui);
+    if poll_civitai(&mut s.civitai, ui) {
+        s.scanned = false;
+    }
+    // Scan the model folders when a tab that lists them opens (or after a
+    // download), once the folders are set.
+    if !s.scanned && matches!(s.tab, Tab::Models | Tab::Assets) {
+        let f = &s.settings.civitai.folders;
+        if [&f.checkpoints, &f.loras, &f.vaes, &f.embeddings].iter().any(|p| !p.trim().is_empty()) {
+            s.start_scan(ctx);
+        }
+    }
 
     ui.horizontal_wrapped(|ui| {
         let tabs = [
@@ -366,7 +527,10 @@ fn settings_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi) {
         let i = &mut s.settings.image;
         ComboBox::from_label(ctx.t("aistudio.backend")).selected_text(i.backend.name()).show_ui(ui, |ui| {
             for b in ImageBackend::ALL {
-                changed |= ui.selectable_value(&mut i.backend, b, b.name()).changed();
+                if ui.selectable_value(&mut i.backend, b, b.name()).changed() {
+                    changed = true;
+                    s.scanned = false;
+                }
             }
         });
         if i.backend != ImageBackend::Placeholder {
@@ -409,44 +573,23 @@ fn settings_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi) {
     }
 }
 
-fn pick_list(ui: &mut Ui, id: &str, label: &str, value: &mut String, list: &[String]) -> bool {
-    let mut changed = false;
+fn pick_list(ui: &mut Ui, id: &str, label: &str, value: &mut String, list: &[Choice], t: &ComboText) -> bool {
     ui.horizontal(|ui| {
         ui.label(label);
-        changed |= ui.add(TextEdit::singleline(value).desired_width(260.0)).changed();
-        if !list.is_empty() {
-            ComboBox::from_id_salt(id).selected_text("…").show_ui(ui, |ui| {
-                if ui.selectable_label(value.is_empty(), "—").clicked() {
-                    value.clear();
-                    changed = true;
-                }
-                for m in list {
-                    if ui.selectable_label(value == m, m).clicked() {
-                        *value = m.clone();
-                        changed = true;
-                    }
-                }
-            });
-        }
-    });
-    changed
+        search_combo(ui, id, value, list, t)
+    })
+    .inner
 }
 
-fn lora_row(ui: &mut Ui, ctx: &EditorContext<'_>, l: &mut LoraPick, list: &[String], id: &str) -> (bool, bool) {
+fn names_as_choices(list: &[String]) -> Vec<Choice> {
+    list.iter().map(|n| Choice { name: n.clone(), on_disk: false, on_backend: false }).collect()
+}
+
+fn lora_row(ui: &mut Ui, ctx: &EditorContext<'_>, l: &mut LoraPick, list: &[Choice], t: &ComboText, id: &str) -> (bool, bool) {
     let mut changed = false;
     let mut remove = false;
     ui.horizontal(|ui| {
-        changed |= ui.add(TextEdit::singleline(&mut l.name).desired_width(200.0).hint_text("LoRA")).changed();
-        if !list.is_empty() {
-            ComboBox::from_id_salt(id).selected_text("…").show_ui(ui, |ui| {
-                for m in list {
-                    if ui.selectable_label(l.name == *m, m).clicked() {
-                        l.name = m.clone();
-                        changed = true;
-                    }
-                }
-            });
-        }
+        changed |= search_combo(ui, id, &mut l.name, list, t);
         changed |= ui.add(DragValue::new(&mut l.weight).range(-2.0..=2.0).speed(0.05)).changed();
         let mut words = l.trigger_words.join(", ");
         if ui.add(TextEdit::singleline(&mut words).desired_width(180.0).hint_text(ctx.t("aistudio.trigger_words"))).changed() {
@@ -477,7 +620,17 @@ fn models_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi) {
             if s.models.is_some() {
                 ui.spinner();
             }
-            let l = &s.model_lists;
+            let any_folder = {
+                let f = &s.settings.civitai.folders;
+                [&f.checkpoints, &f.loras, &f.vaes, &f.embeddings].iter().any(|p| !p.trim().is_empty())
+            };
+            if ui.add_enabled(any_folder && s.scan.is_none(), egui::Button::new(ctx.t("aistudio.rescan"))).clicked() {
+                s.start_scan(ctx);
+            }
+            if s.scan.is_some() {
+                ui.spinner();
+            }
+            let l = &s.choices;
             ui.label(RichText::new(format!(
                 "{} checkpoints · {} LoRAs · {} VAEs · {} embeddings",
                 l.checkpoints.len(), l.loras.len(), l.vaes.len(), l.embeddings.len()
@@ -485,6 +638,12 @@ fn models_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi) {
         });
         let i = &mut s.settings.image;
         let lists = &s.model_lists;
+        let samplers: Vec<Choice> = names_as_choices(&scan::samplers(backend, &lists.samplers));
+        let schedulers: Vec<Choice> = names_as_choices(&scan::schedulers(backend, &lists.schedulers));
+        let default_t = ComboText::new(ctx, "aistudio.default_value");
+        let none_t = ComboText::new(ctx, "aistudio.none_value");
+        let lora_t = ComboText::new(ctx, "aistudio.add_lora");
+        let emb_t = ComboText::new(ctx, "aistudio.insert_embedding");
         ComboBox::from_label(ctx.t("aistudio.preset")).selected_text(i.preset.name()).show_ui(ui, |ui| {
             for p in SdPreset::ALL {
                 if ui.selectable_label(i.preset == p, p.name()).clicked() {
@@ -493,10 +652,11 @@ fn models_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi) {
                 }
             }
         });
-        changed |= pick_list(ui, "ai_ckpt", &ctx.t("aistudio.checkpoint"), &mut i.model, &lists.checkpoints);
-        changed |= pick_list(ui, "ai_vae", "VAE", &mut i.vae, &lists.vaes);
-        changed |= pick_list(ui, "ai_sampler", &ctx.t("aistudio.sampler"), &mut i.sampler, &lists.samplers);
-        changed |= pick_list(ui, "ai_sched", &ctx.t("aistudio.scheduler"), &mut i.scheduler, &lists.schedulers);
+        let ch = &s.choices;
+        changed |= pick_list(ui, "ai_ckpt", &ctx.t("aistudio.checkpoint"), &mut i.model, &ch.checkpoints, &default_t);
+        changed |= pick_list(ui, "ai_vae", "VAE", &mut i.vae, &ch.vaes, &default_t);
+        changed |= pick_list(ui, "ai_sampler", &ctx.t("aistudio.sampler"), &mut i.sampler, &samplers, &default_t);
+        changed |= pick_list(ui, "ai_sched", &ctx.t("aistudio.scheduler"), &mut i.scheduler, &schedulers, &none_t);
         ui.horizontal(|ui| {
             ui.label(ctx.t("aistudio.steps"));
             changed |= ui.add(DragValue::new(&mut i.steps).range(1..=150)).changed();
@@ -506,13 +666,31 @@ fn models_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi) {
             changed |= ui.add(DragValue::new(&mut i.clip_skip).range(1..=12)).changed();
         });
         changed |= field(ui, &ctx.t("aistudio.quality_tags"), &mut i.quality_tags);
-        if !lists.embeddings.is_empty() {
-            ui.label(RichText::new(format!("{}: {}", ctx.t("aistudio.embeddings"), lists.embeddings.join(", "))).color(weak(ui)));
+        if !ch.embeddings.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(ctx.t("aistudio.embeddings")).color(weak(ui)));
+                for (id, target_negative) in [("ai_emb_neg", true), ("ai_emb_q", false)] {
+                    let mut picked = String::new();
+                    let t = ComboText { none: format!("{} ({})", emb_t.none, ctx.t(if target_negative { "aistudio.negative" } else { "aistudio.quality_tags" })), ..emb_t.clone() };
+                    if search_combo(ui, id, &mut picked, &ch.embeddings, &t) && !picked.is_empty() {
+                        let tag = if backend == ImageBackend::ComfyUi { format!("embedding:{picked}") } else { picked };
+                        let target = if target_negative { &mut i.negative_prompt } else { &mut i.quality_tags };
+                        if !target.trim().is_empty() && !target.trim_end().ends_with(',') {
+                            target.push(',');
+                        }
+                        if !target.is_empty() && !target.ends_with(' ') {
+                            target.push(' ');
+                        }
+                        target.push_str(&tag);
+                        changed = true;
+                    }
+                }
+            });
         }
         section_title(ui, &ctx.t("aistudio.loras"));
         let mut remove = None;
         for (n, l) in i.loras.iter_mut().enumerate() {
-            let (c, r) = lora_row(ui, ctx, l, &lists.loras, &format!("ai_lora_{n}"));
+            let (c, r) = lora_row(ui, ctx, l, &ch.loras, &default_t, &format!("ai_lora_{n}"));
             changed |= c;
             if r {
                 remove = Some(n);
@@ -522,8 +700,9 @@ fn models_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi) {
             i.loras.remove(n);
             changed = true;
         }
-        if ui.button(format!("{} {}", icons::PLUS, ctx.t("aistudio.add_lora"))).clicked() {
-            i.loras.push(LoraPick { weight: 0.8, ..LoraPick::default() });
+        let mut new_lora = String::new();
+        if search_combo(ui, "ai_lora_add", &mut new_lora, &ch.loras, &lora_t) && !new_lora.is_empty() {
+            i.loras.push(LoraPick { name: new_lora, weight: 0.8, ..LoraPick::default() });
             changed = true;
         }
     });
@@ -542,10 +721,36 @@ fn civitai_card(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi, chan
         *changed |= ui.checkbox(&mut c.show_nsfw, ctx.t("aistudio.show_nsfw")).changed();
         ui.collapsing(ctx.t("aistudio.folders"), |ui| {
             ui.label(RichText::new(ctx.t("aistudio.folders_hint")).color(weak(ui)));
+            let before = c.folders.clone();
             *changed |= field(ui, "Checkpoints", &mut c.folders.checkpoints);
             *changed |= field(ui, "LoRA", &mut c.folders.loras);
             *changed |= field(ui, "Embeddings", &mut c.folders.embeddings);
             *changed |= field(ui, "VAE", &mut c.folders.vaes);
+            if c.folders != before {
+                s.scanned = false;
+            }
+            let backend = s.settings.image.backend;
+            if matches!(backend, ImageBackend::ComfyUi | ImageBackend::Automatic1111) {
+                let key = if backend == ImageBackend::ComfyUi { "aistudio.comfy_root" } else { "aistudio.a1111_root" };
+                *changed |= field(ui, &ctx.t(key), &mut s.settings.image.comfy_root);
+                ui.horizontal(|ui| {
+                    let can = !s.settings.image.comfy_root.trim().is_empty();
+                    if ui.add_enabled(can, egui::Button::new(ctx.t("aistudio.detect"))).clicked() {
+                        match scan::detect_folders(&s.settings.image.comfy_root, backend) {
+                            Some(f) => {
+                                c.folders = f;
+                                s.scanned = false;
+                                *changed = true;
+                                s.detect_msg = ctx.t("aistudio.detect_ok");
+                            }
+                            None => s.detect_msg = ctx.t("aistudio.detect_fail"),
+                        }
+                    }
+                    if !s.detect_msg.is_empty() {
+                        ui.label(RichText::new(&s.detect_msg).color(weak(ui)));
+                    }
+                });
+            }
         });
         let cu = &mut s.civitai;
         ui.horizontal(|ui| {
@@ -813,6 +1018,7 @@ fn assets_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi, root: 
         return;
     };
     ui.label(RichText::new(ctx.tf("aistudio.backend_is", &[("name", &s.settings.image.backend.name())])).color(weak(ui)));
+    let none_text = ComboText::new(ctx, "aistudio.pick_lora");
     ui.collapsing(ctx.t("aistudio.looks"), |ui| {
         ui.label(RichText::new(ctx.t("aistudio.looks_hint")).color(weak(ui)));
         let mut changed = false;
@@ -835,7 +1041,7 @@ fn assets_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi, root: 
                 }
             });
             if let Some(l) = &mut look.lora {
-                let (c2, remove) = lora_row(ui, ctx, l, &s.model_lists.loras, &format!("look_{}", c.id));
+                let (c2, remove) = lora_row(ui, ctx, l, &s.choices.loras, &none_text, &format!("look_{}", c.id));
                 changed |= c2;
                 if remove {
                     look.lora = None;

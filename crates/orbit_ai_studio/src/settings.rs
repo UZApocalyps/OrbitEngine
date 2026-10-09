@@ -127,6 +127,8 @@ pub struct ImageSettings {
     pub scheduler: String,
     /// CLIP skip (1 = none, 2 for most anime / Pony models).
     pub clip_skip: u32,
+    /// Install folder of ComfyUI / A1111, to detect the model folders from.
+    pub comfy_root: String,
 }
 
 impl Default for ImageSettings {
@@ -161,6 +163,7 @@ impl Default for ImageSettings {
             vae: String::new(),
             scheduler: String::new(),
             clip_skip: 1,
+            comfy_root: String::new(),
         }
     }
 }
