@@ -1110,6 +1110,7 @@ impl DataScreen {
                     icon_path: n.icon.clone(),
                     sound: n.sound.clone(),
                     duration: n.duration,
+                    from_story: false,
                 }))
             }
             UiAction::Custom { name, args } => Some(UiEvent::Custom {

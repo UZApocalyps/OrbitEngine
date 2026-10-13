@@ -61,7 +61,7 @@ pub mod stage;
 mod ui_music;
 
 pub use achievements::{AchievementEvent, AchievementHook, SharedAchievementHook, achievement_icon_paths};
-pub use director::{AudioCommand, Director, Flow, Line, StageTransition};
+pub use director::{AudioCommand, Director, Flow, Line, StageTransition, StoryNotification};
 pub use input::{Hotkey, InputAction, InputMapper};
 pub use loading::{AssetStore, LoadedStory, parse_story, scene_asset_paths, successor_scenes};
 pub use runtime::{

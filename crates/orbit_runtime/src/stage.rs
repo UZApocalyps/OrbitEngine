@@ -274,6 +274,8 @@ impl StageState {
             | PresentationEvent::StopMusic { .. }
             | PresentationEvent::PlaySound { .. }
             | PresentationEvent::AchievementUnlocked { .. }
+            | PresentationEvent::Notify { .. }
+            | PresentationEvent::NotifyText(_)
             | PresentationEvent::Custom { .. } => StageEffect::None,
         }
     }

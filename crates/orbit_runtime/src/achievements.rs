@@ -81,7 +81,8 @@ pub(crate) fn rows(
         .collect()
 }
 
-/// Manifest paths of the icons (unlocked and locked) of the achievements (the host loads them as
+/// Manifest paths of the icons (unlocked and locked) of the achievements and of the `Notify`
+/// nodes (the host loads them as
 /// textures for the achievements screen).
 pub fn achievement_icon_paths(story: &Story) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -94,6 +95,15 @@ pub fn achievement_icon_paths(story: &Story) -> Vec<String> {
             if !out.contains(&entry.path) {
                 out.push(entry.path.clone());
             }
+        }
+    }
+    // The icons of the `Notify` nodes are toast pictures too.
+    for n in story.scenes.iter().flat_map(|s| &s.nodes) {
+        if let orbit_core::NodeKind::Notify(orbit_core::Notify { icon: Some(icon), .. }) = &n.kind
+            && let Some(entry) = story.assets.get(*icon)
+            && !out.contains(&entry.path)
+        {
+            out.push(entry.path.clone());
         }
     }
     out

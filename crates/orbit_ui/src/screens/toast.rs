@@ -53,6 +53,9 @@ pub struct Notification {
     pub sound: Option<String>,
     /// Seconds on screen (else the style's, else the theme's).
     pub duration: Option<f32>,
+    /// Asked by the story (a `Notify` node, a script): removed by
+    /// [`NotificationStack::clear_story`] (rollback, load).
+    pub from_story: bool,
 }
 
 impl Notification {
@@ -80,6 +83,7 @@ struct Toast {
     y: Option<f32>,
     /// Text read by screen readers.
     plain: String,
+    from_story: bool,
 }
 
 /// The toasts on screen and those waiting their turn.
@@ -180,6 +184,14 @@ impl NotificationStack {
         self.visible.clear();
         self.queue.clear();
         self.sounds.clear();
+    }
+
+    /// Removes the toasts the story asked for (a rollback or a load takes
+    /// the story elsewhere); engine messages and achievements stay.
+    pub fn clear_story(&mut self) {
+        self.visible.retain(|t| !t.from_story);
+        self.queue.retain(|n| !n.from_story);
+        self.promote();
     }
 
     pub fn is_empty(&self) -> bool {
@@ -424,6 +436,7 @@ impl NotificationStack {
             duration: self.duration_of(n),
             y: None,
             plain,
+            from_story: n.from_story,
         }
     }
 
@@ -673,5 +686,14 @@ mod tests {
         assert!(t.visible[0].shape.is_some());
         t.clear();
         assert!(t.is_empty());
+    }
+
+    #[test]
+    fn a_rollback_removes_the_story_toasts_only() {
+        let mut t = stack();
+        t.push("Saved");
+        t.notify(Notification { text: "Quest".into(), from_story: true, ..Default::default() });
+        t.clear_story();
+        assert_eq!(t.texts(), ["Saved"]);
     }
 }

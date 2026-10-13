@@ -422,6 +422,9 @@ impl Ready {
                 UiEvent::ReturnToMainMenu => self.jump(Which::Main),
                 UiEvent::Quit => self.toasts.push("Quit requested (ignored in the gallery)"),
                 UiEvent::Toast(text) => self.toasts.push(text),
+                UiEvent::Notify(n) => {
+                    self.toasts.notify(n);
+                }
                 UiEvent::LoadSlot(id) => {
                     log::info!("gallery: load {id:?}");
                     self.toasts.push(self.texts.get("ui.toast.loaded"));

@@ -53,6 +53,7 @@ pub fn asset_users(story: &Story, id: AssetId) -> Vec<AssetUser> {
             | NodeKind::ShowScene3d { scene: asset, .. } => *asset == id,
             NodeKind::BackgroundLayers { layers, .. } => layers.iter().any(|l| l.asset == id),
             NodeKind::Hotspots(map) => map.assets().contains(&id),
+            NodeKind::Notify(n) => n.assets().contains(&id),
             NodeKind::Particles(e) => e.sprite == Some(id),
             NodeKind::Say { voice, .. } => *voice == Some(id),
             _ => false,
@@ -92,6 +93,7 @@ pub fn asset_users_index(story: &Story) -> std::collections::HashMap<AssetId, Ve
             | NodeKind::ShowScene3d { scene: asset, .. } => add(*asset, user),
             NodeKind::BackgroundLayers { layers, .. } => layers.iter().for_each(|l| add(l.asset, user)),
             NodeKind::Hotspots(map) => map.assets().into_iter().for_each(|a| add(a, user)),
+            NodeKind::Notify(n) => n.assets().into_iter().for_each(|a| add(a, user)),
             NodeKind::Particles(e) => e.sprite.into_iter().for_each(|s| add(s, user)),
             NodeKind::Say { voice: Some(v), .. } => add(*v, user),
             _ => {}

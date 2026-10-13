@@ -632,14 +632,26 @@ impl Shell {
         if images != self.ui_images {
             self.ui_images = images;
             self.quick.set_images(self.ui_images.clone());
+            self.toasts.set_images(self.ui_images.clone());
             self.sync_data();
         }
     }
 
     fn toast(&mut self, text: String) {
-        let seq = self.last_toast.as_ref().map_or(0, |(s, _)| s + 1);
-        self.last_toast = Some((seq, orbit_ui::a11y::plain(&text)));
-        self.toasts.push(text);
+        self.notify(orbit_ui::Notification::system(text));
+    }
+
+    /// Shows a notification (any origin) and tells screen readers.
+    fn notify(&mut self, n: orbit_ui::Notification) {
+        let plain = if n.markup {
+            plain_text(&n.text)
+        } else {
+            n.text.clone()
+        };
+        if self.toasts.notify(n) {
+            let seq = self.last_toast.as_ref().map_or(0, |(s, _)| s + 1);
+            self.last_toast = Some((seq, orbit_ui::a11y::plain(&plain)));
+        }
     }
 
     fn toast_key(&mut self, key: &str) {
@@ -681,6 +693,8 @@ impl Shell {
             settings,
         ));
         self.stack.clear();
+        // A new game or a load: the story toasts of before do not apply.
+        self.toasts.clear_story();
         self.end_handled = false;
         self.autosave_cooldown = 0.0;
         self.lines_since_autosave = 0;
@@ -898,6 +912,7 @@ impl Shell {
         }
         self.flush_persistent();
         self.leave_music();
+        self.toasts.clear_story();
         self.game = None;
         self.cut_screen_fx = true;
         self.sync_story_screens();
@@ -2059,6 +2074,7 @@ impl Shell {
         match event {
             UiEvent::Sound(sound) => self.effects.push(Effect::UiSound(sound)),
             UiEvent::Toast(text) => self.toast(text),
+            UiEvent::Notify(n) => self.notify(n),
             UiEvent::StartGame => self.start_new_game(),
             UiEvent::Continue => self.continue_game(),
             UiEvent::OpenLoad => self.open(Overlay::Load),
@@ -2229,6 +2245,8 @@ impl Shell {
 
     fn rollback(&mut self) {
         self.cut_screen_fx = true;
+        // The toasts of the story belong to what is undone.
+        self.toasts.clear_story();
         let theme = self.theme.clone();
         if let Some(game) = &mut self.game {
             game.rollback(&theme);
@@ -2266,9 +2284,12 @@ impl Shell {
 
     fn pump_audio(&mut self) {
         let mut unlocks = Vec::new();
+        let mut notes = Vec::new();
         if let Some(game) = &mut self.game {
             // A voice is not started while skipping (it would be cut at once).
             let skipping = game.skipping();
+            self.toasts.set_skipping(skipping);
+            notes = game.director.take_notifications();
             for command in game.director.take_audio() {
                 if skipping && matches!(command, AudioCommand::PlayVoice { .. }) {
                     game.director.voice_finished();
@@ -2283,6 +2304,18 @@ impl Shell {
         }
         for id in unlocks {
             self.announce_unlock(id);
+        }
+        for n in notes {
+            self.notify(orbit_ui::Notification {
+                text: n.text,
+                markup: true,
+                style: n.style,
+                icon: None,
+                icon_path: n.icon,
+                sound: n.sound,
+                duration: n.duration,
+                from_story: true,
+            });
         }
     }
 
@@ -2300,9 +2333,12 @@ impl Shell {
             .icon
             .and_then(|icon| self.story.assets.get(icon))
             .and_then(|entry| self.ui_images.get(&entry.path).copied());
-        let seq = self.last_toast.as_ref().map_or(0, |(s, _)| s + 1);
-        self.last_toast = Some((seq, orbit_ui::a11y::plain(&text)));
-        self.toasts.push_with_icon(text, icon);
+        self.notify(orbit_ui::Notification {
+            text,
+            style: Some(orbit_ui::ACHIEVEMENT_NOTIFY_STYLE.to_owned()),
+            icon,
+            ..Default::default()
+        });
         self.persistent.unlocked_achievements.insert(id);
         self.flush_persistent();
         if let Some(hook) = &self.achievement_hook {
@@ -2399,6 +2435,12 @@ impl Shell {
     }
 
     fn ui_input(&mut self, input: UiInput) {
+        // A click on a toast dismisses it and does nothing else.
+        if let UiInput::PointerDown(p) = input
+            && self.toasts.click(p)
+        {
+            return;
+        }
         if let Some(top) = self.top() {
             let events = self.screen(top).handle(input);
             self.apply_all(events);
@@ -2539,7 +2581,11 @@ impl Shell {
 
     /// Advances the game, the screens and the pending work by `dt` seconds.
     pub fn update(&mut self, dt: f32) {
+        self.toasts.set_reduced_motion(self.prefs.reduced_motion);
         self.toasts.update(dt);
+        for path in self.toasts.take_sounds() {
+            self.effects.push(Effect::PlayAsset(path));
+        }
         let top = self.top();
         match (&self.game, top) {
             (None, _) => self.main_screen().update(dt),

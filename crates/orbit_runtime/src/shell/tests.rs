@@ -12,6 +12,7 @@ mod music;
 mod splashes;
 mod replay;
 mod story_screens;
+mod notify;
 
 const DEMO: &str = include_str!("../../../../examples/stories/test_minimal.ron");
 const FR: &str = include_str!("../../../../examples/stories/i18n/test_minimal.fr.ron");

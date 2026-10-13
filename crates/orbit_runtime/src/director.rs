@@ -99,6 +99,17 @@ struct PendingTransition {
     kind: TransitionKind,
 }
 
+/// A notification asked by the story (a `Notify` node, a script or a
+/// plugin), ready to show: translated markup text and project paths.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StoryNotification {
+    pub text: String,
+    pub style: Option<String>,
+    pub icon: Option<String>,
+    pub sound: Option<String>,
+    pub duration: Option<f32>,
+}
+
 /// Runs a story and exposes what to show.
 pub struct Director {
     vm: Vm,
@@ -116,6 +127,9 @@ pub struct Director {
     voice_active: bool,
     /// Achievements unlocked since the last [`Director::take_unlocks`].
     unlocked: Vec<orbit_core::AchievementId>,
+    /// Notifications (`Notify` nodes, scripts) since the last
+    /// [`Director::take_notifications`].
+    notifications: Vec<StoryNotification>,
     /// The music the host was last asked to play.
     music: Option<MusicState>,
     generation: u64,
@@ -162,6 +176,7 @@ impl Director {
             audio: Vec::new(),
             voice_active: false,
             unlocked: Vec::new(),
+            notifications: Vec::new(),
             music: None,
             generation: 0,
             progress: 0,
@@ -278,6 +293,12 @@ impl Director {
     /// Audio requests accumulated since the last call.
     pub fn take_audio(&mut self) -> Vec<AudioCommand> {
         std::mem::take(&mut self.audio)
+    }
+
+    /// Notifications the story asked for since the last call, text
+    /// translated and `[variables]` filled in, for the host's toasts.
+    pub fn take_notifications(&mut self) -> Vec<StoryNotification> {
+        std::mem::take(&mut self.notifications)
     }
 
     /// Achievements unlocked since the last call (M7-05), for the host's toast
@@ -610,6 +631,34 @@ impl Director {
                 }
                 PresentationEvent::AchievementUnlocked { achievement } => {
                     self.unlocked.push(*achievement);
+                }
+                PresentationEvent::Notify { notify, vars, .. } => {
+                    let story = self.vm.story();
+                    let text = orbit_core::interpolate_vars(self.loc.text(notify.text_id), |name| {
+                        vars.iter()
+                            .find(|(n, _)| n == name)
+                            .map(|(_, v)| v.clone())
+                            .or_else(|| self.vm.variable(name).map(ToString::to_string))
+                    });
+                    let path = |a: Option<orbit_core::AssetId>| {
+                        a.and_then(|a| story.asset_path(a)).map(str::to_owned)
+                    };
+                    self.notifications.push(StoryNotification {
+                        text,
+                        style: notify.style.clone(),
+                        icon: path(notify.icon),
+                        sound: path(notify.sound),
+                        duration: notify.duration,
+                    });
+                }
+                PresentationEvent::NotifyText(n) => {
+                    self.notifications.push(StoryNotification {
+                        text: n.text.clone(),
+                        style: n.style.clone(),
+                        icon: n.icon.clone(),
+                        sound: n.sound.clone(),
+                        duration: n.duration,
+                    });
                 }
                 _ => {}
             }

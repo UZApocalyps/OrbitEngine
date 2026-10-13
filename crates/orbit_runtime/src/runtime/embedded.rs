@@ -158,6 +158,8 @@ pub(super) struct DialoguePreview {
     quick: orbit_ui::QuickMenu,
     images: std::collections::HashMap<String, TextureId>,
     background: [u8; 4],
+    /// Test notifications of the editor's "Notifications" tab.
+    toasts: orbit_ui::NotificationStack,
 }
 
 impl DialoguePreview {
@@ -192,11 +194,14 @@ impl DialoguePreview {
         };
         let mut quick = orbit_ui::QuickMenu::new(theme, texts, view);
         quick.set_images(images.clone());
+        let mut toasts = orbit_ui::NotificationStack::new(theme);
+        toasts.set_images(images.clone());
         Self {
             dialogue,
             menu,
             quick,
             images,
+            toasts,
             background: theme.screens.background,
         }
     }
@@ -226,6 +231,9 @@ pub(super) struct ScreenPreview {
 
 /// Seconds a toast of the preview needs to show and fade.
 const TOAST_SETTLE: f32 = 4.0;
+/// Seconds the preview keeps animating after a test notification (a long
+/// custom duration is cut short in the preview, not in the game).
+const TEST_TOAST_SETTLE: f32 = 12.0;
 
 impl ScreenPreview {
     fn find(
@@ -251,12 +259,14 @@ impl ScreenPreview {
         nav.set_declared(vars);
         nav.images = images;
         let screen = orbit_ui::DataScreen::new(asset, &theme, &texts, nav.context("Preview"));
+        let mut toasts = orbit_ui::NotificationStack::new(&theme);
+        toasts.set_images(nav.images.clone());
         Ok(Self {
             screen,
             nav,
             bundle: bundle.clone(),
             stock,
-            toasts: orbit_ui::ToastStack::new(&theme),
+            toasts,
             theme,
             texts,
             pick: None,
@@ -289,6 +299,8 @@ impl ScreenPreview {
         images: std::collections::HashMap<String, TextureId>,
     ) {
         self.nav.set_declared(vars);
+        self.toasts.set_theme(&theme);
+        self.toasts.set_images(images.clone());
         self.nav.images = images;
         self.bundle = bundle.clone();
         self.theme = theme;
@@ -332,6 +344,10 @@ impl ScreenPreview {
                 orbit_ui::UiEvent::StopMusic => {
                     let op = self.music.manual_stop();
                     self.music_ops.push(op);
+                }
+                // A Notify button shows the real toast.
+                orbit_ui::UiEvent::Notify(n) => {
+                    self.toasts.notify(n.clone());
                 }
                 _ => {}
             }
@@ -1335,6 +1351,26 @@ impl Runtime {
         Ok(())
     }
 
+    /// Shows `n` as a toast over the UI preview (editor "Notifications"
+    /// tab, "Show test notification"), with the theme of the preview.
+    /// `false` when no screen or dialogue preview is shown.
+    pub fn show_test_notification(&mut self, n: orbit_ui::Notification) -> bool {
+        let Some(emb) = self.embedded.as_mut() else {
+            return false;
+        };
+        let shown = match emb.ui_preview.as_mut() {
+            Some(UiPreview::Screen(p)) => p.toasts.notify(n),
+            Some(UiPreview::Dialogue(p)) => p.toasts.notify(n),
+            _ => false,
+        };
+        if shown {
+            // Long enough for the toast to come, stay and go.
+            emb.ui_settle = emb.ui_settle.max(TEST_TOAST_SETTLE);
+            emb.dirty = true;
+        }
+        shown
+    }
+
     /// Carries out the music operations the screen preview collected.
     fn drain_preview_music(&mut self) {
         let ops = match self.embedded.as_mut().and_then(|e| e.ui_preview.as_mut()) {
@@ -1416,6 +1452,7 @@ impl Runtime {
                 if emb.ui_settle > 0.0 {
                     p.screen.update(secs);
                     p.toasts.update(secs);
+                    p.toasts.take_sounds();
                     emb.ui_settle -= secs;
                     emb.dirty = true;
                 }
@@ -1431,6 +1468,8 @@ impl Runtime {
                 use orbit_ui::Screen as _;
                 if emb.ui_settle > 0.0 {
                     p.quick.update(secs);
+                    p.toasts.update(secs);
+                    p.toasts.take_sounds();
                     emb.ui_settle -= secs;
                     emb.dirty = true;
                 }
@@ -1542,6 +1581,7 @@ impl Runtime {
                             p.quick.draw(&mut ctx);
                         }
                     }
+                    p.toasts.draw(&mut ctx);
                 }
                 out.scene(renderer, &ui_scene)
             }
