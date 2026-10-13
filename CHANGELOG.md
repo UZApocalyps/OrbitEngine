@@ -1,5 +1,14 @@
 # Changelog
 
+## Non publié
+
+### Nouveautés
+- **Plugins de l'éditeur (DLL)** : l'éditeur charge au démarrage des plugins natifs installés par l'utilisateur depuis **Outils > Extensions > Plugins…** (installation d'un `.orbitplugin` ou d'une bibliothèque, activation, désactivation, désinstallation, réglages, redémarrage). Chaque plugin est vérifié avant chargement : format du fichier, description lue dans un processus séparé, empreinte de compilation identique à celle de l'éditeur (version, compilateur, egui, sources, disposition et identité des types), somme de contrôle. Un plugin qui plante est désactivé sans fermer l'éditeur ; `--no-plugins` démarre sans aucun plugin.
+- SDK des plugins (`orbit_editor_sdk`), exemple `examples/editor_plugins/hello`, chapitre « Plugins de l'éditeur » du manuel, et `cargo xtask plugins` pour compiler et empaqueter les plugins officiels.
+
+### Changements
+- **Le Studio IA devient un plugin** : il n'est plus intégré à l'éditeur livré. Compilez-le avec `cargo xtask plugins` et installez-le depuis le gestionnaire de plugins ; ses réglages existants (`ai_studio.ron`) sont conservés.
+
 ## 0.3.1 (2026-10-07)
 
 Version corrective.

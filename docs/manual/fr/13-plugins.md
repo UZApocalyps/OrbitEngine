@@ -1,6 +1,6 @@
 # Plugins Rust
 
-Les plugins ajoutent de nouveaux types d'étapes et de nouvelles actions d'interface à un jeu. Ils sont écrits en Rust par un programmeur ; vous n'en avez pas besoin pour faire un jeu. Ce chapitre explique comment en utiliser un, par exemple le plugin de dés fourni avec le moteur (`examples/plugins/dice`).
+Les plugins ajoutent de nouveaux types d'étapes et de nouvelles actions d'interface à un jeu. Ils sont écrits en Rust par un programmeur ; vous n'en avez pas besoin pour faire un jeu. Ce chapitre explique comment en utiliser un, par exemple le plugin de dés fourni avec le moteur (`examples/plugins/dice`). Les plugins qui étendent l'éditeur lui-même (Studio IA...) sont décrits dans *Plugins de l'éditeur*.
 
 ## Ajouter un plugin à un projet
 

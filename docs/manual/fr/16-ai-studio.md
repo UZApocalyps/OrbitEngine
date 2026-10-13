@@ -2,6 +2,8 @@
 
 Le Studio IA construit un visual novel complet à partir de quelques lignes : vous décrivez le jeu, un modèle de langage de votre choix écrit l'histoire, un générateur d'images dessine les décors et les personnages, et le studio intègre le tout à votre projet. Chaque étape peut être relue, modifiée et relancée.
 
+Le Studio IA est un **plugin de l'éditeur** : l'éditeur est livré sans lui. Compilez-le avec `cargo xtask plugins` et installez `orbit.ai_studio-….orbitplugin` depuis **Outils > Extensions > Plugins…**, puis redémarrez l'éditeur (voir *Plugins de l'éditeur*). Sa page de réglages dans le gestionnaire de plugins contient les réglages des fournisseurs.
+
 Ouvrez-le depuis **Outils > Studio IA**. Il travaille sur le projet ouvert.
 
 Le studio fait partie de l'éditeur uniquement : rien de lui n'est jamais inclus dans un jeu exporté.

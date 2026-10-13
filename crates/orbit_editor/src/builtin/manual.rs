@@ -58,6 +58,7 @@ macro_rules! all_chapters {
             chapter!($lang, "14-scripting"),
             chapter!($lang, "15-renpy-import"),
             chapter!($lang, "16-ai-studio"),
+            chapter!($lang, "17-editor-plugins"),
         ]
     };
 }

@@ -2,6 +2,8 @@
 
 The AI Studio builds a whole visual novel from a few lines of text: you describe the game, a language model of your choice writes the story, an image generator draws the backgrounds and characters, and the studio puts everything into your project. Every step can be reviewed, edited and run again.
 
+AI Studio is an **editor plugin**: the editor ships without it. Build it with `cargo xtask plugins` and install `orbit.ai_studio-….orbitplugin` from **Tools > Extensions > Plugins…**, then restart the editor (see *Editor plugins*). Its settings page in the plugin manager holds the provider settings.
+
 Open it from **Tools > AI Studio**. It works on the open project.
 
 The studio is part of the editor only. Nothing of it is ever included in an exported game.

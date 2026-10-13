@@ -1,6 +1,6 @@
 # Rust plugins
 
-Plugins add new kinds of steps and new interface actions to a game. They are written in Rust by a programmer; you do not need them to make a game. This chapter explains how to use one, for example the dice plugin shipped with the engine (`examples/plugins/dice`).
+Plugins add new kinds of steps and new interface actions to a game. They are written in Rust by a programmer; you do not need them to make a game. This chapter explains how to use one, for example the dice plugin shipped with the engine (`examples/plugins/dice`). Plugins that extend the editor itself (AI Studio...) are described in *Editor plugins*.
 
 ## Adding a plugin to a project
 
