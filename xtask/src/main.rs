@@ -3,6 +3,7 @@
 mod arch;
 mod assets;
 mod bench;
+mod plugins;
 mod serve;
 mod templates;
 mod web;
@@ -33,6 +34,9 @@ Commands:
                 Options: --debug --quick --out <json> --baseline <json> --threshold <ratio, 1.5>
                 --strict (fail on a regression) --update-baseline
   gen-assets    Regenerate assets/logo.png and the procedural assets/demo/ files
+  plugins       Build the official native editor plugins (plugins/*) and package them as .orbitplugin into
+                <target>/plugins/. Options: --debug (default release, same profile as the editor)
+                --examples (also examples/editor_plugins/*) --only <package> --out <dir> --no-check
 ";
 
 fn main() -> ExitCode {
@@ -47,6 +51,7 @@ fn main() -> ExitCode {
         Some("check-arch") => arch::check(),
         Some("bench") => bench::bench(&rest),
         Some("gen-assets") => assets::generate(),
+        Some("plugins") => plugins::plugins(&rest),
         Some("help") | Some("--help") | Some("-h") | None => {
             print!("{HELP}");
             Ok(())

@@ -106,8 +106,8 @@ impl EditorFacts {
     pub fn cache_key(&self) -> String {
         let f = &self.fingerprint;
         format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}",
-            f.api_version, f.abi_version, f.rustc, f.egui, f.target, f.profile, f.api_hash, f.layout_hash
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            f.api_version, f.abi_version, f.rustc, f.egui, f.target, f.profile, f.api_hash, f.layout_hash, f.type_hash
         )
     }
 }

@@ -12,12 +12,12 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-# The editor API, with the editor's exact egui (`orbit_editor_api::egui`).
-# Out of this repository, depend on the editor's git tag instead:
-# orbit_editor_api = { git = "https://.../OrbitEngine", tag = "v0.3.1" }
-orbit_editor_api.workspace = true
-orbit_core.workspace = true
-orbit_project.workspace = true
+# The only dependency a plugin needs: the editor API, the editor's egui, the
+# project crates, and the editor's dependency resolution. Out of this
+# repository, take it from the editor's git tag and copy the editor's
+# Cargo.lock next to your Cargo.toml:
+# orbit_editor_sdk = { git = "https://github.com/<owner>/OrbitEngine", tag = "v0.3.1" }
+orbit_editor_sdk.workspace = true
 
 # `export_plugin!` generates `#[no_mangle]` functions: `unsafe_code` may be
 # denied but not forbidden (the workspace forbids it).

@@ -13,6 +13,10 @@ image.workspace = true
 hound.workspace = true
 brotli = "9.0.0"
 serde_json = "1"
+# `cargo xtask plugins`: the .orbitplugin packages (zip + manifest.ron).
+serde.workspace = true
+ron.workspace = true
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true

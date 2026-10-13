@@ -15,13 +15,14 @@ use std::path::Path;
 
 use orbit_editor_api::native::{
     CREATE_SYMBOL, DESCRIPTOR_LAYOUT_VERSION, DESCRIPTOR_SYMBOL, DescriptorInfo, Fingerprint,
-    LAYOUT_HASH, MAGIC, NATIVE_ABI_VERSION, NativePlugin, PluginDescriptor,
+    LAYOUT_HASH, MAGIC, NATIVE_ABI_VERSION, NativePlugin, PluginDescriptor, TYPE_HASH_SYMBOL,
 };
 
 use crate::verify::{Problem, ProbeOutput};
 
 type DescriptorFn = unsafe extern "C" fn() -> *const PluginDescriptor;
-type CreateFn = unsafe extern "C" fn(u32, u64, u64) -> *mut c_void;
+type TypeHashFn = unsafe extern "C" fn() -> u64;
+type CreateFn = unsafe extern "C" fn(u32, u64, u64, u64) -> *mut c_void;
 
 /// A library opened and whose descriptor was read.
 pub struct OpenLibrary {
@@ -83,6 +84,15 @@ pub fn open(path: &Path) -> Result<OpenLibrary, Problem> {
             "descriptor layout {layout} (size {size}), this editor reads layout {DESCRIPTOR_LAYOUT_VERSION}"
         )));
     }
+    // SAFETY: the symbol, when present, has this signature (export_plugin!).
+    let type_hash_fn: TypeHashFn = unsafe {
+        *library
+            .get::<TypeHashFn>(&symbol_name(TYPE_HASH_SYMBOL))
+            .map_err(|_| Problem::BadDescriptor(format!("no `{TYPE_HASH_SYMBOL}` function")))?
+    };
+    // SAFETY: an `extern "C"` function without arguments returning a number
+    // (it hashes `TypeId`s; nothing that can fail).
+    let type_hash = unsafe { type_hash_fn() };
     // SAFETY: layout checked above: the descriptor has this exact type.
     let d = unsafe { &*ptr };
     // SAFETY: string fields point to NUL-terminated literals of the library.
@@ -102,6 +112,7 @@ pub fn open(path: &Path) -> Result<OpenLibrary, Problem> {
                 profile: text(d.profile, "profile")?,
                 api_hash: format!("{:016x}", d.api_hash),
                 layout_hash: format!("{:016x}", d.layout_hash),
+                type_hash: format!("{type_hash:016x}"),
             },
         }
     };
@@ -138,6 +149,7 @@ impl OpenLibrary {
                 NATIVE_ABI_VERSION,
                 orbit_editor_api::native::API_HASH,
                 LAYOUT_HASH,
+                orbit_editor_api::native::type_hash(),
             )
         };
         std::mem::forget(self.library);

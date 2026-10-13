@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Mutex;
 
-use orbit_editor_api::egui::{self, ComboBox, DragValue, RichText, ScrollArea, TextEdit, Ui};
+use orbit_editor_sdk::egui::{self, ComboBox, DragValue, RichText, ScrollArea, TextEdit, Ui};
 use orbit_ai_studio::assets::{AssetKindAi, AssetStatus};
 use orbit_ai_studio::civitai::{self, DownloadOutcome, ModelInfo, ModelType};
 use orbit_ai_studio::pipeline::{self, PipelineState, ScriptStatus};
@@ -22,8 +22,8 @@ use orbit_ai_studio::sd::{self, LoraPick, ModelLists, SdPreset};
 use orbit_ai_studio::{
     ImageBackend, ImplementOptions, OpenAiChat, StudioSettings, image_gen, implement,
 };
-use orbit_editor_api::native::PluginHost;
-use orbit_editor_api::{
+use orbit_editor_sdk::native::PluginHost;
+use orbit_editor_sdk::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, PanelDef,
     Plugin, PluginManifest, ProjectRegistry, SettingsDef, TaskError, TaskHandle, icons,
 };
@@ -906,7 +906,7 @@ fn spawn_step(
     ctx: &mut EditorContext<'_>,
     root: &Path,
     title_key: &str,
-    f: impl FnOnce(&mut PipelineState, &StudioSettings, &Path, &orbit_editor_api::Progress) -> Result<(), String> + Send + 'static,
+    f: impl FnOnce(&mut PipelineState, &StudioSettings, &Path, &orbit_editor_sdk::Progress) -> Result<(), String> + Send + 'static,
 ) {
     s.save_state();
     s.message = None;

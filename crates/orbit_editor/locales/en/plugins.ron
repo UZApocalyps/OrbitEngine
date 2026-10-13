@@ -46,6 +46,7 @@
     "plugins.field.profile": "build profile",
     "plugins.field.api_hash": "API sources",
     "plugins.field.layout_hash": "type layouts",
+    "plugins.field.type_hash": "dependency build (Cargo.lock, features)",
     "plugins.binary.unreadable": "The file cannot be read: {detail}",
     "plugins.binary.not_library": "The file is not a dynamic library.",
     "plugins.binary.wrong_platform": "Library for {found}, this editor runs on {expected}.",

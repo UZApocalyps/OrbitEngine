@@ -11,7 +11,7 @@
 mod studio;
 mod ui_util;
 
-use orbit_editor_api::native::{NativePlugin, PluginHost};
+use orbit_editor_sdk::native::{NativePlugin, PluginHost};
 
 #[derive(Default)]
 pub struct AiStudioNative;
@@ -31,7 +31,7 @@ impl NativePlugin for AiStudioNative {
     }
 }
 
-orbit_editor_api::export_plugin!(
+orbit_editor_sdk::export_plugin!(
     AiStudioNative,
     id = "orbit.ai_studio",
     name = "AI Studio",

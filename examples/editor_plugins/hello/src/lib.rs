@@ -19,11 +19,11 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use orbit_core::{Node, NodeId, NodeKind, StringId};
-use orbit_editor_api::egui;
-use orbit_editor_api::native::{NativePlugin, PluginHost};
-use orbit_editor_api::{ActionDef, EditorContext, SettingsDef, WindowDef, icons};
-use orbit_project::Command;
+use orbit_editor_sdk::egui;
+use orbit_editor_sdk::native::{NativePlugin, PluginHost};
+use orbit_editor_sdk::orbit_core::{Node, NodeId, NodeKind, StringId};
+use orbit_editor_sdk::orbit_project::{self, Command};
+use orbit_editor_sdk::{ActionDef, EditorContext, SettingsDef, WindowDef, icons};
 
 /// The plugin id (also in `manifest.ron`).
 pub const ID: &str = "acme.hello";
@@ -214,7 +214,7 @@ impl NativePlugin for Hello {
     }
 }
 
-orbit_editor_api::export_plugin!(
+orbit_editor_sdk::export_plugin!(
     Hello,
     id = "acme.hello",
     name = "Hello",

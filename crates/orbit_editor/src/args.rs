@@ -12,6 +12,7 @@ Options :
   --no-config              ne lit ni n'écrit aucune configuration
   --no-plugins             mode sans échec : ne charge aucun plugin natif
   --probe-plugin <fichier> affiche la description (JSON) d'une bibliothèque de plugin puis quitte
+  --plugin-abi             affiche l'empreinte de compilation que les plugins doivent partager (JSON)
   --theme dark|light       force le thème
   --lang en|fr             force la langue de l'interface (sans l'enregistrer), pour les captures
   --size <LxH>             taille initiale de la fenêtre, en pixels logiques (ex. 1360x820)
@@ -87,6 +88,9 @@ pub struct Args {
     /// Prints the descriptor of a plugin library as JSON and exits (the
     /// plugin manager runs this in a child process).
     pub probe_plugin: Option<PathBuf>,
+    /// Prints this editor's plugin fingerprint as JSON and exits
+    /// (`cargo xtask plugins` compares it with the plugins it builds).
+    pub plugin_abi: bool,
     pub help: bool,
 }
 
@@ -149,6 +153,7 @@ impl Args {
                 }
                 "--config-dir" => out.config_dir = Some(PathBuf::from(value("--config-dir")?)),
                 "--no-plugins" => out.no_plugins = true,
+                "--plugin-abi" => out.plugin_abi = true,
                 "--probe-plugin" => out.probe_plugin = Some(PathBuf::from(value("--probe-plugin")?)),
                 "--palette-query" => out.palette_query = value("--palette-query")?,
                 "--search" => out.search = Some(value("--search")?),

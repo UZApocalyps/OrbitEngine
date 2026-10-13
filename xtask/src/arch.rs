@@ -5,7 +5,8 @@
 //!   gfx/platform/editor crates.
 //! * They must compile for `wasm32-unknown-unknown`.
 //! * `orbit_player` must never depend on the editor (`orbit_editor`, `orbit_editor_api`), egui, the native file
-//!   dialog crate, the MCP server or the exporter (`orbit_export`).
+//!   dialog crate, the MCP server, the exporter (`orbit_export`) or the native plugin loader.
+//! * `orbit_editor` must not link AI Studio (or any plugin): optional tools are native plugins.
 
 use std::collections::BTreeSet;
 
@@ -56,10 +57,15 @@ const PLAYER_FORBIDDEN: &[&str] = &[
     "orbit_export",
     "orbit_mcp",
     "orbit_ai_studio",
+    "orbit_plugin_host",
     "rfd",
     "rmcp",
     "rmcp-*",
 ];
+
+/// The shipped editor has no plugin compiled in: AI Studio and the other
+/// optional tools are native plugins (`plugins/*`), installed by the user.
+const EDITOR_FORBIDDEN: &[&str] = &["orbit_ai_studio", "orbit_ai_studio_plugin", "orbit_hello_plugin"];
 
 fn matches(pattern: &str, name: &str) -> bool {
     match pattern.strip_suffix('*') {
@@ -132,6 +138,17 @@ pub fn check() -> Result {
     } else {
         failures.push(format!(
             "orbit_player depends on forbidden crates: {}",
+            bad.join(", ")
+        ));
+    }
+
+    let editor = dependencies("orbit_editor")?;
+    let bad = forbidden_found(&editor, EDITOR_FORBIDDEN);
+    if bad.is_empty() {
+        println!("ok: orbit_editor ships without plugins compiled in");
+    } else {
+        failures.push(format!(
+            "orbit_editor links plugins that must stay native plugins: {}",
             bad.join(", ")
         ));
     }

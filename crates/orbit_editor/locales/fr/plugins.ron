@@ -46,6 +46,7 @@
     "plugins.field.profile": "profil de compilation",
     "plugins.field.api_hash": "sources de l'API",
     "plugins.field.layout_hash": "disposition des types",
+    "plugins.field.type_hash": "compilation des dépendances (Cargo.lock, features)",
     "plugins.binary.unreadable": "Le fichier ne peut pas être lu : {detail}",
     "plugins.binary.not_library": "Le fichier n'est pas une bibliothèque dynamique.",
     "plugins.binary.wrong_platform": "Bibliothèque pour {found}, cet éditeur tourne sous {expected}.",

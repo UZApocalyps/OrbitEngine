@@ -1,0 +1,322 @@
+//! `cargo xtask plugins`: builds the official native editor plugins
+//! (`plugins/*`, and the SDK examples with `--examples`) with this
+//! workspace's toolchain and profile, and packages each one as a
+//! `.orbitplugin` (zip: `manifest.ron`, the library, `locales/`, `assets/`)
+//! into `<target>/plugins/`.
+//!
+//! A native plugin only loads in an editor built from the same sources, by
+//! the same compiler, with the same profile (see `orbit_editor_api::native`):
+//! build the editor with the same `--release` / `--debug` choice. Before
+//! building, the features each plugin resolves for the crates it shares with
+//! the editor (everything `orbit_editor_api` depends on, egui included) are
+//! compared with the editor's; after, when the editor binary of that profile
+//! exists, its
+//! fingerprint (`orbit-editor --plugin-abi`) is compared with the plugin's
+//! (`orbit-editor --probe-plugin`).
+
+use std::collections::BTreeSet;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::{Result, cargo, run, workspace_root};
+
+const HELP: &str = "\
+cargo xtask plugins [--debug] [--examples] [--only <package>] [--out <dir>] [--no-check]
+
+Builds the official native editor plugins (plugins/*) in release (or --debug), with the
+toolchain and profile of the editor, and writes <target>/plugins/<id>-<version>-<os>-<arch>.orbitplugin.
+--examples also builds examples/editor_plugins/*; --only builds one package; --no-check skips the
+comparison of the features resolved for the crates shared with the editor. Build the editor with
+the same profile: a plugin only loads in it.
+";
+
+/// The package manifest (`manifest.ron`), as the editor reads it.
+#[derive(Serialize, Deserialize)]
+struct Manifest {
+    id: String,
+    name: String,
+    version: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    author: String,
+    library: String,
+    #[serde(default)]
+    min_editor: Option<String>,
+    #[serde(default)]
+    max_editor: Option<String>,
+    #[serde(default)]
+    homepage: Option<String>,
+}
+
+struct PluginCrate {
+    name: String,
+    version: String,
+    dir: PathBuf,
+}
+
+fn metadata() -> Result<serde_json::Value> {
+    let out = cargo()
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .output()?;
+    if !out.status.success() {
+        return Err(format!("cargo metadata failed: {}", String::from_utf8_lossy(&out.stderr)).into());
+    }
+    Ok(serde_json::from_slice(&out.stdout)?)
+}
+
+/// The cdylib packages under `plugins/` (and `examples/editor_plugins/`).
+fn plugin_crates(meta: &serde_json::Value, examples: bool) -> Vec<PluginCrate> {
+    let root = workspace_root();
+    let mut dirs = vec![root.join("plugins")];
+    if examples {
+        dirs.push(root.join("examples").join("editor_plugins"));
+    }
+    let mut out = Vec::new();
+    for package in meta["packages"].as_array().into_iter().flatten() {
+        let manifest = PathBuf::from(package["manifest_path"].as_str().unwrap_or_default());
+        let Some(dir) = manifest.parent() else { continue };
+        let inside = dirs.iter().any(|d| {
+            dir.canonicalize()
+                .ok()
+                .zip(d.canonicalize().ok())
+                .is_some_and(|(a, b)| a.starts_with(b))
+        });
+        let cdylib = package["targets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|t| t["crate_types"].as_array().into_iter().flatten().any(|c| c == "cdylib"));
+        if inside && cdylib && dir.join("manifest.ron").is_file() {
+            out.push(PluginCrate {
+                name: package["name"].as_str().unwrap_or_default().to_owned(),
+                version: package["version"].as_str().unwrap_or_default().to_owned(),
+                dir: dir.to_path_buf(),
+            });
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// `package version|features` of every crate `package`'s build resolves
+/// (normal and build dependencies, proc macros included).
+fn resolved(package: &str) -> Result<BTreeSet<String>> {
+    let out = cargo()
+        .args(["tree", "-p", package, "-e", "normal,build", "--prefix", "none", "-f", "{p}|{f}"])
+        .output()?;
+    if !out.status.success() {
+        return Err(format!("cargo tree failed for {package}: {}", String::from_utf8_lossy(&out.stderr)).into());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.replace(" (*)", ""))
+        .map(|l| {
+            // Drop the path of workspace crates: `name vX (path)|features`.
+            match (l.find(" ("), l.find('|')) {
+                (Some(a), Some(b)) if a < b => format!("{}{}", &l[..a], &l[b..]),
+                _ => l,
+            }
+        })
+        .collect())
+}
+
+/// The crates whose build must be the editor's: everything
+/// `orbit_editor_api` depends on (egui included). Their resolved features
+/// decide their `TypeId`s, which the plugin fingerprint compares.
+fn shared_crates() -> Result<BTreeSet<String>> {
+    Ok(resolved("orbit_editor_api")?
+        .into_iter()
+        .filter_map(|l| l.split('|').next().map(str::to_owned))
+        .collect())
+}
+
+/// What `package` resolves differently from the editor among `shared`.
+fn differences(editor: &BTreeSet<String>, package: &str, shared: &BTreeSet<String>) -> Result<Vec<String>> {
+    let keep = |l: &String| l.split('|').next().is_some_and(|p| shared.contains(p));
+    let plugin: BTreeSet<String> = resolved(package)?.into_iter().filter(keep).collect();
+    let editor: BTreeSet<String> = editor.iter().filter(|l| keep(l)).cloned().collect();
+    Ok(editor
+        .symmetric_difference(&plugin)
+        .map(|l| {
+            let side = if editor.contains(l) { "editor" } else { "plugin" };
+            format!("{side}: {l}")
+        })
+        .collect())
+}
+
+fn library_file(name: &str) -> String {
+    format!(
+        "{}{}{}",
+        std::env::consts::DLL_PREFIX,
+        name.replace('-', "_"),
+        std::env::consts::DLL_SUFFIX
+    )
+}
+
+fn add_dir(zip: &mut zip::ZipWriter<std::fs::File>, base: &Path, dir: &Path) -> Result {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()) };
+    let mut entries: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            add_dir(zip, base, &path)?;
+        } else {
+            let rel = path.strip_prefix(base)?.to_string_lossy().replace('\\', "/");
+            zip.start_file(rel, zip::write::SimpleFileOptions::default())?;
+            zip.write_all(&std::fs::read(&path)?)?;
+        }
+    }
+    Ok(())
+}
+
+/// Runs `editor <args>` and returns its last JSON line.
+fn editor_json(editor: &Path, args: &[&std::ffi::OsStr]) -> Option<serde_json::Value> {
+    let out = std::process::Command::new(editor).args(args).output().ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with('{'))
+        .and_then(|l| serde_json::from_str(l).ok())
+}
+
+pub fn plugins(args: &[String]) -> Result {
+    let mut release = true;
+    let mut examples = false;
+    let mut only: Option<String> = None;
+    let mut out_dir: Option<PathBuf> = None;
+    let mut check = true;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--debug" => release = false,
+            "--release" => release = true,
+            "--examples" => examples = true,
+            "--no-check" => check = false,
+            "--only" => only = Some(it.next().ok_or("--only needs a package")?.clone()),
+            "--out" => out_dir = Some(PathBuf::from(it.next().ok_or("--out needs a folder")?)),
+            "-h" | "--help" => {
+                print!("{HELP}");
+                return Ok(());
+            }
+            other => return Err(format!("unknown option `{other}`\n\n{HELP}").into()),
+        }
+    }
+    let meta = metadata()?;
+    let target = PathBuf::from(meta["target_directory"].as_str().unwrap_or("target"));
+    let editor_version = meta["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|p| p["name"] == "orbit_editor")
+        .and_then(|p| p["version"].as_str())
+        .ok_or("orbit_editor not found in the workspace")?
+        .to_owned();
+    let mut crates = plugin_crates(&meta, examples);
+    if let Some(name) = &only {
+        crates.retain(|c| &c.name == name);
+        if crates.is_empty() {
+            return Err(format!("no plugin package `{name}`").into());
+        }
+    }
+    if crates.is_empty() {
+        println!("no plugin to build");
+        return Ok(());
+    }
+
+    if check {
+        let shared = shared_crates()?;
+        let editor = resolved("orbit_editor")?;
+        for c in &crates {
+            let diff = differences(&editor, &c.name, &shared)?;
+            if !diff.is_empty() {
+                return Err(format!(
+                    "{} resolves crates shared with the editor differently (their TypeIds would differ, \
+                     the editor would refuse it); depend on orbit_editor_sdk and do not enable other \
+                     features of these crates:\n  {}",
+                    c.name,
+                    diff.join("\n  ")
+                )
+                .into());
+            }
+        }
+        println!(
+            "ok: the plugins build the {} crates shared with the editor exactly like the editor",
+            shared.len()
+        );
+    }
+
+    let profile = if release { "release" } else { "debug" };
+    let out_dir = out_dir.unwrap_or_else(|| target.join("plugins"));
+    std::fs::create_dir_all(&out_dir)?;
+    let editor_exe = target.join(profile).join(format!("orbit-editor{}", std::env::consts::EXE_SUFFIX));
+    let editor_abi = editor_exe
+        .is_file()
+        .then(|| editor_json(&editor_exe, &["--plugin-abi".as_ref()]))
+        .flatten();
+
+    for c in &crates {
+        let mut build = cargo();
+        build.args(["build", "-p", &c.name]);
+        if release {
+            build.arg("--release");
+        }
+        run(&mut build)?;
+        let lib_name = library_file(&c.name);
+        let lib = target.join(profile).join(&lib_name);
+        if !lib.is_file() {
+            return Err(format!("{} was not produced", lib.display()).into());
+        }
+        let text = std::fs::read_to_string(c.dir.join("manifest.ron"))?;
+        let mut manifest: Manifest = ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(&text)
+            .map_err(|e| format!("{}: manifest.ron: {e}", c.name))?;
+        manifest.library = lib_name.clone();
+        manifest.version = c.version.clone();
+        // A native plugin is tied to the editor build it was compiled with.
+        manifest.min_editor = Some(editor_version.clone());
+        manifest.max_editor = Some(editor_version.clone());
+
+        let file = out_dir.join(format!(
+            "{}-{}-{}-{}.orbitplugin",
+            manifest.id,
+            manifest.version,
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ));
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&file)?);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("manifest.ron", options)?;
+        zip.write_all(
+            ron::ser::to_string_pretty(&manifest, ron::ser::PrettyConfig::default())?.as_bytes(),
+        )?;
+        zip.start_file(lib_name.as_str(), options)?;
+        zip.write_all(&std::fs::read(&lib)?)?;
+        for sub in ["locales", "assets"] {
+            add_dir(&mut zip, &c.dir, &c.dir.join(sub))?;
+        }
+        zip.finish()?;
+        let size = std::fs::metadata(&file)?.len();
+        println!("{} ({:.1} MB)", file.display(), size as f64 / 1e6);
+
+        if let Some(editor) = &editor_abi {
+            let probe = editor_json(&editor_exe, &["--probe-plugin".as_ref(), lib.as_os_str()]);
+            match probe.as_ref().map(|p| (&p["ok"], &p["info"]["fingerprint"])) {
+                Some((serde_json::Value::Bool(true), fp)) if fp == editor => {
+                    println!("  compatible with {}", editor_exe.display());
+                }
+                Some((serde_json::Value::Bool(true), fp)) => {
+                    println!(
+                        "  warning: NOT compatible with {} (rebuild the editor with this profile)\n  plugin: {fp}\n  editor: {editor}",
+                        editor_exe.display()
+                    );
+                }
+                _ => println!("  warning: the probe of {} failed: {probe:?}", lib.display()),
+            }
+        }
+    }
+    Ok(())
+}

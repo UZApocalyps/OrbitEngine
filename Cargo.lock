@@ -3086,7 +3086,7 @@ dependencies = [
  "image",
  "orbit_ai_studio",
  "orbit_core",
- "orbit_editor_api",
+ "orbit_editor_sdk",
  "orbit_project",
 ]
 
@@ -3213,6 +3213,7 @@ dependencies = [
  "serde_json",
  "spade",
  "winresource",
+ "zip",
 ]
 
 [[package]]
@@ -3227,6 +3228,17 @@ dependencies = [
  "ron",
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "orbit_editor_sdk"
+version = "0.3.1"
+dependencies = [
+ "orbit_core",
+ "orbit_editor",
+ "orbit_editor_api",
+ "orbit_plugin_api",
+ "orbit_project",
 ]
 
 [[package]]
@@ -3265,9 +3277,7 @@ dependencies = [
 name = "orbit_hello_plugin"
 version = "0.1.0"
 dependencies = [
- "orbit_core",
- "orbit_editor_api",
- "orbit_project",
+ "orbit_editor_sdk",
 ]
 
 [[package]]
@@ -3396,10 +3406,8 @@ version = "0.3.1"
 dependencies = [
  "libloading",
  "log",
- "orbit_core",
  "orbit_editor_api",
  "orbit_plugin_api",
- "orbit_project",
  "ron",
  "serde",
  "serde_json",
@@ -5994,7 +6002,10 @@ dependencies = [
  "hound",
  "image",
  "orbit_export",
+ "ron",
+ "serde",
  "serde_json",
+ "zip",
 ]
 
 [[package]]

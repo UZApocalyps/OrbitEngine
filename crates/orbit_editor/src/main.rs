@@ -23,6 +23,11 @@ fn main() -> ExitCode {
         println!("{json}");
         return if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE };
     }
+    if args.plugin_abi {
+        let fingerprint = orbit_editor_api::native::Fingerprint::current();
+        println!("{}", serde_json::to_string(&fingerprint).unwrap_or_default());
+        return ExitCode::SUCCESS;
+    }
     if args.help {
         print!("{USAGE}");
         return ExitCode::SUCCESS;

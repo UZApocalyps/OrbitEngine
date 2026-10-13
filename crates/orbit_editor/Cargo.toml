@@ -64,6 +64,8 @@ spade = "2.15"
 
 [dev-dependencies]
 hound.workspace = true
+# tests/native_plugins.rs builds a .orbitplugin package.
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = { version = "0.1", default-features = false }

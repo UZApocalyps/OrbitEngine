@@ -1,7 +1,7 @@
 //! The few egui helpers of the editor's built-in panels the studio uses
 //! (copied: a plugin only sees the egui style, like the built-ins do).
 
-use orbit_editor_api::egui::{
+use orbit_editor_sdk::egui::{
     self, Color32, CornerRadius, FontFamily, FontId, Frame, Margin, Response, RichText, Ui, vec2,
 };
 

@@ -1,0 +1,23 @@
+[package]
+name = "orbit_editor_sdk"
+description = "OrbitEngine native editor plugin SDK: the one dependency of a plugin (cdylib). Re-exports orbit_editor_api (with the editor's egui) and pins the editor's dependency resolution so that the plugin's build of egui and of the API crates is the editor's."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbit_editor_api.workspace = true
+orbit_plugin_api.workspace = true
+orbit_core.workspace = true
+orbit_project.workspace = true
+# Not used by the code: depending on the editor makes cargo resolve every
+# shared crate (egui and its dependencies, the API crates) with exactly the
+# editor's features, so their `TypeId`s match the editor's (egui keys its
+# internal state by `TypeId`; the plugin fingerprint checks it). It is not
+# linked into the plugin.
+orbit_editor = { path = "../orbit_editor" }
+
+[lints]
+workspace = true

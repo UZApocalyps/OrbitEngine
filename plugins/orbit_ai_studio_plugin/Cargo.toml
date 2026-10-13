@@ -11,7 +11,8 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-orbit_editor_api.workspace = true
+# The plugin SDK: editor API, the editor's egui and dependency resolution.
+orbit_editor_sdk.workspace = true
 orbit_ai_studio.workspace = true
 orbit_core.workspace = true
 orbit_project.workspace = true
