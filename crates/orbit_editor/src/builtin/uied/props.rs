@@ -731,7 +731,7 @@ fn eligible_editor(ui: &mut Ui, env: &Env, list: &mut Vec<String>, candidates: &
 
 // ---------------------------------------------------------------- actions
 
-const ACTION_NAMES: [&str; 20] = [
+const ACTION_NAMES: [&str; 21] = [
     "game_new",
     "game_continue",
     "game_quit",
@@ -752,6 +752,7 @@ const ACTION_NAMES: [&str; 20] = [
     "replay_scene",
     "play_music",
     "stop_music",
+    "notify",
 ];
 
 fn action_index(a: &UiAction) -> usize {
@@ -776,6 +777,7 @@ fn action_index(a: &UiAction) -> usize {
         UiAction::ReplayScene(_) => 17,
         UiAction::PlayMusic(_) => 18,
         UiAction::StopMusic => 19,
+        UiAction::Notify(_) => 20,
     }
 }
 
@@ -803,6 +805,7 @@ fn action_from_index(i: usize, vars: &[VarInfo]) -> UiAction {
         17 => UiAction::ReplayScene(Operand::Item),
         18 => UiAction::PlayMusic(String::new()),
         19 => UiAction::StopMusic,
+        20 => UiAction::Notify(orbit_ui::UiNotify::text(String::new())),
         _ => UiAction::VarSet(varwidgets::blank_op(vars)),
     }
 }
@@ -825,6 +828,28 @@ fn action_editor(ui: &mut Ui, env: &Env, salt: &str, action: &mut UiAction) {
             ui.add(egui::TextEdit::singleline(path).desired_width(140.0));
         }
         UiAction::PlayMusic(path) => music_file_picker(ui, env, (salt, "music"), path),
+        UiAction::Notify(n) => {
+            ui.vertical(|ui| {
+                if let orbit_ui::TextRef::Literal(text) = &mut n.text {
+                    ui.add(
+                        egui::TextEdit::singleline(text)
+                            .hint_text(env.t("uied.notify_text_hint"))
+                            .desired_width(160.0),
+                    );
+                }
+                let mut style = n.style.clone().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut style)
+                            .hint_text(env.t("uied.notify_style_hint"))
+                            .desired_width(110.0),
+                    )
+                    .changed()
+                {
+                    n.style = (!style.trim().is_empty()).then(|| style.trim().to_owned());
+                }
+            });
+        }
         UiAction::SceneGoto(scene) => scene_editor(ui, env, salt, scene),
         UiAction::ReplayScene(o) => replay_target_editor(ui, env, salt, o),
         UiAction::Custom { name, args } => {

@@ -608,6 +608,17 @@ impl PreviewHost {
             force_draw = true;
             wake.redraw = true;
         }
+        if let Some((text, style)) = core.state.preview.ui_test_notification.take()
+            && self.runtime.show_test_notification(orbit_ui::Notification {
+                text,
+                markup: true,
+                style,
+                ..Default::default()
+            })
+        {
+            force_draw = true;
+            wake.redraw = true;
+        }
 
         // ---- commands
         let commands = std::mem::take(&mut core.state.preview.commands);

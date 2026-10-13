@@ -23,6 +23,7 @@ mod inspector_screen;
 mod inspector_script;
 mod inspector_voice;
 pub(crate) mod inspector_hotspots;
+pub(crate) mod inspector_notify;
 mod hotspot_edit;
 mod script_highlight;
 mod scripts_panel;

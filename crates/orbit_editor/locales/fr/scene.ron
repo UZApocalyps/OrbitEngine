@@ -134,6 +134,7 @@
     "scene.row.open_screen": "Ouvrir un écran",
     "scene.row.script": "Script",
     "scene.row.unlock": "Succès",
+    "scene.row.notify": "Notification",
     "scene.row.close_screen": "Fermer un écran",
     "scene.row.background_layers": "Parallaxe",
     "scene.row.particles": "Particules",

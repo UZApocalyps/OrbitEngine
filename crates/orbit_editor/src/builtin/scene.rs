@@ -1273,6 +1273,10 @@ fn describe(texts: &orbit_editor_api::Translator, story: &Story, node: &Node) ->
                 .unwrap_or("?")
                 .to_owned(),
         ),
+        NodeKind::Notify(n) => (
+            texts.t("scene.row.notify"),
+            story.text(n.text_id).unwrap_or("?").to_owned(),
+        ),
         NodeKind::Return => (texts.t("scene.row.return"), String::new()),
         NodeKind::End => (texts.t("scene.row.end"), String::new()),
         NodeKind::Custom {

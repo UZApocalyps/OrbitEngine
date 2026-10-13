@@ -37,6 +37,7 @@ pub fn kind_key(kind: &NodeKind) -> String {
         NodeKind::Script { .. } => "Script".into(),
         NodeKind::Unlock { .. } => "Unlock".into(),
         NodeKind::Hotspots(_) => "Hotspots".into(),
+        NodeKind::Notify(_) => "Notify".into(),
         NodeKind::Custom {
             plugin_id, kind, ..
         } => format!("{plugin_id}.{kind}"),
@@ -77,6 +78,7 @@ pub fn kind_label(texts: &Translator, kind: &NodeKind) -> String {
         NodeKind::Script { .. } => "node.kind.script",
         NodeKind::Unlock { .. } => "node.kind.unlock",
         NodeKind::Hotspots(_) => "node.kind.hotspots",
+        NodeKind::Notify(_) => "node.kind.notify",
     })
 }
 
@@ -113,6 +115,7 @@ pub fn kind_icon(kind: &NodeKind) -> &'static str {
         NodeKind::Script { .. } => icons::CODE,
         NodeKind::Unlock { .. } => icons::TROPHY,
         NodeKind::Hotspots(_) => icons::CURSOR_CLICK,
+        NodeKind::Notify(_) => icons::BELL_RINGING,
     }
 }
 
@@ -152,7 +155,7 @@ pub fn kind_color(kind: &NodeKind) -> egui::Color32 {
         | NodeKind::Particles(_)
         | NodeKind::StopParticles { .. } => Color32::from_rgb(236, 120, 96),
         NodeKind::OpenScreen { .. } | NodeKind::CloseScreen { .. } => Color32::from_rgb(120, 200, 120),
-        NodeKind::Unlock { .. } => Color32::from_rgb(232, 196, 70),
+        NodeKind::Unlock { .. } | NodeKind::Notify(_) => Color32::from_rgb(232, 196, 70),
         NodeKind::Custom { .. } => Color32::from_rgb(232, 110, 160),
     }
 }
@@ -343,6 +346,7 @@ pub fn summary(texts: &Translator, story: &Story, node: &Node) -> String {
             .find(|a| a.id == *achievement)
             .and_then(|a| story.text(a.title_id))
             .map_or_else(|| "?".to_owned(), |t| truncate(t, 70)),
+        NodeKind::Notify(n) => truncate(story.text(n.text_id).unwrap_or("?"), 70),
         NodeKind::Custom {
             plugin_id, kind, ..
         } => format!("{plugin_id}.{kind}"),

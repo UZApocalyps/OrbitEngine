@@ -170,6 +170,8 @@
     "draft.label.script": "Script (Rhai)",
     "draft.label.unlock": "Débloquer un succès",
     "draft.need_achievement": "Définissez d'abord un succès (panneau Succès).",
+    "draft.label.notify": "Notification",
+    "draft.notify_text": "Nouvelle notification",
     "draft.label.close_screen": "Fermer un écran",
     "draft.label.background_layers": "Fond en parallaxe",
     "draft.label.particles": "Particules",

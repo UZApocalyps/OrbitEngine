@@ -401,6 +401,7 @@ fn node_inspector(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId) {
         NodeKind::Unlock { achievement } => {
             super::inspector_voice::unlock_node(ui, ctx, id, achievement);
         }
+        NodeKind::Notify(n) => super::inspector_notify::notify_node(ui, ctx, id, &n),
         NodeKind::Label { name } => label(ui, ctx, id, &name),
         NodeKind::Choice { options } => choice(ui, ctx, id, &options),
         NodeKind::Hotspots(map) => super::inspector_hotspots::hotspots(ui, ctx, id, &map),

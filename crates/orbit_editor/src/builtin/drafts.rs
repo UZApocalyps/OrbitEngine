@@ -159,6 +159,12 @@ fn all_builtin_insertables() -> Vec<Insertable> {
             "draft.group.logic",
         ),
         item(
+            "Notify",
+            "draft.label.notify",
+            icons::BELL_RINGING,
+            "draft.group.dialogue",
+        ),
+        item(
             "Hotspots",
             "draft.label.hotspots",
             icons::CURSOR_CLICK,
@@ -487,6 +493,22 @@ pub fn drafts_for(
             vec![NodeDraft::plain(NodeKind::Unlock { achievement })]
         }
         "StopParticles" => vec![NodeDraft::plain(NodeKind::StopParticles { name: String::new() })],
+        "Notify" => {
+            let text_id = StringId::new();
+            vec![NodeDraft {
+                node: orbit_core::Node {
+                    id: orbit_core::NodeId::new(),
+                    kind: NodeKind::Notify(orbit_core::Notify {
+                        text_id,
+                        icon: None,
+                        sound: None,
+                        duration: None,
+                        style: None,
+                    }),
+                },
+                strings: vec![(text_id, texts.t("draft.notify_text"))],
+            }]
+        }
         "OpenScreen" => vec![NodeDraft::plain(NodeKind::OpenScreen {
             screen: String::new(),
             wait: false,

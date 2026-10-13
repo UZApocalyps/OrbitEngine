@@ -136,6 +136,9 @@ pub struct PreviewState {
     pub ui_request: Option<UiPreviewRequest>,
     /// Widget of the shown screen to outline in the UI preview.
     pub ui_highlight: Option<Vec<usize>>,
+    /// A test notification (text, style name) to show over the UI preview
+    /// (UI editor "Notifications" tab), taken by the host.
+    pub ui_test_notification: Option<(String, Option<String>)>,
     /// Language of the game texts (`ui.*`) in the UI preview; `None`: the
     /// story's source language (not the editor's).
     pub ui_language: Option<String>,

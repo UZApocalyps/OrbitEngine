@@ -12,6 +12,8 @@
 //!   of sample widgets per state ([`style_ed`]);
 //! * **Dialogue box**: the textbox, name plate, choices and quick menu of
 //!   the theme, previewed by the real runtime ([`dialogue_tab`]);
+//! * **Notifications**: placement, timing and named looks of the in-game
+//!   toasts, with a test toast over the preview ([`notify_tab`]);
 //! * **Splashes**: the splash screens, the mandatory engine one shown as a
 //!   locked first row.
 //!
@@ -22,6 +24,7 @@
 
 mod dialogue_tab;
 mod model;
+mod notify_tab;
 mod props;
 mod style_ed;
 
@@ -110,6 +113,7 @@ enum Tab {
     Screens,
     Theme,
     Dialogue,
+    Notifications,
     Splashes,
 }
 
@@ -151,6 +155,12 @@ struct State {
     /// Dialogue box tab: sample speaker and line of the preview.
     dlg_speaker: String,
     dlg_line: String,
+    /// Notifications tab: the style edited, the sample text, the name of a
+    /// new style, a test toast waiting for the preview.
+    ntf_style: String,
+    ntf_text: String,
+    ntf_new: String,
+    ntf_pending: Option<(String, Option<String>)>,
 }
 
 impl Default for State {
@@ -179,6 +189,10 @@ impl Default for State {
             dlg_choices: false,
             dlg_speaker: String::new(),
             dlg_line: String::new(),
+            ntf_style: String::new(),
+            ntf_text: String::new(),
+            ntf_new: String::new(),
+            ntf_pending: None,
         }
     }
 }
@@ -412,6 +426,7 @@ fn panel(
             Tab::Screens => screens_tab(ui, ctx, &mut st),
             Tab::Theme => theme_tab(ui, ctx, &mut st),
             Tab::Dialogue => dialogue_tab::dialogue_tab(ui, ctx, &mut st),
+            Tab::Notifications => notify_tab::notify_tab(ui, ctx, &mut st),
             Tab::Splashes => splash_tab(ui, ctx, &mut st),
         }
     });
@@ -480,6 +495,7 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
             (Tab::Screens, "uied.tab.screens"),
             (Tab::Theme, "uied.tab.theme"),
             (Tab::Dialogue, "uied.tab.dialogue"),
+            (Tab::Notifications, "uied.tab.notifications"),
             (Tab::Splashes, "uied.tab.splashes"),
         ] {
             if ui
@@ -548,7 +564,7 @@ fn toolbar(ui: &mut Ui, ctx: &mut EditorContext<'_>, st: &mut State) {
 fn tab_mode(tab: Tab) -> Mode {
     match tab {
         Tab::Splashes => Mode::Splashes,
-        Tab::Dialogue => Mode::Dialogue,
+        Tab::Dialogue | Tab::Notifications => Mode::Dialogue,
         Tab::Screens | Tab::Theme => Mode::Screen,
     }
 }

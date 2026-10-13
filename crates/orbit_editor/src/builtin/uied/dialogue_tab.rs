@@ -128,7 +128,7 @@ fn style_picker(
     });
 }
 
-fn image_picker(ui: &mut Ui, tr: &Translator, salt: &str, images: &[String], slot: &mut Option<String>) {
+pub(super) fn image_picker(ui: &mut Ui, tr: &Translator, salt: &str, images: &[String], slot: &mut Option<String>) {
     let mut path = slot.clone().unwrap_or_default();
     let text = if path.is_empty() { tr.t("uied.none") } else { path.clone() };
     ComboBox::from_id_salt(salt)

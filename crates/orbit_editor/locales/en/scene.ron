@@ -134,6 +134,7 @@
     "scene.row.open_screen": "Open screen",
     "scene.row.script": "Script",
     "scene.row.unlock": "Achievement",
+    "scene.row.notify": "Notification",
     "scene.row.close_screen": "Close screen",
     "scene.row.background_layers": "Parallax",
     "scene.row.particles": "Particles",
