@@ -592,6 +592,21 @@ pub enum CommandSpec {
         /// Achievement id or exact title.
         achievement: String,
     },
+    /// Show a non-blocking notification (toast) while the story goes on.
+    /// The text is markup; `[variable]` is replaced by its value. Look and
+    /// placement come from the UI theme's `notifications` section.
+    Notify {
+        /// The notification text (non-empty).
+        text: String,
+        /// Image asset shown left of the text.
+        icon: Option<String>,
+        /// Sound asset played with the toast (else the style's/theme's).
+        sound: Option<String>,
+        /// Seconds on screen (>= 0; else the style's/theme's duration).
+        duration: Option<f32>,
+        /// Named style of `notifications.styles` in the UI theme.
+        style: Option<String>,
+    },
     /// Parallel keyframe tracks (target x property x keys). Animated values
     /// are relative to the staging, like `effect`. A timeline that does not
     /// `wait` keeps playing while the story goes on until the scene changes.
@@ -729,6 +744,7 @@ pub fn spec_variant(spec: &CommandSpec) -> &'static str {
         CommandSpec::StopParticles { .. } => "StopParticles",
         CommandSpec::Script { .. } => "Script",
         CommandSpec::Unlock { .. } => "Unlock",
+        CommandSpec::Notify { .. } => "Notify",
     }
 }
 
@@ -791,6 +807,7 @@ pub const NODE_KIND_TOOLS: &[(&str, &str)] = &[
     ("StopParticles", "add_command type=stop_particles"),
     ("Script", "add_command type=script"),
     ("Unlock", "add_command type=unlock"),
+    ("Notify", "add_command type=notify"),
     ("Hotspots", "add_hotspots"),
 ];
 
@@ -1578,6 +1595,32 @@ fn build_kind(cx: &ToolCx<'_>, spec: &CommandSpec) -> Result<NodeKind, ToolError
         CommandSpec::StopParticles { name } => NodeKind::StopParticles {
             name: name.clone().unwrap_or_default(),
         },
+        CommandSpec::Notify {
+            text,
+            icon,
+            sound,
+            duration,
+            style,
+        } => {
+            non_empty(text, "text")?;
+            NodeKind::Notify(orbit_core::Notify {
+                text_id: StringId::new(),
+                icon: icon
+                    .as_deref()
+                    .map(|a| find_asset(story, a, Some(AssetKind::Image)))
+                    .transpose()?,
+                sound: sound
+                    .as_deref()
+                    .map(|a| find_asset(story, a, Some(AssetKind::Sound)))
+                    .transpose()?,
+                duration: duration.map(|d| seconds("duration", d)).transpose()?,
+                style: style
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned),
+            })
+        }
         CommandSpec::Unlock { achievement } => NodeKind::Unlock {
             achievement: crate::voice_tools::achievement_arg(story, achievement)?,
         },
@@ -1971,6 +2014,15 @@ fn add_command(cx: &mut ToolCx<'_>, a: AddCommandArgs) -> Result<String, ToolErr
         note = Some(format!(
             "variable `{var}` is not declared yet: use declare_variable (validate warns about it)"
         ));
+    }
+    if let (NodeKind::Notify(n), CommandSpec::Notify { text, .. }) = (&kind, &a.command) {
+        exec(
+            cx,
+            Command::SetString {
+                id: n.text_id,
+                text: Some(text.trim().to_owned()),
+            },
+        )?;
     }
     let node = Node {
         id: NodeId::new(),
@@ -2977,7 +3029,7 @@ fn ui_tool_defs() -> Vec<ToolDef> {
     vec![
         def::<u::NoArgs>("list_ui", "List the UI", "List the project's ui/ folder: screens (with their system role), theme styles, system-screen links, splashes and validation issues.", Kind::Read, u::list_ui),
         def::<u::ScreenIdArg>("read_ui_screen", "Read a UI screen", "Read a UI screen (ui/<id>.screen.ron) as RON, with its validation issues.", Kind::Read, u::read_ui_screen),
-        def::<u::WriteScreenArgs>("write_ui_screen", "Create or edit a UI screen", "Create or replace a UI screen from RON (ScreenAsset; its id names it). Refused, nothing written, when the UI would have errors; warnings are returned. ScreenAsset also takes `music: Some((asset: \"assets/music/menu.ogg\", ..))` (see set_ui_screen_music); SaveSlots takes `look: (..)` and its children as the card template (see set_ui_save_slots); button actions include PlayMusic(\"path\") and StopMusic. A generated list `Repeat(source: .., dir: Grid(3), overflow: Pages)` takes `overflow`: Scroll (default; wheel, drag, keyboard, scrollbar), Pages (prev/next buttons + page counter) or Off, for rows that do not fit; give it a Fill or Fixed height.", Kind::Edit, u::write_ui_screen),
+        def::<u::WriteScreenArgs>("write_ui_screen", "Create or edit a UI screen", "Create or replace a UI screen from RON (ScreenAsset; its id names it). Refused, nothing written, when the UI would have errors; warnings are returned. ScreenAsset also takes `music: Some((asset: \"assets/music/menu.ogg\", ..))` (see set_ui_screen_music); SaveSlots takes `look: (..)` and its children as the card template (see set_ui_save_slots); button actions include PlayMusic(\"path\"), StopMusic and Notify(UiNotify: text, style, icon, sound, duration; shows a toast, see write_ui_notifications). A generated list `Repeat(source: .., dir: Grid(3), overflow: Pages)` takes `overflow`: Scroll (default; wheel, drag, keyboard, scrollbar), Pages (prev/next buttons + page counter) or Off, for rows that do not fit; give it a Fill or Fixed height.", Kind::Edit, u::write_ui_screen),
         def::<u::ScreenIdArg>("delete_ui_screen", "Delete a UI screen", "Delete a UI screen and the system-screen links pointing to it. Refused if that leaves errors.", Kind::Destructive, u::delete_ui_screen),
         def::<u::StyleNameArg>("read_ui_style", "Read a theme style", "Read a named style of ui/theme.ron as RON.", Kind::Read, u::read_ui_style),
         def::<u::WriteStyleArgs>("write_ui_style", "Create or edit a theme style", "Create or replace a named style in ui/theme.ron (the theme is created if missing) from RON. Fields (all optional): extends, font, text_size, bold, text_align (Left|Center|Right), show_text (false = image-only button), text_colors / colors (normal, hover, pressed, disabled, focused), fills: per-state backgrounds (normal, hover, pressed, disabled, focused) each Color((r,g,b,a)) | Gradient(top: .., bottom: ..) | Image(image: \"assets/ui/b.png\", fit: Stretch|Fit|Cover) | NineSlice(image: .., insets: (l,t,r,b)), fill (one background for all states), border: Some((color, width)), shadow: Some((color, offset: (x,y))), padding: Some((x,y)), sounds: Some((hover, confirm)).", Kind::Edit, u::write_ui_style),
@@ -2987,6 +3039,8 @@ fn ui_tool_defs() -> Vec<ToolDef> {
         def::<u::IndexArg>("delete_ui_splash", "Delete a splash", "Delete a splash by index (see list_ui).", Kind::Destructive, u::delete_ui_splash),
         def::<u::NoArgs>("read_ui_dialogue", "Read the dialogue box style", "Read the dialogue box section of ui/theme.ron as RON: textbox (rect, anchor, padding, sizes, colors, chars_per_second, style, name_style, name_plate, speaker_color, indicator_*, mode: Box|Bubbles, bubble: (fill, border, border_width, corner_radius, padding, max_width, min_width, text_size, text_color, font, show_name, name_size, tail_length, tail_width, gap, margin, pop, speaker_border, narrator: Box|Caption, caption_fill, offscreen: Bubble|Box, characters: {<character id>: (fill, border, text_color, head_offset)})), choice (button_size, spacing, colors, show_numbers, button_style, anchor) and quick_menu (anchor, button_style, button_width, gap, hidden).", Kind::Read, u::read_ui_dialogue),
         def::<u::WriteDialogueArgs>("write_ui_dialogue", "Edit the dialogue box style", "Replace sections of the dialogue box part of ui/theme.ron from RON (textbox, choice, quick_menu; sections left out stay). textbox.mode: Bubbles shows character lines as comic speech bubbles next to the speaker (narrator keeps the box); a line can pick its bubble with a {bubble=thought} or {bubble=shout} tag. Style fields name styles of the theme (images, nine-slices, per-state looks). Refused when it leaves errors; warnings (unknown styles) are returned.", Kind::Edit, u::write_ui_dialogue),
+        def::<u::NoArgs>("read_ui_notifications", "Read the notification style", "Read the `notifications` section of ui/theme.ron as RON (NotificationTheme): anchor, offset, width, max_visible, gap, direction, duration, animation (Slide|Fade|None), animation_seconds, sound, click_to_dismiss, skip (Show|Brief|Suppress) and named styles (style, background, border, corner_radius, padding, icon_size, icon, text_size, text_color, font, width, duration, sound). Toasts come from the `notify` story node (add_command type=notify) and the Notify UI button action.", Kind::Read, u::read_ui_notifications),
+        def::<u::WriteNotificationsArgs>("write_ui_notifications", "Edit the notification style", "Replace the `notifications` section of ui/theme.ron from RON (NotificationTheme; missing fields take their defaults, so read first). Styles named by `notify` nodes live in `styles`. The Notify button action (write_ui_screen) shows a toast from a screen. Refused when it leaves errors; warnings are returned.", Kind::Edit, u::write_ui_notifications),
         def::<u::ScreenMusicArgs>("set_ui_screen_music", "Set the music of a UI screen", "Give a UI screen music (played while it is open: the title music on the main menu, a track over the game that replaces or ducks the game's music and is put back on close) or remove it. The audio file is a project path (a music or sound asset). Fades, volume, looping, `keep_if_same` (the next screen with the same track does not restart it) and `resume_game_music` are optional. Warnings list a missing audio file. Buttons can also run the actions PlayMusic(\"path\") and StopMusic (write_ui_screen).", Kind::Edit, u::set_ui_screen_music),
         def::<u::SlotCardArgs>("set_ui_save_slots", "Customize a save slot list", "Customize a SaveSlots widget: write (or remove) its card template, the widget tree drawn inside each slot card, with bindings SlotField(..) and the SlotEmpty / SlotUsed / SlotLocked conditions, and set its look (styles per state of the cards, tabs, page buttons, delete button, confirmation dialog; card height; gaps). A SaveSlots without template draws the stock card.", Kind::Edit, u::set_ui_save_slots),
         def::<u::WidgetStyleArgs>("set_ui_widget_style", "Apply a style to a widget", "Give a widget (by id) of a UI screen a named style of the theme, or remove its style.", Kind::Edit, u::set_ui_widget_style),

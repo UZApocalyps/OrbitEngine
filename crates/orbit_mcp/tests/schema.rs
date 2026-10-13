@@ -154,6 +154,21 @@ fn command_fields_match_the_ir_fields() {
             assert_eq!(fields, emitter, "`add_command type=particles` vs IR Emitter");
             continue;
         }
+        if variant == "Notify" {
+            // `NodeKind::Notify(Notify)` wraps a struct; the command takes
+            // the literal `text` where the IR holds a `text_id`.
+            let mut notify: BTreeSet<String> = schema
+                .pointer("/$defs/Notify/properties")
+                .and_then(Value::as_object)
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect();
+            notify.remove("text_id");
+            notify.insert("text".to_owned());
+            assert_eq!(fields, notify, "`add_command type=notify` vs IR Notify");
+            continue;
+        }
         let ir_fields = ir_variant_fields(&schema, &variant);
         // `repeat` is the pass count of the IR's `looping: Loop(n)`.
         let mut fields = fields;

@@ -464,6 +464,37 @@ pub fn write_ui_dialogue(cx: &mut ToolCx<'_>, a: WriteDialogueArgs) -> Result<St
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct WriteNotificationsArgs {
+    /// RON `NotificationTheme`: `(anchor: TopRight, offset: (16.0, 16.0),
+    /// width: 320.0, max_visible: 4, gap: 8.0, direction: Auto, duration: Some(4.0),
+    /// animation: Slide, animation_seconds: 0.25, sound: Some("assets/sfx/ping.ogg"),
+    /// click_to_dismiss: true, skip: Show | Brief | Suppress, styles: {"achievement":
+    /// (background: .., icon: .., ..)})`. Missing fields take their defaults.
+    ron: String,
+}
+
+pub fn read_ui_notifications(cx: &mut ToolCx<'_>, _: NoArgs) -> Result<String, ToolError> {
+    let b = load(cx)?;
+    let theme = b.theme.unwrap_or_default();
+    let ron = ron::ser::to_string_pretty(&theme.notifications, ron::ser::PrettyConfig::new())
+        .map_err(|e| ToolError::invalid(e.to_string()))?;
+    out(json!({"ron": ron}))
+}
+
+pub fn write_ui_notifications(
+    cx: &mut ToolCx<'_>,
+    a: WriteNotificationsArgs,
+) -> Result<String, ToolError> {
+    let n: orbit_ui_data::NotificationTheme = ron::from_str(&a.ron)
+        .map_err(|e| ToolError::invalid(format!("notifications RON: {e}")))?;
+    let mut b = load(cx)?;
+    b.theme.get_or_insert_with(Default::default).notifications = n;
+    let issues = commit(cx, &b)?;
+    out(json!({"written": true, "issues": issues}))
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ScreenMusicArgs {
     /// Screen id.
     screen: String,

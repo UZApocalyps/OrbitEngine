@@ -370,6 +370,42 @@ fn achievement_locked_icon_is_set_listed_and_undoable() {
 }
 
 #[test]
+fn notify_command_adds_a_toast_node_and_checks_its_input() {
+    let mut f = Fixture::new("notify");
+    f.write_asset_source("incoming/i.png");
+    f.write_asset_source("incoming/ding.wav");
+    f.ok("import_asset", json!({"source": "incoming/i.png"}));
+    f.ok("import_asset", json!({"source": "incoming/ding.wav", "kind": "sound"}));
+    f.ok("create_scene", json!({"name": "s"}));
+    let add = |f: &mut Fixture, c: Value| f.call("add_command", json!({"scene": "s", "command": c}));
+    add(
+        &mut f,
+        json!({"type": "notify", "text": "Gold: [gold]", "icon": "i", "sound": "ding.wav", "duration": 2.5, "style": "gold"}),
+    )
+    .unwrap();
+    match &f.story().scenes[0].nodes[0].kind {
+        orbit_core::NodeKind::Notify(n) => {
+            assert!(n.icon.is_some() && n.sound.is_some());
+            assert_eq!(n.duration, Some(2.5));
+            assert_eq!(n.style.as_deref(), Some("gold"));
+            assert_eq!(f.story().text(n.text_id), Some("Gold: [gold]"));
+        }
+        other => panic!("{other:?}"),
+    }
+    let n = f.story().scenes[0].nodes.len();
+    for bad in [
+        json!({"type": "notify", "text": "  "}),
+        json!({"type": "notify", "text": "x", "duration": -1.0}),
+        json!({"type": "notify", "text": "x", "icon": "missing"}),
+        json!({"type": "notify", "text": "x", "icon": "ding.wav"}),
+        json!({"type": "notify", "text": "x", "sound": "i"}),
+    ] {
+        assert!(add(&mut f, bad.clone()).is_err(), "{bad}");
+    }
+    assert_eq!(f.story().scenes[0].nodes.len(), n);
+}
+
+#[test]
 fn every_tool_call_is_one_undo_entry() {
     let mut f = Fixture::new("undo");
     f.ok("create_character", json!({"name": "Alice"}));

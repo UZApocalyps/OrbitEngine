@@ -141,6 +141,25 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
         NodeKind::Unlock { achievement } => {
             format!("unlock achievement {}", achievement_label(story, *achievement))
         }
+        NodeKind::Notify(n) => {
+            let mut s = format!(
+                "notify {}",
+                quote(story.text(n.text_id).unwrap_or("<missing text>"))
+            );
+            if let Some(i) = n.icon {
+                s.push_str(&format!(" icon {}", asset_label(story, i)));
+            }
+            if let Some(i) = n.sound {
+                s.push_str(&format!(" sound {}", asset_label(story, i)));
+            }
+            if let Some(d) = n.duration {
+                s.push_str(&format!(" for {d}s"));
+            }
+            if let Some(st) = &n.style {
+                s.push_str(&format!(" style {}", quote(st)));
+            }
+            s
+        }
         NodeKind::Hotspots(map) => {
             let items: Vec<String> = map
                 .hotspots
@@ -802,6 +821,14 @@ fn describe_event(story: &Story, event: &PresentationEvent) -> String {
         }
         PresentationEvent::StopMusic { .. } => "music stops".to_owned(),
         PresentationEvent::PlaySound { asset } => format!("sound {}", asset_label(story, *asset)),
+        PresentationEvent::Notify { notify, vars, .. } => {
+            let mut text = story.text(notify.text_id).unwrap_or("<missing text>").to_owned();
+            for (name, value) in vars {
+                text = text.replace(&format!("[{name}]"), value);
+            }
+            format!("notify {}", quote(&text))
+        }
+        PresentationEvent::NotifyText(n) => format!("notify {}", quote(&n.text)),
         PresentationEvent::AchievementUnlocked { achievement } => {
             format!("achievement unlocked {}", achievement_label(story, *achievement))
         }

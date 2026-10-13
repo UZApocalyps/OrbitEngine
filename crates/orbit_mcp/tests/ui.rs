@@ -211,4 +211,17 @@ fn image_button_styles_and_the_dialogue_box_through_mcp() {
     let ron = r["ron"].as_str().unwrap();
     assert!(ron.contains("img_button") && ron.contains("show_numbers"), "{ron}");
     assert!(h.call_tool("write_ui_dialogue", json!({"ron": "(textbox: 3)"})).is_err());
+
+    // The notification theme round trips.
+    h.call_tool(
+        "write_ui_notifications",
+        json!({"ron": "(anchor: BottomLeft, max_visible: 2, skip: Suppress, styles: {\"gold\": (text_size: Some(30.0))})"}),
+    )
+    .unwrap();
+    let r = json_of(h.call_tool("read_ui_notifications", json!({})).unwrap());
+    let ron = r["ron"].as_str().unwrap();
+    assert!(ron.contains("BottomLeft") && ron.contains("Suppress") && ron.contains("gold"), "{ron}");
+    assert!(h.call_tool("write_ui_notifications", json!({"ron": "(anchor: Nowhere)"})).is_err());
+    let r = json_of(h.call_tool("read_ui_notifications", json!({})).unwrap());
+    assert!(r["ron"].as_str().unwrap().contains("BottomLeft"));
 }
