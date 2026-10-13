@@ -43,7 +43,8 @@ Le rapport est aussi enregistré dans `import-report.md`, dans le nouveau projet
 | `Composite(…)`, `ConditionSwitch(…)`, `layeredimage` | au mieux : le premier calque, la branche par défaut, le calque de base (signalé) |
 | un screen avec un `imagemap` (`ground`, `hover`, `hotspot (x, y, w, h) action …`) ou des `imagebutton`, utilisé par `call screen` / `show screen` | un nœud point & click (`Hotspots`) : le `ground` devient le décor, les zones les hotspots, `hover` leur image de survol ; un `if` autour d'un hotspot devient sa condition, `sensitive` son état actif |
 | un screen de `textbutton` utilisé de la même façon | un choix |
-| actions `Jump("x")`, `Call("x")`, `Return()`, `SetVariable("x", v)`, `SetField(persistent, "x", v)`, `ToggleVariable("x")`, et leurs listes | le bloc qui suit chaque zone / option |
+| actions `Jump("x")`, `Call("x")`, `Return()`, `SetVariable("x", v)`, `SetField(persistent, "x", v)`, `ToggleVariable("x")`, `Notify("texte")`, et leurs listes | le bloc qui suit chaque zone / option |
+| `$ renpy.notify("…")` (aussi dans un bloc `python:`) et l'action d'écran `Notify("…")` | un nœud Notify (une notification : texte converti comme un dialogue, style par défaut) |
 | `tl/french/*.rpy` (blocs `strings` et blocs de dialogue) | la traduction française du projet |
 
 Positions : le moteur ancre un sprite par le milieu de son bord bas, donc `xalign a` devient `x = 0.25 + 0.5 a` (les `left`, `center` et `right` des deux moteurs coïncident alors) et `yalign b` devient `y = 0.5 + 0.5 b` ; `xpos` / `ypos` placent l'ancre directement (les pixels sont divisés par la taille d'écran lue dans `gui.init(…)` ou `config.screen_width`). Les zones des `imagebutton` prennent la taille de leur image (en-tête PNG / JPEG).
@@ -53,7 +54,7 @@ Positions : le moteur ancre un sprite par le milieu de son bord bas, donc `xalig
 - Les écrans d'interface (say, menus, sauvegarde, préférences…), les styles, les screens qui ne sont pas de la navigation, le dossier `gui/` : les écrans OrbitEngine se créent dans l'éditeur d'UI. Ils sont signalés une fois, pas ligne par ligne.
 - Les transforms à paramètres, les ATL `parallel`, `choice`, `on`, `function`, `contains`, `crop` et les autres propriétés : signalés avec leur emplacement.
 - Les images des `imagebutton` ne sont pas dessinées (la zone brille sur le décor) ; les calques des images composées et des layered images ne sont pas assemblés.
-- Les blocs `init python` et le Python qui n'est ni une simple affectation ni l'un des appels ci-dessus : gardés dans un nœud de script commenté et listés dans le rapport, pour les réécrire (en Rhai, voir le chapitre Scripts). `renpy.notify` n'a pas d'équivalent.
+- Les blocs `init python` et le Python qui n'est ni une simple affectation ni l'un des appels ci-dessus : gardés dans un nœud de script commenté et listés dans le rapport, pour les réécrire (en Rhai, voir le chapitre Scripts).
 - Les conditions que la syntaxe du moteur ne sait pas exprimer deviennent des conditions Rhai : vérifiez-les.
 - L'interpolation `[variable]` reste telle quelle dans les textes ; les autres balises (`{size}`, `{font}`, `{a}`…) sont retirées (signalées une fois par balise, avec le nombre de lignes).
 - Le mode NVL (les lignes vont dans la boîte de texte normale, `nvl clear` est ignoré), les side images, `window show / hide / auto`, `pause` sans durée (une seconde), les sons en boucle et les canaux autres que la musique.

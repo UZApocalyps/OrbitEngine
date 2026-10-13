@@ -346,11 +346,8 @@ fn sample_game_imports_every_palier1_feature() {
 
     // The report: what is left is listed with its place.
     let unsupported: Vec<String> = report.unsupported.iter().map(ToString::to_string).collect();
-    assert!(
-        unsupported
-            .iter()
-            .any(|i| i.starts_with("script.rpy:33:") && i.contains("renpy.notify"))
-    );
+    assert!(!unsupported.iter().any(|i| i.contains("renpy.notify")));
+    assert_eq!(count(&|k| matches!(k, NodeKind::Notify(_))), 2);
     assert!(
         unsupported
             .iter()

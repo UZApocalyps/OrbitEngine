@@ -109,4 +109,4 @@ screen doors():
 screen town_buttons():
     vbox:
         textbutton "Kitchen" action Jump("kitchen")
-        textbutton "Garden" action Jump("garden")
+        textbutton "Garden" action [Notify("Off to the garden!"), Jump("garden")]

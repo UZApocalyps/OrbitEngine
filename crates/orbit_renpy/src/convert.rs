@@ -1976,6 +1976,12 @@ impl<'a> Conv<'a> {
                 false,
                 "stopping sounds is ignored (sounds end by themselves)",
             ),
+            "renpy.notify" => {
+                let Some(raw) = args.first().and_then(|a| str_arg(a)) else {
+                    return false;
+                };
+                self.push_notify(&raw, line.line);
+            }
             "renpy.jump" | "renpy.call" => {
                 let Some(label) = args.first().and_then(|a| str_arg(a)) else {
                     return false;
@@ -2020,6 +2026,18 @@ impl<'a> Conv<'a> {
             _ => return false,
         }
         true
+    }
+
+    /// A `Notify` node showing `raw` (Ren'Py text converted to the markup).
+    fn push_notify(&mut self, raw: &str, line: usize) {
+        let text_id = self.add_text_raw(raw, line);
+        self.push(NodeKind::Notify(orbit_core::Notify {
+            text_id,
+            icon: None,
+            sound: None,
+            duration: None,
+            style: None,
+        }));
     }
 
     /// Python that does not map: kept as a commented Rhai script node so
@@ -2931,6 +2949,7 @@ impl<'a> Conv<'a> {
                         &format!("screen action `Call(\"{l}\")` of an unknown label"),
                     ),
                 },
+                Action::Notify(raw) => self.push_notify(raw, line.line),
                 Action::Return => {
                     self.jump_to(end);
                     return;

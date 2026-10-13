@@ -22,7 +22,7 @@ scene start
   Say "{color=#ffeedd}This line has a voice.{/color}"
   Wait
   Wait
-  Script
+  Notify
   PlayMusic
   StopMusic
   PlaySound
@@ -101,6 +101,7 @@ scene ending
   Label screen_1_1
   JumpScene
   Label screen_1_2
+  Notify
   JumpScene
   Label screen_1_end
   Say "The end."
@@ -108,7 +109,6 @@ scene ending
 unsupported:
   definitions.rpy:57: transform with parameters (not converted): `transform shaky(amount):`
   definitions.rpy:64: init python block: 1 statement(s) not converted (functions, classes, imports...): `init python:`
-  script.rpy:33: Python statement: `$ renpy.notify("Saved!")`
   gui.rpy:10: `style` statements skipped (the look of the interface is set in the UI editor) (3 times, first here)
   screens.rpy:3: `style` statements skipped (the look of the interface is set in the UI editor) (3 times, first here)
   screens.rpy:6: standard Ren'Py interface screens skipped (say, menus, save/load...: the engine has its own, made in the UI editor) (6 times, first here)

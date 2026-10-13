@@ -144,3 +144,27 @@ L'interface standard gagne un écran **Succès**, ouvert depuis le menu principa
 Pour composer son propre écran, utiliser dans l'éditeur **Interface** une liste générée dont la **Liste** est **Succès**. Dans une ligne, lier un texte à **Succès de la ligne** (titre, description) ou une **Image** à son **icône** ; la condition **le succès de la ligne est débloqué** distingue les succès obtenus ; **progression (3 / 10)** marche partout, et la condition **l'histoire a des succès** cache un bouton quand il n'y en a pas.
 
 Les plateformes (Steam, itch.io, consoles) passent par le trait `AchievementHook` d'`orbit_runtime` (`RuntimeConfig::achievement_hook`) : il reçoit l'identifiant stable du succès quand il est débloqué, et une fois au démarrage pour ceux que le joueur a déjà. Aucune plateforme n'est branchée pour l'instant (Steam est au backlog) ; sans hook, seules les données persistantes sont écrites.
+
+## Notifications
+
+L'étape **Notify** (groupe Histoire) affiche un court message dans un coin de l'écran, une *notification*, et l'histoire continue aussitôt : elle n'attend jamais la disparition de la notification. Ses champs :
+
+* **Texte** : le balisage est permis, et `[variable]` est remplacé par la valeur de la variable au moment de l'affichage. Le texte se traduit comme tous les autres textes de l'histoire.
+* **Icône** (facultatif) : une image affichée à gauche du texte. **Son** (facultatif) : joué avec la notification. **Durée** (facultatif, en secondes) : le temps d'affichage. **Style** (facultatif) : le nom d'un style de notification du thème ; sans lui, le style `default` est utilisé.
+
+En format texte : `notify "Sauvegardé !" [icon x] [sound y] [style z] [duration n]`. Dans un script Rhai : `notify("texte")`, `notify("texte", "style")` ou `notify("texte", #{style: "system", icon: "cloche", sound: "ping", duration: 4.0})`. Un bouton peut aussi la déclencher avec l'action **Notify** (un texte, et un style si besoin).
+
+Les succès utilisent le style `achievement`, et les messages du moteur lui-même le style `system` : modifiez leur apparence dans le thème comme n'importe quel autre style.
+
+Les notifications ne sont jamais sauvegardées. Un retour en arrière, ou le chargement d'une sauvegarde, retire celles de l'histoire qui sont à l'écran. En mode **Passer**, une notification suit le réglage **Passer** ci-dessous.
+
+### Le thème : `notifications`
+
+L'apparence se règle dans l'éditeur d'**Interface**, onglet **Notifications** :
+
+* **Ancrage** (en haut à droite par défaut) et **Décalage** depuis ce coin ; **Largeur** (0 s'ajuste au texte) ; **Maximum visibles** (les autres attendent dans une file) ; **Espace** entre deux notifications et **Sens d'empilement** (Auto, Vers le bas ou Vers le haut).
+* **Durée** et **Animation** : Glissement, Fondu ou Aucune, avec sa durée en secondes. Quand le joueur demande moins de mouvement, le glissement devient un fondu. **Son par défaut**, et **Clic pour fermer**.
+* **Comportement en mode Passer** : Afficher, Bref (un affichage plus court) ou Supprimer (rien n'est affiché pendant qu'on passe).
+* **Styles nommés** : chacun a un fond (une couleur, ou un style du thème comme une image à neuf zones), une bordure, un rayon d'angle, une marge intérieure, une taille d'icône et une icône par défaut, la taille, la couleur et la police du texte, et éventuellement sa propre largeur, durée et son.
+
+L'aperçu propose un bouton **Afficher une notification de test** pour voir le résultat sans jouer l'histoire.

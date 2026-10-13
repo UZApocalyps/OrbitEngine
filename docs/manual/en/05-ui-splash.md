@@ -144,3 +144,27 @@ The stock interface gains an **Achievements** screen, opened from the main menu 
 To build your own screen, use in the **Interface** editor a generated list whose **List** is **Achievements**. Inside a row, bind a text to **Achievement of the row** (title, description) or an **Image** to its **icon**; the condition **the row's achievement is unlocked** tells the unlocked ones apart; **progress (3 / 10)** works anywhere, and the condition **the story has achievements** hides a button when there are none.
 
 Platforms (Steam, itch.io, consoles) are reached through the `AchievementHook` trait of `orbit_runtime` (`RuntimeConfig::achievement_hook`): it is called with the stable id of the achievement when it is unlocked, and once at start-up for the ones the player already has. No platform is wired yet (Steam is on the backlog); without a hook only the persistent data is written.
+
+## Notifications
+
+The **Notify** step (Story group) shows a short message in a corner of the screen, a *toast*, and the story goes on at once: it never waits for the toast to disappear. Its fields:
+
+* **Text**: markup is allowed, and `[variable]` is replaced by the value of the variable when the toast is shown. The text is translated like any other text of the story.
+* **Icon** (optional): an image shown left of the text. **Sound** (optional): played with the toast. **Duration** (optional, in seconds): how long it stays. **Style** (optional): the name of a notification style of the theme; without one, the `default` style is used.
+
+In the text format: `notify "Saved!" [icon x] [sound y] [style z] [duration n]`. In a Rhai script: `notify("text")`, `notify("text", "style")` or `notify("text", #{style: "system", icon: "bell", sound: "ping", duration: 4.0})`. A button can also do it with the action **Notify** (a text, and a style if needed).
+
+Achievements use the `achievement` style, and the messages of the engine itself the `system` style: restyle them in the theme like any other.
+
+Toasts are never saved. Rolling back, or loading a save, removes the toasts of the story that are on screen. In **Skip** mode a notification follows the **skip** setting below.
+
+### The theme: `notifications`
+
+The look is set in the **Interface** editor, **Notifications** tab:
+
+* **Anchor** (top right by default) and **Offset** from that corner; **Width** (0 fits the text); **Max visible** (the others wait in a queue); **Gap** between two toasts and **Stacking direction** (Auto, Down or Up).
+* **Duration** and **Animation**: Slide, Fade or None, with its length in seconds. When the player asks for reduced motion, Slide becomes Fade. **Default sound**, and **Click to dismiss**.
+* **Skip behaviour**: Show, Brief (a shorter stay) or Suppress (nothing is shown while skipping).
+* **Named styles**: each one has a background (a color, or a theme style such as a nine-slice picture), a border, a corner radius, a padding, an icon size and a default icon, the text size, color and font, and optionally its own width, duration and sound.
+
+The preview has a **Show test notification** button to see the result without playing the story.

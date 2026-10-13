@@ -13,6 +13,8 @@ pub enum Action {
     Jump(String),
     Call(String),
     Return,
+    /// `Notify("text")`.
+    Notify(String),
     /// `SetVariable("x", value)`, `SetField(persistent, "x", value)`,
     /// `ToggleVariable("x")` (value `None`).
     Set(String, Option<Vec<Tok>>),
@@ -113,6 +115,7 @@ pub fn actions(toks: &[Tok]) -> Result<Vec<Action>, String> {
         "Jump" => vec![Action::Jump(text(0).ok_or_else(what)?)],
         "Call" => vec![Action::Call(text(0).ok_or_else(what)?)],
         "Return" => vec![Action::Return],
+        "Notify" => vec![Action::Notify(text(0).ok_or_else(what)?)],
         "NullAction" => Vec::new(),
         "SetVariable" | "SetLocalVariable" => {
             vec![Action::Set(

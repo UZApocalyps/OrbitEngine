@@ -240,14 +240,9 @@ fn imports_a_small_game() {
     assert_eq!(kinds(start, |k| matches!(k, NodeKind::Call { .. })), 1);
     assert!(kinds(start, |k| matches!(k, NodeKind::If { .. })) >= 2);
     assert!(kinds(start, |k| matches!(k, NodeKind::SetVar { .. })) >= 3);
-    // `$ renpy.notify(...)` is kept as a commented script and reported.
-    assert_eq!(kinds(start, |k| matches!(k, NodeKind::Script { .. })), 1);
-    assert!(
-        report
-            .unsupported
-            .iter()
-            .any(|i| i.message.contains("renpy.notify") && i.line == 27)
-    );
+    // `$ renpy.notify(...)` becomes a Notify node.
+    assert_eq!(kinds(start, |k| matches!(k, NodeKind::Notify(_))), 1);
+    assert_eq!(kinds(start, |k| matches!(k, NodeKind::Script { .. })), 0);
     // The choice condition and the markup.
     let choice = start.iter().find_map(|n| match &n.kind {
         NodeKind::Choice { options } => Some(options),
