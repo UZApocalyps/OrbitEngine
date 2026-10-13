@@ -52,7 +52,7 @@ pub use input::{UiInput, UiSound};
 pub use paint::Painter;
 pub use screens::{
     HistoryScreen, MainMenu, PauseMenu, PreferencesScreen, QuickMenu, SaveLoadScreen, Screen,
-    ToastStack, page_count, page_range,
+    Notification, NotificationStack, ToastStack, page_count, page_range, stack_tops, toast_phase,
 };
 pub use texts::{EN, FR, TextProvider, TextTable, Texts};
 pub use theme::{
@@ -71,6 +71,10 @@ pub use widgets::{
 };
 pub use orbit_ui_data::{AA_COMPONENT, AA_TEXT, ContrastIssue, TEXT_SCALE_RANGE, clamp_text_scale, contrast_ratio};
 pub use orbit_ui_data::{describe_chars, language_missing_chars};
+pub use orbit_ui_data::{
+    ACHIEVEMENT_NOTIFY_STYLE, DEFAULT_NOTIFY_STYLE, NotificationStyle, NotificationTheme, NotifyAnchor, NotifyAnimation,
+    NotifySkip, SYSTEM_NOTIFY_STYLE, StackDirection, UiNotify,
+};
 pub use asset::{
     AchievementField, AchievementRow, BindPath, Cond, DataContext, DataScreen, Issue, LayoutDef, ScreenAsset, Severity, SlotsMode, NavStep, PreviewNav,
     OverGame, Overflow, ScreenMusic, SettingKey, SlotField, SlotsLook, SplashContent, SplashDef, TextRef, UI_VERSION, UiAction, UiBundle,

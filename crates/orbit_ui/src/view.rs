@@ -265,6 +265,8 @@ pub enum UiEvent {
     PlayMusic(String),
     /// Fade the music out (`UiAction::StopMusic`).
     StopMusic,
+    /// Show an in-game notification (`UiAction::Notify`), text resolved.
+    Notify(crate::screens::Notification),
     /// Free-form hook for the host or a plugin.
     Custom { name: String, args: Vec<String> },
     /// Apply a no-code variable operation to the running game.

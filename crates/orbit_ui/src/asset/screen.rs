@@ -1098,6 +1098,20 @@ impl DataScreen {
             UiAction::PlaySound(path) => Some(UiEvent::PlaySound(path.clone())),
             UiAction::PlayMusic(path) => Some(UiEvent::PlayMusic(path.clone())),
             UiAction::StopMusic => Some(UiEvent::StopMusic),
+            UiAction::Notify(n) => {
+                let text = orbit_core::interpolate_vars(&self.text(&n.text), |name| {
+                    self.ctx.vars.get(name).map(ToString::to_string)
+                });
+                Some(UiEvent::Notify(crate::screens::Notification {
+                    text,
+                    markup: true,
+                    style: n.style.clone(),
+                    icon: None,
+                    icon_path: n.icon.clone(),
+                    sound: n.sound.clone(),
+                    duration: n.duration,
+                }))
+            }
             UiAction::Custom { name, args } => Some(UiEvent::Custom {
                 name: name.clone(),
                 args: args.clone(),
@@ -2258,5 +2272,24 @@ mod tests {
         let mut s = DataScreen::new(asset, &Theme::default(), &Texts::builtin("en"), ctx());
         assert_eq!(click(&mut s, 1), vec![UiEvent::PlayMusic("assets/m.ogg".into())]);
         assert_eq!(click(&mut s, 2), vec![UiEvent::StopMusic]);
+    }
+
+    #[test]
+    fn a_notify_action_becomes_an_event_with_its_variables() {
+        let asset = from_ron(
+            "(id: \"n\", root: (kind: Stack(dir: Vertical), children: [             (kind: Button(text: Literal(\"a\"), action: [Notify((text: Literal(\"Gold: [gold] [nope]\"),              style: Some(\"quest\"), icon: Some(\"assets/i.png\"), duration: Some(2.0)))]))]))",
+        )
+        .unwrap();
+        let mut c = ctx();
+        c.vars.insert("gold".into(), orbit_core::Value::Int(7));
+        let mut s = DataScreen::new(asset, &Theme::default(), &Texts::builtin("en"), c);
+        let events = click(&mut s, 1);
+        let [UiEvent::Notify(n)] = events.as_slice() else {
+            panic!("{events:?}");
+        };
+        assert_eq!(n.text, "Gold: 7 [nope]");
+        assert_eq!(n.style.as_deref(), Some("quest"));
+        assert_eq!(n.icon_path.as_deref(), Some("assets/i.png"));
+        assert_eq!(n.duration, Some(2.0));
     }
 }

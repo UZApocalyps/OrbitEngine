@@ -362,6 +362,11 @@ fn check_action(sid: &str, wid: &str, action: &UiAction, out: &mut Vec<Issue>) {
         UiAction::SceneGoto(scene) if scene.trim().is_empty() => {
             out.push(Issue::error(sid, wid, "SceneGoto needs a scene"));
         }
+        UiAction::Notify(n)
+            if matches!(&n.text, crate::widget::TextRef::Literal(t) | crate::widget::TextRef::Key(t) if t.trim().is_empty()) =>
+        {
+            out.push(Issue::warning(sid, wid, "Notify has no text"));
+        }
         UiAction::ReplayScene(Operand::Lit(orbit_core::Value::Str(scene))) if scene.trim().is_empty() => {
             out.push(Issue::error(sid, wid, "ReplayScene needs a scene"));
         }

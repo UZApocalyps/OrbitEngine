@@ -36,6 +36,10 @@ pub struct Theme {
     /// absent = the stock bar).
     #[serde(skip_serializing_if = "QuickMenuTheme::is_default")]
     pub quick_menu: QuickMenuTheme,
+    /// In-game notifications (toasts): placement, timing, animation and
+    /// named looks (`ui_version` 11; absent = the stock toasts).
+    #[serde(skip_serializing_if = "crate::notify::NotificationTheme::is_default")]
+    pub notifications: crate::notify::NotificationTheme,
 }
 
 impl Theme {
@@ -74,6 +78,7 @@ impl Theme {
     pub fn image_paths(&self) -> Vec<String> {
         let mut out: Vec<String> = self.styles.values().flat_map(Style::image_paths).collect();
         out.extend(self.textbox.indicator_image.iter().cloned());
+        out.extend(self.notifications.image_paths());
         out.retain(|p| !p.trim().is_empty());
         out.sort();
         out.dedup();
@@ -103,6 +108,7 @@ impl Theme {
                 out.extend(sounds.hover.iter().chain(&sounds.confirm).cloned());
             }
         }
+        out.extend(self.notifications.sound_paths());
         out.retain(|p| !p.trim().is_empty());
         out.sort();
         out.dedup();
@@ -128,6 +134,9 @@ impl Theme {
         }
         fix(&mut self.choice.button_style);
         fix(&mut self.quick_menu.button_style);
+        for n in self.notifications.styles.values_mut() {
+            fix(&mut n.style);
+        }
     }
 
     /// Problems of the styles and of the dialogue box section: unknown
@@ -139,6 +148,17 @@ impl Theme {
         for (at, name) in self.dialogue_style_refs() {
             if !self.styles.contains_key(name) {
                 out.push(Issue::warning("theme", at, format!("unknown style `{name}`")));
+            }
+        }
+        for (key, n) in &self.notifications.styles {
+            if let Some(name) = &n.style
+                && !self.styles.contains_key(name)
+            {
+                out.push(Issue::warning(
+                    "theme",
+                    &format!("notifications.styles.{key}.style"),
+                    format!("unknown style `{name}`"),
+                ));
             }
         }
         for (name, style) in &self.styles {

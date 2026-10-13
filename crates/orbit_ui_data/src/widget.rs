@@ -10,7 +10,7 @@ use crate::layout::{Align, Anchor, Dir, PanelKind, Size};
 use crate::transition::ScreenTransition;
 
 /// Current version of the screen document format.
-pub const UI_VERSION: u32 = 10;
+pub const UI_VERSION: u32 = 11;
 
 fn default_version() -> u32 {
     UI_VERSION

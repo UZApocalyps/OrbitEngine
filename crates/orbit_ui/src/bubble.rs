@@ -187,7 +187,7 @@ pub fn caption_rect(size: [f32; 2], theme: &BubbleTheme) -> [f32; 4] {
 /// it).
 pub type Polygon = Vec<[f32; 2]>;
 
-fn rounded_rect(rect: [f32; 4], radius: f32) -> Polygon {
+pub(crate) fn rounded_rect(rect: [f32; 4], radius: f32) -> Polygon {
     let [x, y, w, h] = rect;
     let r = radius.min(w * 0.5).min(h * 0.5).max(0.0);
     if r < 0.5 {

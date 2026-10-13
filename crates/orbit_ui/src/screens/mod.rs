@@ -15,7 +15,7 @@ pub use pause::PauseMenu;
 pub use prefs::PreferencesScreen;
 pub use quick::QuickMenu;
 pub use save_load::{SaveLoadScreen, page_count, page_range};
-pub use toast::ToastStack;
+pub use toast::{Notification, NotificationStack, ToastStack, phase as toast_phase, stack_tops};
 
 use crate::input::UiInput;
 use crate::texts::Texts;

@@ -246,6 +246,7 @@ impl UiBundle {
         let mut out = self.image_paths();
         out.extend(self.splash_image_paths());
         out.extend(self.music_paths());
+        out.extend(self.notify_paths());
         if let Some(theme) = &self.theme {
             out.extend(theme.font_paths());
             out.extend(theme.sound_paths());
@@ -280,6 +281,27 @@ impl UiBundle {
         out.retain(|p| !p.trim().is_empty());
         out.sort();
         out.dedup();
+        out
+    }
+
+    /// The icons and sounds of the `Notify` actions of the screens.
+    pub fn notify_paths(&self) -> Vec<String> {
+        use crate::action::UiAction;
+        let mut out = Vec::new();
+        let mut add = |a: &UiAction| {
+            if let UiAction::Notify(n) = a {
+                out.extend(n.icon.iter().chain(&n.sound).cloned());
+            }
+        };
+        for screen in &self.screens {
+            screen.on_cancel.iter().for_each(&mut add);
+            screen.root.walk(&mut |w| {
+                for a in w.kind.actions().into_iter().flatten() {
+                    add(a);
+                }
+            });
+        }
+        out.retain(|p| !p.trim().is_empty());
         out
     }
 

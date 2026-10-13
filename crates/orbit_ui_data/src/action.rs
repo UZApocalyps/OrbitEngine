@@ -195,6 +195,8 @@ pub enum UiAction {
     PlayMusic(String),
     /// Fades the music out (`ui_version` 9).
     StopMusic,
+    /// Shows an in-game notification (toast, `ui_version` 11).
+    Notify(crate::notify::UiNotify),
 }
 
 impl UiAction {

@@ -12,6 +12,7 @@ mod bundle;
 mod coverage;
 mod layout;
 pub mod migrate;
+mod notify;
 mod slots;
 mod sound;
 mod theme;
@@ -26,6 +27,10 @@ pub use action::{AchievementField, BindPath, SettingKey, SlotField, UiAction};
 pub use bundle::{SYSTEM_SCREENS, SplashContent, SplashDef, UiBundle};
 pub use layout::{Align, Anchor, Dir, PanelKind, Size};
 pub use coverage::{describe_chars, language_missing_chars, missing_chars};
+pub use notify::{
+    ACHIEVEMENT_NOTIFY_STYLE, BRIEF_SECONDS, DEFAULT_NOTIFY_STYLE, NotificationStyle, NotificationTheme, NotifyAnchor,
+    NotifyAnimation, NotifySkip, SYSTEM_NOTIFY_STYLE, StackDirection, UiNotify,
+};
 pub use slots::default_slot_card;
 pub use sound::UiSound;
 pub use transition::{ScreenFx, ScreenTransition, ScreenTransitionKind};
