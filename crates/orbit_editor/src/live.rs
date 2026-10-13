@@ -564,6 +564,39 @@ fn shorten(text: &str, max: usize) -> String {
     }
 }
 
+/// Runs a story tool (built-in or plugin MCP tool) for a plugin
+/// (`EditorRequest::RunTool`): the same dispatch as the live MCP server, one
+/// undo entry per call. Preview / export tools are not offered here.
+pub(crate) fn run_story_tool(core: &mut EditorCore, name: &str, args: &str) -> Result<String, String> {
+    if core.session.is_none() {
+        return Err("no project is open in the editor".into());
+    }
+    let args: Json = if args.trim().is_empty() {
+        json!({})
+    } else {
+        serde_json::from_str(args).map_err(|e| format!("invalid JSON arguments: {e}"))?
+    };
+    let sandbox = sandbox_of(core).map_err(|e| e.to_string())?;
+    let manifest = manifest_of(core);
+    let core_ref = &mut *core;
+    let Some(session) = core_ref.session.as_mut() else {
+        return Err("no project is open in the editor".into());
+    };
+    let (result, save) = core_ref.mcp.runner.dispatch(
+        &mut session.project,
+        &sandbox,
+        &manifest,
+        &core_ref.registry.project,
+        name,
+        args,
+    );
+    let text = result.map_err(|e| e.to_string())?;
+    if save && !core.save() {
+        return Err("the story could not be saved".into());
+    }
+    Ok(text)
+}
+
 fn run_tool(
     core: &mut EditorCore,
     name: &str,

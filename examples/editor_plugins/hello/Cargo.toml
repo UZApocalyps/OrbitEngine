@@ -1,0 +1,28 @@
+[package]
+name = "orbit_hello_plugin"
+description = "Example native editor plugin (plugin SDK template): a window, a Tools menu action that adds a note to the project, a settings page and its own texts."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# A native editor plugin is a C-ABI dynamic library.
+crate-type = ["cdylib"]
+
+[dependencies]
+# The editor API, with the editor's exact egui (`orbit_editor_api::egui`).
+# Out of this repository, depend on the editor's git tag instead:
+# orbit_editor_api = { git = "https://.../OrbitEngine", tag = "v0.3.1" }
+orbit_editor_api.workspace = true
+orbit_core.workspace = true
+orbit_project.workspace = true
+
+# `export_plugin!` generates `#[no_mangle]` functions: `unsafe_code` may be
+# denied but not forbidden (the workspace forbids it).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

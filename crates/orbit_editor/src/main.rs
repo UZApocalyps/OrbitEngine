@@ -16,6 +16,13 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if let Some(path) = &args.probe_plugin {
+        // Run by the plugin manager in a throw-away process: a broken
+        // library can only take this process down.
+        let (json, ok) = orbit_plugin_host::probe_main(path);
+        println!("{json}");
+        return if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE };
+    }
     if args.help {
         print!("{USAGE}");
         return ExitCode::SUCCESS;

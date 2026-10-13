@@ -51,6 +51,11 @@ pub struct CoreOptions {
     /// without touching the saved choice; `None` uses the saved choice, then
     /// the system language.
     pub language: Option<Lang>,
+    /// Loads the enabled native plugins of `config_dir` at start-up (the
+    /// window app; never tests).
+    pub native_plugins: bool,
+    /// Safe mode (`--no-plugins`): the plugin manager works, nothing loads.
+    pub plugins_safe_mode: bool,
 }
 
 impl CoreOptions {
@@ -73,6 +78,8 @@ impl Default for CoreOptions {
             open_palette: false,
             palette_query: String::new(),
             language: None,
+            native_plugins: false,
+            plugins_safe_mode: false,
         }
     }
 }
@@ -134,6 +141,8 @@ pub struct EditorCore {
     language_pref: Option<Lang>,
     saved_layout: String,
     quit: bool,
+    /// The quit is a restart (plugin changes): see [`Self::take_restart`].
+    restart: bool,
     first_frame_done: bool,
     /// Frame counter overlay (debug).
     pub show_frame_counter: bool,
@@ -174,15 +183,37 @@ impl EditorCore {
         ctx: &Context,
         extra: Vec<Box<dyn EditorPlugin>>,
     ) -> Self {
+        let store = ConfigStore::new(options.config_dir.clone());
+        let config = store.load();
+        let language_pref = config.language;
+        let lang = options
+            .language
+            .or(language_pref)
+            .unwrap_or_else(|| Lang::from_system(orbit_platform::system_language().as_deref()));
+
         let mut registry = EditorRegistry::new();
         let shared = builtin::Shared {
             config_dir: options.config_dir.clone(),
             ..builtin::Shared::default()
         };
+        {
+            let mut plugins = shared.plugins.borrow_mut();
+            plugins.config_dir = options.config_dir.clone();
+            plugins.safe_mode = options.plugins_safe_mode;
+        }
         for plugin in builtin::plugins_with(&shared).iter().chain(extra.iter()) {
             if let Err(e) = registry.install(plugin.as_ref()) {
                 registry.errors.push(e.to_string());
             }
+        }
+        // Native plugins (DLL) installed by the user: after the built-in
+        // tools (their ids are taken), before the "Show" actions (their
+        // panels get one).
+        if options.native_plugins {
+            crate::plugins::load_at_startup(&mut shared.plugins.borrow_mut(), &mut registry, lang);
+        } else {
+            shared.plugins.borrow_mut().builtin_ids =
+                registry.project.plugins().iter().map(|m| m.id.clone()).collect();
         }
         // One "Show: <panel>" action per panel, once all panels are known.
         let view = builtin::PanelActions::for_registry(&registry);
@@ -190,18 +221,10 @@ impl EditorCore {
             registry.errors.push(e.to_string());
         }
 
-        let store = ConfigStore::new(options.config_dir.clone());
-        let config = store.load();
         let mode = options.theme.unwrap_or(config.theme);
         let theme = Theme::for_mode(mode);
         install_fonts(ctx);
         theme.apply(ctx);
-
-        let language_pref = config.language;
-        let lang = options
-            .language
-            .or(language_pref)
-            .unwrap_or_else(|| Lang::from_system(orbit_platform::system_language().as_deref()));
         let translator = crate::i18n::translator(lang);
         for (table_lang, table) in registry.text_tables() {
             translator.add_table(*table_lang, table.clone());
@@ -246,6 +269,7 @@ impl EditorCore {
             language_pref,
             saved_layout,
             quit: false,
+            restart: false,
             first_frame_done: false,
             show_frame_counter: false,
             project_generation: 0,
@@ -851,6 +875,30 @@ impl EditorCore {
         std::mem::take(&mut self.quit)
     }
 
+    /// Whether the quit just taken is a restart (the app starts a new editor
+    /// process after the shutdown).
+    pub fn take_restart(&mut self) -> bool {
+        std::mem::take(&mut self.restart)
+    }
+
+    /// Where a restarted editor reopens: the open project (folder, or story
+    /// file without manifest) and the config folder.
+    pub fn restart_target(&self) -> (Option<PathBuf>, Option<PathBuf>) {
+        let project = self.session.as_ref().map(|s| {
+            if s.location.manifest.is_some() {
+                s.location.root.clone()
+            } else {
+                s.location.root.join(&s.location.story_file)
+            }
+        });
+        (project, self.options.config_dir.clone())
+    }
+
+    /// The native plugins state (plugin manager, tests).
+    pub fn plugins(&self) -> crate::plugins::SharedPlugins {
+        self.shared.plugins.clone()
+    }
+
     /// Clean shutdown: saves the config, ends the session (a modified
     /// project keeps its recovery snapshot).
     /// Writes a recovery snapshot of unsaved edits right now (no autosave
@@ -878,6 +926,7 @@ impl EditorCore {
     }
 
     pub fn shutdown(&mut self) {
+        crate::plugins::unload_all(&mut self.shared.plugins.borrow_mut());
         self.poll_save(true);
         crate::live::shutdown(self);
         self.flush_layout();
@@ -1005,7 +1054,18 @@ impl EditorCore {
             EditorRequest::ConvertStory => self.convert_story(),
             EditorRequest::CloseProject => self.close_project(),
             EditorRequest::Quit => {
+                self.restart = false;
                 self.request_close();
+            }
+            EditorRequest::Restart => {
+                // Cancelled in the unsaved-changes dialog: no quit comes, and
+                // the next plain Quit clears the flag.
+                self.restart = true;
+                self.request_close();
+            }
+            EditorRequest::RunTool { ticket, name, args } => {
+                let result = crate::live::run_story_tool(self, &name, &args);
+                self.state.tool_results.insert(ticket, result);
             }
             EditorRequest::OpenPalette => self.palette.toggle(),
             EditorRequest::ResetLayout => {

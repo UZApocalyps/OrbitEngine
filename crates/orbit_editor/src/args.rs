@@ -10,6 +10,8 @@ orbit-editor [projet | histoire.orbit] [options]
 Options :
   --config-dir <dossier>   dossier de configuration utilisateur (disposition, projets récents)
   --no-config              ne lit ni n'écrit aucune configuration
+  --no-plugins             mode sans échec : ne charge aucun plugin natif
+  --probe-plugin <fichier> affiche la description (JSON) d'une bibliothèque de plugin puis quitte
   --theme dark|light       force le thème
   --lang en|fr             force la langue de l'interface (sans l'enregistrer), pour les captures
   --size <LxH>             taille initiale de la fenêtre, en pixels logiques (ex. 1360x820)
@@ -80,6 +82,11 @@ pub struct Args {
     pub autoscroll: Option<f32>,
     pub mcp_port: Option<u16>,
     pub mcp_token: Option<String>,
+    /// Safe mode: no native plugin is loaded.
+    pub no_plugins: bool,
+    /// Prints the descriptor of a plugin library as JSON and exits (the
+    /// plugin manager runs this in a child process).
+    pub probe_plugin: Option<PathBuf>,
     pub help: bool,
 }
 
@@ -141,6 +148,8 @@ impl Args {
                     out.edit_delay = v.parse().map_err(|_| format!("nombre invalide : {v}"))?;
                 }
                 "--config-dir" => out.config_dir = Some(PathBuf::from(value("--config-dir")?)),
+                "--no-plugins" => out.no_plugins = true,
+                "--probe-plugin" => out.probe_plugin = Some(PathBuf::from(value("--probe-plugin")?)),
                 "--palette-query" => out.palette_query = value("--palette-query")?,
                 "--search" => out.search = Some(value("--search")?),
                 "--select-asset" => {

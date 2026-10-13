@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Mutex;
 
-use egui::{ComboBox, DragValue, RichText, ScrollArea, TextEdit, Ui};
+use orbit_editor_api::egui::{self, ComboBox, DragValue, RichText, ScrollArea, TextEdit, Ui};
 use orbit_ai_studio::assets::{AssetKindAi, AssetStatus};
 use orbit_ai_studio::civitai::{self, DownloadOutcome, ModelInfo, ModelType};
 use orbit_ai_studio::pipeline::{self, PipelineState, ScriptStatus};
@@ -22,14 +22,17 @@ use orbit_ai_studio::sd::{self, LoraPick, ModelLists, SdPreset};
 use orbit_ai_studio::{
     ImageBackend, ImplementOptions, OpenAiChat, StudioSettings, image_gen, implement,
 };
+use orbit_editor_api::native::PluginHost;
 use orbit_editor_api::{
     ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, PanelDef,
-    Plugin, PluginManifest, ProjectRegistry, TaskError, TaskHandle, icons,
+    Plugin, PluginManifest, ProjectRegistry, SettingsDef, TaskError, TaskHandle, icons,
 };
 
-use super::ui_util::{card, primary_button, secondary_button, section_title, weak};
+use crate::ui_util::{card, primary_button, secondary_button, section_title, weak};
 
 pub const PLUGIN_ID: &str = "orbit.ai_studio";
+/// The editor's preview panel (full id).
+const PREVIEW_PANEL: &str = "orbit.preview.preview";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -267,6 +270,16 @@ pub struct AiStudioPlugin {
 impl AiStudioPlugin {
     pub fn new(config_dir: Option<PathBuf>) -> Self {
         Self { ui: Rc::new(RefCell::new(StudioUi::new(config_dir))) }
+    }
+
+    /// The provider settings as the plugin's settings page (plugin manager).
+    pub fn register_settings(&self, host: &mut PluginHost<'_>) {
+        let ui = self.ui.clone();
+        host.settings_page(SettingsDef::new("aistudio.title", move |u, c| {
+            let mut s = ui.borrow_mut();
+            poll(&mut s, c);
+            settings_tab(u, c, &mut s);
+        }));
     }
 }
 
@@ -1176,7 +1189,7 @@ fn implement_tab(ui: &mut Ui, ctx: &mut EditorContext<'_>, s: &mut StudioUi, roo
                 s.message = Some((report.errors.is_empty(), text.clone()));
                 if report.errors.is_empty() {
                     ctx.info(text);
-                    ctx.request(EditorRequest::ShowPanel(super::panels::PREVIEW.to_owned()));
+                    ctx.request(EditorRequest::ShowPanel(PREVIEW_PANEL.to_owned()));
                 } else {
                     ctx.warn(format!("{text}\n{}", report.errors.join("\n")));
                 }

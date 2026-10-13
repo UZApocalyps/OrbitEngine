@@ -150,6 +150,19 @@ pub enum EditorRequest {
     /// Shows a panel (full id) alone, filling the window, or brings the
     /// layout back when it already is.
     ToggleMaximizePanel(String),
+    /// Runs an MCP tool (built-in or plugin) on the open project, exactly
+    /// like an AI client would: one undo entry per call. The result goes to
+    /// [`EditorState::tool_results`] under `ticket` (see
+    /// [`EditorContext::call_tool`]).
+    RunTool {
+        ticket: u64,
+        name: String,
+        /// JSON object of the arguments.
+        args: String,
+    },
+    /// Restarts the editor (after the unsaved-changes question), reopening
+    /// the current project: what enabling or disabling a plugin needs.
+    Restart,
 }
 
 /// Something of the project the editor can show: a node, a scene, a
@@ -345,6 +358,10 @@ pub struct EditorState {
     pub panels: crate::lazy::PanelVisibility,
     /// Bumped by the host each time a project is opened or closed.
     pub project_generation: u64,
+    /// Results of [`EditorRequest::RunTool`], by ticket, until taken.
+    pub tool_results: BTreeMap<u64, Result<String, String>>,
+    /// Last ticket handed out by [`EditorContext::call_tool`].
+    pub tool_ticket: u64,
 }
 
 impl EditorState {
@@ -541,6 +558,38 @@ impl<'a> EditorContext<'a> {
                 false
             }
         }
+    }
+
+    /// Runs `f` on the project as **one undo entry** labeled `label`,
+    /// whatever it executes (commands, `orbit_project::ops`); rolled back if
+    /// it fails.
+    pub fn group<R>(
+        &mut self,
+        label: &str,
+        f: impl FnOnce(&mut Project) -> Result<R, ProjectError>,
+    ) -> Result<R, EditorError> {
+        let project = self.project.as_deref_mut().ok_or(EditorError::NoProject)?;
+        Ok(project.group(label, f)?)
+    }
+
+    /// Asks the host to run the MCP tool `name` (the same operations an AI
+    /// client gets, built-in and plugin tools) with `args` (a JSON object).
+    /// It runs between frames as one undo entry; take the result with
+    /// [`Self::take_tool_result`] and the returned ticket.
+    pub fn call_tool(&mut self, name: impl Into<String>, args: impl Into<String>) -> u64 {
+        self.state.tool_ticket += 1;
+        let ticket = self.state.tool_ticket;
+        self.request(EditorRequest::RunTool {
+            ticket,
+            name: name.into(),
+            args: args.into(),
+        });
+        ticket
+    }
+
+    /// The result of a [`Self::call_tool`], once the host ran it.
+    pub fn take_tool_result(&mut self, ticket: u64) -> Option<Result<String, String>> {
+        self.state.tool_results.remove(&ticket)
     }
 
     pub fn undo(&mut self) -> Result<bool, EditorError> {

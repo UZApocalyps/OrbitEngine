@@ -119,6 +119,11 @@ impl EditorCore {
                         .show_inside(ui, &mut DockViewer { ctx: &mut ectx });
                 });
 
+            // Floating windows of plugins (each decides whether it is open).
+            for window in ectx.registry().windows() {
+                (window.def.ui)(&ctx, &mut ectx);
+            }
+
             let registry_ref: &EditorRegistry = registry;
             let search = shared.search.clone();
             palette_outcome = palette.show(&ctx, theme, |query| {
@@ -151,6 +156,7 @@ impl EditorCore {
             PaletteOutcome::Close | PaletteOutcome::None => {}
         }
         self.apply_dialog_outcome(dialog_outcome);
+        crate::plugins::check_health(&mut self.shared.plugins.borrow_mut(), &mut self.state);
         self.pump(&ctx);
         // No text field focused and no drag in progress: the live-edit merge
         // session is over.

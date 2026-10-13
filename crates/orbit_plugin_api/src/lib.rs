@@ -16,12 +16,14 @@
 //! actions in the player (ADR 0015 §4). See that module for the rollback and
 //! save rules a plugin must follow.
 
+pub mod guard;
 mod registry;
 pub mod runtime;
 
+pub use guard::PluginGuard;
 pub use registry::{
     AssetImporter, FieldDef, FieldKind, ImportedAsset, McpToolDef, NodeTypeDef, PluginError,
-    ProjectEvent, ProjectHook, ProjectRegistry, RegisteredNodeType, check_fields, default_data_of,
+    ProjectEvent, ProjectHook, ProjectMark, ProjectRegistry, RegisteredNodeType, check_fields, default_data_of,
 };
 pub use runtime::{
     CustomNode, Handled, NodeHandler, PluginContext, PluginEvent, PluginHost, PluginOutcome,

@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "xtask", "examples/plugins/*"]
+# `plugins/*` are the official native editor plugins (cdylib, built by
+# `cargo xtask plugins`), `examples/editor_plugins/*` the plugin SDK examples:
+# neither is in `default-members`, the editor ships without plugins.
+members = ["crates/*", "xtask", "examples/plugins/*", "plugins/*", "examples/editor_plugins/*"]
 default-members = ["crates/*"]
 
 [workspace.package]
@@ -21,6 +24,7 @@ orbit_plugin_api = { path = "crates/orbit_plugin_api" }
 orbit_mcp = { path = "crates/orbit_mcp" }
 orbit_layers = { path = "crates/orbit_layers" }
 orbit_editor_api = { path = "crates/orbit_editor_api" }
+orbit_plugin_host = { path = "crates/orbit_plugin_host" }
 orbit_pak = { path = "crates/orbit_pak" }
 orbit_export = { path = "crates/orbit_export" }
 orbit_dsl = { path = "crates/orbit_dsl" }
@@ -88,9 +92,14 @@ time = { version = "0.3", default-features = false, features = ["std", "local-of
 # --- m3 editor (native only: Windows + Linux) ---
 # egui is built without `default_fonts` (their license is outside deny.toml):
 # the editor ships Inter + the Phosphor icon font itself.
-egui = { version = "0.36.2", default-features = false }
-egui-winit = { version = "0.36.2", default-features = false, features = ["clipboard", "x11", "wayland"] }
-egui-wgpu = { version = "0.36.2", default-features = false }
+# egui is pinned exactly: native editor plugins (DLL) share egui types with
+# the editor and must be built against the very same version (the plugin
+# fingerprint carries it, see orbit_editor_api/src/native.rs).
+egui = { version = "=0.36.2", default-features = false }
+egui-winit = { version = "=0.36.2", default-features = false, features = ["clipboard", "x11", "wayland"] }
+egui-wgpu = { version = "=0.36.2", default-features = false }
+# Native editor plugins: loading of the plugin libraries (orbit_plugin_host).
+libloading = "0.8.9"
 egui_dock = { version = "0.21.1", features = ["serde"] }
 egui-phosphor = { version = "0.14.0", default-features = false, features = ["regular"] }
 rfd = "0.17"

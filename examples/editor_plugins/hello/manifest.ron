@@ -1,0 +1,13 @@
+// Package manifest (`manifest.ron` at the root of the `.orbitplugin` archive).
+// `cargo xtask plugins` replaces `library` with the platform's file name
+// (`orbit_hello_plugin.dll`, `liborbit_hello_plugin.so`,
+// `liborbit_hello_plugin.dylib`) and sets `min_editor` / `max_editor` to the
+// editor version it was built against.
+(
+    id: "acme.hello",
+    name: "Hello",
+    version: "0.1.0",
+    description: "Example plugin: a window and a Tools menu action that adds a note to the project.",
+    author: "OrbitEngine contributors",
+    library: "orbit_hello_plugin.dll",
+)

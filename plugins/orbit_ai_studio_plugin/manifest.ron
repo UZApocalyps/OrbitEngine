@@ -1,0 +1,11 @@
+// Package manifest of AI Studio. `cargo xtask plugins` sets `library` to the
+// platform's file name and `min_editor` / `max_editor` to the editor version
+// it was built against (a native plugin is tied to one editor build).
+(
+    id: "orbit.ai_studio",
+    name: "AI Studio",
+    version: "0.3.1",
+    description: "AI game-creation wizard: pitch, story bible, script, generated pictures, implementation in the project; plus its MCP tools.",
+    author: "OrbitEngine contributors",
+    library: "orbit_ai_studio_plugin.dll",
+)

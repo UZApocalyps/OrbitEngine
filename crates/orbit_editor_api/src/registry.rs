@@ -245,6 +245,66 @@ impl InspectorDef {
     }
 }
 
+type WindowUi = Box<dyn Fn(&egui::Context, &mut EditorContext<'_>)>;
+
+/// A floating window drawn by a plugin over the dock, every frame. The
+/// closure shows its own `egui::Window` (and keeps its own "open" flag):
+/// nothing is drawn while it decides to stay closed.
+pub struct WindowDef {
+    /// Local id; the registered id is `plugin_id.id`.
+    pub id: String,
+    pub ui: WindowUi,
+}
+
+impl WindowDef {
+    pub fn new(
+        id: impl Into<String>,
+        ui: impl Fn(&egui::Context, &mut EditorContext<'_>) + 'static,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            ui: Box::new(ui),
+        }
+    }
+}
+
+/// The settings page of a plugin, shown by the plugin manager.
+pub struct SettingsDef {
+    /// Title (text key or literal).
+    pub title: String,
+    pub ui: PanelUi,
+}
+
+impl SettingsDef {
+    pub fn new(
+        title: impl Into<String>,
+        ui: impl Fn(&mut egui::Ui, &mut EditorContext<'_>) + 'static,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            ui: Box::new(ui),
+        }
+    }
+}
+
+/// A window with its owner (`def.id` is the full id).
+pub struct RegisteredWindow {
+    pub plugin_id: String,
+    pub def: WindowDef,
+}
+
+/// How many elements of each kind a registry holds: what a later
+/// [`EditorRegistry::guard_since`] wraps.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RegistryMark {
+    panels: usize,
+    actions: usize,
+    inspectors: usize,
+    windows: usize,
+    settings: usize,
+    project: orbit_plugin_api::ProjectMark,
+}
+
 /// A panel with its owner.
 pub struct RegisteredPanel {
     pub plugin_id: String,
@@ -306,6 +366,9 @@ pub struct EditorRegistry {
     actions: Vec<RegisteredAction>,
     menus: Vec<MenuDef>,
     inspectors: Vec<(String, InspectorDef)>,
+    windows: Vec<RegisteredWindow>,
+    /// Settings pages, by plugin id.
+    settings: Vec<(String, SettingsDef)>,
     /// Text tables registered by plugins, merged by the host into its translator.
     texts: Vec<(Lang, Table)>,
     /// Registration problems (duplicates...), reported in the console.
@@ -325,6 +388,115 @@ impl EditorRegistry {
         plugin.register(&mut self.project);
         plugin.register_ui(self);
         Ok(())
+    }
+
+    /// Makes `manifest` the owner of what is registered next, without a
+    /// plugin object: native plugins register through their `PluginHost`.
+    pub fn begin_plugin(&mut self, manifest: &orbit_plugin_api::PluginManifest) -> Result<(), PluginError> {
+        self.project.begin(manifest)?;
+        self.current = manifest.id.clone();
+        Ok(())
+    }
+
+    /// Id of the plugin registering now.
+    pub fn current_plugin(&self) -> &str {
+        &self.current
+    }
+
+    /// Where the registry stands now (see [`Self::guard_since`]).
+    pub fn mark(&self) -> RegistryMark {
+        RegistryMark {
+            panels: self.panels.len(),
+            actions: self.actions.len(),
+            inspectors: self.inspectors.len(),
+            windows: self.windows.len(),
+            settings: self.settings.len(),
+            project: self.project.mark(),
+        }
+    }
+
+    /// Wraps every closure registered since `mark` (panels, actions,
+    /// inspectors, windows, settings pages, MCP tools, hooks) so that a
+    /// panic fails `guard` instead of unwinding into the host; a failed
+    /// plugin's panels show the error and its actions are disabled.
+    ///
+    /// The wrapping must be compiled into the plugin (see
+    /// `orbit_plugin_api::guard`): native plugins reach this through
+    /// `PluginHost::seal`, which runs in the plugin's copy of this crate.
+    pub fn guard_since(&mut self, mark: RegistryMark, guard: &orbit_plugin_api::PluginGuard) {
+        fn failed_label(ui: &mut egui::Ui, g: &orbit_plugin_api::PluginGuard) {
+            let message = g.failure().unwrap_or_default();
+            ui.colored_label(
+                ui.visuals().error_fg_color,
+                format!("Plugin `{}`: {message}", g.plugin()),
+            );
+        }
+        for p in self.panels.iter_mut().skip(mark.panels) {
+            let def = &mut p.def;
+            let ui = std::mem::replace(&mut def.ui, Box::new(|_, _| {}));
+            let g = guard.clone();
+            def.ui = Box::new(move |u, c| {
+                if g.is_failed() {
+                    failed_label(u, &g);
+                    return;
+                }
+                g.call(|| (), || ui(u, c));
+            });
+            if let Some(hook) = def.on_shown.take() {
+                let g = guard.clone();
+                def.on_shown = Some(Box::new(move |c| g.call(|| (), || hook(c))));
+            }
+            if let Some(hook) = def.on_hidden.take() {
+                let g = guard.clone();
+                def.on_hidden = Some(Box::new(move |c| g.call(|| (), || hook(c))));
+            }
+        }
+        for a in self.actions.iter_mut().skip(mark.actions) {
+            let def = &mut a.def;
+            let run = std::mem::replace(&mut def.run, Box::new(|_| {}));
+            let g = guard.clone();
+            def.run = Box::new(move |c| g.call(|| (), || run(c)));
+            let enabled = std::mem::replace(&mut def.enabled, Box::new(|_| false));
+            let g = guard.clone();
+            def.enabled = Box::new(move |c| g.call(|| false, || enabled(c)));
+            if let Some(label) = def.label_fn.take() {
+                let g = guard.clone();
+                let key = def.label.clone();
+                def.label_fn = Some(Box::new(move |c| g.call(|| c.t(&key), || label(c))));
+            }
+            if let Some(checked) = def.checked.take() {
+                let g = guard.clone();
+                def.checked = Some(Box::new(move |c| g.call(|| false, || checked(c))));
+            }
+        }
+        for (_, i) in self.inspectors.iter_mut().skip(mark.inspectors) {
+            let ui = std::mem::replace(&mut i.ui, Box::new(|_, _, _| {}));
+            let g = guard.clone();
+            i.ui = Box::new(move |u, c, n| {
+                if g.is_failed() {
+                    failed_label(u, &g);
+                    return;
+                }
+                g.call(|| (), || ui(u, c, n));
+            });
+        }
+        for w in self.windows.iter_mut().skip(mark.windows) {
+            let ui = std::mem::replace(&mut w.def.ui, Box::new(|_, _| {}));
+            let g = guard.clone();
+            w.def.ui = Box::new(move |ctx, c| g.call(|| (), || ui(ctx, c)));
+        }
+        for (_, s) in self.settings.iter_mut().skip(mark.settings) {
+            let ui = std::mem::replace(&mut s.ui, Box::new(|_, _| {}));
+            let g = guard.clone();
+            s.ui = Box::new(move |u, c| {
+                if g.is_failed() {
+                    failed_label(u, &g);
+                    return;
+                }
+                g.call(|| (), || ui(u, c));
+            });
+        }
+        self.project.guard_since(mark.project, guard);
     }
 
     fn full_id(&self, local: &str) -> String {
@@ -396,6 +568,44 @@ impl EditorRegistry {
             return;
         }
         self.inspectors.push((self.current.clone(), def));
+    }
+
+    /// Registers a floating window (see [`WindowDef`]).
+    pub fn window(&mut self, mut def: WindowDef) {
+        def.id = self.full_id(&def.id);
+        if self.windows.iter().any(|w| w.def.id == def.id) {
+            self.errors
+                .push(format!("window `{}` registered twice", def.id));
+            return;
+        }
+        self.windows.push(RegisteredWindow {
+            plugin_id: self.current.clone(),
+            def,
+        });
+    }
+
+    /// Registers the settings page of the plugin being installed (one per
+    /// plugin; shown by the plugin manager).
+    pub fn settings_page(&mut self, def: SettingsDef) {
+        if self.settings.iter().any(|(p, _)| *p == self.current) {
+            self.errors
+                .push(format!("settings page of `{}` registered twice", self.current));
+            return;
+        }
+        self.settings.push((self.current.clone(), def));
+    }
+
+    /// The floating windows, in registration order.
+    pub fn windows(&self) -> &[RegisteredWindow] {
+        &self.windows
+    }
+
+    /// The settings page of a plugin, if it has one.
+    pub fn settings_for(&self, plugin_id: &str) -> Option<&SettingsDef> {
+        self.settings
+            .iter()
+            .find(|(p, _)| p == plugin_id)
+            .map(|(_, s)| s)
     }
 
     pub fn find_panel(&self, id: &str) -> Option<&RegisteredPanel> {

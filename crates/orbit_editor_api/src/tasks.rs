@@ -232,9 +232,11 @@ fn fraction_of(s: &Shared) -> Option<f32> {
 #[derive(Default)]
 pub struct Tasks {
     live: Mutex<Vec<Arc<Shared>>>,
+    /// Last job id. Kept here rather than in a `static`: a native plugin
+    /// has its own copy of this crate's statics, and its jobs must not take
+    /// the ids of the editor's.
+    next_id: AtomicU64,
 }
-
-static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 impl Tasks {
     /// Runs `job` on the worker pool. `doc` names the document it works on
@@ -264,7 +266,7 @@ impl Tasks {
         F: FnOnce(&Progress) -> Result<T, TaskError> + Send + 'static,
     {
         let shared = Arc::new(Shared {
-            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            id: self.next_id.fetch_add(1, Ordering::Relaxed) + 1,
             title,
             doc: doc.map(str::to_owned),
             fraction: AtomicU32::new(INDETERMINATE),

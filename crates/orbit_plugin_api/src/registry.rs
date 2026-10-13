@@ -178,6 +178,13 @@ pub struct McpToolDef {
     pub call: McpCall,
 }
 
+/// A position in a [`ProjectRegistry`] (see [`ProjectRegistry::mark`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProjectMark {
+    mcp_tools: usize,
+    hooks: usize,
+}
+
 /// Everything plugins registered on the project side. Keys are
 /// `plugin_id.element`.
 #[derive(Default)]
@@ -329,6 +336,39 @@ impl ProjectRegistry {
         self.mcp_tools
             .iter()
             .map(|(p, t)| (format!("{p}.{}", t.name), t))
+    }
+
+    /// Where the registry stands now: what a later [`Self::guard_since`]
+    /// wraps.
+    pub fn mark(&self) -> ProjectMark {
+        ProjectMark {
+            mcp_tools: self.mcp_tools.len(),
+            hooks: self.hooks.len(),
+        }
+    }
+
+    /// Wraps the MCP tools and hooks registered since `mark` with `guard`
+    /// (see [`crate::guard`]): a panic disables the plugin instead of
+    /// unwinding into the host. Must be called by the plugin's own copy of
+    /// this crate (native editor plugins do it through their host object).
+    /// Node types and importers are plain `fn` pointers and are not wrapped:
+    /// a native plugin must not panic in them.
+    pub fn guard_since(&mut self, mark: ProjectMark, guard: &crate::PluginGuard) {
+        for (_, tool) in self.mcp_tools.iter_mut().skip(mark.mcp_tools) {
+            let inner = std::mem::replace(&mut tool.call, Box::new(|_, _| Ok(String::new())));
+            let g = guard.clone();
+            tool.call = Box::new(move |project, args| {
+                g.call(
+                    || Err(format!("plugin `{}` is disabled after a crash", g.plugin())),
+                    || inner(project, args),
+                )
+            });
+        }
+        for (_, hook) in self.hooks.iter_mut().skip(mark.hooks) {
+            let inner = std::mem::replace(hook, Box::new(|_| {}));
+            let g = guard.clone();
+            *hook = Box::new(move |event| g.call(|| (), || inner(event)));
+        }
     }
 
     /// Delivers an event to every hook.

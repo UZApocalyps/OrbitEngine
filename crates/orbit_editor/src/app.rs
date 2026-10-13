@@ -107,6 +107,8 @@ impl EditorApp {
             language: args.lang,
             open_palette: args.open_palette,
             palette_query: args.palette_query.clone(),
+            native_plugins: true,
+            plugins_safe_mode: args.no_plugins,
             ..CoreOptions::default()
         };
         if let Some(secs) = args.autosave_secs {
@@ -682,7 +684,14 @@ impl App for EditorApp {
             self.host.push(HostRequest::Quit);
         }
         if self.core.take_quit() {
+            let restart = self.core.take_restart();
+            let (project, config_dir) = self.core.restart_target();
             self.core.shutdown();
+            if restart
+                && let Err(e) = crate::plugins::spawn_restart(project.as_deref(), config_dir.as_deref())
+            {
+                log::error!("restart failed: {e}");
+            }
             self.host.push(HostRequest::Quit);
         }
     }
@@ -716,6 +725,9 @@ impl App for EditorApp {
     }
 
     fn close_requested(&mut self) -> bool {
+        // Closing the window never restarts (a restart cancelled earlier in
+        // the unsaved-changes dialog is forgotten).
+        let _ = self.core.take_restart();
         if self.core.request_close() {
             self.core.shutdown();
             true

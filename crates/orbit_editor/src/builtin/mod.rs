@@ -3,8 +3,6 @@
 //! the editor itself has no privileged UI code.
 
 mod actions;
-#[cfg(feature = "ai-studio")]
-mod ai_studio;
 mod anim_edit;
 mod assistant;
 mod console;
@@ -33,6 +31,7 @@ mod library;
 mod library_select;
 pub mod manual;
 mod nodeinfo;
+mod plugins;
 mod preview;
 mod problems;
 pub mod profiler;
@@ -170,8 +169,10 @@ pub struct Shared {
     pub rig: crate::rig_host::SharedLink,
     /// Link with the GPU host of the animated thumbnails of rigged expressions.
     pub rig_thumbs: crate::rig_host::SharedThumbs,
-    /// Per-user config folder (the AI studio keeps its provider settings there).
+    /// Per-user config folder.
     pub config_dir: Option<std::path::PathBuf>,
+    /// Native plugins: what loaded, what failed (plugin manager).
+    pub plugins: crate::plugins::SharedPlugins,
 }
 
 /// The built-in plugins, in registration order (menus first, then panels in
@@ -182,8 +183,7 @@ pub fn plugins() -> Vec<Box<dyn EditorPlugin>> {
 
 /// [`plugins`], sharing `shared` with the editor core.
 pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
-    #[allow(unused_mut)]
-    let mut list: Vec<Box<dyn EditorPlugin>> = vec![
+    vec![
         Box::new(actions::CorePlugin),
         Box::new(importers::ImportersPlugin),
         Box::new(welcome::WelcomePlugin),
@@ -213,10 +213,8 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(scene3d::Scene3dPlugin::new(shared.scene3d.clone())),
         Box::new(rigedit::RigPlugin::new(shared.rig.clone())),
         Box::new(SamplePlugin::default()),
-    ];
-    #[cfg(feature = "ai-studio")]
-    list.push(Box::new(ai_studio::AiStudioPlugin::new(shared.config_dir.clone())));
-    list
+        Box::new(plugins::PluginsPlugin::new(shared.plugins.clone())),
+    ]
 }
 
 /// Registers, once every panel is known, a "Show: <panel>" action for
@@ -270,7 +268,8 @@ fn panel_group(panel_id: &str) -> &'static str {
         | "orbit.timeline.timeline"
         | "orbit.export.export"
         | "orbit.assistant.assistant"
-        | "orbit.manual.manual" => GROUP_TOOLS,
+        | "orbit.manual.manual"
+        | "orbit.plugins.manager" => GROUP_TOOLS,
         id if id.starts_with("orbit.rig.") || id.starts_with("orbit.scene3d.") => GROUP_TOOLS,
         _ => GROUP_OTHER,
     }

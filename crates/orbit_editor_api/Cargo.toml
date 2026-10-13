@@ -1,17 +1,21 @@
 [package]
 name = "orbit_editor_api"
-description = "OrbitEngine plugin API, editor side (egui): panels, actions, menus, inspectors, the editor context. Native only."
+description = "OrbitEngine plugin API, editor side (egui): panels, actions, menus, inspectors, the editor context, and the native (DLL) plugin ABI. Native only."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+build = "build.rs"
 
 [dependencies]
 orbit_core.workspace = true
 orbit_project.workspace = true
 orbit_plugin_api.workspace = true
-egui.workspace = true
+# The features are the ones the editor resolves (egui_dock / egui-snarl enable
+# `serde`, egui-wgpu `bytemuck`): a native plugin compiles this crate without
+# the editor and must get the very same egui (see src/native.rs).
+egui = { workspace = true, features = ["bytemuck", "serde"] }
 egui-phosphor.workspace = true
 serde.workspace = true
 ron.workspace = true

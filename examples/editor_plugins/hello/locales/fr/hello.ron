@@ -1,0 +1,16 @@
+{
+    "hello.open": "Fenêtre Hello",
+    "hello.window_title": "Bonjour depuis un plugin",
+    "hello.greeting": "Cette fenêtre est dessinée par un plugin natif (une DLL) avec l'egui de l'éditeur.",
+    "hello.added_count.one": "{count} note ajoutée pendant cette session.",
+    "hello.added_count.other": "{count} notes ajoutées pendant cette session.",
+    "hello.add_note": "Ajouter une note",
+    "hello.add_note_mcp": "Ajouter une note via MCP (add_dialogue)",
+    "hello.default_note": "Note du plugin Hello",
+    "hello.added": "Note ajoutée : {text}",
+    "hello.no_project": "Ouvrez d'abord un projet.",
+    "hello.undo_label": "Hello : ajouter une note",
+    "hello.crash_test": "Hello : test de plantage (désactive le plugin)",
+    "hello.settings_title": "Hello",
+    "hello.note_text": "Texte des notes :",
+}

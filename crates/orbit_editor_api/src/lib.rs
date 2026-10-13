@@ -41,9 +41,16 @@ pub use preview::{
     PreviewCommand, PreviewInput, PreviewSpeed, PreviewState, PreviewStatus, UiPreviewRequest,
 };
 pub use registry::{
-    ActionDef, DockSlot, EditorRegistry, InspectorDef, MenuDef, MenuSlot, PanelDef, UiEditorLink,
-    RegisteredAction, RegisteredPanel, shortcut_text,
+    ActionDef, DockSlot, EditorRegistry, InspectorDef, MenuDef, MenuSlot, PanelDef, RegisteredAction,
+    RegisteredPanel, RegisteredWindow, RegistryMark, SettingsDef, UiEditorLink, WindowDef,
+    shortcut_text,
 };
+pub use orbit_plugin_api::PluginGuard;
+pub mod native;
+
+/// The exact egui the editor is built with. A native plugin draws with this
+/// one (`orbit_editor_api::egui`), never with its own egui dependency.
+pub use egui;
 pub use scene_view::{SceneViewActor, SceneViewState};
 pub use tasks::{Progress, TaskError, TaskHandle, TaskInfo, Tasks};
 

@@ -1,0 +1,27 @@
+[package]
+name = "orbit_ai_studio_plugin"
+description = "AI Studio, the first official native editor plugin (cdylib): the AI game-creation wizard panel and its MCP tools. Built by `cargo xtask plugins`, installed from the editor's plugin manager."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+orbit_editor_api.workspace = true
+orbit_ai_studio.workspace = true
+orbit_core.workspace = true
+orbit_project.workspace = true
+# Thumbnails of the Civitai previews.
+image = { workspace = true, features = ["jpeg"] }
+
+# `export_plugin!` generates `#[no_mangle]` functions: `unsafe_code` is denied
+# here rather than forbidden (the workspace forbids it).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

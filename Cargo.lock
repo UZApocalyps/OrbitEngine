@@ -3080,6 +3080,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit_ai_studio_plugin"
+version = "0.3.1"
+dependencies = [
+ "image",
+ "orbit_ai_studio",
+ "orbit_core",
+ "orbit_editor_api",
+ "orbit_project",
+]
+
+[[package]]
 name = "orbit_anim"
 version = "0.3.1"
 dependencies = [
@@ -3169,7 +3180,6 @@ dependencies = [
  "hound",
  "image",
  "log",
- "orbit_ai_studio",
  "orbit_anim",
  "orbit_assets",
  "orbit_audio",
@@ -3183,6 +3193,7 @@ dependencies = [
  "orbit_mcp",
  "orbit_platform",
  "orbit_plugin_api",
+ "orbit_plugin_host",
  "orbit_profile",
  "orbit_project",
  "orbit_render2d",
@@ -3248,6 +3259,15 @@ dependencies = [
  "orbit_profile",
  "thiserror 2.0.21",
  "wgpu",
+]
+
+[[package]]
+name = "orbit_hello_plugin"
+version = "0.1.0"
+dependencies = [
+ "orbit_core",
+ "orbit_editor_api",
+ "orbit_project",
 ]
 
 [[package]]
@@ -3368,6 +3388,22 @@ dependencies = [
  "orbit_project",
  "orbit_vm",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "orbit_plugin_host"
+version = "0.3.1"
+dependencies = [
+ "libloading",
+ "log",
+ "orbit_core",
+ "orbit_editor_api",
+ "orbit_plugin_api",
+ "orbit_project",
+ "ron",
+ "serde",
+ "serde_json",
+ "zip",
 ]
 
 [[package]]
