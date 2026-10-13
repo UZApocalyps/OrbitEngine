@@ -14,9 +14,11 @@
 //!   `set_var(name, value)` (queued, applied by the VM after the script, all
 //!   or nothing, with the type checks of `VarOp::set`), `rand_int(a, b)`,
 //!   `rand_float()`, `chance(p)` (the VM's seeded RNG), `branch(name)` (or
-//!   return the branch name), `log(message)`, `api_version()`. Rhai
-//!   conditions (`Expr::Rhai`) may only read: `set_var`, `branch` and the
-//!   random functions are errors there.
+//!   return the branch name), `log(message)`, `notify(text)` /
+//!   `notify(text, style)` / `notify(text, #{style, icon, sound, duration})`
+//!   (an in-game toast, shown only when the script succeeds),
+//!   `api_version()`. Rhai conditions (`Expr::Rhai`) may only read:
+//!   `set_var`, `branch`, `notify` and the random functions are errors there.
 //! * **Modules.** Shared sources (`scripts/<name>.rhai` of a project, the
 //!   same entries in the pak) are given to [`ScriptEngine::new`] as a map
 //!   and imported by name: `import "shop" as shop; shop::buy("sword")`.
@@ -33,7 +35,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use orbit_core::{ScalarType, Value, ValueType, VarOp};
-use orbit_vm::{PluginContext, Rng, ScriptFailure, ScriptHost, ScriptOutcome};
+use orbit_vm::{PluginContext, Rng, ScriptFailure, ScriptHost, ScriptOutcome, TextNotification};
 use rhai::packages::{Package, StandardPackage};
 use rhai::{
     Dynamic, Engine, EvalAltResult, ImmutableString, Module, NativeCallContext, Position, Scope, AST,
@@ -167,6 +169,8 @@ struct CallState {
     rng: CountingRng,
     branch: Option<String>,
     logs: Vec<String>,
+    /// `notify(…)` calls, in order.
+    notifications: Vec<TextNotification>,
     /// Modules being imported, outermost first (cycle and depth checks).
     importing: Vec<String>,
     /// Modules evaluated so far by this call.
@@ -182,6 +186,7 @@ impl CallState {
             rng: CountingRng { rng, draws: 0 },
             branch: None,
             logs: Vec::new(),
+            notifications: Vec::new(),
             importing: Vec::new(),
             modules_loaded: 0,
         }
@@ -933,6 +938,41 @@ fn register_api(engine: &mut Engine, slot: &Slot) {
     });
 
     let s = Arc::clone(slot);
+    engine.register_fn("notify", move |text: &str| -> RhaiResult<()> {
+        push_notification(&s, TextNotification {
+            text: text.to_owned(),
+            ..TextNotification::default()
+        })
+    });
+    let s = Arc::clone(slot);
+    engine.register_fn("notify", move |text: &str, style: &str| -> RhaiResult<()> {
+        push_notification(&s, TextNotification {
+            text: text.to_owned(),
+            style: (!style.is_empty()).then(|| style.to_owned()),
+            ..TextNotification::default()
+        })
+    });
+    let s = Arc::clone(slot);
+    engine.register_fn("notify", move |text: &str, options: rhai::Map| -> RhaiResult<()> {
+        let field = |name: &str| {
+            options
+                .get(name)
+                .and_then(|v| v.clone().into_string().ok())
+                .filter(|v| !v.is_empty())
+        };
+        let duration = options.get("duration").and_then(|v| {
+            v.as_float().ok().map(|f| f as f32).or_else(|| v.as_int().ok().map(|i| i as f32))
+        });
+        push_notification(&s, TextNotification {
+            text: text.to_owned(),
+            style: field("style"),
+            icon: field("icon"),
+            sound: field("sound"),
+            duration: duration.filter(|d| d.is_finite() && *d >= 0.0),
+        })
+    });
+
+    let s = Arc::clone(slot);
     engine.register_fn("log", move |message: &str| -> RhaiResult<()> {
         with_state(&s, |st| {
             push_log(st, message);
@@ -952,6 +992,21 @@ fn register_api(engine: &mut Engine, slot: &Slot) {
             push_log(st, message);
         }
     });
+}
+
+/// Notifications are capped like the logs (a loop cannot flood the screen).
+const MAX_NOTIFICATIONS: usize = 8;
+
+fn push_notification(slot: &Slot, notification: TextNotification) -> RhaiResult<()> {
+    with_state(slot, |st| {
+        writable(st, "notify")?;
+        if st.notifications.len() < MAX_NOTIFICATIONS {
+            let mut n = notification;
+            n.text = n.text.chars().take(1024).collect();
+            st.notifications.push(n);
+        }
+        Ok(())
+    })
 }
 
 /// Logs are capped so that a looping script cannot flood the console.
@@ -987,6 +1042,9 @@ impl ScriptHost for ScriptEngine {
             if let Err(e) = ctx.apply(VarOp::set(&name, value)) {
                 return Err(ScriptFailure::new(format!("set_var(`{name}`): {e}")));
             }
+        }
+        for n in state.notifications {
+            ctx.notify(n);
         }
         let branch = if value.is_string() {
             value.into_string().ok().filter(|s| !s.is_empty())

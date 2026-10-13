@@ -309,6 +309,10 @@ pub enum NodeKind {
     /// the visible hotspots (same waiting state, saves, rollback); the host
     /// draws zones instead of a menu. Appended last.
     Hotspots(crate::hotspot::HotspotMap),
+    /// A non-blocking in-game notification (toast): the host shows it and
+    /// the story goes on at once. Transient: not in the VM state, saves or
+    /// rollback history. Appended last.
+    Notify(crate::notify::Notify),
 }
 
 /// A named output of a [`NodeKind::Script`].
@@ -368,6 +372,7 @@ impl NodeKind {
             NodeKind::Say { text_id, .. } => vec![*text_id],
             NodeKind::Choice { options } => options.iter().map(|o| o.text_id).collect(),
             NodeKind::Hotspots(map) => map.hotspots.iter().map(|h| h.text_id).collect(),
+            NodeKind::Notify(n) => vec![n.text_id],
             _ => Vec::new(),
         }
     }

@@ -50,8 +50,30 @@ pub struct PluginContext<'a> {
     pending: BTreeMap<String, Value>,
     ops: Vec<VarOp>,
     events: Vec<PluginEvent>,
+    notifications: Vec<TextNotification>,
     warnings: Vec<String>,
     error: Option<String>,
+}
+
+/// A notification (toast) asked by a script or a plugin with a literal
+/// text (`notify("…")`), delivered as `PresentationEvent::NotifyText` once
+/// the handler succeeded.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TextNotification {
+    /// Text shown (markup allowed).
+    pub text: String,
+    /// A named notification style of the theme (`None`: `default`).
+    #[serde(default)]
+    pub style: Option<String>,
+    /// Project path of an image shown left of the text.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Project path of a sound played with it.
+    #[serde(default)]
+    pub sound: Option<String>,
+    /// Seconds on screen (else the style's / theme's duration).
+    #[serde(default)]
+    pub duration: Option<f32>,
 }
 
 impl<'a> PluginContext<'a> {
@@ -69,6 +91,7 @@ impl<'a> PluginContext<'a> {
             pending: BTreeMap::new(),
             ops: Vec::new(),
             events: Vec::new(),
+            notifications: Vec::new(),
             warnings: Vec::new(),
             error: None,
         }
@@ -168,6 +191,16 @@ impl<'a> PluginContext<'a> {
         });
     }
 
+    /// Shows a notification (toast) once the handler succeeded.
+    pub fn notify(&mut self, notification: TextNotification) {
+        self.notifications.push(notification);
+    }
+
+    /// Notifications queued so far, in order.
+    pub fn notifications(&self) -> &[TextNotification] {
+        &self.notifications
+    }
+
     /// A non-fatal message (shown in the console / the editor's warnings).
     pub fn warn(&mut self, message: impl Into<String>) {
         self.warnings.push(message.into());
@@ -186,6 +219,7 @@ impl<'a> PluginContext<'a> {
             rng: self.rng,
             values: self.pending,
             events: self.events,
+            notifications: self.notifications,
             warnings: self.warnings,
             error: self.error,
         }
@@ -197,6 +231,7 @@ pub(crate) struct PluginEffects {
     /// Final value of every variable written, in name order.
     pub values: BTreeMap<String, Value>,
     pub events: Vec<PluginEvent>,
+    pub notifications: Vec<TextNotification>,
     pub warnings: Vec<String>,
     pub error: Option<String>,
 }

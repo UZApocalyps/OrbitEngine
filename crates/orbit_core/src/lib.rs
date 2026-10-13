@@ -15,6 +15,7 @@ pub mod expr;
 pub mod hotspot;
 pub mod ids;
 pub mod migrate;
+pub mod notify;
 pub mod particles;
 pub mod scripting;
 pub mod story;
@@ -24,6 +25,7 @@ pub mod varops;
 
 pub use custom::CustomData;
 pub use hotspot::{Hotspot, HotspotMap, HotspotShape, HotspotStyle};
+pub use notify::{Notify, interpolate_vars};
 pub use particles::{
     BgLayer, Emitter, EmitterInstance, MAX_PARTICLES_PER_EMITTER, MAX_PARTICLES_TOTAL, Particle,
     ParticlePreset, hash01,

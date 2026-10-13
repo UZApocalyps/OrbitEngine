@@ -57,7 +57,16 @@ const MAGIC: &[u8; 8] = b"ORBITGAM";
 /// one; any other game keeps the layout of version 6 (or older) byte for
 /// byte (`orbit_core::with_legacy_v16_layout`). Versions 1 to 6 are read
 /// with that layout.
-pub const PACK_VERSION: u32 = 7;
+///
+/// Version 8 adds the `Notify` node (in-game notifications). Same layout as
+/// version 7 (the variant is appended last); it is written only for a game
+/// that has one, so a player that predates notifications refuses the pack
+/// ("too new") instead of failing on an unknown node. Any other game keeps
+/// its older version byte for byte.
+pub const PACK_VERSION: u32 = 8;
+/// Version written for a game with an achievement locked icon or hotspots
+/// (and nothing newer).
+pub const PACK_VERSION_V17: u32 = 7;
 /// Version written for a game using schema v16 content (and nothing newer).
 pub const PACK_VERSION_V16: u32 = 6;
 /// Version written for a game with a rigged expression (and nothing newer).
@@ -181,8 +190,17 @@ impl GamePack {
                 .iter()
                 .flat_map(|s| &s.nodes)
                 .any(|n| matches!(n.kind, orbit_core::NodeKind::Hotspots(_)));
-        let version = if v17 {
+        let v18 = self
+            .story
+            .scenes
+            .iter()
+            .flat_map(|s| &s.nodes)
+            .any(|n| matches!(n.kind, orbit_core::NodeKind::Notify(_)));
+        let v17 = v17 || v18;
+        let version = if v18 {
             PACK_VERSION
+        } else if v17 {
+            PACK_VERSION_V17
         } else if v16 {
             PACK_VERSION_V16
         } else if self.uses_rigs() {
@@ -908,10 +926,33 @@ mod tests {
             GamePack::from_bytes(&bytes[..20]),
             Err(PackError::Corrupt(_))
         ));
-        bytes[8] = 8;
+        bytes[8] = 9;
         assert_eq!(
             GamePack::from_bytes(&bytes).unwrap_err(),
-            PackError::UnsupportedVersion { found: 8 }
+            PackError::UnsupportedVersion { found: 9 }
         );
+    }
+
+    #[test]
+    fn a_notify_node_is_written_in_version_8_only() {
+        use orbit_core::{Node, NodeId, NodeKind, Notify};
+        let mut pack = fixture_pack();
+        let before = pack.to_bytes().unwrap();
+        assert_eq!(&before[8..12], &BASE_PACK_VERSION.to_le_bytes());
+        let text_id = pack.story.strings.add("Gold +1");
+        pack.story.scenes[0].nodes.push(Node {
+            id: NodeId::new(),
+            kind: NodeKind::Notify(Notify {
+                text_id,
+                icon: None,
+                sound: None,
+                duration: Some(2.5),
+                style: Some("achievement".into()),
+            }),
+        });
+        let bytes = pack.to_bytes().unwrap();
+        assert_eq!(&bytes[8..12], &8u32.to_le_bytes(), "older players refuse it");
+        assert_eq!(GamePack::from_bytes(&bytes).unwrap(), pack);
+        assert!(GamePack::from_bytes(&before).is_ok());
     }
 }

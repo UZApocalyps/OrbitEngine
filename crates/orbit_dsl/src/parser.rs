@@ -91,6 +91,13 @@ enum Raw {
         voice: Option<Ref>,
     },
     Unlock(Ref),
+    Notify {
+        text: String,
+        icon: Option<Ref>,
+        sound: Option<Ref>,
+        style: Option<String>,
+        duration: Option<f32>,
+    },
     Hotspots {
         bg: Option<Ref>,
         style: orbit_core::HotspotStyle,
@@ -886,6 +893,34 @@ impl LineParser<'_> {
                         })
                     }
                     "unlock" => Stmt::Node(Raw::Unlock(self.reference("an achievement")?)),
+                    "notify" => {
+                        let text = self.string("the notification text")?;
+                        let (mut icon, mut sound, mut style, mut duration) = (None, None, None, None);
+                        let mut seen = HashSet::new();
+                        while let Some(Tok::Ident(opt)) = self.peek().cloned() {
+                            if !seen.insert(opt.clone()) {
+                                return self.err(format!("`{opt}` given twice"));
+                            }
+                            self.at += 1;
+                            match opt.as_str() {
+                                "icon" => icon = Some(self.reference("an image")?),
+                                "sound" => sound = Some(self.reference("a sound")?),
+                                "style" => style = Some(self.name("a notification style name")?),
+                                "duration" => {
+                                    let d = self.f32()?;
+                                    if !(d.is_finite() && d >= 0.0) {
+                                        return self.err("the duration must be a positive number");
+                                    }
+                                    duration = Some(d);
+                                }
+                                _ => {
+                                    self.at -= 1;
+                                    return self.err(format!("unknown `notify` option `{opt}`"));
+                                }
+                            }
+                        }
+                        Stmt::Node(Raw::Notify { text, icon, sound, style, duration })
+                    }
                     "menu" => Stmt::Node(Raw::Menu(Vec::new())),
                     "hotspots" => {
                         let bg = if self.eat_word("bg") {
@@ -1710,6 +1745,28 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                 Raw::Unlock(r) => {
                     by_name::<AchievementId>(d, line, r, &names.achievements, "achievement")
                         .map(|achievement| NodeKind::Unlock { achievement })
+                }
+                Raw::Notify { text, icon, sound, style, duration } => {
+                    let reuse = match old {
+                        Some(NodeKind::Notify(n)) => Some(n.text_id),
+                        _ => None,
+                    };
+                    let asset = |d: &mut Diags, r: &Option<Ref>| match r {
+                        None => Some(None),
+                        Some(r) => by_name::<AssetId>(d, line, r, &names.assets, "asset").map(Some),
+                    };
+                    let icon = asset(d, icon);
+                    let sound = asset(d, sound);
+                    match (icon, sound) {
+                        (Some(icon), Some(sound)) => Some(NodeKind::Notify(orbit_core::Notify {
+                            text_id: string_for(reuse, text),
+                            icon,
+                            sound,
+                            duration: *duration,
+                            style: style.clone(),
+                        })),
+                        _ => None,
+                    }
                 }
                 Raw::Hotspots { bg, style, spots } => {
                     let old_spots = match old {

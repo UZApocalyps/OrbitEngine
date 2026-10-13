@@ -52,6 +52,7 @@
 //! stop particles ["<name>"]                      StopParticles
 //! script "<rhai source>" [branch <name> -> <label-ref> ...] [on_error <label-ref>]   Script
 //! unlock <achievement-ref>                        Unlock (an achievement, by its title)
+//! notify "<text>" [icon <asset-ref>] [sound <asset-ref>] [style <name>] [duration <f>]   Notify (toast)
 //! hotspots [bg <asset-ref>] [<style>]            Hotspots (point & click); zones follow:
 //!     spot <shape> "tooltip" -> <label-ref> [name <name>] [hover <asset-ref>]
 //!         [sound <asset-ref>] [style <style>] [enabled <expr>] [if <expr>]
@@ -170,6 +171,7 @@ pub const KEYWORDS: &[&str] = &[
     "rgba",
     "hotspots",
     "spot",
+    "notify",
 ];
 
 /// A name as written in the DSL: bare when possible, quoted otherwise.
@@ -603,6 +605,22 @@ fn write_node(ctx: &Ctx<'_>, scene: SceneId, node: &Node, out: &mut String) {
         }
         NodeKind::Unlock { achievement } => {
             format!("unlock {}", ctx.achievement_ref(*achievement))
+        }
+        NodeKind::Notify(n) => {
+            let mut line = format!("notify {}", ctx.text(n.text_id));
+            if let Some(icon) = n.icon {
+                line.push_str(&format!(" icon {}", ctx.asset_ref(icon)));
+            }
+            if let Some(sound) = n.sound {
+                line.push_str(&format!(" sound {}", ctx.asset_ref(sound)));
+            }
+            if let Some(style) = &n.style {
+                line.push_str(&format!(" style {}", fmt_name(style)));
+            }
+            if let Some(d) = n.duration {
+                line.push_str(&format!(" duration {}", fmt_f32(d)));
+            }
+            line
         }
         NodeKind::Choice { options } => {
             out.push_str(&format!("    menu #@{}\n", node.id));

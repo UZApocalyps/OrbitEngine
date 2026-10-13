@@ -334,3 +334,33 @@ fn api_version_value(engine: &ScriptEngine) -> i64 {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn notify_queues_toasts_only_when_the_script_succeeds() {
+    use orbit_vm::PresentationEvent;
+    let notes = |vm: &mut Vm| -> Vec<orbit_vm::TextNotification> {
+        vm.take_events()
+            .into_iter()
+            .filter_map(|e| match e {
+                PresentationEvent::NotifyText(n) => Some(n),
+                _ => None,
+            })
+            .collect()
+    };
+    let (s, ..) = story(
+        r#"notify("Hi"); notify("Gold!", "achievement"); notify("x", #{icon: "a.png", duration: 2});"#,
+    );
+    let mut m = vm(s, BTreeMap::new());
+    m.step();
+    let got = notes(&mut m);
+    assert_eq!(got.len(), 3);
+    assert_eq!(got[0].text, "Hi");
+    assert_eq!(got[1].style.as_deref(), Some("achievement"));
+    assert_eq!(got[2].icon.as_deref(), Some("a.png"));
+    assert_eq!(got[2].duration, Some(2.0));
+
+    let (s, ..) = story(r#"notify("never"); throw "boom";"#);
+    let mut m = vm(s, BTreeMap::new());
+    m.step();
+    assert!(notes(&mut m).is_empty(), "a failing script shows nothing");
+}

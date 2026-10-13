@@ -58,6 +58,7 @@ fn kind_tag(kind: &NodeKind) -> u8 {
         NodeKind::Script { .. } => 29,
         NodeKind::Unlock { .. } => 30,
         NodeKind::Hotspots(_) => 31,
+        NodeKind::Notify(_) => 32,
     }
 }
 

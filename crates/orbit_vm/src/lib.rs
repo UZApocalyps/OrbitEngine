@@ -42,6 +42,9 @@ mod replay_tests;
 #[cfg(test)]
 mod achievement_tests;
 
+#[cfg(test)]
+mod notify_tests;
+
 pub use error::VmError;
 pub use vm::HotspotChoice;
 pub use event::{ChoiceView, PresentationEvent, StepResult};
@@ -50,7 +53,7 @@ pub use history::{
     Presentation, RollbackHistory,
 };
 pub use plugin::{
-    Handled, PluginContext, PluginEvent, PluginHost, PluginOutcome, SharedPluginHost,
+    Handled, PluginContext, PluginEvent, PluginHost, PluginOutcome, SharedPluginHost, TextNotification,
 };
 pub use rollback::scene_events;
 pub use script::{ScriptFailure, ScriptHost, ScriptOutcome, SharedScriptHost};

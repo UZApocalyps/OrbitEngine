@@ -823,6 +823,17 @@ impl Vm {
                     self.state.pc = next;
                     self.unlock_achievement(*achievement);
                 }
+                NodeKind::Notify(notify) => {
+                    // Non-blocking and transient: an event only (nothing in
+                    // the state, so saves and rollback never hold a toast).
+                    self.state.pc = next;
+                    let vars = self.notify_vars(story.text(notify.text_id).unwrap_or_default());
+                    self.events.push(PresentationEvent::Notify {
+                        node: pc,
+                        notify: notify.clone(),
+                        vars,
+                    });
+                }
             }
         }
         Err(VmError::StepLimit(MAX_NODES_PER_STEP))
@@ -916,6 +927,9 @@ impl Vm {
                 self.history.patch_cursor_var(&name, &value);
             }
             self.store_var(&name, value);
+        }
+        for notification in effects.notifications {
+            self.events.push(PresentationEvent::NotifyText(notification));
         }
         for event in effects.events {
             self.events.push(PresentationEvent::Custom {
@@ -1376,6 +1390,19 @@ impl Vm {
     /// rejected variable operations).
     pub fn take_warnings(&mut self) -> Vec<String> {
         std::mem::take(&mut self.warnings)
+    }
+
+    /// The values of the `[name]` variables `text` refers to, as they stand
+    /// now (a notification's text is interpolated by the host later, after
+    /// the story may have moved on).
+    fn notify_vars(&self, text: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        orbit_core::interpolate_vars(text, |name| {
+            let v = self.state.vars.get(name).or_else(|| self.persistent.get(name))?;
+            out.push((name.to_owned(), v.to_string()));
+            None
+        });
+        out
     }
 
     /// Playthrough (`Game`) variables only, as stored in the state.

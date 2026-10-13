@@ -135,4 +135,17 @@ pub enum PresentationEvent {
     AchievementUnlocked {
         achievement: orbit_core::AchievementId,
     },
+    /// A `Notify` node ran (non-blocking): the host shows a toast. `vars`
+    /// are the values of the `[name]` variables of its source text when it
+    /// ran, for the host's interpolation. Never stored (saves, rollback);
+    /// executing the node again (after a rollback) emits it again.
+    /// Appended last.
+    Notify {
+        node: orbit_core::NodeId,
+        notify: orbit_core::Notify,
+        vars: Vec<(String, String)>,
+    },
+    /// A script or a plugin asked for a notification with a literal text
+    /// (`notify("…")` in Rhai). Same rules as `Notify`. Appended last.
+    NotifyText(crate::plugin::TextNotification),
 }

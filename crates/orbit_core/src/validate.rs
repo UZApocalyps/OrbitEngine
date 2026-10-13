@@ -497,6 +497,17 @@ impl Cx<'_> {
                 NodeKind::Choice { options } if options.is_empty() => {
                     self.errors.push(ValidationError::EmptyChoice(id));
                 }
+                NodeKind::Notify(n) => {
+                    if let Some(a) = n.icon {
+                        self.check_asset(Some(id), a, AssetKind::Image);
+                    }
+                    if let Some(a) = n.sound {
+                        self.check_asset(Some(id), a, AssetKind::Sound);
+                    }
+                    if n.duration.is_some_and(|d| !d.is_finite() || d < 0.0) {
+                        self.stage_problem(id, "a notification duration must be a positive number");
+                    }
+                }
                 NodeKind::Hotspots(map) => {
                     if map.hotspots.is_empty() {
                         self.errors.push(ValidationError::EmptyChoice(id));
