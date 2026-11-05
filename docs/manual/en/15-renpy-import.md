@@ -41,7 +41,7 @@ The report is also saved as `import-report.md` in the new project: counts, every
 | `image black = Solid("#000")` (or `"#000"`) | a generated picture of that color (with its transparency) |
 | `image fire:` with only pictures, `pause` and `repeat` | a frame animation of the expression |
 | `Composite(…)`, `ConditionSwitch(…)`, `layeredimage` | best effort: the first layer, the default branch, the base layer (reported) |
-| a screen with an `imagemap` (`ground`, `hover`, `hotspot (x, y, w, h) action …`) or `imagebutton`s, used by `call screen` / `show screen` | a point & click node (`Hotspots`): the ground is the background, the zones are the hotspots, `hover` their hover picture; `if` around a hotspot becomes its condition, `sensitive` its enabled state |
+| a screen with an `imagemap` (`ground`, `hover`, `hotspot (x, y, w, h) action …`) or `imagebutton`s, used by `call screen` / `show screen` | a point & click node (`Hotspots`): the ground is the background, the zones are the hotspots, `hover` their hover picture; `if` around a hotspot becomes its condition, `sensitive` its enabled state. An `imagebutton` becomes a picture zone: its idle picture is drawn and only its opaque pixels react, its hover picture replaces it on hover. Button actions made of `SetVariable` / `ToggleVariable` (to a literal or a variable), `Notify`, `Jump` and `Return` become zone actions; a `Call` or a computed value keeps a small block of generated nodes |
 | a screen of `textbutton`s used the same way | a choice |
 | button actions `Jump("x")`, `Call("x")`, `Return()`, `SetVariable("x", v)`, `SetField(persistent, "x", v)`, `ToggleVariable("x")`, `Notify("text")`, and lists of them | the block that follows each zone / option |
 | `$ renpy.notify("…")` (also inside a `python:` block) and the screen action `Notify("…")` | a Notify node (a toast: text converted like dialogue, default style) |
@@ -53,7 +53,7 @@ Positions: the engine anchors a sprite by its bottom-center point, so `xalign a`
 
 - Interface screens (say, menus, save / load, preferences…), styles, screens that are not navigation, the `gui/` folder: OrbitEngine screens are made in the UI editor. They are reported once, not line by line.
 - Transforms with parameters, ATL `parallel`, `choice`, `on`, `function`, `contains`, `crop` and other properties: reported with their place.
-- Image button pictures are not drawn (the zone glows over the background); layers of composite and layered images are not combined.
+- Layers of composite and layered images are not combined.
 - `init python` blocks and Python that is not a simple assignment or one of the calls above: kept as a commented script node and listed in the report, so you can rewrite them (in Rhai, see the Scripting chapter).
 - Conditions the engine syntax cannot hold are converted to Rhai conditions: check them.
 - `[variable]` interpolation in texts stays as written; other text tags (`{size}`, `{font}`, `{a}`...) are removed (reported once per tag, with the number of lines).

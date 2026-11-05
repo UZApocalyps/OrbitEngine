@@ -292,15 +292,24 @@ fn sample_game_imports_every_palier1_feature() {
         .iter()
         .find(|m| m.background.is_none())
         .expect("image buttons");
-    assert_eq!(
-        doors.hotspots[0].shape,
-        HotspotShape::Rect {
-            x: 100.0 / 1280.0,
-            y: 200.0 / 720.0,
-            w: 200.0 / 1280.0,
-            h: 300.0 / 720.0
-        }
-    );
+    // Image buttons: their idle picture is drawn and hit-tested (a mask),
+    // the hover picture shows on hover.
+    let HotspotShape::Mask { image, x, y, w, h, draw, .. } = doors.hotspots[0].shape else {
+        panic!("a mask zone: {:?}", doors.hotspots[0].shape);
+    };
+    assert_eq!((x, y, w, h), (100.0 / 1280.0, 200.0 / 720.0, 200.0 / 1280.0, 300.0 / 720.0));
+    assert!(draw);
+    let idle_path = story.asset_path(image).unwrap();
+    assert!(idle_path.contains("door") && idle_path.contains("idle"), "{idle_path}");
+    assert!(doors.hotspots.iter().all(|h| h.hover_image.is_some()));
+    // `Jump("garden")` (another scene) alone: one zone action, no generated block;
+    // `[SetVariable("points", 3), Jump("ending")]`: zone actions.
+    assert!(matches!(doors.hotspots[0].actions.as_slice(), [orbit_core::HotspotAction::JumpScene { .. }]));
+    assert!(matches!(
+        doors.hotspots[1].actions.first(),
+        Some(orbit_core::HotspotAction::SetVar { var, value: orbit_core::Operand::Lit(orbit_core::Value::Int(3)), .. }) if var == "points"
+    ));
+    assert!(doors.hotspots[1].actions.iter().any(|a| matches!(a, orbit_core::HotspotAction::JumpScene { .. })));
     // `show screen` of text buttons: a choice.
     let ending = story.scenes.iter().find(|s| s.name == "ending").unwrap();
     assert!(

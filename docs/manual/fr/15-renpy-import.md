@@ -41,7 +41,7 @@ Le rapport est aussi enregistré dans `import-report.md`, dans le nouveau projet
 | `image black = Solid("#000")` (ou `"#000"`) | une image générée de cette couleur (avec sa transparence) |
 | `image fire:` fait seulement d'images, de `pause` et de `repeat` | une animation image par image de l'expression |
 | `Composite(…)`, `ConditionSwitch(…)`, `layeredimage` | au mieux : le premier calque, la branche par défaut, le calque de base (signalé) |
-| un screen avec un `imagemap` (`ground`, `hover`, `hotspot (x, y, w, h) action …`) ou des `imagebutton`, utilisé par `call screen` / `show screen` | un nœud point & click (`Hotspots`) : le `ground` devient le décor, les zones les hotspots, `hover` leur image de survol ; un `if` autour d'un hotspot devient sa condition, `sensitive` son état actif |
+| un screen avec un `imagemap` (`ground`, `hover`, `hotspot (x, y, w, h) action …`) ou des `imagebutton`, utilisé par `call screen` / `show screen` | un nœud point & click (`Hotspots`) : le `ground` devient le décor, les zones les hotspots, `hover` leur image de survol ; un `if` autour d'un hotspot devient sa condition, `sensitive` son état actif. Un `imagebutton` devient une zone image : son image `idle` est dessinée et seuls ses pixels opaques réagissent, son image `hover` la remplace au survol. Les actions faites de `SetVariable` / `ToggleVariable` (vers une valeur ou une variable), `Notify`, `Jump` et `Return` deviennent des actions de zone ; un `Call` ou une valeur calculée garde un petit bloc de nœuds générés |
 | un screen de `textbutton` utilisé de la même façon | un choix |
 | actions `Jump("x")`, `Call("x")`, `Return()`, `SetVariable("x", v)`, `SetField(persistent, "x", v)`, `ToggleVariable("x")`, `Notify("texte")`, et leurs listes | le bloc qui suit chaque zone / option |
 | `$ renpy.notify("…")` (aussi dans un bloc `python:`) et l'action d'écran `Notify("…")` | un nœud Notify (une notification : texte converti comme un dialogue, style par défaut) |
@@ -53,7 +53,7 @@ Positions : le moteur ancre un sprite par le milieu de son bord bas, donc `xalig
 
 - Les écrans d'interface (say, menus, sauvegarde, préférences…), les styles, les screens qui ne sont pas de la navigation, le dossier `gui/` : les écrans OrbitEngine se créent dans l'éditeur d'UI. Ils sont signalés une fois, pas ligne par ligne.
 - Les transforms à paramètres, les ATL `parallel`, `choice`, `on`, `function`, `contains`, `crop` et les autres propriétés : signalés avec leur emplacement.
-- Les images des `imagebutton` ne sont pas dessinées (la zone brille sur le décor) ; les calques des images composées et des layered images ne sont pas assemblés.
+- Les calques des images composées et des layered images ne sont pas assemblés.
 - Les blocs `init python` et le Python qui n'est ni une simple affectation ni l'un des appels ci-dessus : gardés dans un nœud de script commenté et listés dans le rapport, pour les réécrire (en Rhai, voir le chapitre Scripts).
 - Les conditions que la syntaxe du moteur ne sait pas exprimer deviennent des conditions Rhai : vérifiez-les.
 - L'interpolation `[variable]` reste telle quelle dans les textes ; les autres balises (`{size}`, `{font}`, `{a}`…) sont retirées (signalées une fois par balise, avec le nombre de lignes).

@@ -59,14 +59,8 @@ scene town
   Background
   Say "You arrive in town."
   Hotspots
-  Label screen_1_1
-  JumpScene
   Label screen_1_2
   Call
-  Jump
-  Label screen_1_3
-  JumpScene
-  Label screen_1_4
   Jump
   Label screen_1_end
   Jump
@@ -79,11 +73,6 @@ scene kitchen
   JumpScene
   Label menu_1_2
   Hotspots
-  Label screen_2_1
-  JumpScene
-  Label screen_2_2
-  SetVar
-  JumpScene
   Label screen_2_end
   Jump
   Label menu_1_end
@@ -129,4 +118,3 @@ warnings:
   script.rpy:28: `window show / hide / auto` ignored (the engine shows the text box while a line is displayed) (3 times, first here)
   script.rpy:55: transition `pixellate` approximated by a dissolve
   script.rpy:60: transition `moveinright` approximated by a dissolve
-  script.rpy:102: image button pictures are not drawn (the engine draws a glowing zone over the background) (2 times, first here)

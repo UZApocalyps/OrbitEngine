@@ -2830,8 +2830,14 @@ impl<'a> Conv<'a> {
         let mut hotspots = Vec::new();
         let mut options = Vec::new();
         for (i, b) in buttons.iter().enumerate() {
-            let target = NodeId::new();
-            targets.push(target);
+            // A zone whose actions all map to zone actions needs no block of
+            // generated nodes: it carries them (its target is where it goes).
+            let direct = if use_zones { self.zone_actions(line, &b.actions, end) } else { None };
+            let target = match &direct {
+                Some((_, t)) => *t,
+                None => NodeId::new(),
+            };
+            targets.push(direct.is_none().then_some(target));
             let text = b.text.clone().unwrap_or_default();
             let text_id = self.add_text_raw(&text, 0);
             let condition = b.condition.as_ref().map(|c| self.condition(line, c));
@@ -2844,23 +2850,33 @@ impl<'a> Conv<'a> {
                         h: h / self.screen_size.h,
                     },
                     None => {
+                        // An image button: its idle picture is drawn and
+                        // only its opaque pixels react; the hover picture
+                        // replaces it on hover.
                         let idle = b.idle.as_deref().and_then(|p| self.resolve_picture(p));
-                        if idle.is_some() {
-                            self.note(
-                                "button-pictures",
-                                b.line,
-                                false,
-                                "image button pictures are not drawn (the engine draws a glowing zone over the background)",
-                            );
+                        let rect = self.button_rect(b, idle.as_deref());
+                        match (idle, rect) {
+                            (Some(idle), HotspotShape::Rect { x, y, w, h }) => HotspotShape::Mask {
+                                image: self.asset(&idle, AssetKind::Image),
+                                x,
+                                y,
+                                w,
+                                h,
+                                threshold: orbit_core::hotspot::DEFAULT_MASK_THRESHOLD,
+                                draw: true,
+                            },
+                            (_, rect) => rect,
                         }
-                        self.button_rect(b, idle.as_deref())
                     }
                 };
                 let enabled = b.sensitive.as_ref().map(|c| self.condition(line, c));
                 let hover_image = if b.rect.is_some() {
                     hover.as_ref().map(|h| self.asset(h, AssetKind::Image))
                 } else {
-                    None
+                    b.hover
+                        .as_deref()
+                        .and_then(|p| self.resolve_picture(p))
+                        .map(|h| self.asset(&h, AssetKind::Image))
                 };
                 hotspots.push(Hotspot {
                     name: b
@@ -2875,6 +2891,7 @@ impl<'a> Conv<'a> {
                     style: None,
                     hover_image,
                     hover_sound: None,
+                    actions: direct.map(|(a, _)| a).unwrap_or_default(),
                 });
             } else {
                 options.push(ChoiceOption {
@@ -2895,11 +2912,85 @@ impl<'a> Conv<'a> {
             self.push(NodeKind::Choice { options });
         }
         for (i, (b, target)) in buttons.iter().zip(targets).enumerate() {
+            let Some(target) = target else { continue };
             self.push_label(target, format!("screen_{n}_{}", i + 1));
             self.button_actions(line, &b.actions, end);
             self.jump_to(end);
         }
         self.push_label(end, format!("screen_{n}_end"));
+    }
+
+    /// A button's actions as zone actions, with the label the zone leads to,
+    /// when they all map (`SetVariable` / `ToggleVariable` to a literal or a
+    /// variable, `Notify`, `Jump`, `Return`); `None` keeps generated nodes
+    /// (`Call`, computed values).
+    fn zone_actions(
+        &mut self,
+        line: &Line,
+        actions: &[Action],
+        end: NodeId,
+    ) -> Option<(Vec<orbit_core::HotspotAction>, NodeId)> {
+        use orbit_core::{HotspotAction as A, OpKind, Operand};
+        // Check first, so nothing is declared for a fallback.
+        let mut plan = Vec::new();
+        for a in actions {
+            match a {
+                Action::Set(_, Some(v)) => match parse_expr_toks(v)? {
+                    Expr::Lit(_) | Expr::Var(_) => {}
+                    _ => return None,
+                },
+                Action::Set(_, None) | Action::Notify(_) | Action::Return => {}
+                Action::Jump(l) => {
+                    self.resolve(l)?;
+                    plan.push(a);
+                    break;
+                }
+                Action::Call(_) => return None,
+            }
+            plan.push(a);
+            if matches!(a, Action::Return) {
+                break;
+            }
+        }
+        let mut out = Vec::new();
+        let mut target = end;
+        for a in plan {
+            match a {
+                Action::Set(var, value) => {
+                    let name = var_name(var);
+                    let (op, value, literal) = match value {
+                        None => (OpKind::Toggle, Operand::Lit(orbit_core::Value::Bool(true)), None),
+                        Some(v) => match parse_expr_toks(v)? {
+                            Expr::Lit(v) => (OpKind::Set, Operand::Lit(v.clone()), Some(v)),
+                            Expr::Var(n) => (OpKind::Set, Operand::Var(n), None),
+                            _ => return None,
+                        },
+                    };
+                    self.declare_assigned(line.line, &name, var, literal);
+                    out.push(A::SetVar { var: name, op, value });
+                }
+                Action::Notify(raw) => {
+                    let text_id = self.add_text_raw(raw, line.line);
+                    out.push(A::Notify(orbit_core::Notify {
+                        text_id,
+                        icon: None,
+                        sound: None,
+                        duration: None,
+                        style: None,
+                    }));
+                }
+                Action::Jump(l) => {
+                    let t = self.resolve(l)?;
+                    match self.jump_kind(t) {
+                        NodeKind::Jump { target: to } => target = to,
+                        NodeKind::JumpScene { scene, label } => out.push(A::JumpScene { scene, label }),
+                        _ => return None,
+                    }
+                }
+                Action::Return | Action::Call(_) => {}
+            }
+        }
+        Some((out, target))
     }
 
     fn button_actions(&mut self, line: &Line, actions: &[Action], end: NodeId) {
