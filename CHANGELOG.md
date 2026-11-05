@@ -1,21 +1,74 @@
 # Changelog
 
-## Non publié
+## 0.4.0 (2026-11-05)
+
+Version centrée sur l'import de jeux Ren'Py, le point & click, les notifications en jeu, les personnages 3D animés et un éditeur extensible par plugins.
 
 ### Nouveautés
-- **Plugins de l'éditeur (DLL)** : l'éditeur charge au démarrage des plugins natifs installés par l'utilisateur depuis **Outils > Extensions > Plugins…** (installation d'un `.orbitplugin` ou d'une bibliothèque, activation, désactivation, désinstallation, réglages, redémarrage). Chaque plugin est vérifié avant chargement : format du fichier, description lue dans un processus séparé, empreinte de compilation identique à celle de l'éditeur (version, compilateur, egui, sources, disposition et identité des types), somme de contrôle. Un plugin qui plante est désactivé sans fermer l'éditeur ; `--no-plugins` démarre sans aucun plugin.
-- SDK des plugins (`orbit_editor_sdk`), exemple `examples/editor_plugins/hello`, chapitre « Plugins de l'éditeur » du manuel, et `cargo xtask plugins` pour compiler et empaqueter les plugins officiels.
-- **Point & click : actions de zone** : une zone peut, au clic, modifier des variables (sans code), afficher une notification, jouer un son, puis rester sur la carte (ramasser un objet), aller à un label ou une scène, appeler un label (retour sur la carte) ou revenir d'un appel. Inspecteur, texte (`do …` sous un `spot`), MCP et validation.
-- **Point & click : zones image** : une zone peut être une image dont seuls les pixels opaques réagissent (un objet posé sur le décor), avec un halo qui suit son contour ; l'image peut être dessinée par-dessus le décor. Les `imagebutton` importés de Ren'Py deviennent de telles zones : leurs images sont maintenant affichées.
-- **Point & click : manette** : nouvelle action « afficher les zones » (Vue / Select par défaut, assignable à Y), avec un rappel sous l'infobulle quand la manette est utilisée. La touche V reste disponible.
+
+**Import Ren'Py**
+- **Importer un jeu Ren'Py** (Fichier > Importer, exporter et traductions > Importer depuis Ren'Py, ou `orbit import-renpy`) : le dossier d'un jeu Ren'Py devient un nouveau projet qui valide. Labels, sauts et appels, menus avec conditions, variables (y compris persistantes), personnages et couleurs, images, décors et positions, transitions, musique, sons, voix, balises de texte et traductions sont convertis ; le reste est conservé en script commenté et listé dans un rapport d'import affiché après l'opération.
+- **Transitions, positions et ATL** : les `at`, `Transform()`, `Position()`, transformations nommées et animations ATL simples deviennent des positions, des échelles et des timelines ; fondus de couleur, `time_warp` et `Pause()` sont pris en charge, les transitions approximées sont signalées une seule fois.
+- **Images de script** : `Solid`, `im.*`, `Composite`, `ConditionSwitch`, `layeredimage` et images animées par frames sont convertis au mieux.
+- **Styles de personnages** : couleur, préfixe, suffixe et italique des répliques sont appliqués aux lignes et aux traductions ; `extend` est fusionné après `{nw}`.
+- **Écrans de navigation** : `imagemap` et `imagebutton` deviennent des cartes point & click (les boutons image deviennent des zones image dessinées), `textbutton` des choix ; les actions simples (variables, notification, saut, retour) deviennent des actions de zone.
+- **Succès, persistance, NVL et notifications** : déclarations de succès et de variables persistantes, `renpy.music` / `sound` / `pause` / `jump` / `call`, et `renpy.notify` / `Notify()` qui deviennent des nœuds Notification.
+
+**Point & click**
+- **Zones cliquables** : nouveau nœud Zones cliquables pour la navigation point & click. Chaque zone (rectangle, ellipse, polygone) sur le décor a une infobulle, une cible, des conditions de visibilité et d'activation, une image et un son au survol. Dans le jeu : léger scintillement au repos, halo pulsé au survol, curseur main, navigation au clavier, à la manette et par chiffres, touche V pour afficher toutes les zones.
+- **Dessiner les zones dans l'Éditeur de vue** : rectangle et ellipse par glisser, polygone par clics ; déplacement, redimensionnement, ajout et suppression de sommets, une étape d'annulation par geste. Inspecteur avec une carte par zone.
+- **Actions de zone** : une zone peut, au clic, modifier des variables (sans code), afficher une notification, jouer un son, puis rester sur la carte (ramasser un objet), aller à un label ou une scène, appeler un label (retour sur la carte) ou revenir d'un appel. Inspecteur, texte (`do …` sous un `spot`), MCP et validation.
+- **Zones image** : une zone peut être une image dont seuls les pixels opaques réagissent (un objet posé sur le décor), avec un halo qui suit son contour ; l'image peut être dessinée par-dessus le décor. Les `imagebutton` importés de Ren'Py deviennent de telles zones : leurs images sont maintenant affichées.
+- **Manette** : nouvelle action « afficher les zones » (Vue / Select par défaut, assignable à Y), avec un rappel sous l'infobulle quand la manette est utilisée. La touche V reste disponible.
 - **Assistant « Nouvelle carte de navigation (maison) »** (Édition > Insérer, palette) : pièces, décors, portes entre les pièces et exemple de porte fermée à clé, en une seule étape d'annulation.
 
+**Notifications**
+- **Nœud Notification** : affiche un message en jeu (balises, `[variable]`), avec icône, son, durée et style nommé, sans interrompre l'histoire. Disponible dans la palette, l'inspecteur, le texte (`notify "…"`), les scripts Rhai (`notify(...)`), les plugins et les actions de bouton.
+- **Onglet Notifications de l'éditeur d'interface** : position, largeur, nombre visible, empilement, durée, animation, son, fermeture au clic, comportement pendant le passage rapide, et styles nommés (défaut, succès, système, personnalisés) avec un bouton « Afficher une notification de test ».
+- Les succès débloqués, les messages du moteur et les notifications de l'histoire passent par une seule pile : sons à l'apparition, fondu en mouvement réduit, lecture par le lecteur d'écran. Un chargement, un retour en arrière ou une nouvelle partie effacent les notifications de l'histoire.
+
+**Dialogue**
+- **Bulles de bande dessinée** : nouveau mode d'affichage des dialogues, en bulles placées près du visage du personnage, avec queue vers la tête, formes parole, pensée (nuage) et cri (éclat) choisies par réplique avec `{bubble=…}`, boîte du narrateur, réglages par personnage. Onglet Dialogue de l'éditeur d'interface et aperçu.
+
+**Interface du jeu**
+- **Musique des menus** : musique par écran, remplacement ou atténuation de la musique du titre et du jeu, actions Jouer / Arrêter la musique.
+- **Emplacements de sauvegarde personnalisables** : modèle de carte, champs liés aux données de la sauvegarde et styles selon l'état.
+- **Listes longues** : la galerie, les succès et le rejeu défilent par ligne (molette, glisser, clavier, manette, barre) ou se divisent en pages avec Précédent / Suivant lorsqu'elles ne tiennent plus à l'écran.
+
+**3D**
+- **Personnages glTF animés** : les modèles importés gardent leur squelette, leurs poids et leurs animations. Mode pose dans l'éditeur 3D (sélection des os, rotation et déplacement avec le gizmo, annulable), arbre des os, poses nommées, aperçu des clips glTF avec scrub, cuisson en pose et clips image par image.
+- **Outils de la fenêtre 3D** : vues prédéfinies (1 / 3 / 7, Ctrl pour l'opposé), magnétisme, frustums des caméras, gizmos des lumières, aperçu de la caméra du jeu en incrustation, aligner la caméra sur la vue, poser au sol (G), glisser-déposer de modèles depuis la hiérarchie ou de fichiers glTF.
+- **Scènes 3D dans les histoires** : l'aperçu d'une scène 2D qui affiche une scène 3D dessine maintenant ses modèles, pas seulement son décor. L'éditeur 3D signale quand l'histoire utilise une copie périmée de la scène ouverte et propose de reprendre le fichier de l'histoire ; nouveau bouton « Afficher dans l'histoire ».
+
+**Éditeur**
+- **Menus imbriqués** : le menu Affichage se divise en Panneaux, Disposition et Options ; les menus Fichier, Édition et Outils gagnent des sous-menus.
+- **Modifier dans l'inspecteur** : clic droit ou double clic « Modifier » sur une ligne de scène, un bloc du graphe, une entrée de l'explorateur, un problème ou la scène ouvre directement l'inspecteur.
+- Le menu Insérer un nœud est organisé en sous-menus par catégorie (Scène, Effets, Écrans, 3D…), avec l'entrée « Nouvelle carte de navigation (maison) ».
+- Export : bouton Parcourir pour choisir l'icône du jeu.
+
+**Plugins de l'éditeur**
+- **Plugins de l'éditeur (DLL)** : l'éditeur charge au démarrage des plugins natifs installés par l'utilisateur depuis **Outils > Extensions > Plugins…** (installation d'un `.orbitplugin` ou d'une bibliothèque, activation, désactivation, désinstallation, réglages, redémarrage). Chaque plugin est vérifié avant chargement : format du fichier, description lue dans un processus séparé, empreinte de compilation identique à celle de l'éditeur (version, compilateur, egui, sources, disposition et identité des types), somme de contrôle. Un plugin qui plante est désactivé sans fermer l'éditeur ; `--no-plugins` démarre sans aucun plugin.
+- SDK des plugins (`orbit_editor_sdk`), exemple `examples/editor_plugins/hello`, chapitre « Plugins de l'éditeur » du manuel, et `cargo xtask plugins` pour compiler et empaqueter les plugins officiels.
+- **Studio IA** (livré en plugin, voir Changements) : bible de l'histoire, écriture du script et génération d'images via Ollama, ComfyUI ou Automatic1111 ; modèles Stable Diffusion (préréglages SD 1.5 / SDXL / Pony / Illustrious, LoRA, VAE, clip skip), listes de modèles lues sur le disque, recherche et téléchargement vérifié depuis Civitai, LoRA et graine par personnage, réparation automatique des références manquantes de la bible. Chapitre du manuel.
+
+**Outils MCP**
+- Zones cliquables (ajout, édition, actions, zones image), nœud Notification et réglages des notifications, poses des personnages 3D, outils du Studio IA.
+
 ### Corrections
+- **Player web** : le jeu exporté pour le web restait bloqué sur l'écran de démarrage au premier chargement de scène.
+- **Icône du jeu exporté** : l'icône choisie à l'export est maintenant écrite dans l'exécutable Windows.
 - L'Éditeur de vue montre le décor propre d'une carte point & click même sans nœud Décor avant elle.
-- Les jeux qui utilisent les actions de zone ou les zones image sont empaquetés en version 9 ; les autres gardent leur version, à l'octet près.
+- Une scène 3D importée dans la bibliothèque garde son nom et son dossier `models/` ; « Ajouter au projet » copie les modèles avec la scène, et les copies plus anciennes sont remplacées. Le panneau Problèmes signale une scène 3D qui place un modèle absent de son dossier.
+- Annuler une modification du texte de l'histoire dont les nouveaux nœuds se référencent entre eux (un menu avant ses labels) n'échoue plus.
+- La ligne de commande affiche les notifications pendant la lecture d'un jeu.
 
 ### Changements
 - **Le Studio IA devient un plugin** : il n'est plus intégré à l'éditeur livré. Compilez-le avec `cargo xtask plugins` et installez-le depuis le gestionnaire de plugins ; ses réglages existants (`ai_studio.ron`) sont conservés.
+- L'import Ren'Py n'est jamais inclus dans le player ni dans le jeu exporté.
+
+### Compatibilité
+- Les anciens projets et sauvegardes se chargent toujours ; les fichiers d'interface passent en `ui_version` 11 (migrations automatiques), les thèmes sans réglage de notifications ni de bulles sont réécrits à l'identique.
+- Les jeux qui utilisent les notifications sont empaquetés en pack version 8, ceux qui utilisent les actions de zone ou les zones image en version 9 ; les autres gardent leur version, à l'octet près. Les players plus anciens refusent ces packs comme trop récents.
 
 ## 0.3.1 (2026-10-07)
 
