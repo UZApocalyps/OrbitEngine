@@ -120,31 +120,31 @@ fn all_builtin_insertables() -> Vec<Insertable> {
             "Effect",
             "draft.label.effect",
             icons::SPARKLE,
-            "draft.group.scene",
+            "draft.group.effects",
         ),
         item(
             "Timeline",
             "draft.label.timeline",
             icons::FILM_STRIP,
-            "draft.group.scene",
+            "draft.group.effects",
         ),
         item(
             "BackgroundLayers",
             "draft.label.background_layers",
             icons::STACK,
-            "draft.group.scene",
+            "draft.group.effects",
         ),
         item(
             "Particles",
             "draft.label.particles",
             icons::CLOUD_RAIN,
-            "draft.group.scene",
+            "draft.group.effects",
         ),
         item(
             "StopParticles",
             "draft.label.stop_particles",
             icons::STOP_CIRCLE,
-            "draft.group.scene",
+            "draft.group.effects",
         ),
         item(
             "Script",
@@ -174,31 +174,31 @@ fn all_builtin_insertables() -> Vec<Insertable> {
             "OpenScreen",
             "draft.label.open_screen",
             icons::BROWSER,
-            "draft.group.scene",
+            "draft.group.screens",
         ),
         item(
             "CloseScreen",
             "draft.label.close_screen",
             icons::X_SQUARE,
-            "draft.group.scene",
+            "draft.group.screens",
         ),
         item(
             "ShowScene3d",
             "draft.label.show_scene3d",
             icons::CUBE,
-            "draft.group.scene",
+            "draft.group.3d",
         ),
         item(
             "Camera3d",
             "draft.label.camera3d",
             icons::VIDEO_CAMERA,
-            "draft.group.scene",
+            "draft.group.3d",
         ),
         item(
             "HideScene3d",
             "draft.label.hide_scene3d",
             icons::EYE_SLASH,
-            "draft.group.scene",
+            "draft.group.3d",
         ),
         item(
             "SetVar",
@@ -248,7 +248,7 @@ fn all_builtin_insertables() -> Vec<Insertable> {
 
 /// Built-in types plus the ones registered by plugins.
 pub fn all_insertables(registry: &EditorRegistry) -> Vec<Insertable> {
-    let mut items = builtin_insertables();
+    let mut items = group_by_category(builtin_insertables());
     for t in registry.project.node_types() {
         items.push(Insertable {
             key: format!("{}.{}", t.plugin_id, t.def.kind),
@@ -257,7 +257,84 @@ pub fn all_insertables(registry: &EditorRegistry) -> Vec<Insertable> {
             group: "draft.group.plugins",
         });
     }
+    group_by_category(items)
+}
+
+/// Fixed display order of the categories.
+pub const GROUP_ORDER: [&str; 9] = [
+    "draft.group.dialogue",
+    "draft.group.scene",
+    "draft.group.effects",
+    "draft.group.screens",
+    "draft.group.sound",
+    "draft.group.logic",
+    "draft.group.navigation",
+    "draft.group.3d",
+    "draft.group.plugins",
+];
+
+/// Icon of a category submenu.
+pub fn group_icon(group: &str) -> &'static str {
+    match group {
+        "draft.group.dialogue" => icons::CHAT_TEXT,
+        "draft.group.scene" => icons::IMAGE,
+        "draft.group.effects" => icons::SPARKLE,
+        "draft.group.screens" => icons::BROWSER,
+        "draft.group.sound" => icons::SPEAKER_HIGH,
+        "draft.group.logic" => icons::GIT_FORK,
+        "draft.group.navigation" => icons::FLAG,
+        "draft.group.3d" => icons::CUBE,
+        _ => icons::PUZZLE_PIECE,
+    }
+}
+
+/// Keys of the entries kept one click away, above the category submenus.
+pub const FREQUENT: [&str; 2] = ["Say", "Choice"];
+
+/// Entries grouped by category (fixed category order, unknown categories
+/// last); registration order is kept within a category.
+fn group_by_category(mut items: Vec<Insertable>) -> Vec<Insertable> {
+    let rank = |g: &str| GROUP_ORDER.iter().position(|o| *o == g).unwrap_or(GROUP_ORDER.len());
+    items.sort_by_key(|i| rank(i.group));
     items
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    #[test]
+    fn each_category_header_appears_once() {
+        let items = group_by_category(builtin_insertables());
+        let mut headers: Vec<&str> = Vec::new();
+        for i in &items {
+            if headers.last() != Some(&i.group) {
+                headers.push(i.group);
+            }
+        }
+        let mut unique = headers.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(headers.len(), unique.len(), "repeated header in {headers:?}");
+        // Relative order inside a category is the registration order.
+        let say = items.iter().position(|i| i.key == "Say").unwrap();
+        let choice = items.iter().position(|i| i.key == "Choice").unwrap();
+        assert!(say < choice);
+    }
+
+    #[test]
+    fn submenus_cover_every_group_and_the_frequent_entries_exist() {
+        let items = builtin_insertables();
+        for i in &items {
+            assert!(GROUP_ORDER.contains(&i.group), "{} has no submenu", i.group);
+        }
+        for k in FREQUENT {
+            assert!(items.iter().any(|i| i.key == k));
+        }
+        for g in ["draft.group.effects", "draft.group.screens"] {
+            assert!(items.iter().any(|i| i.group == g), "{g} is empty");
+        }
+    }
 }
 
 /// Speaker of the closest `Say` before `index` in the scene.

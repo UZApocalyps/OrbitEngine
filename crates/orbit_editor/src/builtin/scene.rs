@@ -667,26 +667,59 @@ fn insert_menu(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
         RichText::new(format!("{}  {}", icons::PLUS_CIRCLE, ui.t("common.add"))),
         |ui| {
             let texts = ctx.translator();
-            let mut group = "";
-            for item in &items {
-                if item.group != group {
-                    if !group.is_empty() {
-                        ui.separator();
-                    }
-                    group = item.group;
-                    ui.label(
-                        RichText::new(item.group_text(&texts).to_uppercase())
-                            .font(bold(10.0))
-                            .color(faint(ui)),
-                    );
-                }
-                if ui
-                    .button(format!("{}  {}", item.icon, item.label_text(&texts)))
-                    .clicked()
+            let mut chosen: Option<String> = None;
+            let mut navmap = false;
+            // The most used entries stay one click away.
+            for key in super::drafts::FREQUENT {
+                if let Some(item) = items.iter().find(|i| i.key == key)
+                    && ui
+                        .button(format!("{}  {}", item.icon, item.label_text(&texts)))
+                        .clicked()
                 {
-                    edit::insert_kind(ctx, &item.key);
+                    chosen = Some(item.key.clone());
                     ui.close();
                 }
+            }
+            ui.separator();
+            for group in super::drafts::GROUP_ORDER {
+                let entries: Vec<_> = items
+                    .iter()
+                    .filter(|i| i.group == group && !super::drafts::FREQUENT.contains(&i.key.as_str()))
+                    .collect();
+                if entries.is_empty() {
+                    continue;
+                }
+                let title = format!("{}  {}", super::drafts::group_icon(group), texts.t(group));
+                ui.menu_button(title, |ui| {
+                    for item in entries {
+                        if ui
+                            .button(format!("{}  {}", item.icon, item.label_text(&texts)))
+                            .clicked()
+                        {
+                            chosen = Some(item.key.clone());
+                            ui.close();
+                        }
+                        // The navigation map wizard sits next to the clickable zones.
+                        if item.key == "Hotspots"
+                            && ui
+                                .button(format!(
+                                    "{}  {}",
+                                    icons::HOUSE,
+                                    ui.t("scene.navmap.action")
+                                ))
+                                .clicked()
+                        {
+                            navmap = true;
+                            ui.close();
+                        }
+                    }
+                });
+            }
+            if let Some(key) = chosen {
+                edit::insert_kind(ctx, &key);
+            }
+            if navmap {
+                ctx.run_action("orbit.scene.new_navigation_map");
             }
             ui.separator();
             ui.label(

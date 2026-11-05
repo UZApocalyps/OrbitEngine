@@ -90,6 +90,9 @@
     // ---- new nodes (insert menus)
     "draft.group.dialogue": "Dialogue",
     "draft.group.scene": "Scène",
+    "draft.group.effects": "Effets",
+    "draft.group.screens": "Écrans",
+    "draft.group.3d": "3D",
     "draft.group.sound": "Son",
     "draft.group.logic": "Logique",
     "draft.group.navigation": "Navigation",
