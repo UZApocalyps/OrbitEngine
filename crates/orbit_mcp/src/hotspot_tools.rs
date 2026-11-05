@@ -6,7 +6,7 @@
 //! project command.
 
 use orbit_core::{
-    AssetKind, Hotspot, HotspotMap, HotspotShape, HotspotStyle, Node, NodeId, NodeKind, StringId,
+    AssetKind, Hotspot, HotspotAction, HotspotMap, HotspotShape, HotspotStyle, Node, NodeId, NodeKind, StringId,
 };
 use orbit_project::Command;
 use schemars::JsonSchema;
@@ -27,11 +27,40 @@ pub enum ShapeArg {
     Ellipse([f32; 4]),
     /// The vertices `[[x, y], ...]` (3 to 64), in order around the zone.
     Polygon(Vec<[f32; 2]>),
+    /// The opaque pixels of a picture (e.g. an object PNG over the
+    /// background): only they react to the mouse.
+    Mask(MaskArg),
+}
+
+/// A picture zone.
+#[derive(Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MaskArg {
+    /// The picture (an image asset id or name; transparent where the zone is not).
+    image: String,
+    /// `[x, y, width, height]` where the picture is drawn, in screen fractions. Default `[0, 0, 1, 1]`: placed like the background.
+    rect: Option<[f32; 4]>,
+    /// Alpha (0 to 1) from which a pixel counts as part of the zone (default 0.5).
+    threshold: Option<f32>,
+    /// Also draw the picture over the background (default false: the picture is already painted in the background).
+    draw: Option<bool>,
 }
 
 impl ShapeArg {
-    fn shape(&self) -> Result<HotspotShape, ToolError> {
+    fn shape(&self, story: &orbit_core::Story) -> Result<HotspotShape, ToolError> {
         let shape = match self {
+            ShapeArg::Mask(m) => {
+                let [x, y, w, h] = m.rect.unwrap_or([0.0, 0.0, 1.0, 1.0]);
+                HotspotShape::Mask {
+                    image: find_asset(story, m.image.trim(), Some(AssetKind::Image))?,
+                    x,
+                    y,
+                    w,
+                    h,
+                    threshold: m.threshold.unwrap_or(orbit_core::hotspot::DEFAULT_MASK_THRESHOLD),
+                    draw: m.draw.unwrap_or(false),
+                }
+            }
             ShapeArg::Rect([x, y, w, h]) => HotspotShape::Rect { x: *x, y: *y, w: *w, h: *h },
             ShapeArg::Ellipse([cx, cy, rx, ry]) => {
                 HotspotShape::Ellipse { cx: *cx, cy: *cy, rx: *rx, ry: *ry }
@@ -44,7 +73,7 @@ impl ShapeArg {
             Ok(shape)
         } else {
             Err(ToolError::invalid(
-                "invalid shape: a non-empty rect / ellipse, or a polygon of 3 to 64 points",
+                "invalid shape: a non-empty rect / ellipse / mask rect (threshold 0 to 1), or a polygon of 3 to 64 points",
             ))
         }
     }
@@ -132,6 +161,114 @@ pub struct ZoneArg {
     hover_sound: Option<String>,
     /// A style of its own (over the map's style).
     style: Option<StyleArg>,
+    /// Actions run in order when the zone is clicked (replaces the list; [] removes them). The first flow action (jump, jump_scene, call, return, stay) decides where the story goes; without one it jumps to `target`.
+    actions: Option<Vec<ActionArg>>,
+}
+
+/// A zone action.
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ActionArg {
+    /// Change a variable without code.
+    SetVar {
+        /// The variable.
+        var: String,
+        /// `set`, `add`, `sub`, `mul`, `div`, `toggle`, `push`, `remove`, `remove_at` or `clear`.
+        op: String,
+        /// A literal (`true`, `3`, `"text"`) or another variable's name; ignored by toggle / clear.
+        value: Option<String>,
+    },
+    /// Jump to a label (id or unique name).
+    Jump { label: String },
+    /// Jump to a scene (id or name), at its start or at one of its labels.
+    JumpScene { scene: String, label: Option<String> },
+    /// Call a label; its `return` shows the map again.
+    Call { label: String },
+    /// Return from the current call.
+    Return,
+    /// Play a sound (asset id or name).
+    PlaySound { sound: String },
+    /// Show a notification (toast); `[var]` in the text shows a variable.
+    Notify {
+        text: String,
+        icon: Option<String>,
+        sound: Option<String>,
+        duration: Option<f32>,
+        style: Option<String>,
+    },
+    /// Show the same map again (e.g. after picking up an item).
+    Stay,
+}
+
+fn action(
+    story: &orbit_core::Story,
+    a: &ActionArg,
+    strings: &mut Vec<(StringId, String)>,
+) -> Result<HotspotAction, ToolError> {
+    use orbit_core::{OpKind, Operand};
+    let opt_asset = |key: &Option<String>, kind| -> Result<Option<orbit_core::AssetId>, ToolError> {
+        match key.as_deref().map(str::trim) {
+            None | Some("") => Ok(None),
+            Some(k) => find_asset(story, k, Some(kind)).map(Some),
+        }
+    };
+    Ok(match a {
+        ActionArg::SetVar { var, op, value } => {
+            let op = match op.trim() {
+                "set" | "=" => OpKind::Set,
+                "add" | "+=" => OpKind::Add,
+                "sub" | "-=" => OpKind::Sub,
+                "mul" | "*=" => OpKind::Mul,
+                "div" | "/=" => OpKind::Div,
+                "toggle" => OpKind::Toggle,
+                "push" => OpKind::Push,
+                "remove" => OpKind::Remove,
+                "remove_at" => OpKind::RemoveAt,
+                "clear" => OpKind::Clear,
+                other => return Err(ToolError::invalid(format!("unknown variable operation `{other}`"))),
+            };
+            let value = match value.as_deref().map(str::trim) {
+                None | Some("") if matches!(op, OpKind::Toggle | OpKind::Clear) => {
+                    Operand::Lit(orbit_core::Value::Bool(true))
+                }
+                None | Some("") => return Err(ToolError::invalid(format!("`{var}`: the operation needs a value"))),
+                Some(t) => match orbit_core::Expr::parse(t) {
+                    Ok(orbit_core::Expr::Lit(v)) => Operand::Lit(v),
+                    Ok(orbit_core::Expr::Var(n)) => Operand::Var(n),
+                    _ => return Err(ToolError::invalid(format!("`{t}`: a literal or a variable name"))),
+                },
+            };
+            if var.trim().is_empty() {
+                return Err(ToolError::invalid("set_var needs a variable"));
+            }
+            HotspotAction::SetVar { var: var.trim().to_owned(), op, value }
+        }
+        ActionArg::Jump { label } => HotspotAction::Jump { label: find_label(story, label.trim())? },
+        ActionArg::Call { label } => HotspotAction::Call { label: find_label(story, label.trim())? },
+        ActionArg::JumpScene { scene, label } => HotspotAction::JumpScene {
+            scene: find_scene(story, scene.trim())?.id,
+            label: match label.as_deref().map(str::trim) {
+                None | Some("") => None,
+                Some(l) => Some(find_label(story, l)?),
+            },
+        },
+        ActionArg::Return => HotspotAction::Return,
+        ActionArg::Stay => HotspotAction::Stay,
+        ActionArg::PlaySound { sound } => HotspotAction::PlaySound {
+            asset: find_asset(story, sound.trim(), Some(AssetKind::Sound))?,
+        },
+        ActionArg::Notify { text, icon, sound, duration, style } => {
+            let text_id = StringId::new();
+            strings.push((text_id, text.trim().to_owned()));
+            HotspotAction::Notify(orbit_core::Notify {
+                text_id,
+                icon: opt_asset(icon, AssetKind::Image)?,
+                sound: opt_asset(sound, AssetKind::Sound)?,
+                duration: duration.filter(|d| d.is_finite() && *d >= 0.0),
+                style: style.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned),
+            })
+        }
+    })
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -204,7 +341,10 @@ fn apply_zone(
         strings.push((zone.text_id, t.trim().to_owned()));
     }
     if let Some(s) = &arg.shape {
-        zone.shape = s.shape()?;
+        zone.shape = s.shape(story)?;
+    }
+    if let Some(list) = &arg.actions {
+        zone.actions = list.iter().map(|a| action(story, a, strings)).collect::<Result<_, _>>()?;
     }
     if let Some(t) = &arg.target {
         zone.target = find_label(story, t.trim())?;
@@ -243,17 +383,7 @@ fn new_zone(
     let (Some(shape), Some(target)) = (&arg.shape, &arg.target) else {
         return Err(ToolError::invalid("a new zone needs a `shape` and a `target`"));
     };
-    let mut zone = Hotspot {
-        name: String::new(),
-        text_id: StringId::new(),
-        shape: shape.shape()?,
-        target: find_label(story, target.trim())?,
-        condition: None,
-        enabled: None,
-        style: None,
-        hover_image: None,
-        hover_sound: None,
-    };
+    let mut zone = Hotspot::new(StringId::new(), shape.shape(story)?, find_label(story, target.trim())?);
     if arg.tooltip.is_none() {
         strings.push((zone.text_id, String::new()));
     }

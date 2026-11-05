@@ -176,6 +176,9 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
                         orbit_core::HotspotShape::Polygon { points } => {
                             format!("polygon({} points)", points.len())
                         }
+                        orbit_core::HotspotShape::Mask { image, x, y, w, h, .. } => {
+                            format!("mask({}, {x}, {y}, {w}, {h})", asset_label(story, *image))
+                        }
                     };
                     let mut s = format!(
                         "[{i}] {} {shape} -> {}",
@@ -187,6 +190,29 @@ pub fn describe_kind(story: &Story, kind: &NodeKind) -> String {
                     }
                     if let Some(c) = &h.enabled {
                         s.push_str(&format!(" enabled {c}"));
+                    }
+                    if !h.actions.is_empty() {
+                        let acts: Vec<String> = h
+                            .actions
+                            .iter()
+                            .map(|a| match a {
+                                orbit_core::HotspotAction::SetVar { var, op, value } => {
+                                    format!("{var} {op:?} {value:?}")
+                                }
+                                orbit_core::HotspotAction::Jump { label } => format!("jump {}", label_ref(story, *label)),
+                                orbit_core::HotspotAction::Call { label } => format!("call {}", label_ref(story, *label)),
+                                orbit_core::HotspotAction::JumpScene { scene, .. } => format!("jump_scene {scene}"),
+                                orbit_core::HotspotAction::Return => "return".into(),
+                                orbit_core::HotspotAction::PlaySound { asset } => {
+                                    format!("sound {}", asset_label(story, *asset))
+                                }
+                                orbit_core::HotspotAction::Notify(n) => {
+                                    format!("notify {}", quote(story.text(n.text_id).unwrap_or("")))
+                                }
+                                orbit_core::HotspotAction::Stay => "stay".into(),
+                            })
+                            .collect();
+                        s.push_str(&format!(" do [{}]", acts.join("; ")));
                     }
                     s
                 })

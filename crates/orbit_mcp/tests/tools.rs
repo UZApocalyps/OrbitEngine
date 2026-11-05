@@ -1556,6 +1556,46 @@ fn validate_finds_the_demo_assets_above_a_lone_story_file() {
 }
 
 #[test]
+fn hotspot_zone_actions_and_mask_shapes() {
+    let mut f = Fixture::new("hotspot_actions");
+    let (_scene, choice) = build_story(&mut f);
+    let map = f.ok(
+        "add_hotspots",
+        json!({"scene": "intro", "after": id_of(&choice, "/id"),
+               "zones": [
+                 {"tooltip": "Key", "shape": {"mask": {"image": "room", "rect": [0.1, 0.1, 0.2, 0.2], "draw": true}},
+                  "target": "kind",
+                  "actions": [
+                    {"set_var": {"var": "trust", "op": "add", "value": "2"}},
+                    {"notify": {"text": "Trust +2"}},
+                    "stay"
+                  ]}
+               ]}),
+    );
+    let id = id_of(&map, "/id");
+    assert!(map["summary"].as_str().unwrap().contains("mask("), "{map}");
+    assert!(map["summary"].as_str().unwrap().contains("stay"), "{map}");
+    let node: orbit_core::NodeId = id.parse().unwrap();
+    let story = f.story();
+    let orbit_core::NodeKind::Hotspots(m) = &story.node(node).unwrap().kind else { panic!() };
+    let h = &m.hotspots[0];
+    assert!(matches!(h.shape, orbit_core::HotspotShape::Mask { draw: true, .. }));
+    assert_eq!(h.actions.len(), 3);
+    let orbit_core::HotspotAction::Notify(n) = &h.actions[1] else { panic!() };
+    assert_eq!(story.text(n.text_id), Some("Trust +2"));
+    drop(story);
+    let err = f.err(
+        "edit_hotspots",
+        json!({"node": id, "update": [{"index": 0, "actions": [{"set_var": {"var": "trust", "op": "explode", "value": "1"}}]}]}),
+    );
+    assert_eq!(err.kind, ErrorKind::InvalidArguments, "{err:?}");
+    f.ok("edit_hotspots", json!({"node": id, "update": [{"index": 0, "actions": []}]}));
+    let story = f.story();
+    let orbit_core::NodeKind::Hotspots(m) = &story.node(node).unwrap().kind else { panic!() };
+    assert!(m.hotspots[0].actions.is_empty());
+}
+
+#[test]
 fn hotspot_maps_are_created_edited_and_undone() {
     let mut f = Fixture::new("hotspots");
     let (_scene, choice) = build_story(&mut f);
