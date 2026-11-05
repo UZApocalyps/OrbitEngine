@@ -638,6 +638,13 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     }
 }
 
+/// Path of `file` relative to the project (forward slashes), as the exporter
+/// joins it onto the project root; absolute when outside the project.
+fn project_relative(root: &Path, file: &Path) -> String {
+    let rel = file.strip_prefix(root).unwrap_or(file);
+    rel.to_string_lossy().replace('\\', "/")
+}
+
 fn profile_form(
     ui: &mut Ui,
     state: &mut ExportUi,
@@ -724,15 +731,29 @@ fn profile_form(
                 &mut profile.version,
             );
             let mut icon = profile.icon.clone().unwrap_or_default();
-            if field(
-                ui,
-                &texts.t("export.field.icon"),
-                &texts.t("export.field.icon_hint"),
-                &mut icon,
-            ) {
-                profile.icon = (!icon.trim().is_empty()).then_some(icon);
-                changed = true;
-            }
+            ui.label(texts.t("export.field.icon"));
+            ui.horizontal(|ui| {
+                let r = ui.add(TextEdit::singleline(&mut icon).desired_width(260.0));
+                let mut icon_changed = r.changed();
+                r.on_hover_text(texts.t("export.field.icon_hint"));
+                if ui
+                    .button(texts.t("export.field.icon_browse"))
+                    .on_hover_text(texts.t("export.field.icon_browse_hint"))
+                    .clicked()
+                    && let Some(file) = rfd::FileDialog::new()
+                        .add_filter(texts.t("export.field.icon_filter"), &["png"])
+                        .set_directory(root)
+                        .pick_file()
+                {
+                    icon = project_relative(root, &file);
+                    icon_changed = true;
+                }
+                if icon_changed {
+                    profile.icon = (!icon.trim().is_empty()).then_some(icon.clone());
+                    changed = true;
+                }
+            });
+            ui.end_row();
             let mut language = profile.default_language.clone().unwrap_or_default();
             if field(
                 ui,
