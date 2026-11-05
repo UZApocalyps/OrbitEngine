@@ -346,7 +346,7 @@ impl NodeKind {
                 ..
             } => std::iter::once(*then_target).chain(*else_target).collect(),
             NodeKind::Choice { options } => options.iter().map(|o| o.target).collect(),
-            NodeKind::Hotspots(map) => map.hotspots.iter().map(|h| h.target).collect(),
+            NodeKind::Hotspots(map) => map.hotspots.iter().flat_map(|h| h.targets()).collect(),
             NodeKind::Script {
                 branches, on_error, ..
             } => branches
@@ -371,7 +371,16 @@ impl NodeKind {
         match self {
             NodeKind::Say { text_id, .. } => vec![*text_id],
             NodeKind::Choice { options } => options.iter().map(|o| o.text_id).collect(),
-            NodeKind::Hotspots(map) => map.hotspots.iter().map(|h| h.text_id).collect(),
+            NodeKind::Hotspots(map) => map
+                .hotspots
+                .iter()
+                .flat_map(|h| {
+                    std::iter::once(h.text_id).chain(h.actions.iter().filter_map(|a| match a {
+                        crate::HotspotAction::Notify(n) => Some(n.text_id),
+                        _ => None,
+                    }))
+                })
+                .collect(),
             NodeKind::Notify(n) => vec![n.text_id],
             _ => Vec::new(),
         }

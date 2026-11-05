@@ -40,6 +40,7 @@ fn with_map(story: &mut Story) -> NodeId {
         style: None,
         hover_image: None,
         hover_sound: None,
+        actions: Vec::new(),
     };
     let map = HotspotMap {
         background: Some(image),
@@ -79,6 +80,56 @@ fn hotspot_maps_are_printed_and_parsed_back_exactly() {
     assert!(text.contains("spot poly (0.5, 0.9) (0.6, 0.5) (0.7, 0.9) \"\" -> outside"), "{text}");
     let parsed = parse(&text, &story, Scope::Scene(scene)).unwrap_or_else(|e| panic!("{e:?}"));
     assert_eq!(parsed, story);
+}
+
+#[test]
+fn zone_actions_and_mask_shapes_round_trip() {
+    use orbit_core::{HotspotAction as A, Notify, OpKind, Operand, Value};
+    let mut story = load();
+    let label = with_map(&mut story);
+    let image = story.assets.assets.iter().find(|a| a.kind == AssetKind::Image).unwrap().id;
+    let scene = story.scenes[0].id;
+    let got = story.strings.add("Got the key: [coins]");
+    let NodeKind::Hotspots(map) = &mut story.scenes[0].nodes[0].kind else { unreachable!() };
+    map.hotspots[0].actions = vec![
+        A::SetVar { var: "has_key".into(), op: OpKind::Toggle, value: Operand::Lit(Value::Bool(true)) },
+        A::SetVar { var: "coins".into(), op: OpKind::Add, value: Operand::Lit(Value::Int(5)) },
+        A::SetVar { var: "coins".into(), op: OpKind::Sub, value: Operand::Lit(Value::Int(-2)) },
+        A::SetVar { var: "score".into(), op: OpKind::Set, value: Operand::Var("coins".into()) },
+        A::SetVar { var: "ratio".into(), op: OpKind::Mul, value: Operand::Lit(Value::Float(1.5)) },
+        A::PlaySound { asset: image },
+        A::Notify(Notify { text_id: got, icon: Some(image), sound: None, duration: Some(2.0), style: Some("gold".into()) }),
+        A::Stay,
+    ];
+    map.hotspots[1].actions = vec![A::Call { label }];
+    map.hotspots[2].actions = vec![A::JumpScene { scene, label: Some(label) }];
+    map.hotspots[2].shape = HotspotShape::Mask { image, x: 0.0, y: 0.0, w: 1.0, h: 1.0, threshold: 0.25, draw: true };
+    map.hotspots.push(Hotspot {
+        actions: vec![A::Jump { label }, A::Return],
+        ..Hotspot::new(
+            story.strings.add("Lamp"),
+            HotspotShape::Mask { image, x: 0.1, y: 0.2, w: 0.3, h: 0.4, threshold: 0.5, draw: false },
+            label,
+        )
+    });
+    let text = print_scene(&story, scene).unwrap();
+    assert!(text.contains("            do set has_key toggle\n"), "{text}");
+    assert!(text.contains("do set coins += 5\n"), "{text}");
+    assert!(text.contains("do set score = coins\n"), "{text}");
+    assert!(text.contains("do stay\n"), "{text}");
+    assert!(text.contains("do call outside\n"), "{text}");
+    assert!(text.contains(" (0.0, 0.0, 1.0, 1.0) threshold 0.25 draw \"\" -> outside"), "{text}");
+    assert!(text.contains(" (0.1, 0.2, 0.3, 0.4) \"Lamp\""), "{text}");
+    assert!(text.contains("do notify \"Got the key: [coins]\" icon "), "{text}");
+    let parsed = parse(&text, &story, Scope::Scene(scene)).unwrap_or_else(|e| panic!("{e:?}\n{text}"));
+    assert_eq!(parsed, story);
+
+    // A `do` line needs a spot above it.
+    let (head, rest) = text.split_once('\n').unwrap();
+    let orphan = format!("{head}\n    do stay\n{rest}");
+    assert!(parse(&orphan, &story, Scope::Scene(scene)).is_err());
+    let unknown = text.replacen("do stay", "do dance", 1);
+    assert!(parse(&unknown, &story, Scope::Scene(scene)).is_err());
 }
 
 #[test]

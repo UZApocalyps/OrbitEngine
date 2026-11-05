@@ -24,7 +24,9 @@ pub mod value;
 pub mod varops;
 
 pub use custom::CustomData;
-pub use hotspot::{Hotspot, HotspotMap, HotspotShape, HotspotStyle};
+pub use hotspot::{
+    AlphaMask, Hotspot, HotspotAction, HotspotMap, HotspotShape, HotspotStyle, with_legacy_hotspot_layout,
+};
 pub use notify::{Notify, interpolate_vars};
 pub use particles::{
     BgLayer, Emitter, EmitterInstance, MAX_PARTICLES_PER_EMITTER, MAX_PARTICLES_TOTAL, Particle,

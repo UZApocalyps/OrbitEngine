@@ -23,6 +23,8 @@ mod vm;
 mod tests;
 #[cfg(test)]
 mod hotspot_tests;
+#[cfg(test)]
+mod hotspot_action_tests;
 
 #[cfg(test)]
 mod anim_tests;

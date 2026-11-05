@@ -18,6 +18,9 @@ web-time.workspace = true
 getrandom = "0.4"
 schemars = { version = "1.2", optional = true }
 
+[dev-dependencies]
+postcard.workspace = true
+
 [features]
 # JSON Schema of the IR (used by the MCP server, and by the tests that keep it
 # coherent with the editor's schema-driven inspector).

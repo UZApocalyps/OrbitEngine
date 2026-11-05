@@ -80,6 +80,40 @@ struct RawSpot {
     style: Option<orbit_core::HotspotStyle>,
     enabled: Option<Expr>,
     condition: Option<Expr>,
+    /// The picture of a `mask` shape (the shape holds a placeholder id).
+    mask: Option<Ref>,
+    /// `do …` lines under the spot.
+    actions: Vec<RawAction>,
+}
+
+/// The fields of a `notify` statement (also a `do notify` zone action).
+#[derive(Clone, Debug)]
+struct RawNotify {
+    text: String,
+    icon: Option<Ref>,
+    sound: Option<Ref>,
+    style: Option<String>,
+    duration: Option<f32>,
+}
+
+/// A `do …` line: a zone action of the spot above.
+#[derive(Clone, Debug)]
+enum RawAction {
+    SetVar {
+        var: String,
+        op: orbit_core::OpKind,
+        value: orbit_core::Operand,
+    },
+    Jump(Ref),
+    Scene {
+        scene: Ref,
+        label: Option<Ref>,
+    },
+    Call(Ref),
+    Return,
+    Sound(Ref),
+    Notify(RawNotify),
+    Stay,
 }
 
 #[derive(Clone, Debug)]
@@ -260,6 +294,7 @@ enum Stmt {
     Track(RawTrack),
     Layer(RawLayer),
     Spot(Box<RawSpot>),
+    Do(RawAction),
 }
 
 type LineError = (usize, String);
@@ -614,9 +649,129 @@ impl LineParser<'_> {
         }
     }
 
+    /// The rest of a `notify` statement (after the keyword).
+    fn notify_rest(&mut self) -> Result<RawNotify, LineError> {
+        let text = self.string("the notification text")?;
+        let (mut icon, mut sound, mut style, mut duration) = (None, None, None, None);
+        let mut seen = HashSet::new();
+        while let Some(Tok::Ident(opt)) = self.peek().cloned() {
+            if !seen.insert(opt.clone()) {
+                return self.err(format!("`{opt}` given twice"));
+            }
+            self.at += 1;
+            match opt.as_str() {
+                "icon" => icon = Some(self.reference("an image")?),
+                "sound" => sound = Some(self.reference("a sound")?),
+                "style" => style = Some(self.name("a notification style name")?),
+                "duration" => {
+                    let d = self.f32()?;
+                    if !(d.is_finite() && d >= 0.0) {
+                        return self.err("the duration must be a positive number");
+                    }
+                    duration = Some(d);
+                }
+                _ => {
+                    self.at -= 1;
+                    return self.err(format!("unknown `notify` option `{opt}`"));
+                }
+            }
+        }
+        Ok(RawNotify { text, icon, sound, style, duration })
+    }
+
+    /// The rest of a `do` line (a zone action).
+    fn zone_action(&mut self) -> Result<RawAction, LineError> {
+        use orbit_core::OpKind;
+        let Some(Tok::Ident(word)) = self.peek().cloned() else {
+            return self.err("expected a zone action: set, jump, scene, call, return, sound, notify or stay");
+        };
+        self.at += 1;
+        Ok(match word.as_str() {
+            "set" => {
+                let var = self.name("a variable")?;
+                let op = if self.eat_sym("=") {
+                    OpKind::Set
+                } else if self.eat_sym("+=") {
+                    OpKind::Add
+                } else if self.eat_sym("-=") {
+                    OpKind::Sub
+                } else if self.eat_sym("*=") {
+                    OpKind::Mul
+                } else if self.eat_sym("/=") {
+                    OpKind::Div
+                } else if self.eat_word("toggle") {
+                    return Ok(RawAction::SetVar {
+                        var,
+                        op: OpKind::Toggle,
+                        value: orbit_core::Operand::Lit(orbit_core::Value::Bool(true)),
+                    });
+                } else if self.eat_word("push") {
+                    OpKind::Push
+                } else if self.eat_word("remove") {
+                    OpKind::Remove
+                } else if self.eat_word("remove_at") {
+                    OpKind::RemoveAt
+                } else if self.eat_word("clear") {
+                    return Ok(RawAction::SetVar {
+                        var,
+                        op: OpKind::Clear,
+                        value: orbit_core::Operand::Lit(orbit_core::Value::Bool(true)),
+                    });
+                } else {
+                    return self.err("expected `=`, `+=`, `-=`, `*=`, `/=`, toggle, push, remove, remove_at or clear");
+                };
+                let value = match self.expr()? {
+                    Expr::Lit(v) => orbit_core::Operand::Lit(v),
+                    Expr::Unary(orbit_core::UnOp::Neg, inner) => match *inner {
+                        Expr::Lit(orbit_core::Value::Int(i)) => orbit_core::Operand::Lit(orbit_core::Value::Int(-i)),
+                        Expr::Lit(orbit_core::Value::Float(f)) => {
+                            orbit_core::Operand::Lit(orbit_core::Value::Float(-f))
+                        }
+                        _ => return self.err("a zone action takes a literal or a variable"),
+                    },
+                    Expr::Var(n) if !n.starts_with('@') => orbit_core::Operand::Var(n),
+                    _ => return self.err("a zone action takes a literal or a variable"),
+                };
+                RawAction::SetVar { var, op, value }
+            }
+            "jump" => RawAction::Jump(self.reference("a label")?),
+            "scene" => {
+                let scene = self.reference("a scene")?;
+                let label = if self.eat_word("label") {
+                    Some(self.reference("a label")?)
+                } else {
+                    None
+                };
+                RawAction::Scene { scene, label }
+            }
+            "call" => RawAction::Call(self.reference("a label")?),
+            "return" => RawAction::Return,
+            "sound" => RawAction::Sound(self.reference("a sound")?),
+            "notify" => RawAction::Notify(self.notify_rest()?),
+            "stay" => RawAction::Stay,
+            other => {
+                self.at -= 1;
+                return self.err(format!("unknown zone action `{other}`"));
+            }
+        })
+    }
+
     /// The rest of a `spot` line.
     fn spot(&mut self) -> Result<RawSpot, LineError> {
-        let shape = self.hotspot_shape()?;
+        let mut mask = None;
+        let shape = if self.eat_word("mask") {
+            mask = Some(self.reference("an image")?);
+            let [x, y, w, h] = self.quad()?;
+            let threshold = if self.eat_word("threshold") {
+                self.f32()?
+            } else {
+                orbit_core::hotspot::DEFAULT_MASK_THRESHOLD
+            };
+            let draw = self.eat_word("draw");
+            orbit_core::HotspotShape::Mask { image: AssetId::new(), x, y, w, h, threshold, draw }
+        } else {
+            self.hotspot_shape()?
+        };
         let text = self.string("the tooltip")?;
         self.expect_sym("->")?;
         let target = self.reference("a label")?;
@@ -630,6 +785,8 @@ impl LineParser<'_> {
             style: None,
             enabled: None,
             condition: None,
+            mask,
+            actions: Vec::new(),
         };
         loop {
             if self.eat_word("name") {
@@ -894,33 +1051,10 @@ impl LineParser<'_> {
                     }
                     "unlock" => Stmt::Node(Raw::Unlock(self.reference("an achievement")?)),
                     "notify" => {
-                        let text = self.string("the notification text")?;
-                        let (mut icon, mut sound, mut style, mut duration) = (None, None, None, None);
-                        let mut seen = HashSet::new();
-                        while let Some(Tok::Ident(opt)) = self.peek().cloned() {
-                            if !seen.insert(opt.clone()) {
-                                return self.err(format!("`{opt}` given twice"));
-                            }
-                            self.at += 1;
-                            match opt.as_str() {
-                                "icon" => icon = Some(self.reference("an image")?),
-                                "sound" => sound = Some(self.reference("a sound")?),
-                                "style" => style = Some(self.name("a notification style name")?),
-                                "duration" => {
-                                    let d = self.f32()?;
-                                    if !(d.is_finite() && d >= 0.0) {
-                                        return self.err("the duration must be a positive number");
-                                    }
-                                    duration = Some(d);
-                                }
-                                _ => {
-                                    self.at -= 1;
-                                    return self.err(format!("unknown `notify` option `{opt}`"));
-                                }
-                            }
-                        }
+                        let RawNotify { text, icon, sound, style, duration } = self.notify_rest()?;
                         Stmt::Node(Raw::Notify { text, icon, sound, style, duration })
                     }
+                    "do" => Stmt::Do(self.zone_action()?),
                     "menu" => Stmt::Node(Raw::Menu(Vec::new())),
                     "hotspots" => {
                         let bg = if self.eat_word("bg") {
@@ -1492,6 +1626,20 @@ pub fn parse(text: &str, base: &Story, scope: Scope) -> Result<Story, Vec<Diagno
                     ),
                 }
             }
+            Stmt::Do(action) => {
+                if let Some((_, col)) = annotation {
+                    diags.push(line_no, col, "zone actions carry no id");
+                }
+                match scenes.last_mut().and_then(|s| s.nodes.last_mut()) {
+                    Some(PNode {
+                        raw: Raw::Hotspots { spots, .. },
+                        ..
+                    }) if menu_open && !spots.is_empty() => {
+                        spots.last_mut().expect("not empty").actions.push(action);
+                    }
+                    _ => diags.push(line_no, 1, "a `do` zone action must follow a `spot`"),
+                }
+            }
             Stmt::Layer(layer) => {
                 if let Some((_, col)) = annotation {
                     diags.push(line_no, col, "background layers carry no id");
@@ -1785,18 +1933,71 @@ fn build(base: &Story, scope: Scope, parsed: Vec<PScene>) -> Result<Story, Vec<D
                         let target = label_ref(d, line, ps.id, &sp.target);
                         let hover = asset(d, &sp.hover);
                         let sound = asset(d, &sp.sound);
+                        let mut shape = sp.shape.clone();
+                        if let (Some(r), orbit_core::HotspotShape::Mask { image, .. }) = (&sp.mask, &mut shape) {
+                            match by_name::<AssetId>(d, line, r, &names.assets, "asset") {
+                                Some(a) => *image = a,
+                                None => ok = false,
+                            }
+                        }
+                        let old_actions = old_spots.get(i).map_or(&[][..], |h| h.actions.as_slice());
+                        let mut actions = Vec::new();
+                        for (j, a) in sp.actions.iter().enumerate() {
+                            use orbit_core::HotspotAction as A;
+                            let resolved = match a {
+                                RawAction::SetVar { var, op, value } => {
+                                    Some(A::SetVar { var: var.clone(), op: *op, value: value.clone() })
+                                }
+                                RawAction::Jump(r) => label_ref(d, line, ps.id, r).map(|label| A::Jump { label }),
+                                RawAction::Call(r) => label_ref(d, line, ps.id, r).map(|label| A::Call { label }),
+                                RawAction::Scene { scene, label } => {
+                                    by_name::<SceneId>(d, line, scene, &scene_names, "scene").and_then(|scene| {
+                                        let label = match label {
+                                            None => Some(None),
+                                            Some(r) => label_ref(d, line, scene, r).map(Some),
+                                        };
+                                        label.map(|label| A::JumpScene { scene, label })
+                                    })
+                                }
+                                RawAction::Return => Some(A::Return),
+                                RawAction::Stay => Some(A::Stay),
+                                RawAction::Sound(r) => by_name::<AssetId>(d, line, r, &names.assets, "asset")
+                                    .map(|asset| A::PlaySound { asset }),
+                                RawAction::Notify(n) => {
+                                    let reuse = match old_actions.get(j) {
+                                        Some(A::Notify(old)) => Some(old.text_id),
+                                        _ => None,
+                                    };
+                                    match (asset(d, &n.icon), asset(d, &n.sound)) {
+                                        (Some(icon), Some(sound)) => Some(A::Notify(orbit_core::Notify {
+                                            text_id: string_for(reuse, &n.text),
+                                            icon,
+                                            sound,
+                                            duration: n.duration,
+                                            style: n.style.clone(),
+                                        })),
+                                        _ => None,
+                                    }
+                                }
+                            };
+                            match resolved {
+                                Some(a) => actions.push(a),
+                                None => ok = false,
+                            }
+                        }
                         match (target, hover, sound) {
                             (Some(target), Some(hover_image), Some(hover_sound)) => {
                                 hotspots.push(orbit_core::Hotspot {
                                     name: sp.name.clone(),
                                     text_id: string_for(old_spots.get(i).map(|h| h.text_id), &sp.text),
-                                    shape: sp.shape.clone(),
+                                    shape,
                                     target,
                                     condition: sp.condition.clone(),
                                     enabled: sp.enabled.clone(),
                                     style: sp.style.clone(),
                                     hover_image,
                                     hover_sound,
+                                    actions,
                                 })
                             }
                             _ => ok = false,

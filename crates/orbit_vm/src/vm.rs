@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
-use orbit_core::{NodeId, NodeKind, Story, StringId, Transition, Value, VarScope};
+use orbit_core::{HotspotAction, NodeId, NodeKind, Story, StringId, Transition, Value, VarScope};
 
 use crate::error::VmError;
 use crate::event::{ChoiceView, PresentationEvent, StepResult};
@@ -211,18 +211,116 @@ impl Vm {
             });
         };
         let node = *node;
-        let target = match &self.node(node)?.kind {
-            NodeKind::Choice { options } => options[option].target,
-            NodeKind::Hotspots(map) => map.hotspots[option].target,
+        let story = Arc::clone(&self.story);
+        let &(si, ni) = self.index.get(&node).ok_or(VmError::UnknownNode(node))?;
+        let (target, actions) = match &story.scenes[si].nodes[ni].kind {
+            NodeKind::Choice { options } => (options[option].target, &[][..]),
+            NodeKind::Hotspots(map) => {
+                let h = &map.hotspots[option];
+                (h.target, h.effective_actions())
+            }
             _ => return Err(VmError::UnknownNode(node)),
         };
-        if !self.index.contains_key(&target) {
-            return Err(VmError::UnknownNode(target));
+        // Zone actions: check where they lead before changing anything, so
+        // an invalid call leaves the VM untouched.
+        let flow = actions.iter().find(|a| a.is_flow());
+        match flow {
+            None => {
+                if !self.index.contains_key(&target) {
+                    return Err(VmError::UnknownNode(target));
+                }
+            }
+            Some(a) => self.check_flow(node, a)?,
         }
         self.history.on_choose(node, index);
         self.state.pending = Pending::None;
         self.state.pc = Some(target);
+        for a in actions {
+            self.run_hotspot_action(node, a);
+        }
         Ok(())
+    }
+
+    /// Fails like the node would (unknown label or scene, call stack full,
+    /// return without call) for a zone's flow action.
+    fn check_flow(&self, node: NodeId, action: &HotspotAction) -> Result<(), VmError> {
+        match action {
+            HotspotAction::Jump { label } => {
+                if !self.index.contains_key(label) {
+                    return Err(VmError::UnknownNode(*label));
+                }
+            }
+            HotspotAction::Call { label } => {
+                if !self.index.contains_key(label) {
+                    return Err(VmError::UnknownNode(*label));
+                }
+                if self.state.call_stack.len() >= MAX_CALL_DEPTH {
+                    return Err(VmError::StackOverflow(MAX_CALL_DEPTH));
+                }
+            }
+            HotspotAction::JumpScene { scene, label } => {
+                if self.story.scene(*scene).is_none() {
+                    return Err(VmError::UnknownScene(*scene));
+                }
+                if let Some(l) = label
+                    && !self.index.contains_key(l)
+                {
+                    return Err(VmError::UnknownNode(*l));
+                }
+            }
+            HotspotAction::Return => {
+                if self.state.call_stack.is_empty() {
+                    return Err(VmError::ReturnWithoutCall(node));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Runs one zone action of the hotspot map `node` (already validated by
+    /// [`Vm::check_flow`]); `pc` is the zone's target until a flow action
+    /// moves it.
+    fn run_hotspot_action(&mut self, node: NodeId, action: &HotspotAction) {
+        match action {
+            HotspotAction::SetVar { var, op, value } => {
+                let op = orbit_core::VarOp::new(var.clone(), *op, value.clone());
+                match op.apply(&|name| self.variable(name).cloned()) {
+                    Ok(v) => self.store_var(var, v),
+                    Err(e) => self
+                        .warnings
+                        .push(format!("node {node}: hotspot action on `{var}` ignored: {e}")),
+                }
+            }
+            HotspotAction::PlaySound { asset } => {
+                self.events.push(PresentationEvent::PlaySound { asset: *asset });
+            }
+            HotspotAction::Notify(notify) => {
+                let vars = self.notify_vars(self.story.text(notify.text_id).unwrap_or_default());
+                self.events.push(PresentationEvent::Notify {
+                    node,
+                    notify: notify.clone(),
+                    vars,
+                });
+            }
+            HotspotAction::Jump { label } => self.state.pc = Some(*label),
+            HotspotAction::JumpScene { scene, label } => {
+                self.clear_anims();
+                self.state.pc = match label {
+                    Some(l) => Some(*l),
+                    None => self.story.scene_entry(*scene, None),
+                };
+            }
+            HotspotAction::Call { label } => {
+                // `Return` shows the map again.
+                self.state.call_stack.push(Some(node));
+                self.state.pc = Some(*label);
+            }
+            HotspotAction::Return => {
+                self.state.pc = self.state.call_stack.pop().flatten();
+            }
+            HotspotAction::Stay => self.state.pc = Some(node),
+        }
     }
 
     fn node(&self, id: NodeId) -> Result<&orbit_core::Node, VmError> {

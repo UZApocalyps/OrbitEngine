@@ -525,6 +525,41 @@ impl Cx<'_> {
                         if let Some(a) = h.hover_sound {
                             self.check_asset(Some(id), a, AssetKind::Sound);
                         }
+                        if let Some(a) = h.shape.mask_image() {
+                            self.check_asset(Some(id), a, AssetKind::Image);
+                        }
+                        let flows = h.actions.iter().filter(|a| a.is_flow()).count();
+                        if flows > 1 {
+                            self.stage_problem(
+                                id,
+                                format!(
+                                    "hotspot `{}`: only its first flow action (jump, scene, call, return, stay) runs",
+                                    h.name
+                                ),
+                            );
+                        }
+                        for a in &h.actions {
+                            match a {
+                                crate::HotspotAction::PlaySound { asset } => {
+                                    self.check_asset(Some(id), *asset, AssetKind::Sound);
+                                }
+                                crate::HotspotAction::Notify(n) => {
+                                    if let Some(a) = n.icon {
+                                        self.check_asset(Some(id), a, AssetKind::Image);
+                                    }
+                                    if let Some(a) = n.sound {
+                                        self.check_asset(Some(id), a, AssetKind::Sound);
+                                    }
+                                }
+                                crate::HotspotAction::JumpScene { scene, .. } if story.scene(*scene).is_none() => {
+                                    self.errors.push(ValidationError::UnknownScene { node: id, scene: *scene });
+                                }
+                                crate::HotspotAction::SetVar { var, .. } if var.trim().is_empty() => {
+                                    self.stage_problem(id, format!("hotspot `{}`: a variable action has no variable", h.name));
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
                 NodeKind::JumpScene { scene, label } => match story.scene(*scene) {
@@ -863,6 +898,26 @@ impl Cx<'_> {
                             .collect(),
                         _ => Vec::new(),
                     };
+                    if let NodeKind::Hotspots(map) = &node.kind {
+                        for h in &map.hotspots {
+                            for a in &h.actions {
+                                if let crate::HotspotAction::SetVar { var, value, .. } = a {
+                                    let operand_var = match value {
+                                        crate::Operand::Var(n) => Some(n.as_str()),
+                                        _ => None,
+                                    };
+                                    for v in std::iter::once(var.as_str()).chain(operand_var) {
+                                        if !v.trim().is_empty() && !defined.contains(v) {
+                                            warnings.push(ValidationWarning::UndefinedVariable {
+                                                node: node.id,
+                                                var: v.to_owned(),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     for c in conditions {
                         rhai_misplaced(&mut errors, node.id, c, true);
                         if let Expr::Rhai(code) = c {

@@ -63,7 +63,15 @@ const MAGIC: &[u8; 8] = b"ORBITGAM";
 /// that has one, so a player that predates notifications refuses the pack
 /// ("too new") instead of failing on an unknown node. Any other game keeps
 /// its older version byte for byte.
-pub const PACK_VERSION: u32 = 8;
+///
+/// Version 9 adds zone actions (`Hotspot::actions`, a new field: a layout
+/// change) and the alpha-mask hotspot shape. It is written only for a game
+/// with one of them; a game whose maps use neither keeps version 7 or 8
+/// byte for byte (`orbit_core::with_legacy_hotspot_layout`), and versions 7
+/// and 8 are read with that layout.
+pub const PACK_VERSION: u32 = 9;
+/// Version written for a game with a `Notify` node (and nothing newer).
+pub const PACK_VERSION_V18: u32 = 8;
 /// Version written for a game with an achievement locked icon or hotspots
 /// (and nothing newer).
 pub const PACK_VERSION_V17: u32 = 7;
@@ -196,9 +204,14 @@ impl GamePack {
             .iter()
             .flat_map(|s| &s.nodes)
             .any(|n| matches!(n.kind, orbit_core::NodeKind::Notify(_)));
-        let v17 = v17 || v18;
-        let version = if v18 {
+        let v19 = self.story.scenes.iter().flat_map(|s| &s.nodes).any(|n| {
+            matches!(&n.kind, orbit_core::NodeKind::Hotspots(map) if map.uses_v9())
+        });
+        let v17 = v17 || v18 || v19;
+        let version = if v19 {
             PACK_VERSION
+        } else if v18 {
+            PACK_VERSION_V18
         } else if v17 {
             PACK_VERSION_V17
         } else if v16 {
@@ -212,8 +225,10 @@ impl GamePack {
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(&version.to_le_bytes());
         let encode = || postcard::to_stdvec(self).map_err(|e| PackError::Corrupt(e.to_string()));
-        let body = if v17 {
+        let body = if v19 {
             encode()?
+        } else if v17 {
+            orbit_core::with_legacy_hotspot_layout(encode)?
         } else if v16 {
             orbit_core::with_legacy_v16_layout(encode)?
         } else {
@@ -278,6 +293,8 @@ impl GamePack {
             orbit_core::with_legacy_v15_layout(decode)
         } else if version == 6 {
             orbit_core::with_legacy_v16_layout(decode)
+        } else if version <= 8 {
+            orbit_core::with_legacy_hotspot_layout(decode)
         } else {
             decode()
         }
@@ -926,10 +943,10 @@ mod tests {
             GamePack::from_bytes(&bytes[..20]),
             Err(PackError::Corrupt(_))
         ));
-        bytes[8] = 9;
+        bytes[8] = 10;
         assert_eq!(
             GamePack::from_bytes(&bytes).unwrap_err(),
-            PackError::UnsupportedVersion { found: 9 }
+            PackError::UnsupportedVersion { found: 10 }
         );
     }
 
@@ -954,5 +971,52 @@ mod tests {
         assert_eq!(&bytes[8..12], &8u32.to_le_bytes(), "older players refuse it");
         assert_eq!(GamePack::from_bytes(&bytes).unwrap(), pack);
         assert!(GamePack::from_bytes(&before).is_ok());
+    }
+
+    fn with_map(pack: &mut GamePack, hotspot: orbit_core::Hotspot) {
+        use orbit_core::{HotspotMap, Node, NodeId, NodeKind};
+        pack.story.scenes[0].nodes.push(Node {
+            id: NodeId::new(),
+            kind: NodeKind::Hotspots(HotspotMap { hotspots: vec![hotspot], ..Default::default() }),
+        });
+    }
+
+    #[test]
+    fn plain_hotspot_maps_keep_version_7_and_its_layout() {
+        use orbit_core::{Hotspot, HotspotShape, NodeId};
+        let mut pack = fixture_pack();
+        let text = pack.story.strings.add("Door");
+        let target = pack.story.scenes[0].nodes[0].id;
+        with_map(&mut pack, Hotspot::new(text, HotspotShape::Rect { x: 0.0, y: 0.0, w: 0.5, h: 0.5 }, target));
+        let bytes = pack.to_bytes().unwrap();
+        assert_eq!(&bytes[8..12], &PACK_VERSION_V17.to_le_bytes());
+        assert_eq!(GamePack::from_bytes(&bytes).unwrap(), pack);
+        // The body is what a version 7 player wrote (no `actions` field):
+        // re-encoding with the legacy layout gives the same bytes.
+        let legacy = orbit_core::with_legacy_hotspot_layout(|| postcard::to_stdvec(&pack).unwrap());
+        assert_eq!(&bytes[12..], &legacy[..]);
+        let _ = NodeId::new();
+    }
+
+    #[test]
+    fn zone_actions_and_mask_shapes_need_version_9() {
+        use orbit_core::{AssetEntry, AssetId, AssetKind, Hotspot, HotspotAction, HotspotShape};
+        for masked in [false, true] {
+            let mut pack = fixture_pack();
+            let text = pack.story.strings.add("Key");
+            let target = pack.story.scenes[0].nodes[0].id;
+            let mut h = Hotspot::new(text, HotspotShape::Rect { x: 0.0, y: 0.0, w: 0.5, h: 0.5 }, target);
+            if masked {
+                let image = AssetId::new();
+                pack.story.assets.assets.push(AssetEntry { id: image, kind: AssetKind::Image, path: "key.png".into() });
+                h.shape = HotspotShape::Mask { image, x: 0.1, y: 0.1, w: 0.2, h: 0.3, threshold: 0.5, draw: true };
+            } else {
+                h.actions = vec![HotspotAction::Stay];
+            }
+            with_map(&mut pack, h);
+            let bytes = pack.to_bytes().unwrap();
+            assert_eq!(&bytes[8..12], &9u32.to_le_bytes(), "older players refuse it");
+            assert_eq!(GamePack::from_bytes(&bytes).unwrap(), pack);
+        }
     }
 }

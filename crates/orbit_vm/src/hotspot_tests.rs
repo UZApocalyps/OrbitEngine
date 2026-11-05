@@ -32,6 +32,7 @@ fn fixture() -> Fixture {
         style: None,
         hover_image: None,
         hover_sound: None,
+        actions: Vec::new(),
     };
     let hotspots = vec![
         spot(&mut story, "Door", door, None, Some(Expr::Var("has_key".into()))),

@@ -56,10 +56,20 @@
 //! hotspots [bg <asset-ref>] [<style>]            Hotspots (point & click); zones follow:
 //!     spot <shape> "tooltip" -> <label-ref> [name <name>] [hover <asset-ref>]
 //!         [sound <asset-ref>] [style <style>] [enabled <expr>] [if <expr>]
+//!         do <zone action>                       zero or more, run on click
 //! ```
 //!
-//! A hotspot `<shape>` is `rect (x, y, w, h)`, `ellipse (cx, cy, rx, ry)` or
-//! `poly (x, y) (x, y) (x, y) ...`, in screen fractions (0 to 1). A `<style>`
+//! A hotspot `<shape>` is `rect (x, y, w, h)`, `ellipse (cx, cy, rx, ry)`,
+//! `poly (x, y) (x, y) (x, y) ...` or `mask <asset-ref> (x, y, w, h)
+//! [threshold <f>] [draw]` (the opaque pixels of a picture placed over the
+//! rectangle), in screen fractions (0 to 1). A zone action is `set <var> =
+//! <value>` (also `+=`, `-=`, `*=`, `/=`, `toggle`, `push`, `remove`,
+//! `remove_at`, `clear`; the value is a literal or a variable), `jump
+//! <label-ref>`, `scene <scene-ref> [label <label-ref>]`, `call <label-ref>`,
+//! `return`, `sound <asset-ref>`, `notify "<text>" [options]` or `stay` (show
+//! the map again). The first flow action (jump, scene, call, return, stay)
+//! decides where the story goes; without one it jumps to the spot's label.
+//! A `<style>`
 //! is any of `color "#rrggbb" fill <f> glow <f> intensity <f> pulse <f>
 //! idle <f> no_hand` (the map prints only what differs from the defaults; a
 //! zone's `style` replaces the map's whole style).
@@ -172,6 +182,7 @@ pub const KEYWORDS: &[&str] = &[
     "hotspots",
     "spot",
     "notify",
+    "do",
 ];
 
 /// A name as written in the DSL: bare when possible, quoted otherwise.
@@ -446,6 +457,78 @@ fn hotspot_shape(shape: &orbit_core::HotspotShape) -> String {
                 .collect();
             format!("poly {}", pts.join(" "))
         }
+        // The picture is printed by the caller (it needs the asset names).
+        S::Mask { x, y, w, h, threshold, draw, .. } => {
+            let mut s = format!("({}, {}, {}, {})", f(*x), f(*y), f(*w), f(*h));
+            if *threshold != orbit_core::hotspot::DEFAULT_MASK_THRESHOLD {
+                s.push_str(&format!(" threshold {}", f(*threshold)));
+            }
+            if *draw {
+                s.push_str(" draw");
+            }
+            s
+        }
+    }
+}
+
+/// The options of a notification, each with a leading space.
+fn notify_options(ctx: &Ctx<'_>, n: &orbit_core::Notify) -> String {
+    let mut line = String::new();
+    if let Some(icon) = n.icon {
+        line.push_str(&format!(" icon {}", ctx.asset_ref(icon)));
+    }
+    if let Some(sound) = n.sound {
+        line.push_str(&format!(" sound {}", ctx.asset_ref(sound)));
+    }
+    if let Some(style) = &n.style {
+        line.push_str(&format!(" style {}", fmt_name(style)));
+    }
+    if let Some(d) = n.duration {
+        line.push_str(&format!(" duration {}", fmt_f32(d)));
+    }
+    line
+}
+
+/// A `do` line's action (after `do `).
+fn zone_action(ctx: &Ctx<'_>, scene: SceneId, a: &orbit_core::HotspotAction) -> String {
+    use orbit_core::{HotspotAction as A, OpKind, Operand};
+    match a {
+        A::SetVar { var, op, value } => {
+            let v = match value {
+                Operand::Lit(v) => print_expr(&orbit_core::Expr::Lit(v.clone())),
+                Operand::Var(n) => fmt_name(n),
+                // Not written by the parser (screen-only operands).
+                other => format!("{other:?}"),
+            };
+            let var = fmt_name(var);
+            match op {
+                OpKind::Set => format!("set {var} = {v}"),
+                OpKind::Add => format!("set {var} += {v}"),
+                OpKind::Sub => format!("set {var} -= {v}"),
+                OpKind::Mul => format!("set {var} *= {v}"),
+                OpKind::Div => format!("set {var} /= {v}"),
+                OpKind::Toggle => format!("set {var} toggle"),
+                OpKind::Clear => format!("set {var} clear"),
+                OpKind::Push => format!("set {var} push {v}"),
+                OpKind::Remove => format!("set {var} remove {v}"),
+                OpKind::RemoveAt => format!("set {var} remove_at {v}"),
+                // Map operations need a key: not offered for zones.
+                OpKind::MapSet | OpKind::MapRemove => format!("set {var} = {v}"),
+            }
+        }
+        A::Jump { label } => format!("jump {}", ctx.label_ref(scene, *label)),
+        A::JumpScene { scene: to, label } => {
+            let mut s = format!("scene {}", ctx.scene_ref(*to));
+            if let Some(l) = label {
+                s.push_str(&format!(" label {}", ctx.label_ref(*to, *l)));
+            }
+            s
+        }
+        A::Call { label } => format!("call {}", ctx.label_ref(scene, *label)),
+        A::Return => "return".to_owned(),
+        A::PlaySound { asset } => format!("sound {}", ctx.asset_ref(*asset)),
+        A::Notify(n) => format!("notify {}{}", ctx.text(n.text_id), notify_options(ctx, n)),
+        A::Stay => "stay".to_owned(),
     }
 }
 
@@ -606,22 +689,7 @@ fn write_node(ctx: &Ctx<'_>, scene: SceneId, node: &Node, out: &mut String) {
         NodeKind::Unlock { achievement } => {
             format!("unlock {}", ctx.achievement_ref(*achievement))
         }
-        NodeKind::Notify(n) => {
-            let mut line = format!("notify {}", ctx.text(n.text_id));
-            if let Some(icon) = n.icon {
-                line.push_str(&format!(" icon {}", ctx.asset_ref(icon)));
-            }
-            if let Some(sound) = n.sound {
-                line.push_str(&format!(" sound {}", ctx.asset_ref(sound)));
-            }
-            if let Some(style) = &n.style {
-                line.push_str(&format!(" style {}", fmt_name(style)));
-            }
-            if let Some(d) = n.duration {
-                line.push_str(&format!(" duration {}", fmt_f32(d)));
-            }
-            line
-        }
+        NodeKind::Notify(n) => format!("notify {}{}", ctx.text(n.text_id), notify_options(ctx, n)),
         NodeKind::Choice { options } => {
             out.push_str(&format!("    menu #@{}\n", node.id));
             for o in options {
@@ -850,9 +918,13 @@ fn write_node(ctx: &Ctx<'_>, scene: SceneId, node: &Node, out: &mut String) {
             head.push_str(&hotspot_style(&map.style));
             out.push_str(&format!("    {head} #@{}\n", node.id));
             for h in &map.hotspots {
+                let shape = match h.shape.mask_image() {
+                    Some(image) => format!("mask {} {}", ctx.asset_ref(image), hotspot_shape(&h.shape)),
+                    None => hotspot_shape(&h.shape),
+                };
                 let mut line = format!(
                     "        spot {} {} -> {}",
-                    hotspot_shape(&h.shape),
+                    shape,
                     ctx.text(h.text_id),
                     label(h.target)
                 );
@@ -877,6 +949,9 @@ fn write_node(ctx: &Ctx<'_>, scene: SceneId, node: &Node, out: &mut String) {
                 }
                 out.push_str(&line);
                 out.push('\n');
+                for a in &h.actions {
+                    out.push_str(&format!("            do {}\n", zone_action(ctx, scene, a)));
+                }
             }
             return;
         }

@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::defs::Color;
 use crate::expr::Expr;
-use crate::ids::{AssetId, NodeId, StringId};
+use crate::ids::{AssetId, NodeId, SceneId, StringId};
+use crate::notify::Notify;
+use crate::varops::{OpKind, Operand};
 
 /// Maximum vertices of a polygon hotspot.
 pub const MAX_POLYGON_POINTS: usize = 64;
@@ -37,7 +39,11 @@ pub struct HotspotMap {
 }
 
 /// One clickable zone.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+///
+/// `Serialize` is written by hand: `actions` is left out of RON files when
+/// empty and of the binary layout of game packs older than version 9 (see
+/// [`with_legacy_hotspot_layout`]).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Hotspot {
     /// Name for the author (editor list, DSL); not shown to the player.
@@ -65,6 +71,272 @@ pub struct Hotspot {
     /// Sound played when the zone gets the hover / focus.
     #[serde(default)]
     pub hover_sound: Option<AssetId>,
+    /// Zone actions, run in order when the zone is activated. Empty: the
+    /// story jumps to `target` (the behavior of every map written before
+    /// actions existed). The first flow action (jump, scene, call, return,
+    /// stay) decides where the story goes and ends the list; without one
+    /// the story jumps to `target` after the other actions.
+    #[serde(default, deserialize_with = "actions_field")]
+    pub actions: Vec<HotspotAction>,
+}
+
+/// Something a zone does when it is activated (see [`Hotspot::actions`]).
+/// New variants are appended at the end (stable indices).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum HotspotAction {
+    /// A no-code variable operation (`=`, `+=`, `-=`, toggle, ...).
+    SetVar { var: String, op: OpKind, value: Operand },
+    /// Jump to a `Label` (flow: ends the list).
+    Jump { label: NodeId },
+    /// Jump to another scene, at its start or at one of its labels (flow).
+    JumpScene {
+        scene: SceneId,
+        #[serde(default)]
+        label: Option<NodeId>,
+    },
+    /// Call the routine at a `Label`; its `Return` comes back to this map,
+    /// shown again (flow).
+    Call { label: NodeId },
+    /// Return from the innermost `Call` (flow).
+    Return,
+    /// Play a sound effect.
+    PlaySound { asset: AssetId },
+    /// Show an in-game notification (toast).
+    Notify(Notify),
+    /// Show the same map again after the actions (pick up an item, ...).
+    Stay,
+}
+
+impl HotspotAction {
+    /// The action decides where the story goes (and ends the list).
+    pub fn is_flow(&self) -> bool {
+        matches!(
+            self,
+            Self::Jump { .. } | Self::JumpScene { .. } | Self::Call { .. } | Self::Return | Self::Stay
+        )
+    }
+
+    /// The labels the action refers to.
+    pub fn labels(&self) -> Vec<NodeId> {
+        match self {
+            Self::Jump { label } | Self::Call { label } => vec![*label],
+            Self::JumpScene { label, .. } => label.iter().copied().collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The assets the action refers to.
+    pub fn assets(&self) -> Vec<AssetId> {
+        match self {
+            Self::PlaySound { asset } => vec![*asset],
+            Self::Notify(n) => n.assets(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+impl Hotspot {
+    /// A zone jumping to `target`, with the map look and no action.
+    pub fn new(text_id: StringId, shape: HotspotShape, target: NodeId) -> Self {
+        Self {
+            name: String::new(),
+            text_id,
+            shape,
+            target,
+            condition: None,
+            enabled: None,
+            style: None,
+            hover_image: None,
+            hover_sound: None,
+            actions: Vec::new(),
+        }
+    }
+
+    /// The flow action that decides where the zone leads, if any: the first
+    /// one of the list (the ones after it never run).
+    pub fn flow(&self) -> Option<&HotspotAction> {
+        self.actions.iter().find(|a| a.is_flow())
+    }
+
+    /// The actions that actually run: up to and including the first flow
+    /// action.
+    pub fn effective_actions(&self) -> &[HotspotAction] {
+        match self.actions.iter().position(HotspotAction::is_flow) {
+            Some(p) => &self.actions[..=p],
+            None => &self.actions,
+        }
+    }
+
+    /// Every label the zone may lead to: `target` (unless a flow action
+    /// replaces it) and the labels of its actions.
+    pub fn targets(&self) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        if self.flow().is_none() {
+            out.push(self.target);
+        }
+        for a in self.effective_actions() {
+            out.extend(a.labels());
+        }
+        out
+    }
+
+    /// Uses what game pack version 9 added (actions, a mask shape).
+    pub fn uses_v9(&self) -> bool {
+        !self.actions.is_empty() || matches!(self.shape, HotspotShape::Mask { .. })
+    }
+}
+
+thread_local! {
+    static LEGACY_HOTSPOT_LAYOUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` (a binary encode or decode of a game pack of version 8 or
+/// older) with the layout of those packs: no `Hotspot::actions`. Postcard is
+/// not self-describing, so the reader has to be told. Frozen, never remove
+/// (backward compatibility).
+pub fn with_legacy_hotspot_layout<R>(f: impl FnOnce() -> R) -> R {
+    let before = LEGACY_HOTSPOT_LAYOUT.with(|c| c.replace(true));
+    let out = f();
+    LEGACY_HOTSPOT_LAYOUT.with(|c| c.set(before));
+    out
+}
+
+fn is_legacy_hotspot_layout() -> bool {
+    LEGACY_HOTSPOT_LAYOUT.with(std::cell::Cell::get) || crate::is_legacy_v15_layout()
+}
+
+fn actions_field<'de, D>(deserializer: D) -> Result<Vec<HotspotAction>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    if !deserializer.is_human_readable() && is_legacy_hotspot_layout() {
+        return Ok(Vec::new());
+    }
+    Vec::deserialize(deserializer)
+}
+
+impl Serialize for Hotspot {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let write_actions = if serializer.is_human_readable() {
+            !self.actions.is_empty()
+        } else {
+            !is_legacy_hotspot_layout()
+        };
+        let mut st = serializer.serialize_struct("Hotspot", 9 + usize::from(write_actions))?;
+        st.serialize_field("name", &self.name)?;
+        st.serialize_field("text_id", &self.text_id)?;
+        st.serialize_field("shape", &self.shape)?;
+        st.serialize_field("target", &self.target)?;
+        st.serialize_field("condition", &self.condition)?;
+        st.serialize_field("enabled", &self.enabled)?;
+        st.serialize_field("style", &self.style)?;
+        st.serialize_field("hover_image", &self.hover_image)?;
+        st.serialize_field("hover_sound", &self.hover_sound)?;
+        if write_actions {
+            st.serialize_field("actions", &self.actions)?;
+        } else {
+            st.skip_field("actions")?;
+        }
+        st.end()
+    }
+}
+
+/// A downsampled alpha bitmap of a picture: the hit test of a
+/// [`HotspotShape::Mask`] zone (built once when the picture loads; a few
+/// kilobytes). Row-major, top-left origin.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AlphaMask {
+    pub width: u32,
+    pub height: u32,
+    pub alpha: Vec<u8>,
+}
+
+/// Longest side of an [`AlphaMask`] built from a picture.
+pub const MASK_MAX_SIDE: u32 = 256;
+
+impl AlphaMask {
+    /// Builds the mask of a non-premultiplied RGBA8 picture, shrunk so its
+    /// longest side is at most `max_side` cells; a cell keeps the highest
+    /// alpha of the pixels it covers (thin parts stay clickable).
+    pub fn from_rgba(width: u32, height: u32, rgba: &[u8], max_side: u32) -> Self {
+        if width == 0 || height == 0 || rgba.len() < (width as usize * height as usize * 4) {
+            return Self { width: 0, height: 0, alpha: Vec::new() };
+        }
+        let scale = (width.max(height) as f32 / max_side.max(1) as f32).max(1.0);
+        let mw = ((width as f32 / scale).ceil() as u32).max(1);
+        let mh = ((height as f32 / scale).ceil() as u32).max(1);
+        let mut alpha = vec![0u8; (mw * mh) as usize];
+        for y in 0..height {
+            let my = ((y as f32 / scale) as u32).min(mh - 1);
+            let row = y as usize * width as usize * 4;
+            for x in 0..width {
+                let a = rgba[row + x as usize * 4 + 3];
+                if a == 0 {
+                    continue;
+                }
+                let mx = ((x as f32 / scale) as u32).min(mw - 1);
+                let cell = &mut alpha[(my * mw + mx) as usize];
+                *cell = (*cell).max(a);
+            }
+        }
+        Self { width: mw, height: mh, alpha }
+    }
+
+    /// Alpha at the normalized point `(u, v)` of the picture (`0` outside).
+    pub fn sample(&self, u: f32, v: f32) -> u8 {
+        if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) || self.alpha.is_empty() {
+            return 0;
+        }
+        let x = ((u * self.width as f32) as u32).min(self.width - 1);
+        let y = ((v * self.height as f32) as u32).min(self.height - 1);
+        self.alpha[(y * self.width + x) as usize]
+    }
+
+    fn opaque(&self, x: i64, y: i64, threshold: u8) -> bool {
+        x >= 0
+            && y >= 0
+            && (x as u32) < self.width
+            && (y as u32) < self.height
+            && self.alpha[(y as u32 * self.width + x as u32) as usize] >= threshold
+    }
+
+    /// Centers (normalized to the picture) of the opaque cells touching a
+    /// transparent one: the edge the glow follows, drawn as small dots. At
+    /// most `limit` points (evenly thinned; `0`: no limit).
+    pub fn edge_points(&self, threshold: f32, limit: usize) -> Vec<(f32, f32)> {
+        let t = threshold_byte(threshold);
+        let mut out = Vec::new();
+        for y in 0..i64::from(self.height) {
+            for x in 0..i64::from(self.width) {
+                if !self.opaque(x, y, t) {
+                    continue;
+                }
+                let edge = !self.opaque(x - 1, y, t)
+                    || !self.opaque(x + 1, y, t)
+                    || !self.opaque(x, y - 1, t)
+                    || !self.opaque(x, y + 1, t);
+                if edge {
+                    out.push((
+                        (x as f32 + 0.5) / self.width as f32,
+                        (y as f32 + 0.5) / self.height as f32,
+                    ));
+                }
+            }
+        }
+        if limit > 0 && out.len() > limit {
+            let step = out.len() as f32 / limit as f32;
+            out = (0..limit).map(|i| out[(i as f32 * step) as usize]).collect();
+        }
+        out
+    }
+}
+
+/// A `0..1` threshold as an alpha byte (at least 1: a fully transparent
+/// pixel never counts).
+pub fn threshold_byte(threshold: f32) -> u8 {
+    ((threshold.clamp(0.0, 1.0) * 255.0).round() as u8).max(1)
 }
 
 /// The geometry of a hotspot, in normalized screen coordinates.
@@ -74,7 +346,30 @@ pub enum HotspotShape {
     Rect { x: f32, y: f32, w: f32, h: f32 },
     Ellipse { cx: f32, cy: f32, rx: f32, ry: f32 },
     Polygon { points: Vec<(f32, f32)> },
+    /// The opaque pixels of a picture placed over the rectangle `x, y, w, h`
+    /// (`0, 0, 1, 1`: placed like the background). Only pixels whose alpha
+    /// reaches `threshold` (0..1) react; `draw` also draws the picture
+    /// (an object overlaid on the background, a Ren'Py `imagebutton`).
+    /// Appended last: older encodings keep their variant indices.
+    Mask {
+        image: AssetId,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        #[serde(default = "default_threshold")]
+        threshold: f32,
+        #[serde(default)]
+        draw: bool,
+    },
 }
+
+fn default_threshold() -> f32 {
+    DEFAULT_MASK_THRESHOLD
+}
+
+/// The usual alpha threshold of a mask shape.
+pub const DEFAULT_MASK_THRESHOLD: f32 = 0.5;
 
 /// How hotspots look. Colors are RGB; alphas go from 0 to 1.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -159,6 +454,34 @@ impl HotspotShape {
                 dx * dx + dy * dy <= 1.0
             }
             HotspotShape::Polygon { points } => point_in_polygon(points, x, y),
+            // Without the picture's pixels: its rectangle (see
+            // `contains_masked`).
+            HotspotShape::Mask { .. } => {
+                let (x0, y0, x1, y1) = self.bounds();
+                x >= x0 && x <= x1 && y >= y0 && y <= y1
+            }
+        }
+    }
+
+    /// [`contains`](Self::contains), testing the opaque pixels of a mask
+    /// shape when its alpha bitmap is known (`None`: its rectangle).
+    pub fn contains_masked(&self, x: f32, y: f32, mask: Option<&AlphaMask>) -> bool {
+        match (self, mask) {
+            (HotspotShape::Mask { x: rx, y: ry, w, h, threshold, .. }, Some(m)) => {
+                if *w == 0.0 || *h == 0.0 {
+                    return false;
+                }
+                m.sample((x - rx) / w, (y - ry) / h) >= threshold_byte(*threshold)
+            }
+            _ => self.contains(x, y),
+        }
+    }
+
+    /// The picture of a mask shape.
+    pub fn mask_image(&self) -> Option<AssetId> {
+        match self {
+            HotspotShape::Mask { image, .. } => Some(*image),
+            _ => None,
         }
     }
 
@@ -177,6 +500,11 @@ impl HotspotShape {
                 (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
                 |(a, b, c, d), &(x, y)| (a.min(x), b.min(y), c.max(x), d.max(y)),
             ),
+            HotspotShape::Mask { x, y, w, h, .. } => {
+                let (x0, x1) = ordered(*x, x + w);
+                let (y0, y1) = ordered(*y, y + h);
+                (x0, y0, x1, y1)
+            }
         }
     }
 
@@ -190,7 +518,7 @@ impl HotspotShape {
     /// for drawing the glow.
     pub fn outline(&self, segments: usize) -> Vec<(f32, f32)> {
         match self {
-            HotspotShape::Rect { .. } => {
+            HotspotShape::Rect { .. } | HotspotShape::Mask { .. } => {
                 let (x0, y0, x1, y1) = self.bounds();
                 vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
             }
@@ -210,7 +538,7 @@ impl HotspotShape {
     /// Moves the shape by `(dx, dy)`.
     pub fn translate(&mut self, dx: f32, dy: f32) {
         match self {
-            HotspotShape::Rect { x, y, .. } => {
+            HotspotShape::Rect { x, y, .. } | HotspotShape::Mask { x, y, .. } => {
                 *x += dx;
                 *y += dy;
             }
@@ -240,6 +568,12 @@ impl HotspotShape {
             HotspotShape::Polygon { points } => {
                 (3..=MAX_POLYGON_POINTS).contains(&points.len())
                     && points.iter().all(|(x, y)| x.is_finite() && y.is_finite())
+            }
+            HotspotShape::Mask { x, y, w, h, threshold, .. } => {
+                [x, y, w, h, threshold].iter().all(|v| v.is_finite())
+                    && *w != 0.0
+                    && *h != 0.0
+                    && (0.0..=1.0).contains(threshold)
             }
         }
     }
@@ -272,8 +606,35 @@ impl HotspotMap {
     pub fn assets(&self) -> Vec<AssetId> {
         self.background
             .into_iter()
-            .chain(self.hotspots.iter().flat_map(|h| h.hover_image.into_iter().chain(h.hover_sound)))
+            .chain(self.hotspots.iter().flat_map(|h| {
+                h.hover_image
+                    .into_iter()
+                    .chain(h.hover_sound)
+                    .chain(h.shape.mask_image())
+                    .chain(h.actions.iter().flat_map(HotspotAction::assets))
+            }))
             .collect()
+    }
+
+    /// Uses what game pack version 9 added (zone actions, mask shapes).
+    pub fn uses_v9(&self) -> bool {
+        self.hotspots.iter().any(Hotspot::uses_v9)
+    }
+
+    /// [`hit`](Self::hit) testing the opaque pixels of mask shapes:
+    /// `mask(i)` is the alpha bitmap of hotspot `i` when known.
+    pub fn hit_masked<'a>(
+        &self,
+        candidates: &[usize],
+        x: f32,
+        y: f32,
+        mask: impl Fn(usize) -> Option<&'a AlphaMask>,
+    ) -> Option<usize> {
+        candidates.iter().rev().copied().find(|&i| {
+            self.hotspots
+                .get(i)
+                .is_some_and(|h| h.shape.contains_masked(x, y, mask(i)))
+        })
     }
 
     /// The topmost hotspot among `candidates` (indices into `hotspots`)
@@ -441,17 +802,97 @@ mod tests {
     use super::*;
 
     fn spot(shape: HotspotShape) -> Hotspot {
-        Hotspot {
-            name: String::new(),
-            text_id: StringId::new(),
-            shape,
-            target: NodeId::new(),
-            condition: None,
-            enabled: None,
-            style: None,
-            hover_image: None,
-            hover_sound: None,
+        Hotspot::new(StringId::new(), shape, NodeId::new())
+    }
+
+    fn checker() -> AlphaMask {
+        // 8x4 picture: the left half opaque, the right half transparent,
+        // except an opaque pixel at (6, 1).
+        let mut rgba = vec![0u8; 8 * 4 * 4];
+        for y in 0..4 {
+            for x in 0..8 {
+                let a = if x < 4 || (x == 6 && y == 1) { 255 } else { 0 };
+                rgba[(y * 8 + x) * 4 + 3] = a;
+            }
         }
+        AlphaMask::from_rgba(8, 4, &rgba, 256)
+    }
+
+    #[test]
+    fn mask_hit_test_follows_opaque_pixels_and_scaling() {
+        let m = checker();
+        assert_eq!((m.width, m.height), (8, 4));
+        // Placed over the right half of the screen, the full height.
+        let shape = HotspotShape::Mask {
+            image: AssetId::new(),
+            x: 0.5,
+            y: 0.0,
+            w: 0.5,
+            h: 1.0,
+            threshold: 0.5,
+            draw: false,
+        };
+        assert!(shape.contains_masked(0.6, 0.5, Some(&m)), "opaque pixel");
+        assert!(!shape.contains_masked(0.9, 0.9, Some(&m)), "transparent pixel");
+        // Pixel (6, 1): u = 6.5/8, v = 1.5/4.
+        assert!(shape.contains_masked(0.5 + 0.5 * 6.5 / 8.0, 1.5 / 4.0, Some(&m)));
+        assert!(!shape.contains_masked(0.2, 0.5, Some(&m)), "outside the rectangle");
+        // Without the bitmap (not loaded yet): the rectangle.
+        assert!(shape.contains_masked(0.9, 0.9, None));
+        assert!(shape.is_valid());
+        // Downsampling keeps thin opaque parts (max of the cell).
+        let small = {
+            let mut rgba = vec![0u8; 8 * 4 * 4];
+            for y in 0..4 {
+                for x in 0..8 {
+                    rgba[(y * 8 + x) * 4 + 3] = if x < 4 || (x == 6 && y == 1) { 255 } else { 0 };
+                }
+            }
+            AlphaMask::from_rgba(8, 4, &rgba, 4)
+        };
+        assert_eq!((small.width, small.height), (4, 2));
+        assert_eq!(small.sample(6.5 / 8.0, 1.5 / 4.0), 255);
+        assert_eq!(small.sample(7.5 / 8.0, 3.5 / 4.0), 0);
+        // A threshold above the pixel's alpha refuses it.
+        let mut half = checker();
+        half.alpha.iter_mut().for_each(|a| *a /= 2);
+        assert!(!shape.contains_masked(0.6, 0.5, Some(&half)));
+        // The glow edge: opaque cells next to a transparent one.
+        let edge = m.edge_points(0.5, 0);
+        assert!(edge.contains(&(3.5 / 8.0, 1.5 / 4.0)));
+        assert!(!edge.contains(&(1.5 / 8.0, 1.5 / 4.0)), "inner cell");
+        assert!(m.edge_points(0.5, 3).len() == 3);
+    }
+
+    #[test]
+    fn hotspot_actions_flow_and_targets() {
+        let back = NodeId::new();
+        let mut h = spot(HotspotShape::Rect { x: 0.0, y: 0.0, w: 0.1, h: 0.1 });
+        assert_eq!(h.targets(), vec![h.target]);
+        assert!(!h.uses_v9());
+        h.actions = vec![
+            HotspotAction::SetVar { var: "key".into(), op: OpKind::Set, value: Operand::Lit(crate::Value::Bool(true)) },
+            HotspotAction::Jump { label: back },
+            HotspotAction::Stay,
+        ];
+        assert!(h.uses_v9());
+        assert_eq!(h.effective_actions().len(), 2);
+        assert_eq!(h.targets(), vec![back], "the flow action replaces the target");
+        // RON: actions written only when present; older files load.
+        let text = ron::to_string(&h).unwrap();
+        assert!(text.contains("actions"));
+        let back_h: Hotspot = ron::from_str(&text).unwrap();
+        assert_eq!(back_h, h);
+        let plain = spot(HotspotShape::Rect { x: 0.0, y: 0.0, w: 0.1, h: 0.1 });
+        assert!(!ron::to_string(&plain).unwrap().contains("actions"));
+        // Binary: the legacy layout reads and writes no actions.
+        let bytes = postcard::to_stdvec(&plain).unwrap();
+        let legacy = with_legacy_hotspot_layout(|| postcard::to_stdvec(&plain).unwrap());
+        assert_eq!(bytes.len(), legacy.len() + 1, "one byte: the empty list");
+        let old: Hotspot = with_legacy_hotspot_layout(|| postcard::from_bytes(&legacy).unwrap());
+        assert_eq!(old, plain);
+        let new: Hotspot = postcard::from_bytes(&postcard::to_stdvec(&h).unwrap()).unwrap();
+        assert_eq!(new, h);
     }
 
     #[test]
