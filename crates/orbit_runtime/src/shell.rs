@@ -322,6 +322,10 @@ pub(crate) struct Shell {
     end_banner: Option<Banner>,
     /// The tooltip of a hotspot map, laid out (with its text).
     hotspot_tip: Option<(String, Banner)>,
+    /// "<button>: show the zones", shown under the tooltip of a hotspot
+    /// map while the player uses a gamepad (see [`Shell::set_pad_hint`]).
+    hotspot_hint: Option<String>,
+    hotspot_hint_banner: Option<(String, Banner)>,
     menu_background: Option<TextureId>,
     /// Textures of the images the theme refers to (nine-slice fills).
     ui_images: std::collections::HashMap<String, TextureId>,
@@ -499,6 +503,8 @@ impl Shell {
             persistent,
             end_banner: None,
             hotspot_tip: None,
+            hotspot_hint: None,
+            hotspot_hint_banner: None,
             menu_background: None,
             ui_images: std::collections::HashMap::new(),
             stack: Vec::new(),
@@ -565,6 +571,14 @@ impl Shell {
 
     pub fn texts(&self) -> &Texts {
         &self.texts
+    }
+
+    /// The gamepad button bound to "show the zones" while the player uses a
+    /// gamepad (`None`: keyboard / mouse, or no binding): a small hint under
+    /// the tooltip of hotspot maps.
+    pub fn set_pad_hint(&mut self, button: Option<&str>) {
+        self.hotspot_hint =
+            button.map(|b| self.texts.get("ui.hotspots.show_hint").replace("{button}", b));
     }
 
     pub fn story(&self) -> &Arc<Story> {
@@ -2888,6 +2902,12 @@ impl Shell {
                                 &mut self.hotspot_tip,
                                 tip.as_deref(),
                             );
+                            Self::draw_hotspot_hint(
+                                ctx,
+                                &self.theme,
+                                &mut self.hotspot_hint_banner,
+                                self.hotspot_hint.as_deref(),
+                            );
                         }
                         FlowKind::Choice => {
                             if let Some(menu) = &mut game.menu {
@@ -2994,6 +3014,16 @@ impl Shell {
                 .tint(tint([0, 0, 0, 120])),
         );
         banner.draw(ctx.engine, ctx.text_renderer, ctx.renderer, ctx.scene, y, 1.0);
+    }
+
+    fn draw_hotspot_hint(ctx: &mut DrawCtx, theme: &Theme, cache: &mut Option<(String, Banner)>, hint: Option<&str>) {
+        let Some(hint) = hint else { return };
+        let size = theme.choice.text_size * 0.6;
+        if cache.as_ref().is_none_or(|(t, _)| t != hint) {
+            *cache = Some((hint.to_owned(), Banner::centered(hint, size, theme.screens.text_color)));
+        }
+        let Some((_, banner)) = cache else { return };
+        banner.draw(ctx.engine, ctx.text_renderer, ctx.renderer, ctx.scene, CANVAS[1] * 0.955, 0.8);
     }
 
     fn draw_end(&mut self, ctx: &mut DrawCtx) {

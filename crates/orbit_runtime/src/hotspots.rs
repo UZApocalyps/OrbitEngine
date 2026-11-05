@@ -5,10 +5,14 @@
 //!
 //! Everything is computed from the map (a few zones): no texture, no shader,
 //! two small meshes per highlighted zone, nothing at all when the story is
-//! not on a map.
+//! not on a map. A mask zone (the opaque pixels of a picture) hit-tests a
+//! small alpha bitmap built when the picture loaded; its glow is a ring of
+//! soft dots along the bitmap's edge, computed once per map.
+
+use std::sync::Arc;
 
 use orbit_core::hotspot::{pulse, triangulate};
-use orbit_core::{AssetId, HotspotStyle};
+use orbit_core::{AlphaMask, AssetId, HotspotShape, HotspotStyle};
 use orbit_render2d::{Layer, Mesh2d, MeshVertex, Scene, TextureId};
 use orbit_vm::HotspotChoice;
 
@@ -18,6 +22,8 @@ use crate::stage::CANVAS;
 const ELLIPSE_SEGMENTS: usize = 48;
 /// Seconds for a highlight to fade in.
 const FADE_IN: f32 = 0.15;
+/// Most glow dots along the edge of a mask zone.
+const MASK_EDGE_DOTS: usize = 900;
 
 /// A hotspot map on screen.
 #[derive(Debug)]
@@ -35,10 +41,15 @@ pub(crate) struct HotspotPlay {
     pub hover_time: f32,
     /// A hover sound waiting to be played.
     pub sound: Option<AssetId>,
+    /// The alpha bitmap of each mask zone, once its picture is loaded.
+    masks: Vec<Option<Arc<AlphaMask>>>,
+    /// Glow dots (virtual pixels) along the edge of each loaded mask zone.
+    edges: Vec<Vec<[f32; 2]>>,
 }
 
 impl HotspotPlay {
     pub fn new(choice: HotspotChoice, tooltips: Vec<String>, show_all: bool) -> Self {
+        let n = choice.map.hotspots.len();
         Self {
             choice,
             tooltips,
@@ -47,6 +58,39 @@ impl HotspotPlay {
             time: 0.0,
             hover_time: 0.0,
             sound: None,
+            masks: vec![None; n],
+            edges: vec![Vec::new(); n],
+        }
+    }
+
+    /// Mask pictures not resolved yet.
+    pub fn wants_masks(&self) -> bool {
+        self.choice
+            .map
+            .hotspots
+            .iter()
+            .zip(&self.masks)
+            .any(|(h, m)| h.shape.mask_image().is_some() && m.is_none())
+    }
+
+    /// Takes the alpha bitmaps of the mask zones whose picture is loaded
+    /// (`mask` resolves a picture; `None`: not loaded yet, its rectangle is
+    /// used meanwhile).
+    pub fn resolve_masks(&mut self, mask: impl Fn(AssetId) -> Option<Arc<AlphaMask>>) {
+        for (i, h) in self.choice.map.hotspots.iter().enumerate() {
+            let HotspotShape::Mask { image, x, y, w, h: hh, threshold, .. } = h.shape else {
+                continue;
+            };
+            if self.masks[i].is_some() {
+                continue;
+            }
+            let Some(m) = mask(image) else { continue };
+            self.edges[i] = m
+                .edge_points(threshold, MASK_EDGE_DOTS)
+                .into_iter()
+                .map(|(u, v)| [(x + u * w) * CANVAS[0], (y + v * hh) * CANVAS[1]])
+                .collect();
+            self.masks[i] = Some(m);
         }
     }
 
@@ -70,7 +114,10 @@ impl HotspotPlay {
     /// The clickable hotspot under a virtual point.
     pub fn hit(&self, p: [f32; 2]) -> Option<usize> {
         let (x, y) = Self::norm(p);
-        self.choice.map.hit(&self.choice.active, x, y)
+        let masks = &self.masks;
+        self.choice
+            .map
+            .hit_masked(&self.choice.active, x, y, |i| masks.get(i).and_then(|m| m.as_deref()))
     }
 
     /// Pointer moved: highlights the zone under it.
@@ -164,6 +211,44 @@ impl HotspotPlay {
             let hovered = Some(i) == self.hover;
             let disabled = self.choice.disabled.contains(&i);
             z += 0.01;
+            if let HotspotShape::Mask { image, draw, .. } = h.shape {
+                // A picture zone: the picture itself (when drawn), its
+                // hover picture over the same rectangle, a tint of the
+                // picture and dots along its edge.
+                let rect = [outline[0], outline[2]];
+                let hover_tex = if hovered { h.hover_image.and_then(&texture) } else { None };
+                let image_tex = texture(image);
+                if let Some(tex) = hover_tex {
+                    scene.push_mesh(quad_mesh(rect, tex, [1.0, 1.0, 1.0, if draw { 1.0 } else { fade }]).z(z));
+                } else if draw && let Some(tex) = image_tex {
+                    let dim = if disabled { 0.55 } else { 1.0 };
+                    scene.push_mesh(quad_mesh(rect, tex, [dim, dim, dim, 1.0]).z(z));
+                }
+                let edge = &self.edges[i];
+                let glow = |scene: &mut Scene, style: &HotspotStyle, alpha: f32, z: f32| {
+                    if edge.is_empty() {
+                        scene.push_mesh(glow_mesh(&outline, white, style, alpha).z(z));
+                    } else {
+                        scene.push_mesh(dots_mesh(edge, white, style, alpha).z(z));
+                    }
+                };
+                if hovered {
+                    if hover_tex.is_none() {
+                        if let Some(tex) = image_tex.filter(|_| !edge.is_empty()) {
+                            scene.push_mesh(quad_mesh(rect, tex, linear(style, style.fill_alpha * fade)).z(z + 0.0005));
+                        }
+                        let a = style.intensity * pulse(style, time) * fade;
+                        glow(scene, style, a, z + 0.001);
+                    }
+                    return;
+                }
+                let idle = idle_alpha(self.show_all, style, time, i, disabled);
+                if idle > 0.003 {
+                    let thin = thin_style(style, disabled);
+                    glow(scene, &thin, idle, z + 0.001);
+                }
+                return;
+            }
             if hovered {
                 if let Some(tex) = h.hover_image.and_then(&texture) {
                     scene.push_mesh(fill_mesh(&outline, tex, [1.0, 1.0, 1.0, fade], true).z(z));
@@ -175,20 +260,9 @@ impl HotspotPlay {
                 scene.push_mesh(glow_mesh(&outline, white, style, a).z(z + 0.001));
                 return;
             }
-            let idle = if self.show_all {
-                style.intensity.max(0.35) * 0.6
-            } else {
-                // A faint shimmer running around the zones.
-                let phase = (time * 1.7 + i as f64 * 0.9).sin() as f32;
-                style.idle_hint * (0.65 + 0.35 * phase)
-            };
-            let idle = if disabled { idle * 0.4 } else { idle };
+            let idle = idle_alpha(self.show_all, style, time, i, disabled);
             if idle > 0.003 {
-                let mut thin = style.clone();
-                thin.glow_width = style.glow_width * 0.6;
-                if disabled {
-                    thin.color = orbit_core::Color { r: 150, g: 150, b: 150 };
-                }
+                let thin = thin_style(style, disabled);
                 scene.push_mesh(glow_mesh(&outline, white, &thin, idle).z(z));
             }
         };
@@ -198,6 +272,60 @@ impl HotspotPlay {
             }
         }
     }
+}
+
+/// Opacity of the outline of a zone that is not highlighted.
+fn idle_alpha(show_all: bool, style: &HotspotStyle, time: f64, i: usize, disabled: bool) -> f32 {
+    let idle = if show_all {
+        style.intensity.max(0.35) * 0.6
+    } else {
+        // A faint shimmer running around the zones.
+        let phase = (time * 1.7 + i as f64 * 0.9).sin() as f32;
+        style.idle_hint * (0.65 + 0.35 * phase)
+    };
+    if disabled { idle * 0.4 } else { idle }
+}
+
+/// The thinner (gray when disabled) outline of a zone at rest.
+fn thin_style(style: &HotspotStyle, disabled: bool) -> HotspotStyle {
+    let mut thin = style.clone();
+    thin.glow_width = style.glow_width * 0.6;
+    if disabled {
+        thin.color = orbit_core::Color { r: 150, g: 150, b: 150 };
+    }
+    thin
+}
+
+/// A picture stretched over `rect` (top-left, bottom-right, virtual pixels).
+fn quad_mesh(rect: [[f32; 2]; 2], texture: TextureId, color: [f32; 4]) -> Mesh2d {
+    let [a, b] = rect;
+    let v = |p: [f32; 2], uv: [f32; 2]| MeshVertex { position: p, uv, color };
+    let vertices = vec![
+        v(a, [0.0, 0.0]),
+        v([b[0], a[1]], [1.0, 0.0]),
+        v(b, [1.0, 1.0]),
+        v([a[0], b[1]], [0.0, 1.0]),
+    ];
+    Mesh2d::new(texture, vertices, vec![0, 1, 2, 0, 2, 3]).layer(Layer::OVERLAY)
+}
+
+/// Soft dots (opaque center, clear rim) of `glow_width` radius at each edge
+/// point of a mask zone: a glow hugging the picture's outline.
+fn dots_mesh(points: &[[f32; 2]], white: TextureId, style: &HotspotStyle, alpha: f32) -> Mesh2d {
+    let r = style.glow_width.max(1.0);
+    let core = linear(style, alpha * 0.6);
+    let clear = [core[0], core[1], core[2], 0.0];
+    let mut vertices = Vec::with_capacity(points.len() * 5);
+    let mut indices = Vec::with_capacity(points.len() * 12);
+    for (k, p) in points.iter().enumerate() {
+        let base = (k * 5) as u32;
+        let at = |dx: f32, dy: f32, color| MeshVertex { position: [p[0] + dx, p[1] + dy], uv: [0.5, 0.5], color };
+        vertices.extend([at(0.0, 0.0, core), at(-r, 0.0, clear), at(0.0, -r, clear), at(r, 0.0, clear), at(0.0, r, clear)]);
+        for s in 0..4u32 {
+            indices.extend([base, base + 1 + s, base + 1 + (s + 1) % 4]);
+        }
+    }
+    Mesh2d::new(white, vertices, indices).layer(Layer::OVERLAY)
 }
 
 fn to_px(points: &[(f32, f32)]) -> Vec<[f32; 2]> {
@@ -295,6 +423,7 @@ mod tests {
             style: None,
             hover_image: None,
             hover_sound: Some(AssetId::new()),
+            actions: Vec::new(),
         };
         let map = HotspotMap {
             hotspots: vec![
@@ -346,6 +475,45 @@ mod tests {
         p.direction(1.0, 0.0);
         assert_eq!(p.hover, Some(1));
         assert_eq!(p.confirm(), Some(1));
+    }
+
+    #[test]
+    fn mask_zones_react_on_opaque_pixels_once_loaded() {
+        let image = AssetId::new();
+        let mut p = play();
+        // Over the bottom-left quarter; the picture's right half is clear.
+        p.choice.map.hotspots[3].shape =
+            HotspotShape::Mask { image, x: 0.0, y: 0.5, w: 0.5, h: 0.5, threshold: 0.5, draw: true };
+        p.choice.active = vec![3];
+        p.choice.disabled.clear();
+        let mut rgba = vec![0u8; 4 * 4 * 4];
+        for y in 0..4 {
+            for x in 0..2 {
+                rgba[(y * 4 + x) * 4 + 3] = 255;
+            }
+        }
+        let mask = Arc::new(AlphaMask::from_rgba(4, 4, &rgba, 256));
+        let transparent = [0.4 * 1920.0, 0.75 * 1080.0];
+        // Not loaded yet: the rectangle reacts.
+        assert!(p.wants_masks());
+        assert_eq!(p.hit(transparent), Some(3));
+        p.resolve_masks(|id| (id == image).then(|| mask.clone()));
+        assert!(!p.wants_masks());
+        assert_eq!(p.hit(transparent), None, "a transparent pixel");
+        assert_eq!(p.hit([0.1 * 1920.0, 0.75 * 1080.0]), Some(3), "an opaque pixel");
+        // Drawn: the picture (always), the edge dots when hovered.
+        let tex = TextureId::placeholder();
+        let mut scene = Scene::new();
+        p.choice.map.style.idle_hint = 0.0;
+        p.draw(&mut scene, tex, false, |_| Some(tex));
+        assert_eq!(scene.meshes().len(), 1, "the idle picture");
+        p.pointer([0.1 * 1920.0, 0.75 * 1080.0]);
+        p.update(1.0);
+        let mut scene = Scene::new();
+        p.draw(&mut scene, tex, false, |_| Some(tex));
+        // Picture, tint, glow dots.
+        assert_eq!(scene.meshes().len(), 3);
+        assert!(scene.meshes()[2].vertices.len() >= 5 * 4, "dots along the edge");
     }
 
     #[test]

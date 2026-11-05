@@ -19,6 +19,7 @@ enum PadAction {
     Auto,
     Rollback,
     History,
+    ShowHotspots,
 }
 
 impl PadAction {
@@ -31,6 +32,7 @@ impl PadAction {
             "auto" => Self::Auto,
             "rollback" => Self::Rollback,
             "history" => Self::History,
+            "show_hotspots" => Self::ShowHotspots,
             _ => return None,
         })
     }
@@ -45,6 +47,7 @@ impl PadAction {
             Self::Skip => InputAction::Hotkey(Hotkey::ToggleSkip),
             Self::Auto => InputAction::Hotkey(Hotkey::ToggleAuto),
             Self::History => InputAction::Hotkey(Hotkey::History),
+            Self::ShowHotspots => InputAction::Hotkey(Hotkey::ShowHotspots),
         }
     }
 }
@@ -83,6 +86,13 @@ impl GamepadBindings {
             }
         }
         Self { table }
+    }
+
+    /// The button bound to the remappable action `name` (see
+    /// `orbit_save::GAMEPAD_ACTIONS`), if any.
+    pub fn button_for(&self, name: &str) -> Option<GamepadButton> {
+        let action = PadAction::from_name(name)?;
+        self.table.iter().find(|(_, a)| *a == action).map(|(b, _)| *b)
     }
 
     /// The action of a pressed button: user bindings first, then the fixed
@@ -132,7 +142,26 @@ mod tests {
         );
         assert_eq!(b.action(GamepadButton::DPadUp), ui(UiInput::Up));
         assert_eq!(b.action(GamepadButton::DPadRight), ui(UiInput::Right));
-        assert_eq!(b.action(GamepadButton::Select), None);
+        assert_eq!(b.action(GamepadButton::Select), Some(InputAction::Hotkey(Hotkey::ShowHotspots)));
+        assert_eq!(b.action(GamepadButton::LeftTrigger), None);
+    }
+
+    #[test]
+    fn show_hotspots_has_a_gamepad_button_and_can_take_y() {
+        let b = GamepadBindings::default();
+        let show = Some(InputAction::Hotkey(Hotkey::ShowHotspots));
+        assert_eq!(b.action(GamepadButton::Select), show);
+        assert_eq!(b.button_for("show_hotspots"), Some(GamepadButton::Select));
+        // Y / Triangle for it, Auto elsewhere.
+        let map: BTreeMap<String, String> = [("show_hotspots", "North"), ("auto", "Select")]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        let b = GamepadBindings::from_prefs(&map);
+        assert_eq!(b.action(GamepadButton::North), show);
+        assert_eq!(b.action(GamepadButton::Select), Some(InputAction::Hotkey(Hotkey::ToggleAuto)));
+        assert_eq!(b.button_for("show_hotspots"), Some(GamepadButton::North));
+        assert_eq!(b.button_for("nothing"), None);
     }
 
     #[test]

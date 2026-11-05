@@ -1024,6 +1024,7 @@ impl Runtime {
             self.on_action(action);
             self.emb_mut().dirty = true;
         }
+        self.sync_pad_hint();
     }
 
     /// Whether time alone changes the picture (typewriter, pause timer,

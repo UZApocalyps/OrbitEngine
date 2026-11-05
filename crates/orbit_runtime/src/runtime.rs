@@ -1177,7 +1177,27 @@ impl Runtime {
 
     /// Carries out what the shell asked for (audio, volumes, window), and
     /// turns a failed story into the error screen.
+    /// Tells the shell which gamepad button shows the hotspot zones, while
+    /// the player uses a gamepad.
+    fn sync_pad_hint(&mut self) {
+        if let Phase::Running(shell) = &mut self.phase {
+            let button = self
+                .mapper
+                .gamepad_active()
+                .then(|| self.mapper.bindings().button_for("show_hotspots"))
+                .flatten()
+                .map(pad_label);
+            shell.set_pad_hint(button);
+        }
+    }
+
     fn after_shell(&mut self) {
+        if let Phase::Running(shell) = &mut self.phase
+            && let Some(game) = shell.game_mut()
+        {
+            let store = &self.store;
+            game.resolve_hotspot_masks(|path| store.mask(path));
+        }
         let (effects, story, failure) = match self.shell_mut() {
             Some(shell) => (
                 shell.take_effects(),
@@ -2491,6 +2511,7 @@ impl App for Runtime {
         if let Some(action) = self.mapper.map(event, |p| renderer.screen_to_world(p)) {
             self.on_action(action);
         }
+        self.sync_pad_hint();
     }
 
     fn close_requested(&mut self) -> bool {
@@ -2697,5 +2718,23 @@ index.txt
             message: "not found".into(),
         };
         assert!(describe_error(&e).contains("story.ron"));
+    }
+}
+
+/// A short, familiar name of a gamepad button for on-screen hints.
+fn pad_label(button: orbit_platform::GamepadButton) -> &'static str {
+    use orbit_platform::GamepadButton as B;
+    match button {
+        B::South => "A",
+        B::East => "B",
+        B::West => "X",
+        B::North => "Y",
+        B::LeftBumper => "LB",
+        B::RightBumper => "RB",
+        B::LeftTrigger => "LT",
+        B::RightTrigger => "RT",
+        B::Select => "View",
+        B::Start => "Menu",
+        B::DPadUp | B::DPadDown | B::DPadLeft | B::DPadRight => "D-pad",
     }
 }

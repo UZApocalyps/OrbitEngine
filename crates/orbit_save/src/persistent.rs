@@ -201,7 +201,10 @@ pub struct Preferences {
 pub const TEXT_SCALE_RANGE: [f32; 2] = [1.0, 1.6];
 
 /// The remappable gamepad actions with their default button.
-pub const GAMEPAD_ACTIONS: [(&str, &str); 7] = [
+/// `show_hotspots` (outline every zone of a hotspot map, like the V key)
+/// defaults to the free `Select` (View / Share) button; Y / Triangle
+/// (`North`) is Auto by default and can be given to it in the preferences.
+pub const GAMEPAD_ACTIONS: [(&str, &str); 8] = [
     ("advance", "South"),
     ("back", "East"),
     ("menu", "Start"),
@@ -209,6 +212,7 @@ pub const GAMEPAD_ACTIONS: [(&str, &str); 7] = [
     ("auto", "North"),
     ("rollback", "LeftBumper"),
     ("history", "West"),
+    ("show_hotspots", "Select"),
 ];
 
 impl Default for Preferences {

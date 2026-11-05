@@ -40,6 +40,8 @@ pub struct InputMapper {
     ctrl: bool,
     alt: bool,
     bindings: GamepadBindings,
+    /// The last button / key / pointer input came from a gamepad.
+    pad_active: bool,
 }
 
 impl Default for InputMapper {
@@ -50,6 +52,7 @@ impl Default for InputMapper {
             ctrl: false,
             alt: false,
             bindings: GamepadBindings::default(),
+            pad_active: false,
         }
     }
 }
@@ -64,6 +67,11 @@ impl InputMapper {
         &self.bindings
     }
 
+    /// The player last used a gamepad (hints show its buttons).
+    pub fn gamepad_active(&self) -> bool {
+        self.pad_active
+    }
+
     /// Last known pointer position in virtual pixels.
     pub fn pointer(&self) -> [f32; 2] {
         self.pointer
@@ -76,6 +84,11 @@ impl InputMapper {
         event: &InputEvent,
         to_world: impl Fn([f32; 2]) -> [f32; 2],
     ) -> Option<InputAction> {
+        match event {
+            InputEvent::Gamepad { pressed: true, .. } => self.pad_active = true,
+            InputEvent::Key { pressed: true, .. } | InputEvent::MouseButton { .. } => self.pad_active = false,
+            _ => {}
+        }
         match event {
             InputEvent::CursorMoved { x, y } => {
                 self.pointer = to_world([*x as f32, *y as f32]);

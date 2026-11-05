@@ -214,6 +214,7 @@ pub const EN: &[(&str, &str)] = &[
     ("ui.loading", "Loading\u{2026}"),
     ("ui.click_to_start", "Click to start"),
     ("ui.the_end", "The end \u{2014} click to return to the menu"),
+    ("ui.hotspots.show_hint", "{button}: show the zones"),
     ("ui.error.title", "The story cannot be started"),
     (
         "ui.error.hint",
@@ -318,6 +319,7 @@ pub const FR: &[(&str, &str)] = &[
     ("ui.loading", "Chargement\u{2026}"),
     ("ui.click_to_start", "Cliquer pour d\u{e9}marrer"),
     ("ui.the_end", "Fin \u{2014} cliquer pour revenir au menu"),
+    ("ui.hotspots.show_hint", "{button} : afficher les zones"),
     ("ui.error.title", "Impossible de lancer l'histoire"),
     (
         "ui.error.hint",

@@ -509,6 +509,17 @@ impl Game {
         }
     }
 
+    /// Hands the alpha bitmaps of loaded pictures to the mask zones of the
+    /// map on screen (`mask` by manifest path). Cheap when there are none.
+    pub fn resolve_hotspot_masks(&mut self, mask: impl Fn(&str) -> Option<Arc<orbit_core::AlphaMask>>) {
+        let Some(h) = &mut self.hotspots else { return };
+        if !h.wants_masks() {
+            return;
+        }
+        let story = &self.story;
+        h.resolve_masks(|id| mask(&story.assets.get(id)?.path));
+    }
+
     /// The hover sound of the zone just entered, once.
     pub fn take_hotspot_sound(&mut self) -> Option<orbit_core::AssetId> {
         self.hotspots.as_mut().and_then(|h| h.sound.take())

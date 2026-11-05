@@ -286,11 +286,19 @@ pub struct AssetStore {
     /// Pictures never released by the memory budget (what the interface
     /// draws, see [`AssetStore::pin`]).
     pinned: HashSet<String>,
+    /// Alpha bitmaps of the pictures of mask hotspots (a few KB each, kept
+    /// when their texture is evicted).
+    masks: HashMap<String, Arc<orbit_core::AlphaMask>>,
 }
 
 impl AssetStore {
     pub fn texture(&self, path: &str) -> Option<TextureId> {
         self.textures.get(path).copied()
+    }
+
+    /// The alpha bitmap of a mask hotspot picture, once loaded.
+    pub fn mask(&self, path: &str) -> Option<Arc<orbit_core::AlphaMask>> {
+        self.masks.get(path).cloned()
     }
 
     /// A loaded rig.
@@ -420,6 +428,7 @@ impl AssetStore {
             renderer.release_texture(texture);
         }
         let sound = self.sounds.remove(path);
+        self.masks.remove(path);
         let font = self.fonts.remove(path) | self.rigs.remove(path).is_some();
         #[cfg(feature = "3d")]
         let font = font || self.scenes3d.remove(path).is_some();
@@ -433,6 +442,7 @@ impl AssetStore {
         }
         self.texture_bytes.clear();
         self.sounds.clear();
+        self.masks.clear();
         self.rigs.clear();
         #[cfg(feature = "3d")]
         {
@@ -459,6 +469,8 @@ enum Handle {
 pub struct PendingAsset {
     path: String,
     handle: Handle,
+    /// The picture of a mask hotspot: its alpha bitmap is kept.
+    mask: bool,
 }
 
 impl PendingAsset {
@@ -501,9 +513,11 @@ pub fn start_loading_only(
 ) -> Vec<PendingAsset> {
     let mut seen = HashSet::new();
     let mut pending = Vec::new();
+    let masks = mask_images(story);
     for entry in &story.assets.assets {
         if only.is_some_and(|only| !only.contains(&entry.path))
-            || store.contains(&entry.path)
+            || (store.contains(&entry.path)
+                && !(masks.contains(&entry.id) && !store.masks.contains_key(&entry.path)))
             || !seen.insert(entry.path.clone())
         {
             continue;
@@ -523,6 +537,7 @@ pub fn start_loading_only(
                         handle: Handle::Library3d(Box::new(
                             crate::library3d::LibraryLoad::start(loader),
                         )),
+                        mask: false,
                     });
                 }
                 Handle::Scene3d(loader.load_with(&entry.path, |_, bytes| {
@@ -545,6 +560,7 @@ pub fn start_loading_only(
         pending.push(PendingAsset {
             path: entry.path.clone(),
             handle,
+            mask: masks.contains(&entry.id),
         });
     }
     pending
@@ -578,9 +594,24 @@ pub fn start_loading_files(
         out.push(PendingAsset {
             path: path.clone(),
             handle,
+            mask: false,
         });
     }
     out
+}
+
+/// The pictures of the mask hotspots of `story`.
+fn mask_images(story: &Story) -> HashSet<orbit_core::AssetId> {
+    story
+        .scenes
+        .iter()
+        .flat_map(|s| &s.nodes)
+        .filter_map(|n| match &n.kind {
+            orbit_core::NodeKind::Hotspots(map) => Some(map),
+            _ => None,
+        })
+        .flat_map(|m| m.hotspots.iter().filter_map(|h| h.shape.mask_image()))
+        .collect()
 }
 
 /// Moves finished assets into the store. A missing or undecodable asset is not
@@ -599,6 +630,17 @@ pub fn finish_loading(
                 let created = match h.poll() {
                     AssetPoll::Ready(img) => {
                         bytes = u64::from(img.width) * u64::from(img.height) * 4;
+                        if asset.mask {
+                            store.masks.insert(
+                                asset.path.clone(),
+                                Arc::new(orbit_core::AlphaMask::from_rgba(
+                                    img.width,
+                                    img.height,
+                                    &img.rgba,
+                                    orbit_core::hotspot::MASK_MAX_SIDE,
+                                )),
+                            );
+                        }
                         renderer.create_texture(
                             &asset.path,
                             img.width,
