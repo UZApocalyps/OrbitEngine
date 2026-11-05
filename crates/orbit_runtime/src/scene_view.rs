@@ -98,7 +98,17 @@ pub fn scene_at(
             let _ = vm.step();
         }
     }
-    let after = vm.scene().clone();
+    let mut after = vm.scene().clone();
+    // A hotspot map shows its own background, whatever the path found
+    // (searched before the background was set, or the VM already waiting
+    // on the map in the state found: it does not run the node again).
+    if let Some(orbit_core::NodeKind::Hotspots(map)) = story.node(node).map(|n| &n.kind)
+        && let Some(bg) = map.background
+    {
+        after.background = Some(bg);
+        after.bg_layers.clear();
+        after.scene3d = None;
+    }
     Ok(NodeScene {
         node,
         before,
@@ -248,6 +258,53 @@ mod tests {
         assert!(after.len() >= before.len());
         // Every character on stage knows the Show that placed it.
         assert!(after.iter().all(|a| a.source.is_some()));
+    }
+
+    /// A hotspot map brings its own background: the stage at the map shows
+    /// it even when no `Background` node comes before (first node of a
+    /// scene, of the story, or after another background).
+    #[test]
+    fn the_stage_at_a_hotspot_map_shows_its_background() {
+        use orbit_core::{AssetKind, Hotspot, HotspotMap, HotspotShape, Node};
+        let mut story = Story::from_ron(DEMO).unwrap();
+        let images: Vec<AssetId> =
+            story.assets.assets.iter().filter(|a| a.kind == AssetKind::Image).map(|a| a.id).collect();
+        let bg = *images.last().unwrap();
+        let label = story.scenes[0].nodes[0].id;
+        let text = story.strings.add("zone");
+        let map = |at: &mut Vec<Node>, index: usize| -> NodeId {
+            let id = NodeId::new();
+            at.insert(index, Node {
+                id,
+                kind: NodeKind::Hotspots(HotspotMap {
+                    background: Some(bg),
+                    hotspots: vec![Hotspot::new(text, HotspotShape::Rect { x: 0.0, y: 0.0, w: 0.5, h: 0.5 }, label)],
+                    ..Default::default()
+                }),
+            });
+            id
+        };
+        let first = map(&mut story.scenes[0].nodes, 0);
+        let last = story.scenes[0].nodes.len();
+        let later = map(&mut story.scenes[0].nodes, last);
+        // The path is searched while the map has no background of its own;
+        // the author then gives it one (same structure: no new search).
+        let mut bare = story.clone();
+        for n in bare.scenes.iter_mut().flat_map(|s| &mut s.nodes) {
+            if let NodeKind::Hotspots(m) = &mut n.kind {
+                m.background = None;
+            }
+        }
+        let bare = Arc::new(bare);
+        let story = Arc::new(story);
+        for node in [first, later] {
+            for searched in [&story, &bare] {
+                let (source, _) = seek_before(searched, node, SeekLimits::default()).unwrap();
+                let at = scene_at(&story, &source, node).unwrap();
+                assert_eq!(at.after.background, Some(bg), "the map's own background");
+                assert_eq!(stage_state(&story, &at.after).background, Some(bg));
+            }
+        }
     }
 
     #[test]
