@@ -372,16 +372,8 @@ pub fn drafts_for(
             let place = fresh_label("lieu");
             let (a, b) = (fresh_label("zone_a"), fresh_label("zone_b"));
             let (text_a, text_b) = (StringId::new(), StringId::new());
-            let zone = |text_id, target, x: f32| orbit_core::Hotspot {
-                name: String::new(),
-                text_id,
-                shape: orbit_core::HotspotShape::Rect { x, y: 0.3, w: 0.25, h: 0.4 },
-                target,
-                condition: None,
-                enabled: None,
-                style: None,
-                hover_image: None,
-                hover_sound: None,
+            let zone = |text_id, target, x: f32| {
+                orbit_core::Hotspot::new(text_id, orbit_core::HotspotShape::Rect { x, y: 0.3, w: 0.25, h: 0.4 }, target)
             };
             let map = NodeDraft {
                 node: orbit_core::Node {

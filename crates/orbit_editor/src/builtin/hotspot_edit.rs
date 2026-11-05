@@ -4,8 +4,12 @@
 //! results into undoable `SetNodeKind` commands; the inspector lists the
 //! zones. Coordinates are normalized to the screen (0..1).
 
-use orbit_core::hotspot::MAX_POLYGON_POINTS;
-use orbit_core::{Hotspot, HotspotMap, HotspotShape, NodeId, StringId};
+use orbit_core::hotspot::{DEFAULT_MASK_THRESHOLD, MAX_POLYGON_POINTS};
+use orbit_core::{AssetId, Hotspot, HotspotMap, HotspotShape, NodeId, StringId};
+
+/// The virtual screen pictures are laid out on (a picture of this size
+/// covers the screen).
+const SCREEN: (f32, f32) = (1920.0, 1080.0);
 
 /// Smallest side of a zone drawn by a drag (a click is not a zone).
 pub const MIN_SIZE: f32 = 0.01;
@@ -136,8 +140,85 @@ pub fn drag_handle(shape: &HotspotShape, index: usize, p: (f32, f32)) -> Hotspot
             } else {
                 Tool::Rect
             };
-            shape_from_drag(tool, opposite, p).unwrap_or_else(|| shape.clone())
+            match (shape_from_drag(tool, opposite, p), shape) {
+                // A picture zone keeps its picture: only its rectangle changes.
+                (Some(HotspotShape::Rect { x, y, w, h }), HotspotShape::Mask { image, threshold, draw, .. }) => {
+                    HotspotShape::Mask { image: *image, x, y, w, h, threshold: *threshold, draw: *draw }
+                }
+                (Some(s), _) => s,
+                (None, _) => shape.clone(),
+            }
         }
+    }
+}
+
+/// The kinds of zone shapes the inspector switches between.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShapeKind {
+    Rect,
+    Ellipse,
+    Polygon,
+    /// The opaque pixels of a picture.
+    Mask,
+}
+
+impl ShapeKind {
+    pub const ALL: [ShapeKind; 4] = [ShapeKind::Rect, ShapeKind::Ellipse, ShapeKind::Polygon, ShapeKind::Mask];
+
+    pub fn of(shape: &HotspotShape) -> Self {
+        match shape {
+            HotspotShape::Rect { .. } => Self::Rect,
+            HotspotShape::Ellipse { .. } => Self::Ellipse,
+            HotspotShape::Polygon { .. } => Self::Polygon,
+            HotspotShape::Mask { .. } => Self::Mask,
+        }
+    }
+}
+
+/// `shape` turned into `kind` over the same bounds (a polygon: its four
+/// corners). A picture zone needs `image` (else `None`); `size` is the
+/// picture's size in pixels, to fit the zone to it.
+pub fn convert_shape(
+    shape: &HotspotShape,
+    kind: ShapeKind,
+    image: Option<AssetId>,
+    size: Option<(u32, u32)>,
+) -> Option<HotspotShape> {
+    let (x0, y0, x1, y1) = shape.bounds();
+    let (w, h) = (x1 - x0, y1 - y0);
+    Some(match kind {
+        ShapeKind::Rect => HotspotShape::Rect { x: x0, y: y0, w, h },
+        ShapeKind::Ellipse => HotspotShape::Ellipse { cx: x0 + w * 0.5, cy: y0 + h * 0.5, rx: w * 0.5, ry: h * 0.5 },
+        ShapeKind::Polygon => HotspotShape::Polygon { points: vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)] },
+        ShapeKind::Mask => mask_fit(image?, size),
+    })
+}
+
+/// A picture zone for `image` placed at the picture's own size, centered
+/// (`size` in pixels of the 1920x1080 virtual screen); a picture of the
+/// screen's size, or of an unknown size, covers the screen like the
+/// background.
+pub fn mask_fit(image: AssetId, size: Option<(u32, u32)>) -> HotspotShape {
+    let (mut w, mut h) = match size {
+        Some((pw, ph)) if pw > 0 && ph > 0 => (pw as f32 / SCREEN.0, ph as f32 / SCREEN.1),
+        _ => (1.0, 1.0),
+    };
+    // Close to the screen size (or bigger): placed like the background.
+    if w >= 0.95 && h >= 0.95 {
+        (w, h) = (1.0, 1.0);
+    } else if w > 1.0 || h > 1.0 {
+        // Too big: shrunk to fit, keeping its proportions.
+        let k = (1.0 / w).min(1.0 / h);
+        (w, h) = (w * k, h * k);
+    }
+    HotspotShape::Mask {
+        image,
+        x: (1.0 - w) * 0.5,
+        y: (1.0 - h) * 0.5,
+        w,
+        h,
+        threshold: DEFAULT_MASK_THRESHOLD,
+        draw: false,
     }
 }
 
@@ -221,17 +302,7 @@ pub fn pick(map: &HotspotMap, selected: Option<usize>, p: (f32, f32), radius: f3
 
 /// A new zone of `shape` leading to `target`, with its tooltip string.
 pub fn new_zone(shape: HotspotShape, target: NodeId) -> Hotspot {
-    Hotspot {
-        name: String::new(),
-        text_id: StringId::new(),
-        shape,
-        target,
-        condition: None,
-        enabled: None,
-        style: None,
-        hover_image: None,
-        hover_sound: None,
-    }
+    Hotspot::new(StringId::new(), shape, target)
 }
 
 /// The zone selected in the editor for map `node` (shared by the scene view
@@ -312,6 +383,41 @@ mod tests {
         assert!(remove_vertex(&quad, i).is_some());
         assert!(remove_vertex(&tri, 0).is_none(), "a triangle keeps its 3 vertices");
         assert!(insert_vertex(&r, (0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn picture_zones_fit_their_picture_and_keep_it_when_resized() {
+        let image = AssetId::new();
+        // Full-screen picture: placed like the background.
+        let full = mask_fit(image, Some((1920, 1080)));
+        assert_eq!(full.bounds(), (0.0, 0.0, 1.0, 1.0));
+        assert_eq!(mask_fit(image, None).bounds(), (0.0, 0.0, 1.0, 1.0));
+        // An object: its own size, centered.
+        let lamp = mask_fit(image, Some((192, 540)));
+        let (x0, y0, x1, y1) = lamp.bounds();
+        assert!((x1 - x0 - 0.1).abs() < 1e-5 && (y1 - y0 - 0.5).abs() < 1e-5);
+        assert!((x0 - 0.45).abs() < 1e-5 && (y0 - 0.25).abs() < 1e-5);
+        // Too big: shrunk to fit, keeping its proportions.
+        let wide = mask_fit(image, Some((3840, 540)));
+        assert_eq!(wide.bounds().2 - wide.bounds().0, 1.0);
+        // Resizing by a corner keeps the picture and the threshold.
+        let HotspotShape::Mask { image: kept, draw, .. } = drag_handle(&lamp, 2, (0.9, 0.9)) else {
+            panic!("still a picture zone")
+        };
+        assert_eq!(kept, image);
+        assert!(!draw);
+        // Kind changes keep the bounds.
+        let r = HotspotShape::Rect { x: 0.1, y: 0.2, w: 0.3, h: 0.4 };
+        let e = convert_shape(&r, ShapeKind::Ellipse, None, None).unwrap();
+        let near = |a: (f32, f32, f32, f32), b: (f32, f32, f32, f32)| {
+            (a.0 - b.0).abs() < 1e-5 && (a.1 - b.1).abs() < 1e-5 && (a.2 - b.2).abs() < 1e-5 && (a.3 - b.3).abs() < 1e-5
+        };
+        assert!(near(e.bounds(), r.bounds()));
+        let p = convert_shape(&r, ShapeKind::Polygon, None, None).unwrap();
+        assert!(p.is_valid() && near(p.bounds(), r.bounds()));
+        assert!(convert_shape(&r, ShapeKind::Mask, None, None).is_none(), "a picture is needed");
+        let m = convert_shape(&r, ShapeKind::Mask, Some(image), Some((1920, 1080))).unwrap();
+        assert_eq!(ShapeKind::of(&m), ShapeKind::Mask);
     }
 
     #[test]

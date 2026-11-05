@@ -1,7 +1,8 @@
 //! The inspector of a hotspot map (point & click navigation): its
 //! background and look, then one card per zone (tooltip, where it leads,
-//! visible / enabled conditions, hover image and sound, a look of its own).
-//! The zones themselves are drawn in the scene view.
+//! visible / enabled conditions, hover image and sound, a look of its own,
+//! the actions a click runs). The zones themselves are drawn in the scene
+//! view; a zone can also be a picture (only its opaque pixels react).
 
 use egui::{DragValue, RichText, Ui};
 use orbit_core::{
@@ -12,7 +13,8 @@ use orbit_editor_api::fields::{self, asset_picker, label_picker};
 use orbit_editor_api::{EditorContext, UiText, icons};
 use orbit_project::{Command, ops};
 
-use super::hotspot_edit::{self, new_zone, select_zone, selected_zone};
+use super::hotspot_edit::{self, ShapeKind, new_zone, select_zone, selected_zone};
+use super::inspector_hotspot_actions::{ActionEdit, actions_editor};
 use super::inspector::{commit, info, new_label_button, tfield, with_new_label};
 use super::ui_util::{accent, card, danger, section_title, strong, weak};
 
@@ -166,8 +168,108 @@ fn style_editor(ui: &mut Ui, style: &HotspotStyle) -> Option<HotspotStyle> {
     changed.then_some(s)
 }
 
-/// Numbers of a shape (position and size in % of the screen).
-fn shape_editor(ui: &mut Ui, shape: &HotspotShape) -> Option<HotspotShape> {
+/// The pixel size of an image asset (read from its file header).
+fn image_size(root: Option<&std::path::Path>, story: &orbit_core::Story, image: orbit_core::AssetId) -> Option<(u32, u32)> {
+    let path = story.asset_path(image)?;
+    image::image_dimensions(root?.join(path)).ok()
+}
+
+/// The kind of a shape (rectangle, ellipse, polygon, picture), then its
+/// numbers (position and size in % of the screen) and, for a picture, the
+/// picture, its alpha threshold and whether it is drawn.
+fn shape_editor(
+    ui: &mut Ui,
+    salt: (NodeId, usize),
+    story: &orbit_core::Story,
+    root: Option<&std::path::Path>,
+    shape: &HotspotShape,
+) -> Option<HotspotShape> {
+    let kind = ShapeKind::of(shape);
+    let name = |k: ShapeKind| match k {
+        ShapeKind::Rect => "inspector.hotspots.shape.rect",
+        ShapeKind::Ellipse => "inspector.hotspots.shape.ellipse",
+        ShapeKind::Polygon => "inspector.hotspots.shape.polygon",
+        ShapeKind::Mask => "inspector.hotspots.shape.mask",
+    };
+    let first_image = story.assets.assets.iter().find(|a| a.kind == AssetKind::Image).map(|a| a.id);
+    let mut converted = None;
+    tfield(ui, "inspector.hotspots.shape", |ui| {
+        egui::ComboBox::from_id_salt(("hotspot_kind", salt))
+            .selected_text(ui.t(name(kind)))
+            .show_ui(ui, |ui| {
+                for k in ShapeKind::ALL {
+                    let enabled = k != ShapeKind::Mask || first_image.is_some();
+                    if ui.add_enabled(enabled, egui::Button::selectable(k == kind, ui.t(name(k)))).clicked() && k != kind {
+                        let image = shape.mask_image().or(first_image);
+                        let size = image.and_then(|i| image_size(root, story, i));
+                        converted = hotspot_edit::convert_shape(shape, k, image, size);
+                    }
+                }
+            });
+    });
+    if converted.is_some() {
+        return converted;
+    }
+    if let HotspotShape::Mask { image, threshold, draw, .. } = shape {
+        let mut out = None;
+        tfield(ui, "inspector.hotspots.mask_image", |ui| {
+            if let Some(new) = asset_picker(ui, ("hotspot_mask", salt), story, AssetKind::Image, *image) {
+                // A new picture: fitted to its size, same threshold and drawing.
+                if let HotspotShape::Mask { x, y, w, h, .. } =
+                    hotspot_edit::mask_fit(new, image_size(root, story, new))
+                {
+                    out = Some(HotspotShape::Mask { image: new, x, y, w, h, threshold: *threshold, draw: *draw });
+                }
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .button(format!("{}  {}", icons::ARROWS_OUT, ui.t("inspector.hotspots.mask_fit")))
+                .on_hover_text(ui.t("inspector.hotspots.mask_fit_tip"))
+                .clicked()
+                && let HotspotShape::Mask { x, y, w, h, .. } =
+                    hotspot_edit::mask_fit(*image, image_size(root, story, *image))
+            {
+                out = Some(HotspotShape::Mask { image: *image, x, y, w, h, threshold: *threshold, draw: *draw });
+            }
+            if ui
+                .button(ui.t("inspector.hotspots.mask_full"))
+                .on_hover_text(ui.t("inspector.hotspots.mask_full_tip"))
+                .clicked()
+            {
+                out = Some(HotspotShape::Mask {
+                    image: *image,
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                    threshold: *threshold,
+                    draw: *draw,
+                });
+            }
+        });
+        let mut t = *threshold;
+        tfield(ui, "inspector.hotspots.mask_threshold", |ui| {
+            if ui.add(egui::Slider::new(&mut t, 0.05..=1.0).max_decimals(2)).changed() {
+                let mut s = shape.clone();
+                if let HotspotShape::Mask { threshold, .. } = &mut s {
+                    *threshold = t;
+                }
+                out = Some(s);
+            }
+        });
+        let label = ui.t("inspector.hotspots.mask_draw");
+        if let Some(v) = fields::checkbox(ui, *draw, &label) {
+            let mut s = shape.clone();
+            if let HotspotShape::Mask { draw, .. } = &mut s {
+                *draw = v;
+            }
+            out = Some(s);
+        }
+        if out.is_some() {
+            return out;
+        }
+    }
     let mut s = shape.clone();
     let mut changed = false;
     let mut num = |ui: &mut Ui, label: &str, v: &mut f32| {
@@ -182,7 +284,7 @@ fn shape_editor(ui: &mut Ui, shape: &HotspotShape) -> Option<HotspotShape> {
         }
     };
     ui.horizontal_wrapped(|ui| match &mut s {
-        HotspotShape::Rect { x, y, w, h } => {
+        HotspotShape::Rect { x, y, w, h } | HotspotShape::Mask { x, y, w, h, .. } => {
             num(ui, "x", x);
             num(ui, "y", y);
             num(ui, "w", w);
@@ -206,10 +308,15 @@ fn shape_editor(ui: &mut Ui, shape: &HotspotShape) -> Option<HotspotShape> {
 
 /// The inspector of a `Hotspots` node.
 pub(super) fn hotspots(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, map: &HotspotMap) {
+    let root = ctx.project_info().map(|p| p.root.clone());
     let Some(story) = ctx.story() else { return };
     let egui_ctx = ui.ctx().clone();
+    let vars = orbit_editor_api::varwidgets::story_vars(story);
+    let map_scene = story.locate(id).map(|(s, _)| story.scenes[s].id);
     enum Do {
         Map(HotspotMap, &'static str),
+        /// The map and a new string (a notification action), one step.
+        MapText(HotspotMap, StringId, String),
         Text(StringId, String),
         NewLabel(usize),
         ToScene(usize, SceneId),
@@ -264,6 +371,7 @@ pub(super) fn hotspots(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, map
                     HotspotShape::Rect { .. } => icons::RECTANGLE,
                     HotspotShape::Ellipse { .. } => icons::CIRCLE,
                     HotspotShape::Polygon { .. } => icons::POLYGON,
+                    HotspotShape::Mask { .. } => icons::IMAGE,
                 };
                 let title = if zone.name.is_empty() {
                     ui.tf("inspector.hotspots.zone_n", &[("n", &(i + 1))])
@@ -324,8 +432,22 @@ pub(super) fn hotspots(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, map
                     .response
                     .on_hover_text(ui.t("inspector.hotspots.to_scene_tip"));
             });
-            if let Some(s) = shape_editor(ui, &zone.shape) {
+            if let Some(s) = shape_editor(ui, (id, i), story, root.as_deref(), &zone.shape) {
                 action = Some(Do::Map(with(&|m| m.hotspots[i].shape = s.clone()), "shape"));
+            }
+            ui.add_space(4.0);
+            ui.label(RichText::new(ui.t("inspector.hotspots.actions")).strong());
+            if let Some(scene) = map_scene
+                && let Some(edit) =
+                    actions_editor(ui, ("hotspot_actions", id, i), story, &vars, &zone.actions, zone.target, scene)
+            {
+                action = Some(match edit {
+                    ActionEdit::List(list) => Do::Map(with(&|m| m.hotspots[i].actions = list.clone()), "actions"),
+                    ActionEdit::WithText(list, text_id, text) => {
+                        Do::MapText(with(&|m| m.hotspots[i].actions = list.clone()), text_id, text)
+                    }
+                    ActionEdit::Text(text_id, text) => Do::Text(text_id, text),
+                });
             }
             ui.add_space(4.0);
             for (key, current, enabled) in [
@@ -419,6 +541,17 @@ pub(super) fn hotspots(ui: &mut Ui, ctx: &mut EditorContext<'_>, id: NodeId, map
     let Some(action) = action else { return };
     match action {
         Do::Map(m, field) => commit_map(ctx, id, m, field),
+        Do::MapText(m, text_id, text) => {
+            let version = ctx.node_version(id);
+            let label = ctx.t("inspector.hotspots.act.add");
+            let result = ctx.transaction(&label, |tx| {
+                tx.execute(Command::SetString { id: text_id, text: Some(text.clone()) })?;
+                tx.execute(Command::SetNodeKind { id, kind: NodeKind::Hotspots(m), expected_version: version })
+            });
+            if let Err(e) = result {
+                ctx.error(e.to_string());
+            }
+        }
         Do::Text(string, text) => {
             let command = Command::SetString { id: string, text: Some(text) };
             if let Err(e) = ctx.exec_merged(command, &format!("hotspot-text:{string}")) {
