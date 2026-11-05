@@ -121,6 +121,7 @@ fn has_nodes_selected(ctx: &EditorContext<'_>) -> bool {
 
 impl EditorPlugin for ScenePlugin {
     fn register_ui(&self, reg: &mut EditorRegistry) {
+        super::navmap::register(reg);
         let state: Shared = Rc::default();
         {
             let state = state.clone();

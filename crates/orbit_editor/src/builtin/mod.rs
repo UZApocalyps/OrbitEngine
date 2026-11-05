@@ -22,6 +22,7 @@ mod inspector_script;
 mod inspector_voice;
 pub(crate) mod inspector_hotspots;
 mod inspector_hotspot_actions;
+mod navmap;
 pub(crate) mod inspector_notify;
 mod hotspot_edit;
 mod script_highlight;

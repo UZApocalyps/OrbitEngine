@@ -71,5 +71,5 @@ fn other_menus_stay_short() {
     }
     // Nothing was dropped by the grouping.
     assert_eq!(reg.menu_actions("file").len(), 12);
-    assert_eq!(reg.menu_actions("edit").len(), 21);
+    assert_eq!(reg.menu_actions("edit").len(), 22);
 }
