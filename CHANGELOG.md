@@ -5,6 +5,14 @@
 ### Nouveautés
 - **Plugins de l'éditeur (DLL)** : l'éditeur charge au démarrage des plugins natifs installés par l'utilisateur depuis **Outils > Extensions > Plugins…** (installation d'un `.orbitplugin` ou d'une bibliothèque, activation, désactivation, désinstallation, réglages, redémarrage). Chaque plugin est vérifié avant chargement : format du fichier, description lue dans un processus séparé, empreinte de compilation identique à celle de l'éditeur (version, compilateur, egui, sources, disposition et identité des types), somme de contrôle. Un plugin qui plante est désactivé sans fermer l'éditeur ; `--no-plugins` démarre sans aucun plugin.
 - SDK des plugins (`orbit_editor_sdk`), exemple `examples/editor_plugins/hello`, chapitre « Plugins de l'éditeur » du manuel, et `cargo xtask plugins` pour compiler et empaqueter les plugins officiels.
+- **Point & click : actions de zone** : une zone peut, au clic, modifier des variables (sans code), afficher une notification, jouer un son, puis rester sur la carte (ramasser un objet), aller à un label ou une scène, appeler un label (retour sur la carte) ou revenir d'un appel. Inspecteur, texte (`do …` sous un `spot`), MCP et validation.
+- **Point & click : zones image** : une zone peut être une image dont seuls les pixels opaques réagissent (un objet posé sur le décor), avec un halo qui suit son contour ; l'image peut être dessinée par-dessus le décor. Les `imagebutton` importés de Ren'Py deviennent de telles zones : leurs images sont maintenant affichées.
+- **Point & click : manette** : nouvelle action « afficher les zones » (Vue / Select par défaut, assignable à Y), avec un rappel sous l'infobulle quand la manette est utilisée. La touche V reste disponible.
+- **Assistant « Nouvelle carte de navigation (maison) »** (Édition > Insérer, palette) : pièces, décors, portes entre les pièces et exemple de porte fermée à clé, en une seule étape d'annulation.
+
+### Corrections
+- L'Éditeur de vue montre le décor propre d'une carte point & click même sans nœud Décor avant elle.
+- Les jeux qui utilisent les actions de zone ou les zones image sont empaquetés en version 9 ; les autres gardent leur version, à l'octet près.
 
 ### Changements
 - **Le Studio IA devient un plugin** : il n'est plus intégré à l'éditeur livré. Compilez-le avec `cargo xtask plugins` et installez-le depuis le gestionnaire de plugins ; ses réglages existants (`ai_studio.ron`) sont conservés.

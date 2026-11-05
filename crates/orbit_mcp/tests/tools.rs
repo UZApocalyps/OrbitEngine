@@ -1583,7 +1583,6 @@ fn hotspot_zone_actions_and_mask_shapes() {
     assert_eq!(h.actions.len(), 3);
     let orbit_core::HotspotAction::Notify(n) = &h.actions[1] else { panic!() };
     assert_eq!(story.text(n.text_id), Some("Trust +2"));
-    drop(story);
     let err = f.err(
         "edit_hotspots",
         json!({"node": id, "update": [{"index": 0, "actions": [{"set_var": {"var": "trust", "op": "explode", "value": "1"}}]}]}),

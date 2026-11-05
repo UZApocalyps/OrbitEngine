@@ -668,6 +668,10 @@ fn describe_event(story: &Story, event: &PresentationEvent) -> String {
                 .map_or_else(String::new, |c| format!(" camera {c}")),
             describe_transition(transition)
         ),
+        PresentationEvent::Notify { notify, .. } => {
+            format!("[notify {:?}]", story.text(notify.text_id).unwrap_or_default())
+        }
+        PresentationEvent::NotifyText(n) => format!("[notify {:?}]", n.text),
         PresentationEvent::HideScene3d { transition } => {
             format!("[hide 3d scene{}]", describe_transition(transition))
         }
