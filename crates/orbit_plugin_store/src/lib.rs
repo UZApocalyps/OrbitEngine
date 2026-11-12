@@ -20,6 +20,7 @@
 pub mod catalog;
 pub mod download;
 pub mod fetch;
+pub mod game;
 pub mod installs;
 pub mod signing;
 pub mod sources;

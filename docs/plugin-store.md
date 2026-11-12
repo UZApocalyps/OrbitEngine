@@ -7,7 +7,8 @@ The editor's plugin manager (**Tools > Extensions > Plugins…**) has three tabs
   catalog has a newer build for this editor;
 * **Store**: every plugin of the enabled catalog sources, with search, source and
   tag filters, install / update / installed state and details (changelog, license,
-  homepage);
+  homepage); its **Game plugins (project)** switch lists the game plugins, which
+  install as sources into the open project (§7);
 * **Sources**: the catalog sources (add by URL, enable / disable, remove, refresh,
   trust level).
 
@@ -198,3 +199,184 @@ Anyone can host a catalog: a repository with an `index.json` in this format and
 its `.orbitplugin` files (GitHub releases or any HTTPS host). Generate your own key
 with `cargo xtask plugin-key gen --out <file>`, sign with `--sign <file>`, and
 publish the public key so users can add your source as **Trusted**.
+
+## 7. Game plugins (sources, per project)
+
+Game plugins (runtime plugins, `orbit_plugin_api::RuntimePlugin`) are Rust crates
+linked statically into the player at export (`orbit_export::plugins`). The store
+distributes them **as sources**, installs them **in the open project**
+(`plugins/<dir>/`, never in the editor's plugin folder) and lists them in the
+**Store** tab under **Game plugins (project)** with a **Game** badge; the
+**Installed** tab has a "Game plugins of <project>" section.
+
+Code: `crates/orbit_plugin_store/src/game/` (`catalog`, `package`, `download`,
+`project`), `crates/orbit_editor/src/builtin/game_plugins.rs` (UI),
+`xtask/src/game_plugin.rs` (`cargo xtask game-plugin pack | index`).
+
+### 7.1 Catalog: `game_plugins` (still schema 1)
+
+Game plugins are a separate, optional top-level array of `index.json`. It is not a
+"kind" field on `plugins[]` entries: an editor that predates it ignores unknown
+fields, so it does not see game plugins at all (instead of listing source packages
+as editor plugins with "no build for your editor"), and an old `plugin-index`
+keeps working on the editor plugins. `schema_version` stays `1` (raising it would
+make older editors refuse the whole catalog). A catalog without `game_plugins` is
+unchanged; a broken `game_plugins` is ignored with a warning and never makes the
+editor plugins of the catalog unusable.
+
+```json
+"game_plugins": [
+  {
+    "id": "orbit.dice",
+    "name": "Dice",
+    "description": { "en": "…", "fr": "…" },
+    "author": "", "homepage": null, "license": "MIT OR Apache-2.0", "icon": null,
+    "tags": ["dice"],
+    "versions": [
+      {
+        "version": "0.4.0",
+        "released": "2026-11-12",
+        "changelog": "First store release.",
+        "api_version": 1,
+        "min_engine": "0.4.0",
+        "max_engine": "0.5.0",
+        "url": "https://…/orbit.dice-0.4.0.orbitsrc",
+        "sha256": "<64 lowercase hex>",
+        "size": 4889,
+        "signature": "<128 lowercase hex, or null>"
+      }
+    ]
+  }
+]
+```
+
+| Field | Rule |
+|---|---|
+| `id`, `name`, `description`, `tags`, `url` | as for editor plugins (§1); `orbit.*` only from the official source |
+| `versions[].api_version` | the `orbit_plugin_api::API_VERSION` the crate is written against |
+| `min_engine` / `max_engine` | engine versions it builds with: `min <= engine < max` (`max` optional) |
+| `sha256` / `size` | of the `.orbitsrc` file, at most 16 MB |
+
+The store offers, for each game plugin, the **newest version whose `api_version`
+equals the editor's and whose engine range contains the editor version** (no build
+id: sources are compiled with the engine at export).
+
+### 7.2 Package: `.orbitsrc`
+
+A zip holding the crate files at its root and `orbit-game-plugin.json`:
+
+```json
+{
+  "format": 1,
+  "id": "orbit.dice", "plugin_ids": ["orbit.dice"],
+  "name": "Dice", "version": "0.4.0", "description": "…", "author": "", "license": "…",
+  "crate_name": "orbit-dice", "dir": "orbit-dice",
+  "api_version": 1, "min_engine": "0.4.0", "max_engine": "0.5.0",
+  "engine_crates": ["orbit_core", "orbit_plugin_api", "orbit_vm"],
+  "build_script": false, "proc_macro": false,
+  "files": { "Cargo.toml": "<sha256>", "src/lib.rs": "<sha256>" }
+}
+```
+
+Reading a package checks everything **before writing anything**: package at most
+16 MB, each file 16 MB, 64 MB unpacked (a zip bomb stops at the limit), 2000 files;
+every entry path relative, `/`-separated, without `..`, `.`, empty parts, drive or
+root, backslash, `:`, control characters, trailing dot or space, or Windows device
+name (`con`, `nul`, `aux`…); no symbolic link or special entry; no duplicate up to
+case; no path that is both a file and a folder; the files are exactly those of
+`files`, each with its SHA-256; `Cargo.toml` at the root; `.orbit-store.json` and
+the manifest name are reserved. The package SHA-256 is what the signature covers,
+so a valid signature vouches for the manifest and every file.
+
+`Cargo.toml` is read by a small line reader (no TOML library in the editor). It
+follows multi-line arrays and inline tables, quoted (`"path"`) and dotted
+(`foo.path`, `dependencies.foo.path`) keys and `[target.'cfg(…)'.dependencies]`,
+and **refuses**, at packing and again at install, every form it cannot read for
+sure: multi-line strings, unbalanced brackets, `[patch]` / `[replace]` /
+`[workspace]` tables, `package.workspace`, `workspace = true`, escapes in a path,
+a dependency path that is not `…/crates/orbit_*`, a crate file path (`[lib] path`,
+`build`) leaving the crate, and a multi-line `[package.metadata.orbit] plugins`.
+At install the crate name, version and plugin ids of `Cargo.toml` must equal the
+manifest's (the exporter reads `Cargo.toml`), and every engine crate it uses must
+exist in the engine sources.
+
+### 7.3 Signatures and trust
+
+Same trust levels as editor plugins (§3: Official, Trusted, Unsigned with the red
+warning), over a different message, so an editor build signature is never valid for
+a game package:
+
+```
+orbit-game-plugin/v1
+id=<plugin id>
+version=<plugin version>
+api_version=<n>
+sha256=<sha256 of the .orbitsrc, lowercase hex>
+```
+
+The installer then checks the package against the catalog (id, version, SHA-256),
+refuses `orbit.*` plugin ids from a non-official source, and checks the package's
+own `api_version` and engine range. A game plugin is code that **runs on the
+developer's machine when the game is exported** (build scripts and procedural
+macros run at compile time; the package says when it has some) and in the players'
+game: every install from a non-official source asks first, with that warning.
+
+### 7.4 Installing in a project
+
+* The package is downloaded to `<config>/plugin_store/downloads/`, size, SHA-256
+  and signature checked, then extracted into `.orbit/plugin-staging/` of the
+  project and moved to `plugins/<dir>/` by a rename; the previous folder is only
+  removed once the new one is in place (any failure puts it back).
+* `plugins/<dir>/.orbit-store.json` records the store id, plugin ids, version,
+  source (id, name, URL, trust), package SHA-256, API version, engine range, the
+  engine folder used and the SHA-256 of every file **as installed**. It travels with
+  the project (version control): updates only come from that source (matched by id,
+  or by URL on another machine), never from another catalog.
+* Engine dependencies: plugin crates depend on the engine crates by path (the
+  exporter needs the same `orbit_plugin_api`). The installer points every path
+  dependency `…/crates/orbit_*` at the engine sources the exporter uses
+  (`ORBIT_ENGINE_SRC`, else the tree the editor was built from). When none is
+  found the crate installs as packaged and the UI says the export will fail until
+  it is reinstalled with `ORBIT_ENGINE_SRC` set. The packager refuses other path
+  dependencies and workspace inheritance (`version.workspace = true`…), and drops
+  a `[lints] workspace = true` table.
+* `orbit.project.ron` > `plugins` gets `{ id, version }` for each plugin id of the
+  crate (removed on uninstall, ids dropped by an update removed), with the same
+  load / save as the export profiles: installing files is not an undoable story
+  edit. A bare story folder (no manifest) installs without it.
+* **Local changes are never overwritten silently.** Installing or updating is
+  refused when the target folder exists without a record (a crate written by
+  hand), when another crate of the project provides the same plugin id, or when
+  the installed files differ from the record (`target/` and `Cargo.lock` are
+  ignored). The UI lists the changed files and offers **Replace (keep a backup)**:
+  the folder is moved to `.orbit/plugin-backups/<dir>-<time>/`, nothing is deleted.
+  Uninstalling deletes a pristine folder (the store can install it again) and moves
+  a changed one to the backups.
+
+### 7.5 The editor half, the toolchain
+
+The editor only knows the node types of a plugin whose editor half is loaded
+(`orbit_plugin_api::Plugin::register`, i.e. an editor plugin with the same id, from
+the Store's editor plugins or built in). The Installed section says, per plugin id:
+loaded (steps editable), "its editor plugin is in the Store", or "no editor part"
+(steps stay read-only in the editor, as for a missing plugin, and the exported game
+runs them). It also checks `cargo --version` and the engine sources once per
+project: missing ones do not block the install, the UI says the export will fail.
+
+### 7.6 Releasing a game plugin
+
+```sh
+cargo xtask game-plugin pack examples/plugins/dice --sign ../OrbitEngine-secrets/plugin_signing_key
+cargo xtask game-plugin index --index ../OrbitEnginePlugins/index.json \
+  --url "https://github.com/UZApocalyps/OrbitEnginePlugins/releases/download/{tag}/{file}" --tag game-v0.4.0
+```
+
+`pack` reads `Cargo.toml` (`[package]` name, version, description, license;
+`[package.metadata.orbit]` `plugins` and an optional display `name`), skips
+`target/`, `Cargo.lock` and hidden files, records this engine's `API_VERSION`, and
+sets the engine range to this version up to the next minor (excluded) unless
+`--min-engine` / `--max-engine <v>|none` say otherwise. It writes
+`<target>/game-plugins/<id>-<version>.orbitsrc` and `<file>.json` (the descriptor).
+`index` merges the descriptors into `game_plugins` (a version listed again is
+replaced) and keeps the editor plugins; `plugin-index` keeps `game_plugins` too.
+Unsigned descriptors are refused unless `--allow-unsigned`.

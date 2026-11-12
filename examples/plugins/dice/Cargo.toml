@@ -10,6 +10,8 @@ publish = false
 # to check the story and to build the player "with plugins".
 [package.metadata.orbit]
 plugins = ["orbit.dice"]
+# Display name in the plugin store (`cargo xtask game-plugin pack`).
+name = "Dice"
 
 [dependencies]
 # Must be the engine's own crate (by path), so the trait types match.

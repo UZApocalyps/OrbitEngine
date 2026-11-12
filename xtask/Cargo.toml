@@ -21,6 +21,8 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 orbit_plugin_store.workspace = true
 orbit_sign.workspace = true
 getrandom = "0.3"
+# `cargo xtask game-plugin pack`: the plugin API version a package targets.
+orbit_plugin_api.workspace = true
 
 [lints]
 workspace = true

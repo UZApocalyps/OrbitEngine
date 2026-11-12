@@ -139,6 +139,12 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
         include_str!("../locales/fr/store.ron"),
     ),
     (
+        "game_plugins",
+        &["gplug"],
+        include_str!("../locales/en/game_plugins.ron"),
+        include_str!("../locales/fr/game_plugins.ron"),
+    ),
+    (
         "manual",
         &["manual", "template"],
         include_str!("../locales/en/manual.ron"),

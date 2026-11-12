@@ -3218,6 +3218,7 @@ dependencies = [
  "orbit_save",
  "orbit_scene",
  "orbit_script",
+ "orbit_sign",
  "orbit_text",
  "orbit_ui",
  "orbit_vm",
@@ -3460,11 +3461,13 @@ version = "0.4.0"
 dependencies = [
  "orbit_editor_api",
  "orbit_http",
+ "orbit_plugin_api",
  "orbit_plugin_host",
  "orbit_sign",
  "ron",
  "serde",
  "serde_json",
+ "zip",
 ]
 
 [[package]]
@@ -6092,6 +6095,7 @@ dependencies = [
  "hound",
  "image",
  "orbit_export",
+ "orbit_plugin_api",
  "orbit_plugin_store",
  "orbit_sign",
  "ron",
