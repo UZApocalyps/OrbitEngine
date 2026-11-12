@@ -59,6 +59,14 @@ macro_rules! all_chapters {
             chapter!($lang, "15-renpy-import"),
             chapter!($lang, "16-ai-studio"),
             chapter!($lang, "17-editor-plugins"),
+            chapter!($lang, "18-tutorial-first-game"),
+            chapter!($lang, "19-tutorial-interface"),
+            chapter!($lang, "20-tutorial-point-and-click"),
+            chapter!($lang, "21-tutorial-characters"),
+            chapter!($lang, "22-tutorial-achievements-translations"),
+            chapter!($lang, "23-tutorial-publish"),
+            chapter!($lang, "24-tutorial-other-starts"),
+            chapter!($lang, "25-tutorial-experts"),
         ]
     };
 }
