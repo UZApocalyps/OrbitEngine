@@ -3206,6 +3206,7 @@ dependencies = [
  "orbit_save",
  "orbit_scene",
  "orbit_script",
+ "orbit_sign",
  "orbit_text",
  "orbit_ui",
  "orbit_vm",

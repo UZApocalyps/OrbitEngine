@@ -20,7 +20,9 @@ use serde::{Deserialize, Serialize};
 
 use super::PackageSource;
 use super::catalog::engine_in_range;
-use super::package::{Package, PackageError, read_cargo_toml, rewrite_engine_paths};
+use super::package::{
+    Package, PackageError, check_packaged_cargo_toml, read_cargo_toml, rewrite_engine_paths,
+};
 use crate::catalog::RESERVED_PREFIX;
 use crate::sources::Trust;
 
@@ -409,7 +411,12 @@ fn write_files(
         }
         let data = match (path.as_str(), engine_root) {
             ("Cargo.toml", Some(engine)) => {
-                rewrite_engine_paths(&String::from_utf8_lossy(data), engine).into_bytes()
+                let text = std::str::from_utf8(data).map_err(|_| {
+                    InstallError::Package(PackageError::Invalid("Cargo.toml is not UTF-8".into()))
+                })?;
+                rewrite_engine_paths(text, engine)
+                    .map_err(InstallError::Package)?
+                    .into_bytes()
             }
             _ => data.clone(),
         };
@@ -448,6 +455,30 @@ pub fn install(
             .find(|id| id.starts_with(RESERVED_PREFIX))
     {
         return Err(InstallError::Reserved(id.clone()));
+    }
+    // The exporter reads Cargo.toml, not the manifest: they must agree,
+    // and it must be a form the rewriting below reads for sure.
+    let cargo = package
+        .files
+        .iter()
+        .find(|(p, _)| p == "Cargo.toml")
+        .map(|(_, d)| d.as_slice())
+        .unwrap_or_default();
+    let cargo = std::str::from_utf8(cargo).map_err(|_| {
+        InstallError::Package(PackageError::Invalid("Cargo.toml is not UTF-8".into()))
+    })?;
+    let engine_crates = check_packaged_cargo_toml(cargo, m).map_err(InstallError::Package)?;
+    if let Some(engine) = opts.engine_root
+        && let Some(missing) = engine_crates
+            .iter()
+            .find(|c| !engine.join("crates").join(c).join("Cargo.toml").is_file())
+    {
+        return Err(InstallError::Incompatible(format!(
+            "{} {} depends on the engine crate {missing}, which {} does not have",
+            m.name,
+            m.version,
+            engine.display()
+        )));
     }
     if m.api_version != opts.api_version {
         return Err(InstallError::Incompatible(format!(
@@ -539,7 +570,10 @@ pub fn install(
             api_version: m.api_version,
             min_engine: m.min_engine.clone(),
             max_engine: m.max_engine.clone(),
-            engine_path: opts.engine_root.map(|p| p.display().to_string()),
+            engine_path: opts.engine_root.map(|p| {
+                let s = p.display().to_string();
+                s.strip_prefix(r"\\?\").map(str::to_owned).unwrap_or(s)
+            }),
             build_script: m.build_script,
             proc_macro: m.proc_macro,
             files,
@@ -722,7 +756,26 @@ mod tests {
         let root = scratch("game_project");
         let src = crate_dir("game_project_src");
         let v1 = pack(&src, &options()).unwrap().bytes;
-        let engine = Path::new("E:/Engine");
+        let engine_dir = scratch("game_project_engine");
+        // An engine tree without orbit_vm: refused, nothing written.
+        for name in ["orbit_core", "orbit_plugin_api"] {
+            std::fs::create_dir_all(engine_dir.join("crates").join(name)).unwrap();
+            std::fs::write(engine_dir.join("crates").join(name).join("Cargo.toml"), "").unwrap();
+        }
+        let err = install(
+            &root,
+            &v1,
+            &source(false),
+            None,
+            &opts(Some(&engine_dir), OnConflict::Refuse),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("orbit_vm"), "{err}");
+        assert!(!root.join(PLUGINS_DIR).exists());
+        std::fs::create_dir_all(engine_dir.join("crates/orbit_vm")).unwrap();
+        std::fs::write(engine_dir.join("crates/orbit_vm/Cargo.toml"), "").unwrap();
+        let engine = engine_dir.as_path();
+        let engine_toml = engine.display().to_string().replace('\\', "/");
         let out = install(
             &root,
             &v1,
@@ -736,7 +789,7 @@ mod tests {
         assert_eq!(out.plugin_ids, ["acme.dice", "acme.extra"]);
         let cargo = std::fs::read_to_string(out.dir.join("Cargo.toml")).unwrap();
         assert!(
-            cargo.contains("E:/Engine/crates/orbit_plugin_api"),
+            cargo.contains(&format!("{engine_toml}/crates/orbit_plugin_api")),
             "{cargo}"
         );
         assert!(out.dir.join("src/nested/mod.rs").is_file());
@@ -749,7 +802,7 @@ mod tests {
             (record.id.as_str(), record.version.as_str()),
             ("acme.dice", "1.2.0")
         );
-        assert_eq!(record.engine_path.as_deref(), Some("E:/Engine"));
+        assert_eq!(record.engine_path, Some(engine.display().to_string()));
         assert!(local_changes(&out.dir, &record).unwrap().is_empty());
         // Building it is not a change.
         std::fs::create_dir_all(out.dir.join("target/release")).unwrap();

@@ -1453,4 +1453,223 @@ mod tests {
         );
         assert!(same_path(Path::new(r"\\?\E:\A\b\"), Path::new("e:/a/B")));
     }
+
+    /// A real export with a game plugin installed by the store's code path:
+    /// the template project, `orbit.dice` packed by `cargo xtask game-plugin
+    /// pack` (`ORBIT_GAME_PLUGIN_PACKAGE`), a signed `file://` catalog,
+    /// download, install, manifest update as the UI does, a `roll` step in
+    /// the story, then `orbit_export::export` for the host platform (builds
+    /// the player with the plugin: slow). Needs `ORBIT_ENGINE_SRC` and cargo.
+    ///
+    /// `cargo test -p orbit_editor --lib -- --ignored game_plugins::tests::a_store_installed_game_plugin_exports --nocapture`
+    #[test]
+    #[ignore]
+    fn a_store_installed_game_plugin_exports() {
+        use orbit_core::{CustomData, Node, NodeId, NodeKind, Value, VarDecl};
+        use orbit_export::{ExportOptions, ExportProject, ExportTarget, export};
+        use orbit_plugin_store::game::catalog::{GameVersion, catalog_json, sign_package};
+        use orbit_plugin_store::signing::{parse_public_key, public_key_hex};
+        use orbit_plugin_store::{Localized, catalog::Catalog};
+
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let work = repo.join("target/game-export-check");
+        let _ = std::fs::remove_dir_all(work.join("project"));
+        let _ = std::fs::remove_dir_all(work.join("store"));
+        let package = PathBuf::from(
+            std::env::var("ORBIT_GAME_PLUGIN_PACKAGE").expect("ORBIT_GAME_PLUGIN_PACKAGE"),
+        );
+        let bytes = std::fs::read(&package).unwrap();
+
+        // 1. A project from the visual novel template, without plugin.
+        let project = work.join("project");
+        copy_dir(
+            &repo.join("assets/templates/visual_novel/project"),
+            &project,
+        );
+        let storage = FsStorage::new(&project);
+        orbit_project::save_manifest(&storage, &ProjectManifest::new("Dice export check")).unwrap();
+
+        // 2. The catalog (file://), signed with a key made here.
+        let catalog_dir = work.join("catalog");
+        std::fs::create_dir_all(catalog_dir.join("packages")).unwrap();
+        std::fs::write(catalog_dir.join("packages/dice.orbitsrc"), &bytes).unwrap();
+        let seed = [7u8; 32];
+        let sha256 = orbit_sign::sha256::digest_hex(&bytes);
+        let manifest = orbit_plugin_store::game::Package::read(&bytes)
+            .unwrap()
+            .manifest;
+        let version = GameVersion {
+            version: manifest.version.clone(),
+            released: None,
+            changelog: Localized::default(),
+            api_version: manifest.api_version,
+            min_engine: manifest.min_engine.clone(),
+            max_engine: manifest.max_engine.clone(),
+            url: "packages/dice.orbitsrc".into(),
+            signature: Some(sign_package(
+                &seed,
+                &manifest.id,
+                &manifest.version,
+                manifest.api_version,
+                &sha256,
+            )),
+            sha256,
+            size: bytes.len() as u64,
+        };
+        let game = GamePlugin {
+            id: manifest.id.clone(),
+            name: manifest.name.clone(),
+            description: Localized::default(),
+            author: String::new(),
+            homepage: None,
+            license: None,
+            icon: None,
+            tags: Vec::new(),
+            versions: vec![version],
+        };
+        std::fs::write(
+            catalog_dir.join("index.json"),
+            catalog_json(&Catalog::new("Official (test)"), &[game]),
+        )
+        .unwrap();
+        let url = format!(
+            "file:///{}",
+            catalog_dir
+                .join("index.json")
+                .display()
+                .to_string()
+                .trim_start_matches(r"\\?\")
+                .replace('\\', "/")
+        );
+        let source = SourceEntry {
+            id: "official".into(),
+            name: "Official (test)".into(),
+            url,
+            enabled: true,
+            public_key: None,
+            builtin: true,
+        };
+        let paths = StorePaths {
+            root: work.join("store"),
+        };
+        fetch::fetch(&paths, &source, true, fetch::MAX_AGE).unwrap();
+        let (games, _) = game_catalog::cached(&paths, &source).unwrap();
+        let chosen =
+            game_catalog::select_game(&games[0], ENGINE_VERSION, orbit_plugin_api::API_VERSION)
+                .version()
+                .cloned()
+                .expect("a version for this engine");
+
+        // 3. Download and install like `start_install` (official flag for
+        //    `orbit.*`, the test key instead of the official one).
+        let plan = GameDownloadPlan {
+            source: PackageSource {
+                trust: Trust::Trusted,
+                key: parse_public_key(&public_key_hex(&seed)),
+                ..PackageSource::of(&source)
+            },
+            plugin_id: games[0].id.clone(),
+            version: chosen.clone(),
+        };
+        let verified = download(&paths, &plan, &Ed25519, &|_, _| true).unwrap();
+        let retry = Retry {
+            file: verified.file,
+            source: plan.source.clone(),
+            expected: Expected {
+                id: plan.plugin_id.clone(),
+                version: chosen.version.clone(),
+                sha256: chosen.sha256.clone(),
+            },
+            name: games[0].name.clone(),
+        };
+        let out = match install_file(&project, &retry, OnConflict::Refuse) {
+            Ok(Done::Installed(out, manifest)) => {
+                assert_eq!(manifest, Ok(true));
+                out
+            }
+            Ok(_) => unreachable!(),
+            Err(Failure::Download(e)) => panic!("{e}"),
+            Err(Failure::Install(e)) => panic!("{e}"),
+            Err(Failure::Conflict(c)) => panic!("{}", c.0),
+        };
+        println!(
+            "installed {} {} in {} (engine {:?})",
+            out.name,
+            out.version,
+            out.dir.display(),
+            out.engine_path
+        );
+        println!(
+            "Cargo.toml as installed:\n{}",
+            std::fs::read_to_string(out.dir.join("Cargo.toml")).unwrap()
+        );
+        let m = orbit_project::load_manifest(&storage).unwrap();
+        assert!(
+            m.plugins.iter().any(|r| r.id == "orbit.dice"),
+            "{:?}",
+            m.plugins
+        );
+
+        // 4. A `roll` step at the start of the story, into a new variable.
+        let mut story = orbit_project::load_story(&storage, &m.story).unwrap();
+        story
+            .variables
+            .push(VarDecl::game("dice_total", Value::Int(0)));
+        story.scenes[0].nodes.insert(
+            0,
+            Node {
+                id: NodeId::new(),
+                kind: NodeKind::Custom {
+                    plugin_id: "orbit.dice".into(),
+                    kind: "roll".into(),
+                    version: 1,
+                    data: CustomData::Map(vec![
+                        ("count".into(), CustomData::Int(2)),
+                        ("sides".into(), CustomData::Int(6)),
+                        ("modifier".into(), CustomData::Int(0)),
+                        ("target".into(), CustomData::Str("dice_total".into())),
+                        ("pause".into(), CustomData::Float(0.0)),
+                    ]),
+                },
+            },
+        );
+        orbit_project::save_story(&storage, &m.story, &story).unwrap();
+
+        // 5. The export, as the editor's Export panel runs it.
+        let exp = ExportProject::open(&project).unwrap();
+        let profile = exp.profile(None).unwrap();
+        let started = Instant::now();
+        let mut progress = |e: &orbit_export::Event| {
+            if let orbit_export::Event::Log { text, .. } = e {
+                println!("[export] {text}");
+            }
+        };
+        let result = export(
+            &exp,
+            &profile,
+            ExportTarget::Windows,
+            &work.join("out"),
+            &ExportOptions::standard(),
+            &mut progress,
+        );
+        println!("export took {:.0} s", started.elapsed().as_secs_f64());
+        let report = result.unwrap_or_else(|e| panic!("export failed: {e}"));
+        println!("export output: {}", report.output.display());
+        assert!(report.output.exists());
+    }
+
+    fn copy_dir(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap().flatten() {
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_dir(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
 }

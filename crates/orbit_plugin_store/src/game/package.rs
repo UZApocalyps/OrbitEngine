@@ -403,8 +403,14 @@ pub fn read_cargo_toml(text: &str) -> Result<CrateInfo, PackageError> {
     let mut info = CrateInfo::default();
     let mut ids = None;
     let mut section = String::new();
+    let mut depth = 0i64;
     for raw in text.lines() {
         let line = strip_comment(raw).trim();
+        // The continuation lines of a multi-line array or inline table.
+        if depth > 0 {
+            depth += depth_change(line);
+            continue;
+        }
         if let Some(s) = section_of(line) {
             section = s;
             continue;
@@ -413,6 +419,12 @@ pub fn read_cargo_toml(text: &str) -> Result<CrateInfo, PackageError> {
             continue;
         };
         let (key, value) = (key.trim(), value.trim());
+        depth = depth_change(value).max(0);
+        if depth > 0 && section == "package.metadata.orbit" {
+            return Err(invalid(format!(
+                "Cargo.toml: write [package.metadata.orbit] {key} on one line (the exporter reads it so)"
+            )));
+        }
         match (section.as_str(), key) {
             ("package", "name") => info.name = unquote(value),
             ("package", "version") => info.version = unquote(value),
@@ -452,13 +464,40 @@ fn is_dependency_section(section: &str) -> bool {
     let kinds = ["dependencies", "dev-dependencies", "build-dependencies"];
     section
         .split('.')
-        .any(|part| kinds.contains(&part.trim_matches('\'').trim_matches('"')))
+        .any(|part| kinds.contains(&part.trim().trim_matches('\'').trim_matches('"')))
 }
 
-/// The `path = "…"` values of a line: (start, end) byte ranges of the
-/// string contents.
-fn path_values(line: &str) -> Vec<(usize, usize)> {
+/// Keys whose string value is a file path the store checks.
+const PATH_KEYS: &[&str] = &["path", "build"];
+
+/// The path-like values of a line: (key, start, end) byte ranges of the
+/// string contents of `path = "…"` / `build = "…"`, bare, quoted (`"path"`)
+/// or dotted (`foo.path`).
+fn path_values(line: &str) -> Vec<(&'static str, usize, usize)> {
     let bytes = line.as_bytes();
+    let key_start = |i: usize| {
+        let before = line[..i].trim_end_matches([' ', '\t']);
+        before.is_empty() || before.ends_with(['{', ',', '.'])
+    };
+    // After a key ending at `j`: optional blanks, `=`, blanks, a quote.
+    let value_at = |mut j: usize| -> Option<(usize, usize)> {
+        while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
+            j += 1;
+        }
+        if bytes.get(j) != Some(&b'=') {
+            return None;
+        }
+        j += 1;
+        while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
+            j += 1;
+        }
+        let q = *bytes.get(j)?;
+        if q != b'"' && q != b'\'' {
+            return None;
+        }
+        let len = line[j + 1..].bytes().position(|c| c == q)?;
+        Some((j + 1, j + 1 + len))
+    };
     let mut out = Vec::new();
     let mut quote: Option<u8> = None;
     let mut i = 0;
@@ -475,32 +514,42 @@ fn path_values(line: &str) -> Vec<(usize, usize)> {
             i += 1;
             continue;
         }
-        if b == b'"' || b == b'\'' {
-            quote = Some(b);
+        if !line.is_char_boundary(i) {
             i += 1;
             continue;
         }
-        if line[i..].starts_with("path")
-            && (i == 0 || matches!(bytes[i - 1], b'{' | b',' | b' ' | b'\t'))
-        {
-            let mut j = i + 4;
-            while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
-                j += 1;
+        let mut matched = None;
+        for key in PATH_KEYS {
+            if !key_start(i) {
+                break;
             }
-            if j < bytes.len() && bytes[j] == b'=' {
-                j += 1;
-                while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
-                    j += 1;
-                }
-                if j < bytes.len() && (bytes[j] == b'"' || bytes[j] == b'\'') {
-                    let q = bytes[j];
-                    if let Some(len) = line[j + 1..].bytes().position(|c| c == q) {
-                        out.push((j + 1, j + 1 + len));
-                        i = j + 2 + len;
-                        continue;
-                    }
+            let bare = line[i..].starts_with(key)
+                && !line[i + key.len()..]
+                    .starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '-');
+            if bare && let Some(range) = value_at(i + key.len()) {
+                matched = Some((*key, range));
+                break;
+            }
+            for q in ['"', '\''] {
+                let quoted = format!("{q}{key}{q}");
+                if line[i..].starts_with(&quoted)
+                    && let Some(range) = value_at(i + quoted.len())
+                {
+                    matched = Some((*key, range));
+                    break;
                 }
             }
+            if matched.is_some() {
+                break;
+            }
+        }
+        if let Some((key, (start, end))) = matched {
+            out.push((key, start, end));
+            i = end + 1;
+            continue;
+        }
+        if b == b'"' || b == b'\'' {
+            quote = Some(b);
         }
         i += 1;
     }
@@ -509,8 +558,11 @@ fn path_values(line: &str) -> Vec<(usize, usize)> {
 
 /// The engine crate a path dependency points at (`…/crates/orbit_x`).
 pub fn engine_crate_of(path: &str) -> Option<String> {
+    if path.contains('\\') {
+        return None;
+    }
     let parts: Vec<&str> = path
-        .split(['/', '\\'])
+        .split('/')
         .filter(|p| !p.is_empty() && *p != ".")
         .collect();
     let [.., parent, last] = parts.as_slice() else {
@@ -524,63 +576,270 @@ pub fn engine_crate_of(path: &str) -> Option<String> {
     .then(|| (*last).to_owned())
 }
 
-/// The `Cargo.toml` as packaged: a `[lints]` table that only says
-/// `workspace = true` removed; any other workspace inheritance and any path
-/// dependency that is not an engine crate refused. Returns the text and the
-/// engine crates depended on.
-pub fn normalize_cargo_toml(text: &str) -> Result<(String, Vec<String>), PackageError> {
-    // Split into tables (header line + body).
-    let mut tables: Vec<(String, Vec<&str>)> = vec![(String::new(), Vec::new())];
-    for line in text.lines() {
-        if let Some(s) = section_of(strip_comment(line)) {
-            tables.push((s, vec![line]));
-        } else if let Some(last) = tables.last_mut() {
-            last.1.push(line);
-        }
-    }
-    let mut out = String::new();
-    let mut engine = BTreeSet::new();
-    for (section, lines) in &tables {
-        let keys: Vec<&str> = lines
-            .iter()
-            .skip(usize::from(!section.is_empty()))
-            .map(|l| strip_comment(l).trim())
-            .filter(|l| !l.is_empty())
-            .collect();
-        if section == "lints" && keys.iter().all(|k| k.replace(' ', "") == "workspace=true") {
-            continue;
-        }
-        for line in lines {
-            let code = strip_comment(line);
-            let compact = code.replace([' ', '\t'], "");
-            if compact.contains(".workspace=true") || compact.contains("workspace=true") {
-                return Err(invalid(format!(
-                    "Cargo.toml inherits from a workspace (`{}`): write the value out, the \
-                     package is built outside your workspace",
-                    line.trim()
-                )));
-            }
-            if is_dependency_section(section) {
-                for (start, end) in path_values(code) {
-                    let path = &code[start..end];
-                    match engine_crate_of(path) {
-                        Some(name) => {
-                            engine.insert(name);
-                        }
-                        None => {
-                            return Err(invalid(format!(
-                                "path dependency `{path}` is not an engine crate (`…/crates/orbit_*`) \
-                                 and would not be in the package"
-                            )));
-                        }
-                    }
+/// A file path inside the crate (`[lib] path`, `build = "…"`): relative,
+/// without `..`.
+fn inside_crate(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && !path.contains(':')
+        && path.split('/').all(|p| p != "..")
+}
+
+/// A path value found by [`scan_toml`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PathRef {
+    /// Physical line (`split_inclusive('\n')` index).
+    line: usize,
+    start: usize,
+    end: usize,
+    /// The engine crate it points at (dependency paths only).
+    engine: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TomlScan {
+    /// Table headers: (line, table name).
+    tables: Vec<(usize, String)>,
+    paths: Vec<PathRef>,
+}
+
+/// Bracket depth change of `code` (strings skipped).
+fn depth_change(code: &str) -> i64 {
+    let mut depth = 0i64;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for c in code.chars() {
+        match quote {
+            Some(q) => {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' && q == '"' {
+                    escaped = true;
+                } else if c == q {
+                    quote = None;
                 }
             }
-            out.push_str(line);
-            out.push('\n');
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '[' | '{' => depth += 1,
+                ']' | '}' => depth -= 1,
+                _ => {}
+            },
         }
     }
+    depth
+}
+
+/// The key of a `key = value` line (text before the first `=` outside a
+/// string), quotes and blanks removed.
+fn line_key(code: &str) -> Option<String> {
+    let mut quote: Option<char> = None;
+    for (i, c) in code.char_indices() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '=' => {
+                    return Some(code[..i].replace(['"', '\'', ' ', '\t'], ""));
+                }
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
+/// Scans a `Cargo.toml` with the line reader of this module and refuses
+/// every form it cannot read for sure, so that a path dependency is never
+/// missed nor rewritten wrongly:
+///
+/// * multi-line strings (`"""`, `'''`), unbalanced brackets;
+/// * `[patch]`, `[replace]` and `[workspace]` tables, `package.workspace`,
+///   and any `workspace = true` inheritance (a `[lints]` table holding only
+///   that is dropped by [`normalize_cargo_toml`] before);
+/// * escapes (`\`) in a path, a dependency path that is not an engine crate
+///   (`…/crates/orbit_*`), a crate file path (`[lib] path`, `build`) that
+///   leaves the crate.
+///
+/// Multi-line inline tables and arrays are followed: their lines belong to
+/// the key that opened them, so `foo = {\n path = "…" }` under
+/// `[dependencies]` is a dependency path.
+fn scan_toml(text: &str) -> Result<TomlScan, PackageError> {
+    let mut scan = TomlScan::default();
+    let mut section = String::new();
+    let mut depth = 0i64;
+    let mut owner = String::new();
+    for (n, line) in text.split_inclusive('\n').enumerate() {
+        let code = strip_comment(line);
+        let trimmed = code.trim();
+        let refuse = |why: &str| {
+            invalid(format!(
+                "Cargo.toml line {}: {why} (`{}`)",
+                n + 1,
+                line.trim()
+            ))
+        };
+        if code.contains("\"\"\"") || code.contains("'''") {
+            return Err(refuse(
+                "multi-line strings are not supported, write the value on one line",
+            ));
+        }
+        let context = if depth > 0 {
+            owner.clone()
+        } else if trimmed.starts_with('[') {
+            if depth_change(trimmed) != 0 {
+                return Err(refuse("unbalanced brackets"));
+            }
+            section = trimmed
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .split('.')
+                .map(|p| p.trim())
+                .collect::<Vec<_>>()
+                .join(".");
+            let first = section
+                .split('.')
+                .next()
+                .unwrap_or_default()
+                .trim_matches(['"', '\''])
+                .to_owned();
+            if matches!(first.as_str(), "patch" | "replace" | "workspace") {
+                return Err(refuse(&format!(
+                    "a `[{first}]` table has no effect in a dependency and is not packaged"
+                )));
+            }
+            scan.tables.push((n, section.clone()));
+            continue;
+        } else if let Some(key) = line_key(code) {
+            if section.is_empty() {
+                key
+            } else {
+                format!("{section}.{key}")
+            }
+        } else {
+            section.clone()
+        };
+        let compact = code.replace([' ', '\t', '"', '\''], "");
+        if compact.contains("workspace=true") {
+            return Err(refuse(
+                "inherits from a workspace: write the value out, the package is built outside your workspace",
+            ));
+        }
+        let ctx_key = context.trim_matches(['"', '\'']).to_owned();
+        if ctx_key == "package.workspace"
+            || (section == "package" && line_key(code).as_deref() == Some("workspace"))
+        {
+            return Err(refuse("`package.workspace` points outside the package"));
+        }
+        for (key, start, end) in path_values(code) {
+            let value = &code[start..end];
+            if value.contains('\\') {
+                return Err(refuse("escapes in a path are not supported"));
+            }
+            let dependency = key == "path" && is_dependency_section(&context);
+            let engine = if dependency {
+                match engine_crate_of(value) {
+                    Some(name) => Some(name),
+                    None => {
+                        return Err(refuse(&format!(
+                            "path dependency `{value}` is not an engine crate (`…/crates/orbit_*`) \
+                             and would not be in the package"
+                        )));
+                    }
+                }
+            } else {
+                if !inside_crate(value) {
+                    return Err(refuse(&format!("`{value}` points outside the crate")));
+                }
+                None
+            };
+            scan.paths.push(PathRef {
+                line: n,
+                start,
+                end,
+                engine,
+            });
+        }
+        let before = depth;
+        let value_part = match code.find('=') {
+            Some(i) if before == 0 => &code[i + 1..],
+            _ => code,
+        };
+        depth += depth_change(value_part);
+        if depth < 0 {
+            return Err(refuse("unbalanced brackets"));
+        }
+        if before == 0 && depth > 0 {
+            owner = context;
+        }
+    }
+    if depth != 0 {
+        return Err(invalid(
+            "Cargo.toml: unbalanced brackets at the end of the file",
+        ));
+    }
+    Ok(scan)
+}
+
+/// The `Cargo.toml` as packaged: a `[lints]` table that only says
+/// `workspace = true` removed, then [`scan_toml`]'s checks. Returns the text
+/// and the engine crates depended on.
+pub fn normalize_cargo_toml(text: &str) -> Result<(String, Vec<String>), PackageError> {
+    // Drop a `[lints]` table that only inherits the workspace lints.
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let mut keep = vec![true; lines.len()];
+    let mut i = 0;
+    while i < lines.len() {
+        if strip_comment(lines[i]).trim() == "[lints]" {
+            let end = (i + 1..lines.len())
+                .find(|&j| strip_comment(lines[j]).trim().starts_with('['))
+                .unwrap_or(lines.len());
+            let only_workspace = (i + 1..end)
+                .map(|j| strip_comment(lines[j]).replace([' ', '\t', '\r', '\n'], ""))
+                .filter(|l| !l.is_empty())
+                .all(|l| l == "workspace=true");
+            if only_workspace {
+                keep[i..end].iter_mut().for_each(|k| *k = false);
+            }
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    let mut out = String::with_capacity(text.len());
+    for (line, keep) in lines.iter().zip(keep) {
+        if keep {
+            out.push_str(line);
+            if !line.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+    }
+    let scan = scan_toml(&out)?;
+    let engine: BTreeSet<String> = scan.paths.into_iter().filter_map(|p| p.engine).collect();
     Ok((out, engine.into_iter().collect()))
+}
+
+/// The installer's check of a packaged `Cargo.toml`: [`scan_toml`]'s rules
+/// (a package made by hand could hold anything) and the facts of the
+/// manifest (crate name, version, plugin ids are what the exporter will
+/// read). Returns the engine crates it depends on.
+pub fn check_packaged_cargo_toml(
+    text: &str,
+    m: &PackageManifest,
+) -> Result<Vec<String>, PackageError> {
+    let scan = scan_toml(text)?;
+    let info = read_cargo_toml(text)?;
+    if info.name != m.crate_name || info.version != m.version || info.plugin_ids != m.plugin_ids {
+        return Err(invalid(format!(
+            "Cargo.toml says {} {} providing {:?}, the manifest {} {} providing {:?}",
+            info.name, info.version, info.plugin_ids, m.crate_name, m.version, m.plugin_ids
+        )));
+    }
+    let engine: BTreeSet<String> = scan.paths.into_iter().filter_map(|p| p.engine).collect();
+    Ok(engine.into_iter().collect())
 }
 
 fn toml_path(p: &Path) -> String {
@@ -590,28 +849,25 @@ fn toml_path(p: &Path) -> String {
 }
 
 /// Points the engine path dependencies of a `Cargo.toml` at `engine_root`
-/// (the folder holding `crates/orbit_*`). Other lines are unchanged.
-pub fn rewrite_engine_paths(text: &str, engine_root: &Path) -> String {
+/// (the folder holding `crates/orbit_*`). Other bytes are unchanged; a file
+/// [`scan_toml`] refuses is refused here too, never half rewritten.
+pub fn rewrite_engine_paths(text: &str, engine_root: &Path) -> Result<String, PackageError> {
+    let scan = scan_toml(text)?;
     let crates = engine_root.join("crates");
-    let mut out = String::with_capacity(text.len() + 64);
-    let mut section = String::new();
-    for line in text.split_inclusive('\n') {
-        let code = strip_comment(line);
-        if let Some(s) = section_of(code) {
-            section = s;
-        }
-        let mut rewritten = line.to_owned();
-        if is_dependency_section(&section) {
-            // Right to left, so the earlier ranges stay valid.
-            for (start, end) in path_values(code).into_iter().rev() {
-                if let Some(name) = engine_crate_of(&code[start..end]) {
-                    rewritten.replace_range(start..end, &toml_path(&crates.join(name)));
-                }
-            }
-        }
-        out.push_str(&rewritten);
+    let engine_dir = toml_path(&crates);
+    if engine_dir.contains(['"', '\'', '\\']) {
+        return Err(invalid(format!(
+            "the engine folder `{engine_dir}` cannot be written in Cargo.toml"
+        )));
     }
-    out
+    let mut lines: Vec<String> = text.split_inclusive('\n').map(str::to_owned).collect();
+    // Right to left within a line, so the earlier ranges stay valid.
+    for p in scan.paths.iter().rev() {
+        if let Some(name) = &p.engine {
+            lines[p.line].replace_range(p.start..p.end, &format!("{engine_dir}/{name}"));
+        }
+    }
+    Ok(lines.concat())
 }
 
 // ------------------------------------------------------------------ packing
@@ -849,7 +1105,7 @@ workspace = true
     #[test]
     fn engine_paths_are_rewritten() {
         let (text, _) = normalize_cargo_toml(CARGO).unwrap();
-        let out = rewrite_engine_paths(&text, Path::new(r"E:\Engine"));
+        let out = rewrite_engine_paths(&text, Path::new(r"E:\Engine")).unwrap();
         assert!(
             out.contains("orbit_plugin_api = { path = \"E:/Engine/crates/orbit_plugin_api\" }"),
             "{out}"
@@ -1126,5 +1382,123 @@ workspace = true
                 .to_string()
                 .contains("format")
         );
+    }
+
+    /// Every TOML form the line reader cannot read for sure is refused at
+    /// packing and at install: never a path dependency missed, never a
+    /// wrong rewrite.
+    #[test]
+    fn cargo_forms_the_reader_cannot_follow_are_refused() {
+        let head = "[package]\nname = \"x\"\nversion = \"1.0.0\"\n";
+        let refused = [
+            // Multi-line strings (a `path = "..."` inside would be missed or invented).
+            "[package]\ndescription = \"\"\"\nline\n\"\"\"\n",
+            "[package]\ndescription = '''\npath = \"../x\"\n'''\n",
+            // Quoted, dotted and root-level dotted keys to a non-engine path.
+            "[dependencies]\nhelper = { \"path\" = \"../helper\" }\n",
+            "[dependencies]\nhelper = { 'path' = '../helper' }\n",
+            "[dependencies]\nhelper.path = \"../helper\"\n",
+            "dependencies.helper.path = \"../helper\"\n",
+            "dependencies.helper = { path = \"../helper\" }\n",
+            // Multi-line inline table (TOML 1.1) to a non-engine path.
+            "[dependencies]\nhelper = {\n  version = \"1\",\n  path = \"../helper\",\n}\n",
+            // Target-specific dependencies.
+            "[target.'cfg(windows)'.dependencies]\nhelper = { path = \"../helper\" }\n",
+            "[target.\"cfg(target_os = \\\"linux\\\")\".dev-dependencies.helper]\npath = \"../helper\"\n",
+            // Tables without effect in a dependency, workspace pointers.
+            "[patch.crates-io]\nserde = { path = \"../serde\" }\n",
+            "[replace]\n\"serde:1.0.0\" = { path = \"../serde\" }\n",
+            "[workspace]\nmembers = []\n",
+            "[workspace.dependencies]\nx = \"1\"\n",
+            "[package]\nworkspace = \"../..\"\n",
+            "[dependencies]\nserde = { \"workspace\" = true }\n",
+            // Escapes and paths leaving the crate.
+            "[dependencies]\norbit_core = { path = \"..\\\\..\\\\crates\\\\orbit_core\" }\n",
+            "[dependencies]\norbit_core = { path = \"\\u002e\\u002e/crates/orbit_core\" }\n",
+            "[lib]\npath = \"../other/lib.rs\"\n",
+            "[[bin]]\nname = \"b\"\npath = \"C:/elsewhere/main.rs\"\n",
+            "[package]\nbuild = \"../build.rs\"\n",
+            // Unbalanced brackets.
+            "[dependencies]\nx = { version = \"1\"\n",
+            "[dependencies\nx = \"1\"\n",
+        ];
+        for body in refused {
+            let text = format!("{head}{body}");
+            assert!(
+                normalize_cargo_toml(&text).is_err(),
+                "accepted at packing:\n{text}"
+            );
+            assert!(
+                rewrite_engine_paths(&text, Path::new("E:/Engine")).is_err(),
+                "rewritten:\n{text}"
+            );
+        }
+        // A multi-line `plugins` list: refused, the exporter could not read it.
+        let multi = format!("{head}[package.metadata.orbit]\nplugins = [\n  \"a.b\",\n]\n");
+        assert!(
+            read_cargo_toml(&multi)
+                .unwrap_err()
+                .to_string()
+                .contains("one line")
+        );
+
+        // What is followed and rewritten right.
+        let ok = format!(
+            "{head}\
+             [features]\nall = [\n  \"a\",\n  [\"nested\"],\n]\n\
+             [dependencies]\n\
+             orbit_core = {{\n  version = \"0.4\",\n  path = \"../../crates/orbit_core\",\n}}\n\
+             orbit_vm.path = \"../../crates/orbit_vm\"\n\
+             \"orbit_plugin_api\" = {{ 'path' = '../../crates/orbit_plugin_api' }}\n\
+             [target.'cfg(windows)'.dependencies.orbit_anim]\npath = \"../../crates/orbit_anim\"  # comment\n\
+             [lib]\npath = \"src/lib.rs\"\n\
+             [package.metadata.orbit]\nplugins = [\"a.b\"]   # one line\n"
+        );
+        let (normalized, engine) = normalize_cargo_toml(&ok).unwrap();
+        assert_eq!(normalized, ok);
+        assert_eq!(
+            engine,
+            ["orbit_anim", "orbit_core", "orbit_plugin_api", "orbit_vm"]
+        );
+        let out = rewrite_engine_paths(&ok, Path::new("E:/Engine")).unwrap();
+        for name in ["orbit_anim", "orbit_core", "orbit_plugin_api", "orbit_vm"] {
+            assert!(
+                out.contains(&format!("E:/Engine/crates/{name}")),
+                "{name}:\n{out}"
+            );
+        }
+        assert!(!out.contains("../../crates"), "{out}");
+        assert!(out.contains("path = \"src/lib.rs\""));
+        assert_eq!(out.lines().count(), ok.lines().count());
+        assert_eq!(read_cargo_toml(&ok).unwrap().plugin_ids, ["a.b"]);
+        // Non-ASCII text outside strings does not panic the reader.
+        assert!(
+            normalize_cargo_toml("[package]\nname = \"x\"\nversion = \"1.0.0\"\nclé = \"é\"\n")
+                .is_ok()
+        );
+        // CRLF files.
+        let crlf = ok.replace('\n', "\r\n");
+        let out = rewrite_engine_paths(&crlf, Path::new("E:/Engine")).unwrap();
+        assert!(out.contains("E:/Engine/crates/orbit_vm\"\r\n"), "{out}");
+    }
+
+    #[test]
+    fn the_installer_checks_the_packaged_cargo_toml() {
+        let dir = crate_dir("installer_cargo");
+        let packed = pack(&dir, &options()).unwrap();
+        let m = &packed.manifest;
+        let (cargo, _) = normalize_cargo_toml(CARGO).unwrap();
+        assert_eq!(
+            check_packaged_cargo_toml(&cargo, m).unwrap(),
+            ["orbit_core", "orbit_plugin_api", "orbit_vm"]
+        );
+        // The manifest and Cargo.toml disagree (the exporter reads Cargo.toml).
+        let other_ids = cargo.replace("\"acme.extra\"", "\"acme.hidden\"");
+        assert!(check_packaged_cargo_toml(&other_ids, m).is_err());
+        let other_version = cargo.replace("version = \"1.2.0\"", "version = \"9.0.0\"");
+        assert!(check_packaged_cargo_toml(&other_version, m).is_err());
+        // A hand-made package with a form the packer refuses.
+        let sneaky = format!("{cargo}[dependencies.helper]\n\"path\" = \"../helper\"\n");
+        assert!(check_packaged_cargo_toml(&sneaky, m).is_err());
     }
 }

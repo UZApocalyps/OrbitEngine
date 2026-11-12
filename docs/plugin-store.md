@@ -288,6 +288,18 @@ case; no path that is both a file and a folder; the files are exactly those of
 the manifest name are reserved. The package SHA-256 is what the signature covers,
 so a valid signature vouches for the manifest and every file.
 
+`Cargo.toml` is read by a small line reader (no TOML library in the editor). It
+follows multi-line arrays and inline tables, quoted (`"path"`) and dotted
+(`foo.path`, `dependencies.foo.path`) keys and `[target.'cfg(…)'.dependencies]`,
+and **refuses**, at packing and again at install, every form it cannot read for
+sure: multi-line strings, unbalanced brackets, `[patch]` / `[replace]` /
+`[workspace]` tables, `package.workspace`, `workspace = true`, escapes in a path,
+a dependency path that is not `…/crates/orbit_*`, a crate file path (`[lib] path`,
+`build`) leaving the crate, and a multi-line `[package.metadata.orbit] plugins`.
+At install the crate name, version and plugin ids of `Cargo.toml` must equal the
+manifest's (the exporter reads `Cargo.toml`), and every engine crate it uses must
+exist in the engine sources.
+
 ### 7.3 Signatures and trust
 
 Same trust levels as editor plugins (§3: Official, Trusted, Unsigned with the red
