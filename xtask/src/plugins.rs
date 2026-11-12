@@ -157,13 +157,15 @@ fn shared_crates() -> Result<BTreeSet<String>> {
             under = None;
         }
         // `name vX.Y.Z (path)` for workspace crates, `name vX.Y.Z (proc-macro)` for proc macros.
-        let name = rest.split(' ').next().unwrap_or_default();
+        // Same form as `shared`: `name vX.Y.Z`.
+        let mut words = rest.split(' ');
+        let name = format!("{} {}", words.next().unwrap_or_default(), words.next().unwrap_or_default());
         let workspace = rest.contains(" (") && !rest.contains("(proc-macro)") && !rest.contains("(*)");
-        if under.is_none() && workspace && shared.contains(name) {
+        if under.is_none() && workspace && shared.contains(&name) {
             under = Some(depth);
         }
         if under.is_some() {
-            extra.insert(name.to_owned());
+            extra.insert(name);
         }
     }
     shared.extend(extra);
