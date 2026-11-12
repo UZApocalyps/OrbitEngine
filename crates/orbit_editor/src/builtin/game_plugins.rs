@@ -446,7 +446,7 @@ fn toolchain_line(ui: &mut Ui, ctx: &EditorContext<'_>, g: &GameUi) {
                 ui.label(
                     RichText::new(ctx.tf(
                         "gplug.toolchain_ok",
-                        &[("cargo", cargo), ("engine", &engine.display())],
+                        &[("cargo", cargo), ("engine", &shown_path(engine))],
                     ))
                     .small()
                     .color(success()),
@@ -1290,7 +1290,7 @@ fn game_card(
                     warning(ui),
                     RichText::new(ctx.tf(
                         "gplug.engine_moved",
-                        &[("path", path), ("engine", &engine.display())],
+                        &[("path", path), ("engine", &shown_path(engine))],
                     ))
                     .small(),
                 );
@@ -1369,6 +1369,13 @@ fn game_card(
             }
         });
     });
+}
+
+/// A path for the user: without the verbatim prefix `canonicalize` adds on
+/// Windows.
+fn shown_path(p: &Path) -> String {
+    let s = p.display().to_string();
+    s.strip_prefix(r"\\?\").unwrap_or(&s).to_owned()
 }
 
 fn same_path(a: &Path, b: &Path) -> bool {
