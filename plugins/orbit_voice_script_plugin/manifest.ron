@@ -1,0 +1,11 @@
+// Package manifest of the voice script. `cargo xtask plugins` sets `library`
+// to the platform's file name and `min_editor` / `max_editor` to the editor
+// version it was built against (a native plugin is tied to one editor build).
+(
+    id: "orbit.voice_script",
+    name: "Voice script",
+    version: "0.4.0",
+    description: "Read-only voice-acting script: the lines to record per character, in scene order, with the expected voice file and its status; CSV and actor-friendly text export.",
+    author: "OrbitEngine contributors",
+    library: "orbit_voice_script_plugin.dll",
+)
