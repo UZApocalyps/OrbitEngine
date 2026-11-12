@@ -1,0 +1,11 @@
+// Package manifest of Story Analysis. `cargo xtask plugins` sets `library` to
+// the platform's file name and `min_editor` / `max_editor` to the editor
+// version it was built against (a native plugin is tied to one editor build).
+(
+    id: "orbit.story_lint",
+    name: "Story Analysis",
+    version: "0.4.0",
+    description: "Read-only analysis panel: unused or never-written variables, unused characters, and a Mermaid export of the scene graph.",
+    author: "OrbitEngine contributors",
+    library: "orbit_story_lint_plugin.dll",
+)
