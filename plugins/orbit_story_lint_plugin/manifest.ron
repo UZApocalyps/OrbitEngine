@@ -4,7 +4,7 @@
 (
     id: "orbit.story_lint",
     name: "Story Analysis",
-    version: "0.5.1",
+    version: "0.5.2",
     description: "Read-only analysis panel: unused or never-written variables, unused characters, and a Mermaid export of the scene graph.",
     author: "OrbitEngine contributors",
     library: "orbit_story_lint_plugin.dll",

@@ -211,7 +211,10 @@ jobs:
   release:
     name: installers ${{ matrix.os }}
     needs: templates
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    # Windows only for now: the Linux installers are on hold. `!cancelled()` lets
+    # the Windows installers be built even when the Linux leg of `templates`
+    # fails (they then ship without the web and Linux player templates).
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -219,8 +222,6 @@ jobs:
         include:
           - os: windows-latest
             formats: wix,nsis
-          - os: ubuntu-latest
-            formats: appimage,deb
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0

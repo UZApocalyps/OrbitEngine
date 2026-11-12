@@ -87,7 +87,7 @@ The template is `examples/editor_plugins/hello`: a window, a **Tools** menu acti
 crate-type = ["cdylib"]
 
 [dependencies]
-orbit_editor_sdk = { git = "https://.../OrbitEngine", tag = "v0.5.1" }
+orbit_editor_sdk = { git = "https://.../OrbitEngine", tag = "v0.5.2" }
 
 [lints.rust]
 unsafe_code = "deny"   # not "forbid": export_plugin! generates exported functions

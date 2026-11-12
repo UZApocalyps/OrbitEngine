@@ -4,7 +4,7 @@
 (
     id: "orbit.renpy_import",
     name: "Ren'Py import",
-    version: "0.5.1",
+    version: "0.5.2",
     description: "File > Import from Ren'Py: converts a Ren'Py game into a new project and shows the import report.",
     author: "OrbitEngine contributors",
     library: "orbit_renpy_plugin.dll",

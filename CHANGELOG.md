@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.1 (2026-11-12)
+## 0.5.2 (2026-11-12)
 
 Version centrée sur le store de plugins : l'éditeur découvre, vérifie et installe des plugins depuis des catalogues signés, et les fonctions facultatives (import Ren'Py, serveur MCP, Studio IA, outils d'analyse) deviennent des plugins officiels livrés avec lui ou installables depuis le store.
 

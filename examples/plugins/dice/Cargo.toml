@@ -1,7 +1,7 @@
 [package]
 name = "orbit-dice"
 description = "Example OrbitEngine plugin (M8-04/05): a `roll` custom node that rolls dice into a story variable, and a `reroll` custom UI action."
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false

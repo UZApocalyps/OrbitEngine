@@ -4,7 +4,7 @@
 (
     id: "orbit.story_stats",
     name: "Story Statistics",
-    version: "0.5.1",
+    version: "0.5.2",
     description: "Read-only statistics panel: scenes, steps, words and lines per scene and per character, choices, estimated reading time, voice coverage, CSV export.",
     author: "OrbitEngine contributors",
     library: "orbit_story_stats_plugin.dll",
