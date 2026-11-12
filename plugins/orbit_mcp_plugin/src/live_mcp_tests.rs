@@ -415,13 +415,17 @@ fn an_ai_edit_over_http_is_live_unsaved_undoable_and_journaled() {
     let dir = TempDir::new("edit");
     let (mut core, _ctx) = editor_with_demo(&dir);
     core.state.ai.port = 0;
+    // The 3D tools are listed only with the experimental switch on. `tools/list`
+    // is answered from the list published at start-up (never waiting for the
+    // editor thread), so the switch must be on before the server starts: set
+    // afterwards, the republish on the next pump races with the client.
+    orbit_core::experimental::set_preference_3d(true);
     live::start(&mut core).unwrap();
     let (port, token) = (core.mcp.port().unwrap(), core.state.ai.token.clone());
     let before = dialogue_texts(&core);
     let revision = core.session.as_ref().unwrap().project.revision();
 
-    // initialize + tools/list (the 3D tools are listed only with the switch on)
-    orbit_core::experimental::set_preference_3d(true);
+    // initialize + tools/list
     let tools = with_editor(&mut core, || {
         let mut client = Client::new(port, &token);
         let init = client.initialize();
