@@ -32,6 +32,9 @@ orbit_dsl = { path = "crates/orbit_dsl" }
 orbit_renpy = { path = "crates/orbit_renpy" }
 orbit_profile = { path = "crates/orbit_profile" }
 orbit_ai_studio = { path = "crates/orbit_ai_studio" }
+orbit_sign = { path = "crates/orbit_sign" }
+orbit_http = { path = "crates/orbit_http" }
+orbit_plugin_store = { path = "crates/orbit_plugin_store" }
 
 # --- story/vm ---
 orbit_vm = { path = "crates/orbit_vm" }

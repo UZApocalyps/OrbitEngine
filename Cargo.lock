@@ -3071,6 +3071,7 @@ dependencies = [
  "image",
  "orbit_core",
  "orbit_dsl",
+ "orbit_http",
  "orbit_mcp",
  "orbit_plugin_api",
  "orbit_project",
@@ -3195,6 +3196,7 @@ dependencies = [
  "orbit_platform",
  "orbit_plugin_api",
  "orbit_plugin_host",
+ "orbit_plugin_store",
  "orbit_profile",
  "orbit_project",
  "orbit_render2d",
@@ -3279,6 +3281,13 @@ name = "orbit_hello_plugin"
 version = "0.1.0"
 dependencies = [
  "orbit_editor_sdk",
+]
+
+[[package]]
+name = "orbit_http"
+version = "0.4.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -3416,6 +3425,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit_plugin_store"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_api",
+ "orbit_http",
+ "orbit_plugin_host",
+ "orbit_sign",
+ "ron",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "orbit_profile"
 version = "0.4.0"
 
@@ -3537,6 +3559,10 @@ dependencies = [
  "orbit_vm",
  "rhai",
 ]
+
+[[package]]
+name = "orbit_sign"
+version = "0.4.0"
 
 [[package]]
 name = "orbit_text"
@@ -6000,9 +6026,12 @@ name = "xtask"
 version = "0.4.0"
 dependencies = [
  "brotli",
+ "getrandom 0.3.4",
  "hound",
  "image",
  "orbit_export",
+ "orbit_plugin_store",
+ "orbit_sign",
  "ron",
  "serde",
  "serde_json",

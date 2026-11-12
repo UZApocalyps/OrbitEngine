@@ -39,6 +39,8 @@ orbit_mcp.workspace = true
 # Native editor plugins (DLL): verification, install, loading. The editor
 # ships without plugins; AI Studio is one (plugins/orbit_ai_studio_plugin).
 orbit_plugin_host.workspace = true
+# The plugin store (catalogs, sources, signed downloads); see docs/plugin-store.md.
+orbit_plugin_store.workspace = true
 orbit_ui.workspace = true
 orbit_render3d.workspace = true
 orbit_scene = { path = "../orbit_scene" }

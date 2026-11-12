@@ -24,12 +24,17 @@ use crate::{Result, cargo, run, workspace_root};
 
 const HELP: &str = "\
 cargo xtask plugins [--debug] [--examples] [--only <package>] [--out <dir>] [--no-check]
+                    [--sign <keyfile> | --sign-env <VAR>]
 
 Builds the official native editor plugins (plugins/*) in release (or --debug), with the
 toolchain and profile of the editor, and writes <target>/plugins/<id>-<version>-<os>-<arch>.orbitplugin.
 --examples also builds examples/editor_plugins/*; --only builds one package; --no-check skips the
 comparison of the features resolved for the crates shared with the editor. Build the editor with
 the same profile: a plugin only loads in it.
+When the editor of that profile is built, <package>.orbitplugin.json (sha256, size, editor build
+id: what `cargo xtask plugin-index` puts in a catalog) is written next to each package; --sign
+signs it with the Ed25519 key of a file (cargo xtask plugin-key gen), --sign-env with the key in an
+environment variable (CI secret ORBIT_PLUGIN_SIGNING_KEY). Signing needs the editor binary.
 ";
 
 /// The package manifest (`manifest.ron`), as the editor reads it.
@@ -188,6 +193,7 @@ pub fn plugins(args: &[String]) -> Result {
     let mut only: Option<String> = None;
     let mut out_dir: Option<PathBuf> = None;
     let mut check = true;
+    let mut key: Option<crate::plugin_store::KeySource> = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -197,12 +203,25 @@ pub fn plugins(args: &[String]) -> Result {
             "--no-check" => check = false,
             "--only" => only = Some(it.next().ok_or("--only needs a package")?.clone()),
             "--out" => out_dir = Some(PathBuf::from(it.next().ok_or("--out needs a folder")?)),
+            "--sign" => {
+                key = Some(crate::plugin_store::KeySource::File(PathBuf::from(
+                    it.next().ok_or("--sign needs a key file")?,
+                )))
+            }
+            "--sign-env" => {
+                key = Some(crate::plugin_store::KeySource::Env(it.next().ok_or("--sign-env needs a variable")?.clone()))
+            }
             "-h" | "--help" => {
                 print!("{HELP}");
                 return Ok(());
             }
             other => return Err(format!("unknown option `{other}`\n\n{HELP}").into()),
         }
+    }
+    // Read the key first: a bad key fails before the long builds.
+    let seed = key.as_ref().map(|k| k.load()).transpose()?;
+    if let Some(seed) = &seed {
+        println!("signing with the key {}", orbit_plugin_store::signing::public_key_hex(seed));
     }
     let meta = metadata()?;
     let target = PathBuf::from(meta["target_directory"].as_str().unwrap_or("target"));
@@ -256,6 +275,15 @@ pub fn plugins(args: &[String]) -> Result {
         .is_file()
         .then(|| editor_json(&editor_exe, &["--plugin-abi".as_ref()]))
         .flatten();
+    if seed.is_some() && editor_abi.is_none() {
+        return Err(format!(
+            "signing needs the editor of this profile to read the plugins' fingerprint: build it first \
+             (cargo build -p orbit_editor{}); {} not found",
+            if release { " --release" } else { "" },
+            editor_exe.display()
+        )
+        .into());
+    }
 
     for c in &crates {
         let mut build = cargo();
@@ -307,12 +335,31 @@ pub fn plugins(args: &[String]) -> Result {
             match probe.as_ref().map(|p| (&p["ok"], &p["info"]["fingerprint"])) {
                 Some((serde_json::Value::Bool(true), fp)) if fp == editor => {
                     println!("  compatible with {}", editor_exe.display());
+                    crate::plugin_store::write_descriptor(
+                        &file,
+                        &manifest.id,
+                        &manifest.name,
+                        &manifest.description,
+                        &manifest.author,
+                        manifest.homepage.clone(),
+                        &manifest.version,
+                        &editor_version,
+                        fp,
+                        seed.as_ref(),
+                    )?;
                 }
                 Some((serde_json::Value::Bool(true), fp)) => {
-                    println!(
-                        "  warning: NOT compatible with {} (rebuild the editor with this profile)\n  plugin: {fp}\n  editor: {editor}",
+                    let text = format!(
+                        "NOT compatible with {} (rebuild the editor with this profile)\n  plugin: {fp}\n  editor: {editor}",
                         editor_exe.display()
                     );
+                    if seed.is_some() {
+                        return Err(format!("{}: {text}; not signed", c.name).into());
+                    }
+                    println!("  warning: {text}");
+                }
+                _ if seed.is_some() => {
+                    return Err(format!("the probe of {} failed: {probe:?}; not signed", lib.display()).into());
                 }
                 _ => println!("  warning: the probe of {} failed: {probe:?}", lib.display()),
             }
