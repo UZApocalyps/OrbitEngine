@@ -1,0 +1,11 @@
+// Package manifest of the translation check. `cargo xtask plugins` sets
+// `library` to the platform's file name and `min_editor` / `max_editor` to the
+// editor version it was built against.
+(
+    id: "orbit.translation_qa",
+    name: "Translation check",
+    version: "0.4.0",
+    description: "Read-only check of the translations: variables and text tags that differ from the source, identical or empty translations, spaces, final punctuation, too long texts, orphaned entries, CSV export.",
+    author: "OrbitEngine contributors",
+    library: "orbit_translation_qa_plugin.dll",
+)
