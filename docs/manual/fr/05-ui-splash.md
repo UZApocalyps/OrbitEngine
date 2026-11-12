@@ -4,11 +4,12 @@ Les menus de votre jeu (menu principal, pause, sauvegarde, chargement, préfére
 
 ## L'éditeur d'interface
 
-Ouvrez le panneau **Interface**. Il comporte quatre onglets :
+Ouvrez le panneau **Interface**. Il comporte cinq onglets :
 
 - **Écrans** : choisissez un écran et modifiez-le. Ajoutez des boutons, des textes, des images et des conteneurs, déplacez-les, et réglez l'action d'un bouton (lancer le jeu, ouvrir un autre écran, quitter...). Un aperçu en direct de la vraie interface du jeu est affiché à côté de l'éditeur.
 - **Thème** : les polices et les **styles** nommés communs à tous les écrans, dans un éditeur de styles visuel.
-- **Boîte de dialogue** : la boîte de texte, le nom du personnage, les choix et le menu rapide affichés pendant le jeu.
+- **Boîte de dialogue** : la boîte de texte, le nom du personnage, les choix et le menu rapide affichés pendant le jeu, et le choix entre la boîte classique et les bulles de bande dessinée.
+- **Notifications** : où et comment apparaissent les notifications du jeu.
 - **Splashes** : les écrans affichés au démarrage du jeu.
 
 Le modèle **Démarrage visual novel** contient déjà un jeu complet d'écrans à adapter. Les modifications sont enregistrées dans le dossier `ui/` ; annuler et rétablir fonctionnent comme d'habitude. Le panneau Interface liste les problèmes (par exemple un bouton qui pointe vers un écran inexistant).
@@ -42,6 +43,16 @@ L'onglet **Boîte de dialogue** stylise ce que le joueur voit pendant l'histoire
 - **Menu rapide** : placement, style et largeur des boutons, espacement, ou le masquer.
 
 Le bouton **+** à côté d'un champ de style crée un style à partir des couleurs actuelles et le relie ; le crayon l'ouvre dans l'onglet Thème. Un projet créé avant ces options garde exactement la même boîte de dialogue.
+
+### Bulles de bande dessinée
+
+Sous **Affichage des dialogues**, choisissez le **Mode d'affichage** : **Boîte classique** (par défaut) ou **Bulles de BD**. En mode bulles, les répliques des personnages apparaissent dans des bulles placées près du visage de celui qui parle, avec une pointe vers la tête ; le narrateur garde la boîte. L'aperçu de l'onglet montre le résultat.
+
+- Une réplique est une bulle de parole par défaut. Commencez-la par `{bubble=thought}` pour un nuage de pensée ou `{bubble=shout}` pour un cri (une bulle en éclat).
+- Réglages des **Bulles** : couleurs du fond et du contour, épaisseur du contour, arrondi des coins, largeur minimale et maximale, police, affichage et taille du nom du personnage, longueur et largeur de la pointe, écart avec la tête, marge de l'écran, animation d'apparition et contour dans la couleur du personnage.
+- **Narrateur** : garder la boîte classique, ou afficher un **Cartouche** (en haut à gauche) avec sa propre couleur.
+- **Personnage hors écran** : une bulle sans pointe, ou la boîte classique.
+- **Par personnage** : couleurs de la bulle et position de la tête (décalage depuis le haut de l'image du personnage), pour que la pointe vise le bon endroit.
 
 ## Musique dans les menus
 
@@ -103,6 +114,8 @@ Le widget **Répéter** construit une liste à partir d'une variable liste ou ma
 
 Le texte **vide** s'affiche quand la collection n'a aucun élément. Choisissez la **direction** (verticale, horizontale ou une grille avec un nombre de colonnes). Une liste affiche au plus 500 lignes ; une map présente ses entrées par ordre de clé.
 
+**Quand les lignes ne tiennent pas.** Sous **Si les lignes ne tiennent pas**, choisissez le comportement d'une longue liste : **Défilement** (molette, glisser, clavier et manette, avec une barre), **Pages** (boutons Précédent / Suivant et compteur de page) ou **Rien (peut déborder)**. Donnez à la liste une hauteur *Remplir* ou *Fixe* pour qu'elle connaisse la place disponible. Les écrans Galerie, Succès et Rejouer du jeu de base défilent par ligne, ou se divisent en pages, quand leurs cartes ne tiennent plus à l'écran. Un conteneur **Liste défilante** fait de même pour n'importe quel groupe de widgets.
+
 ### Les transitions d'écran
 
 Chaque écran peut avoir une **transition d'ouverture** et une **transition de fermeture** : fondu, glissement vers le haut, le bas, la gauche ou la droite, ou mise à l'échelle, avec une durée et une courbe d'accélération (les courbes nommées de votre projet sont acceptées). Les transitions sont purement visuelles : l'écran est ouvert ou fermé immédiatement, seul son dessin est animé. Le retour en arrière, le chargement d'une sauvegarde et la préférence d'accessibilité **réduire les animations** les coupent.
@@ -147,7 +160,7 @@ Les plateformes (Steam, itch.io, consoles) passent par le trait `AchievementHook
 
 ## Notifications
 
-L'étape **Notify** (groupe Histoire) affiche un court message dans un coin de l'écran, une *notification*, et l'histoire continue aussitôt : elle n'attend jamais la disparition de la notification. Ses champs :
+L'étape **Notification** (groupe Dialogue du menu d'insertion) affiche un court message dans un coin de l'écran, une *notification*, et l'histoire continue aussitôt : elle n'attend jamais la disparition de la notification. Ses champs :
 
 * **Texte** : le balisage est permis, et `[variable]` est remplacé par la valeur de la variable au moment de l'affichage. Le texte se traduit comme tous les autres textes de l'histoire.
 * **Icône** (facultatif) : une image affichée à gauche du texte. **Son** (facultatif) : joué avec la notification. **Durée** (facultatif, en secondes) : le temps d'affichage. **Style** (facultatif) : le nom d'un style de notification du thème ; sans lui, le style `default` est utilisé.

@@ -1,6 +1,6 @@
 # Translations (PO and CSV)
 
-Every text of your story (lines, character names, choices) can be translated into other languages. The language you write in is the **source language**.
+Every text of your story (lines, character names, choices, notifications and the tooltips of clickable zones) can be translated into other languages. The language you write in is the **source language**.
 
 ## Adding a language
 

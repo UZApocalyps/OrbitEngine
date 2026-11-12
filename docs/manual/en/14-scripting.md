@@ -8,14 +8,13 @@ Insert a **Script** step (Logic group of the insert menu). Its inspector shows a
 
 What a script can do:
 
-| Function | Effect |
-|---|---|
-| `get_var("gold")` | reads a variable of the project |
-| `has_var("gold")` | tells whether the variable exists |
-| `set_var("gold", 12)` | changes a variable (applied when the script ends) |
-| `rand_int(1, 6)`, `rand_float()`, `chance(0.3)` | random numbers from the game's own random generator |
-| `branch("win")` | chooses the output `win` (returning the text `"win"` does the same) |
-| `log("text")` | writes a message to the console (also `print`) |
+- `get_var("gold")`: reads a variable of the project
+- `has_var("gold")`: tells whether the variable exists
+- `set_var("gold", 12)`: changes a variable (applied when the script ends)
+- `rand_int(1, 6)`, `rand_float()`, `chance(0.3)`: random numbers from the game's own random generator
+- `branch("win")`: chooses the output `win` (returning the text `"win"` does the same)
+- `log("text")`: writes a message to the console (also `print`)
+- `notify("text")`, `notify("text", "style")`, `notify("text", #{style: "system", icon: "bell", sound: "ping", duration: 4.0})`: shows a notification (toast) in the game, like the Notification step; like `set_var`, it only happens if the script ends without error
 
 Variables are the ones you declare in the **Variables** panel; a script cannot create new ones. Their type is kept: an integer variable stays an integer.
 
@@ -29,7 +28,7 @@ The **Run in sandbox** button runs the script against the initial values of your
 
 ## Rhai conditions
 
-The condition of a **Condition** step or of a choice option can be written in Rhai: tick **Rhai** next to the condition. A Rhai condition only reads variables (`get_var("gold") % 2 == 0 && get_var("round") < 3`); it cannot change them or draw random numbers. If it fails it counts as false. In the text view it is written `rhai "…"`.
+The condition of a **Condition** step or of a choice option can be written in Rhai: tick **Rhai** next to the condition. A Rhai condition only reads variables (`get_var("gold") % 2 == 0 && get_var("round") < 3`); it cannot change them, draw random numbers or show notifications. If it fails it counts as false. In the text view it is written `rhai "…"`.
 
 ## Shared modules
 

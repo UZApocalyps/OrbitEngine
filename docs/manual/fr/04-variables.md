@@ -11,7 +11,7 @@ Ouvrez le panneau **Variables** et ajoutez une variable avec un nom, un type (no
 
 ## Modifier une variable
 
-Ajoutez une étape **Définir une variable** et choisissez une opération dans le menu : définir à une valeur, ajouter, soustraire, multiplier, diviser. L'Inspecteur décrit l'opération en toutes lettres, aucune formule n'est nécessaire.
+Ajoutez une étape **Modifier une variable** et choisissez une opération dans le menu : définir à une valeur, ajouter, soustraire, multiplier, diviser, inverser (oui/non). L'Inspecteur décrit l'opération en toutes lettres, aucune formule n'est nécessaire. Le **Mode expression** permet de saisir une formule à la place (une expression qui peut utiliser d'autres variables) et **Revenir au mode visuel** ramène aux menus. Une zone cliquable peut aussi modifier des variables au clic, avec les mêmes opérations (voir *Écrire l'histoire*).
 
 ## Réagir à une variable
 
@@ -23,3 +23,11 @@ Ajoutez une étape **Définir une variable** et choisissez une opération dans l
 Les écrans personnalisés (voir le chapitre Interface) peuvent afficher une variable dans un texte, par exemple un score ou un nom.
 
 Les variables sont vérifiées pour vous : utiliser un nom qui n'existe pas, ou mélanger texte et nombres, apparaît dans le panneau Problèmes.
+
+## Listes et tables
+
+Une variable peut aussi contenir une **liste** (une collection ordonnée : les objets d'un inventaire) ou une **table** (des entrées avec une clé : l'affinité de chaque personnage). Leur contenu se modifie dans le panneau Variables (**+ élément**, **+ entrée**). Opérations : ajouter à la liste, retirer une valeur, retirer à une position, vider, définir ou retirer l'entrée d'une clé. Dans une condition, on peut tester si elle **contient** une valeur, **a la clé**, ou comparer sa **taille**. Un écran peut en afficher le contenu avec une liste générée (voir le chapitre *Interface*).
+
+## Construire des conditions
+
+Une condition (étape Condition, option de choix, zone cliquable, widget) se construit avec des lignes : une variable, une comparaison (égal, supérieur à, est vrai, contient...) et une valeur. Les lignes sont regroupées par **Toutes ces conditions sont vraies** ou **Au moins une est vraie**, et **Ajouter un groupe** imbrique des groupes. Pour une condition que les lignes ne savent pas exprimer, passez à une expression typée (`affinite > 2 && !vu`) ou cochez **Rhai** (voir *Scripts*).

@@ -4,17 +4,30 @@ OrbitEngine can work with an AI assistant that edits your story alongside you. I
 
 ## In the editor
 
-Open the **Assistant** panel (Tools menu, Ctrl+Shift+A). It shows whether the connection is ready and gives the address to put into your AI application. While the editor is open, the assistant sees your project live: its changes appear immediately and can be undone with Ctrl+Z like your own.
+Open the **Assistant** panel (**Tools > AI Assistant (MCP)...**, Ctrl+Shift+A). It shows whether the connection is ready and gives the address to put into your AI application. While the editor is open, the assistant sees your project live: its changes appear immediately and can be undone with Ctrl+Z like your own.
 
 ## What the assistant can do
 
-It can list and read scenes, create and rename scenes, add and edit lines and choices, place commands (backgrounds, characters, music, jumps, conditions, variable changes), read the problems list, and save. It cannot do anything that the editor refuses: a change that would break the story is rejected with an explanation, and nothing is half applied.
+It cannot do anything that the editor refuses: a change that would break the story is rejected with an explanation, and nothing is half applied. The tools are grouped by subject:
+
+- **Story**: list, read, create, rename and delete scenes; add and edit lines and choices; place any step with `add_command` (backgrounds, characters, music, sounds, transitions, waits, variable changes, conditions, labels, jumps, calls, **notifications**, scripts, screens...); move and delete steps; read the problems list; `validate`; `simulate` (play the story with a list of choices, without a graphics card, to check every branch); save, undo and redo.
+- **Definitions**: characters and expressions, variables, assets and curves.
+- **Point & click**: `add_hotspots` and `edit_hotspots` create and change clickable zones (rectangle, ellipse, polygon, picture zones), their conditions and their click actions.
+- **Interface**: read and write screens, styles, the dialogue box (including the comic bubbles mode), the **notifications** settings and styles, splash screens, save slots and the music of screens.
+- **Achievements**: list, create, edit and delete achievements and their icons.
+- **Voice and translations**: import voice files in bulk (`import_voices`, with a dry run), and read the coverage and stale translations of each language (`translation_status`).
+- **Scripts**: list, read, write and check Rhai scripts and modules, and test a script in the sandbox (see *Scripting*).
+- **Rigs (2D skeleton animation)**: build and animate a rig from start to finish (create from a picture, bones, binding, slots, skins, IK, clips and keys), import PSD / Krita / OpenRaster layers, cut a picture into layers, duplicate and recenter rigs, and sample a pose to check it (see *Characters and animations*).
+- **3D scenes** (experimental): list, read, create and edit scenes, and pose the skeleton of a 3D character. These tools only show when the experimental 3D switch is on.
+- **Editor only** (live mode): play, step and choose in the preview, take a screenshot of it, select a step in the editor, take a picture of a 3D scene from one of its cameras, and `build_project` / `export_game` (marked destructive).
+- **Plugins**: the tools declared by the game plugins and the editor plugins you installed (for example the AI Studio tools).
 
 ## Good to know
 
 - Each request of the assistant is one entry in your undo history, labelled with the tool name.
 - If you edit the same step at the same time, the assistant is told the step changed and tries again instead of overwriting your work.
 - Deleting a scene or a step is marked as destructive, so your AI application can ask you before doing it.
+- Some tools (rigs, 3D scenes) rewrite a file instead of going through the undo history when the file is not open in its editor; when it is open, the change goes through the editor and Ctrl+Z undoes it for rigs.
 
 ## Without the editor
 

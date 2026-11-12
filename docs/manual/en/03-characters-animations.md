@@ -48,6 +48,13 @@ A **rig** brings a drawing to life with bones: breathing, a waving arm, a head t
 
 If you add bones later, the step bar asks you to bind again. Then click **Add to project**: the file is saved as `assets/rigs/<name>.rig.ron` and appears in the Library. The pictures a rig draws must be files of the project.
 
+### Meshes, clips and keys
+
+- **Mesh.** The mesh of a picture is traced from its transparency. Take the **mesh tool** (**M**) to retouch the vertices (Delete removes the selected vertex), or **Rebuild the mesh** from the picture to start again (this replaces manual edits); a smaller *inner spacing* gives more inner vertices, which bend better. **Follow only the slot's bone** removes the weights so that the mesh follows its bone as a whole.
+- **Clips.** In the Rig clips panel, create a clip (name, duration, loop). Select it to edit its tracks and keys in the timeline: snapping to the grid, the playhead and other keys (hold **Alt** to bypass it), Delete removes the selected keys.
+- **Recording keys.** In pose mode, pose a bone and record: with **auto-key** on (the record button), every pose change writes keys at the playhead; or press **K** (*Key pose*) to record all the posed bones at the playhead in one go.
+- **Characters on stage.** A clip plays on a character once an expression uses the rig (see the end of this section).
+
 ### Cutting a picture into layers
 
 A character drawn as one flat picture can be split into layers that sit on different planes and move on their own bones — typically, for an anime face: **front hair strands / eyelids / face / back hair**. Select the part in the slot list (Rig hierarchy) and take the **cut tool** (scissors, in rest mode):
