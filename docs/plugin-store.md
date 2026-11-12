@@ -46,16 +46,16 @@ catalog needs a newer editor".
       "tags": ["ai", "writing"],
       "versions": [
         {
-          "version": "0.4.0",
+          "version": "0.5.0",
           "released": "2026-11-12",
           "changelog": { "en": "First store release.", "fr": "Première version du store." },
           "builds": [
             {
-              "editor_version": "0.4.0",
+              "editor_version": "0.5.0",
               "fingerprint": "3f1c0e9a7b2d4c5e8f9a0b1c2d3e4f50",
               "target": "x86_64-pc-windows-msvc",
               "profile": "release",
-              "url": "https://github.com/UZApocalyps/OrbitEnginePlugins/releases/download/orbit.ai_studio-v0.4.0/orbit.ai_studio-0.4.0-windows-x86_64.orbitplugin",
+              "url": "https://github.com/UZApocalyps/OrbitEnginePlugins/releases/download/orbit.ai_studio-v0.5.0/orbit.ai_studio-0.5.0-windows-x86_64.orbitplugin",
               "sha256": "<64 lowercase hex>",
               "size": 1234567,
               "signature": "<128 lowercase hex, or null>"
@@ -245,13 +245,13 @@ editor plugins of the catalog unusable.
     "tags": ["dice"],
     "versions": [
       {
-        "version": "0.4.0",
+        "version": "0.5.0",
         "released": "2026-11-12",
         "changelog": "First store release.",
         "api_version": 1,
-        "min_engine": "0.4.0",
-        "max_engine": "0.5.0",
-        "url": "https://…/orbit.dice-0.4.0.orbitsrc",
+        "min_engine": "0.5.0",
+        "max_engine": "0.6.0",
+        "url": "https://…/orbit.dice-0.5.0.orbitsrc",
         "sha256": "<64 lowercase hex>",
         "size": 4889,
         "signature": "<128 lowercase hex, or null>"
@@ -280,9 +280,9 @@ A zip holding the crate files at its root and `orbit-game-plugin.json`:
 {
   "format": 1,
   "id": "orbit.dice", "plugin_ids": ["orbit.dice"],
-  "name": "Dice", "version": "0.4.0", "description": "…", "author": "", "license": "…",
+  "name": "Dice", "version": "0.5.0", "description": "…", "author": "", "license": "…",
   "crate_name": "orbit-dice", "dir": "orbit-dice",
-  "api_version": 1, "min_engine": "0.4.0", "max_engine": "0.5.0",
+  "api_version": 1, "min_engine": "0.5.0", "max_engine": "0.6.0",
   "engine_crates": ["orbit_core", "orbit_plugin_api", "orbit_vm"],
   "build_script": false, "proc_macro": false,
   "files": { "Cargo.toml": "<sha256>", "src/lib.rs": "<sha256>" }
@@ -379,7 +379,7 @@ project: missing ones do not block the install, the UI says the export will fail
 ```sh
 cargo xtask game-plugin pack examples/plugins/dice --sign ../OrbitEngine-secrets/plugin_signing_key
 cargo xtask game-plugin index --index ../OrbitEnginePlugins/index.json \
-  --url "https://github.com/UZApocalyps/OrbitEnginePlugins/releases/download/{tag}/{file}" --tag game-v0.4.0
+  --url "https://github.com/UZApocalyps/OrbitEnginePlugins/releases/download/{tag}/{file}" --tag game-v0.5.0
 ```
 
 `pack` reads `Cargo.toml` (`[package]` name, version, description, license;
