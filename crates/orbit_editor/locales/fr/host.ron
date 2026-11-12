@@ -194,6 +194,7 @@
     "problem.scene_ends_game": "La partie se termine ici (la scène n'a ni saut, ni fin, ni retour)",
     "problem.all_options_conditional": "Toutes les options ont une condition : le joueur peut être bloqué",
     "problem.missing_plugin": "Plugin absent : « {plugin} » ; ce nœud est conservé en lecture seule",
+    "problem.hotspots_no_exit": "Aucune zone de cette carte ne permet de la quitter (toutes restent sur place) : le joueur est bloqué ici",
     "problem.timeline_key_after_end": "Une clé se trouve après la fin de la chronologie : elle n'est jamais atteinte",
     "problem.invalid_screen_node": "Nœud d'écran : {message}",
     "problem.invalid_script": "Script : {message}",

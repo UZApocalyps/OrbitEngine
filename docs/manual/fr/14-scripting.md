@@ -8,14 +8,13 @@ Insérez une étape **Script** (groupe Logique du menu d'insertion). Son inspect
 
 Ce qu'un script peut faire :
 
-| Fonction | Effet |
-|---|---|
-| `get_var("or")` | lit une variable du projet |
-| `has_var("or")` | indique si la variable existe |
-| `set_var("or", 12)` | modifie une variable (appliqué à la fin du script) |
-| `rand_int(1, 6)`, `rand_float()`, `chance(0.3)` | nombres aléatoires tirés du générateur du jeu |
-| `branch("gagne")` | choisit la sortie `gagne` (renvoyer le texte `"gagne"` fait de même) |
-| `log("texte")` | écrit un message dans la console (aussi `print`) |
+- `get_var("or")` : lit une variable du projet
+- `has_var("or")` : indique si la variable existe
+- `set_var("or", 12)` : modifie une variable (appliqué à la fin du script)
+- `rand_int(1, 6)`, `rand_float()`, `chance(0.3)` : nombres aléatoires tirés du générateur du jeu
+- `branch("gagne")` : choisit la sortie `gagne` (renvoyer le texte `"gagne"` fait de même)
+- `log("texte")` : écrit un message dans la console (aussi `print`)
+- `notify("texte")`, `notify("texte", "style")`, `notify("texte", #{style: "system", icon: "bell", sound: "ping", duration: 4.0})` : affiche une notification (toast) dans le jeu, comme l'étape Notification ; comme `set_var`, elle n'a lieu que si le script se termine sans erreur
 
 Les variables sont celles déclarées dans le panneau **Variables** ; un script ne peut pas en créer. Leur type est conservé : une variable entière reste entière.
 
@@ -29,7 +28,7 @@ Le bouton **Exécuter dans le bac à sable** lance le script avec les valeurs in
 
 ## Conditions Rhai
 
-La condition d'une étape **Condition** ou d'une option de choix peut s'écrire en Rhai : cochez **Rhai** à côté de la condition. Une condition Rhai ne fait que lire (`get_var("or") % 2 == 0 && get_var("manche") < 3`) ; elle ne peut ni modifier une variable ni tirer au hasard. Si elle échoue, elle vaut faux. Dans la vue texte, elle s'écrit `rhai "…"`.
+La condition d'une étape **Condition** ou d'une option de choix peut s'écrire en Rhai : cochez **Rhai** à côté de la condition. Une condition Rhai ne fait que lire (`get_var("or") % 2 == 0 && get_var("manche") < 3`) ; elle ne peut ni modifier une variable, ni tirer au hasard, ni afficher de notification. Si elle échoue, elle vaut faux. Dans la vue texte, elle s'écrit `rhai "…"`.
 
 ## Modules partagés
 

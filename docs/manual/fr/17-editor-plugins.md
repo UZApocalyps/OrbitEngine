@@ -37,19 +37,17 @@ Un dossier par plugin (`plugins/<id>/`) contient sa bibliothèque, ses textes (`
 
 Un plugin et l'éditeur partagent directement des types Rust (l'interface egui, le projet, le contexte de l'éditeur). Ce n'est sûr que si les deux ont été compilés à partir des mêmes sources, par le même compilateur, avec les mêmes réglages. L'éditeur lit donc une **empreinte** dans chaque plugin avant de le charger, et refuse toute différence :
 
-| Champ | Signification |
-|---|---|
-| éditeur | la version de l'API de l'éditeur (`orbit_editor_api`) |
-| ABI des plugins | la version du contrat des plugins |
-| compilateur | le `rustc` exact (version, date et commit) |
-| egui | la version d'egui |
-| plateforme | la cible (`x86_64-pc-windows-msvc`...) |
-| profil de compilation | `release` ou `debug` |
-| sources de l'API | une empreinte des sources des crates de l'API |
-| disposition des types | une empreinte de la taille des types partagés |
-| compilation des dépendances | une empreinte de l'identité (`TypeId`) des types partagés, qui dépend de la résolution des dépendances par cargo (`Cargo.lock`, features) |
+- éditeur : la version de l'API de l'éditeur (`orbit_editor_api`)
+- ABI des plugins : la version du contrat des plugins
+- compilateur : le `rustc` exact (version, date et commit)
+- egui : la version d'egui
+- plateforme : la cible (`x86_64-pc-windows-msvc`...)
+- profil de compilation : `release` ou `debug`
+- sources de l'API : une empreinte des sources des crates de l'API
+- disposition des types : une empreinte de la taille des types partagés
+- compilation des dépendances : une empreinte de l'identité (`TypeId`) des types partagés, qui dépend de la résolution des dépendances par cargo (`Cargo.lock`, features)
 
-Le manifeste d'un paquet peut aussi indiquer les versions de l'éditeur qu'il accepte (`min_editor`, `max_editor`). En pratique : **un plugin doit être recompilé pour chaque nouvelle version de l'éditeur**, avec la chaîne de compilation de l'éditeur.
+Le manifeste d'un paquet peut aussi indiquer les versions de l'éditeur qu'il accepte (`min_editor`, `max_editor`). En pratique : **un plugin doit être recompilé pour chaque nouvelle version de l'éditeur**, avec la chaîne de compilation de l'éditeur. Après une mise à jour de l'éditeur, un plugin qui fonctionnait est listé comme **Incompatible**, avec le champ qui diffère ; rien n'est supprimé. Installez le paquet recompilé par-dessus (une nouvelle version remplace l'ancienne au prochain démarrage).
 
 Avant le chargement, l'éditeur vérifie aussi que le fichier est une bibliothèque pour ce système et ce processeur, lit l'empreinte dans un processus séparé de courte durée (une bibliothèque défectueuse ne peut pas faire planter l'éditeur), contrôle l'identifiant du plugin et compare la bibliothèque avec la somme de contrôle (SHA-256) enregistrée à l'installation : une bibliothèque modifiée ensuite est refusée.
 
@@ -75,7 +73,7 @@ Le modèle est `examples/editor_plugins/hello` : une fenêtre, une action du men
 crate-type = ["cdylib"]
 
 [dependencies]
-orbit_editor_sdk = { git = "https://.../OrbitEngine", tag = "v0.3.1" }
+orbit_editor_sdk = { git = "https://.../OrbitEngine", tag = "v0.4.0" }
 
 [lints.rust]
 unsafe_code = "deny"   # pas "forbid" : export_plugin! génère des fonctions exportées

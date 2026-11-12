@@ -1,7 +1,10 @@
-//! The plugin manager (Tools > Extensions > Plugins): the native plugins
-//! installed in `<config>/plugins/`, their state, install from a file
-//! (`.orbitplugin` package or a bare library), enable / disable (next start),
-//! uninstall, settings pages, restart.
+//! The plugin manager (Tools > Extensions > Plugins), three tabs:
+//!
+//! * Installed: the native plugins installed in `<config>/plugins/`, their
+//!   state, install from a file (`.orbitplugin` package or a bare library),
+//!   enable / disable (next start), uninstall, settings pages, restart, and
+//!   the updates the catalogs offer;
+//! * Store and Sources: see `builtin::plugin_store`.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -20,6 +23,7 @@ use orbit_plugin_host::{
     ProcessProber, RangeError,
 };
 
+use super::plugin_store::{self, StoreUi};
 use super::ui_util::{card, danger, primary_button, secondary_button, success, warning, weak};
 use crate::plugins::SharedPlugins;
 
@@ -27,8 +31,20 @@ pub const PLUGIN_ID: &str = "orbit.plugins";
 /// Full id of the manager panel.
 pub const PANEL: &str = "orbit.plugins.manager";
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Tab {
+    #[default]
+    Installed,
+    Store,
+    Sources,
+}
+
 #[derive(Default)]
 struct ManagerUi {
+    tab: Tab,
+    /// The panel was just shown (cached catalogs, background refresh).
+    shown: bool,
+    store: StoreUi,
     /// The plugin folders, read again when the panel shows or after a change.
     list: Option<Vec<InstalledPlugin>>,
     /// A file picked, waiting for the security confirmation.
@@ -65,7 +81,11 @@ impl EditorPlugin for PluginsPlugin {
             PanelDef::new("manager", "plugins.title", icons::PUZZLE_PIECE, DockSlot::Hidden, move |u, c| {
                 panel(u, c, &shared, &mut ui.borrow_mut());
             })
-            .on_shown(move |_| on_shown.borrow_mut().list = None),
+            .on_shown(move |_| {
+                let mut m = on_shown.borrow_mut();
+                m.list = None;
+                m.shown = true;
+            }),
         );
         reg.action(
             ActionDef::new("open", "plugins.open", |c| {
@@ -152,7 +172,7 @@ pub fn describe_problem(ctx: &EditorContext<'_>, p: &Problem) -> String {
     }
 }
 
-fn describe_install_error(ctx: &EditorContext<'_>, e: &InstallError) -> String {
+pub(super) fn describe_install_error(ctx: &EditorContext<'_>, e: &InstallError) -> String {
     match e {
         InstallError::Unsupported(f) => ctx.tf("plugins.install.unsupported", &[("file", f)]),
         InstallError::Io(d) => ctx.tf("plugins.install.io", &[("detail", d)]),
@@ -250,6 +270,7 @@ fn poll_install(ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &mut Man
     m.message = Some(match outcome {
         Ok(Ok(done)) => {
             shared.borrow_mut().restart_needed = true;
+            plugin_store::forget_origin(shared, &mut m.store, &done.id);
             let key = if done.staged || done.updated { "plugins.updated" } else { "plugins.installed" };
             (Level::Info, ctx.tf(key, &[("name", &done.name), ("version", &done.version)]))
         }
@@ -266,6 +287,12 @@ fn poll_install(ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &mut Man
 
 fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &mut ManagerUi) {
     poll_install(ctx, shared, m);
+    if plugin_store::poll(ctx, shared, &mut m.store) {
+        m.list = None;
+    }
+    if std::mem::take(&mut m.shown) {
+        plugin_store::on_show(ctx, shared, &mut m.store);
+    }
     let Some(mut manager) = shared.borrow().manager() else {
         ui.label(RichText::new(ctx.t("plugins.no_config")).color(weak(ui)));
         return;
@@ -294,9 +321,32 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &m
             });
         });
     }
-    ui.add_space(6.0);
+    let updates = m.store.updates(&list);
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        let installed = if updates.is_empty() {
+            ctx.tf("store.tab.installed", &[("count", &list.len())])
+        } else {
+            ctx.tf("store.tab.installed_updates", &[("count", &list.len()), ("updates", &updates.len())])
+        };
+        ui.selectable_value(&mut m.tab, Tab::Installed, format!("{} {installed}", icons::PUZZLE_PIECE));
+        ui.selectable_value(&mut m.tab, Tab::Store, format!("{} {}", icons::STOREFRONT, ctx.t("store.tab.store")));
+        ui.selectable_value(&mut m.tab, Tab::Sources, format!("{} {}", icons::LIST, ctx.t("store.tab.sources")));
+    });
+    ui.separator();
+    match m.tab {
+        Tab::Installed => {}
+        Tab::Store => {
+            plugin_store::store_tab(ui, ctx, shared, &mut m.store, &list);
+            return;
+        }
+        Tab::Sources => {
+            plugin_store::sources_tab(ui, ctx, shared, &mut m.store);
+            return;
+        }
+    }
     ui.horizontal_wrapped(|ui| {
-        let busy = m.installing.is_some();
+        let busy = m.installing.is_some() || m.store.is_busy();
         if ui
             .add_enabled(!busy, egui::Button::new(format!("{} {}", icons::PLUS, ctx.t("plugins.install"))))
             .clicked()
@@ -340,6 +390,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &m
         };
         ui.colored_label(color, text);
     }
+    plugin_store::installed_header(ui, ctx, shared, &mut m.store);
     ui.separator();
 
     if list.is_empty() {
@@ -348,7 +399,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &m
     }
     ScrollArea::vertical().id_salt("plugins_list").auto_shrink([false, false]).show(ui, |ui| {
         for plugin in &list {
-            plugin_card(ui, ctx, shared, m, &mut manager, plugin, &editor);
+            plugin_card(ui, ctx, shared, m, &mut manager, plugin, &editor, &updates, &list);
             ui.add_space(6.0);
         }
     });
@@ -363,6 +414,8 @@ fn plugin_card(
     manager: &mut PluginManager,
     plugin: &InstalledPlugin,
     editor: &EditorFacts,
+    updates: &std::collections::BTreeMap<String, orbit_plugin_store::installs::Update>,
+    list: &[InstalledPlugin],
 ) {
     let id = plugin.id().to_owned();
     let status = status_of(plugin, &shared.borrow(), editor);
@@ -390,6 +443,11 @@ fn plugin_card(
             Status::Problem(p) => (danger(ui), format!("{} — {}", ctx.t("plugins.status.error"), describe_problem(ctx, p))),
         };
         ui.colored_label(color, text);
+        if let Some(update) = updates.get(&id)
+            && !matches!(status, Status::Removing)
+        {
+            plugin_store::update_line(ui, ctx, shared, &mut m.store, update, list);
+        }
         ui.horizontal_wrapped(|ui| {
             if !matches!(status, Status::Removing) {
                 let mut enabled = plugin.record.enabled;

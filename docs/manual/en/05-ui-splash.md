@@ -4,11 +4,12 @@ The menus of your game (main menu, pause, save, load, preferences) are **screens
 
 ## The Interface editor
 
-Open the **Interface** panel. It has four tabs:
+Open the **Interface** panel. It has five tabs:
 
 - **Screens**: pick a screen and edit it. Add buttons, texts, images and containers, move them, and set what a button does (start the game, open another screen, quit...). A live preview of the real game interface is shown next to the editor.
 - **Theme**: fonts and the named **styles** shared by all screens, in a visual style editor.
-- **Dialogue box**: the textbox, speaker name, choices and quick menu shown during play.
+- **Dialogue box**: the textbox, speaker name, choices and quick menu shown during play, and the choice between the classic box and comic bubbles.
+- **Notifications**: where and how the toasts of the game appear.
 - **Splashes**: the screens shown when the game starts.
 
 The **Visual novel starter** template already contains a full set of screens to adapt. Changes are saved into the `ui/` folder; use undo and redo as usual. The Interface panel lists problems (for example a button that points to a screen that does not exist).
@@ -42,6 +43,16 @@ The **Dialogue box** tab styles what the player sees during the story, with a li
 - **Quick menu**: placement, button style and width, spacing, or hide it.
 
 The **+** button next to a style field creates a style from the current colors and links it; the pencil opens it in the Theme tab. A project made before these options keeps exactly the same dialogue box.
+
+### Comic bubbles
+
+Under **Dialogue display**, choose the **Display mode**: **Classic box** (the default) or **Comic bubbles**. In bubble mode the lines of characters appear in speech bubbles placed near the speaker's face, with a tail pointing to the head; the narrator keeps the box. The preview of the tab shows the result.
+
+- A line is a speech bubble by default. Start it with `{bubble=thought}` for a thought cloud or `{bubble=shout}` for a shout (a jagged burst).
+- **Speech bubbles** settings: fill and outline colors, outline width, corner radius, minimum and maximum width, font, whether the speaker's name is shown and its size, tail length and width, gap to the head, screen margin, the pop-in animation, and an outline in the character's color.
+- **Narrator**: keep the classic box, or show a **Caption** (top left) with its own color.
+- **Speaker off screen**: a bubble without a tail, or the classic box.
+- **Per character**: bubble colors and the position of the head (an offset from the top of the character's picture), so the tail points at the right place.
 
 ## Music in the menus
 
@@ -103,6 +114,8 @@ The **Repeat** widget builds a list from a list or map variable of the story, or
 
 The **empty** text is shown when the collection has no element. Choose the **direction** (vertical, horizontal or a grid with a number of columns). A list shows at most 500 rows; a map lists its entries in key order.
 
+**When the rows do not fit.** Under **If the rows do not fit**, choose how a long list behaves: **Scroll** (mouse wheel, drag, keyboard and game controller, with a scrollbar), **Pages** (Previous / Next buttons and a page counter) or **Nothing (may overflow)**. Give the list a *Fill* or *Fixed* height so that it knows how much room it has. The stock Gallery, Achievements and Replay screens scroll by row, or split into pages, when their cards no longer fit on the screen. A **Scroll list** container does the same for any group of widgets.
+
 ### Screen transitions
 
 Each screen can have an **opening transition** and a **closing transition**: fade, slide up, down, left or right, or scale, with a duration and an easing curve (the named curves of your project are accepted). Transitions are purely visual: the screen is open or closed immediately, only its drawing is animated. Rollback, loading a save and the **reduced motion** accessibility preference cut them short.
@@ -147,7 +160,7 @@ Platforms (Steam, itch.io, consoles) are reached through the `AchievementHook` t
 
 ## Notifications
 
-The **Notify** step (Story group) shows a short message in a corner of the screen, a *toast*, and the story goes on at once: it never waits for the toast to disappear. Its fields:
+The **Notification (toast)** step (Dialogue group of the insert menu) shows a short message in a corner of the screen, a *toast*, and the story goes on at once: it never waits for the toast to disappear. Its fields:
 
 * **Text**: markup is allowed, and `[variable]` is replaced by the value of the variable when the toast is shown. The text is translated like any other text of the story.
 * **Icon** (optional): an image shown left of the text. **Sound** (optional): played with the toast. **Duration** (optional, in seconds): how long it stays. **Style** (optional): the name of a notification style of the theme; without one, the `default` style is used.

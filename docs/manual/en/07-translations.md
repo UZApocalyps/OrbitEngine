@@ -1,6 +1,6 @@
 # Translations (PO and CSV)
 
-Every text of your story (lines, character names, choices) can be translated into other languages. The language you write in is the **source language**.
+Every text of your story (lines, character names, choices, notifications and the tooltips of clickable zones) can be translated into other languages. The language you write in is the **source language**.
 
 ## Adding a language
 
@@ -8,10 +8,13 @@ Open the **Translations** panel, type a language tag (for example `fr` or `pt-BR
 
 ## Translating
 
-You have two ways to work:
+The editor does not edit translated texts itself: translation is done in another tool, then imported back.
 
-- **In the editor**: fill in the translated text next to each source text.
-- **In another tool**: export the translation as a **PO** file (used by many translation tools) or a **CSV** file (opens in any spreadsheet), send it to your translator, then **Import** the result. The file type is recognized from its extension (.po or .csv). Import updates the texts and reports how many changed.
+1. **Create** the language (see above).
+2. **Export** it as a **PO** file (used by many translation tools) or a **CSV** file (opens in any spreadsheet).
+3. Translate the file yourself or send it to your translator. Keep the file format and the identifiers.
+4. **Import** the result. The file type is recognized from its extension (.po or .csv). Import updates the texts and reports how many changed.
+5. Check the coverage shown in the panel: *missing* should reach 0.
 
 ## Stale translations
 

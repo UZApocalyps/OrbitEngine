@@ -57,6 +57,10 @@
 
     // targets and output
     "export.targets": "Cibles",
+    "export.target.windows": "Windows (zip)",
+    "export.target.linux": "Linux (tar.gz)",
+    "export.target.web": "Web (navigateur)",
+    "export.target.android": "Android (APK / AAB)",
     "export.template_missing": "(template introuvable)",
     "export.template_missing_hint": "Le template du player de cette cible n'est pas installé : voir `cargo xtask templates` ou le dossier des templates ci-dessous.",
     "export.output_dir": "Dossier de sortie",

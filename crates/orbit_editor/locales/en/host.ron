@@ -194,6 +194,7 @@
     "problem.scene_ends_game": "The game ends here (the scene has no jump, end or return)",
     "problem.all_options_conditional": "Every option has a condition: the player may get stuck",
     "problem.missing_plugin": "Missing plugin: “{plugin}”; this node is kept read-only",
+    "problem.hotspots_no_exit": "No zone of this map leaves it (they all only stay): the player is stuck here",
     "problem.timeline_key_after_end": "A key lies after the end of the timeline: it is never reached",
     "problem.invalid_screen_node": "Screen node: {message}",
     "problem.invalid_script": "Script: {message}",

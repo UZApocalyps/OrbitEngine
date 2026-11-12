@@ -30,6 +30,11 @@ Votre propre écran de préférences peut proposer les mêmes options : dans l'�
 
 L'éditeur d'interface signale les couleurs de thème difficiles à lire : dans l'onglet Thème et dans la liste des problèmes, chaque paire de couleurs texte/fond sous le contraste WCAG AA (4,5:1 pour le texte, 3:1 pour les éléments des curseurs et interrupteurs) est listée avec son ratio. Un avertissement n'empêche pas d'exporter votre jeu. Les joueurs qui ont besoin de plus de contraste peuvent toujours activer le mode contraste élevé, qui passe toujours la vérification.
 
+## Notifications et point & click
+
+- Les **notifications** (succès, messages du moteur et étape Notification) sont lues par le lecteur d'écran quand elles apparaissent. Avec **Réduire les animations** activé, une notification qui glisse apparaît en fondu. Leur comportement pendant le passage rapide du texte se règle dans l'onglet *Notifications* de l'éditeur d'interface.
+- Les **zones cliquables** sont accessibles sans souris : au clavier (Tab, flèches, chiffres) et à la manette. La touche **V** (et un bouton de manette, Select / Vue par défaut) entoure toutes les zones d'un coup, pour que personne n'ait à les chercher. Une zone grisée n'est pas encore cliquable.
+
 ## Ce que vous pouvez faire en tant qu'auteur
 
 - Rédigez des choix clairs, sans vous reposer uniquement sur des couleurs ou des positions.

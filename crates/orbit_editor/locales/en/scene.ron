@@ -7,7 +7,7 @@
     // Navigation map wizard (builtin/navmap.rs)
     "scene.navmap.action": "New navigation map (house)…",
     "scene.navmap.title": "New navigation map (house)",
-    "scene.navmap.intro": "Writes one label and one point & click map per room, with a door zone to each linked room (a placeholder rectangle: move it onto the door in the Scene view), a \"back\" zone, and an example of a door locked by a key.",
+    "scene.navmap.intro": "Writes one label and one point & click map per room, with a door zone to each linked room (a placeholder rectangle: move it onto the door in the Stage View), a \"back\" zone, and an example of a door locked by a key.",
     "scene.navmap.rooms": "Rooms",
     "scene.navmap.pick_bg": "Choose a background",
     "scene.navmap.remove_room": "Remove the room",

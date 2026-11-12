@@ -1,6 +1,6 @@
 # Traductions (PO et CSV)
 
-Chaque texte de votre histoire (répliques, noms de personnages, choix) peut être traduit dans d'autres langues. La langue dans laquelle vous écrivez est la **langue source**.
+Chaque texte de votre histoire (répliques, noms de personnages, choix, notifications et infobulles des zones cliquables) peut être traduit dans d'autres langues. La langue dans laquelle vous écrivez est la **langue source**.
 
 ## Ajouter une langue
 
@@ -8,10 +8,13 @@ Ouvrez le panneau **Traductions**, saisissez un code de langue (par exemple `fr`
 
 ## Traduire
 
-Deux façons de travailler :
+L'éditeur ne modifie pas lui-même les textes traduits : on traduit dans un autre outil, puis on réimporte.
 
-- **Dans l'éditeur** : saisissez le texte traduit à côté de chaque texte source.
-- **Dans un autre outil** : exportez la traduction en fichier **PO** (utilisé par de nombreux outils de traduction) ou **CSV** (s'ouvre dans n'importe quel tableur), envoyez-le à votre traducteur, puis **Importez** le résultat. Le type de fichier est reconnu par son extension (.po ou .csv). L'import met à jour les textes et indique combien ont changé.
+1. **Créez** la langue (voir ci-dessus).
+2. **Exportez**-la en fichier **PO** (utilisé par de nombreux outils de traduction) ou **CSV** (s'ouvre dans n'importe quel tableur).
+3. Traduisez le fichier vous-même ou envoyez-le à votre traducteur. Conservez le format du fichier et les identifiants.
+4. **Importez** le résultat. Le type de fichier est reconnu par son extension (.po ou .csv). L'import met à jour les textes et indique combien ont changé.
+5. Vérifiez l'avancement affiché dans le panneau : le nombre de textes manquants doit tomber à 0.
 
 ## Traductions périmées
 

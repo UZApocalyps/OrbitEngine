@@ -37,19 +37,17 @@ One folder per plugin (`plugins/<id>/`) holds its library, its texts (`locales/`
 
 A plugin and the editor share Rust types directly (the egui interface, the project, the editor context). That is only safe when both were built from the same sources, by the same compiler, with the same settings. The editor therefore reads a **fingerprint** in every plugin before loading it, and refuses any difference:
 
-| Field | Meaning |
-|---|---|
-| editor | the version of the editor API (`orbit_editor_api`) |
-| plugin ABI | the version of the plugin contract |
-| compiler | the exact `rustc` (version, date and commit) |
-| egui | the egui version |
-| platform | the target (`x86_64-pc-windows-msvc`...) |
-| build profile | `release` or `debug` |
-| API sources | a hash of the sources of the API crates |
-| type layouts | a hash of the size of the shared types |
-| dependency build | a hash of the identity (`TypeId`) of shared types, which depends on how cargo resolved the dependencies (`Cargo.lock`, features) |
+- editor: the version of the editor API (`orbit_editor_api`)
+- plugin ABI: the version of the plugin contract
+- compiler: the exact `rustc` (version, date and commit)
+- egui: the egui version
+- platform: the target (`x86_64-pc-windows-msvc`...)
+- build profile: `release` or `debug`
+- API sources: a hash of the sources of the API crates
+- type layouts: a hash of the size of the shared types
+- dependency build: a hash of the identity (`TypeId`) of shared types, which depends on how cargo resolved the dependencies (`Cargo.lock`, features)
 
-The manifest of a package can also give the editor versions it accepts (`min_editor`, `max_editor`). In practice: **a plugin must be rebuilt for each new editor version**, with the editor's toolchain.
+The manifest of a package can also give the editor versions it accepts (`min_editor`, `max_editor`). In practice: **a plugin must be rebuilt for each new editor version**, with the editor's toolchain. After you update the editor, a plugin that worked before is listed as **Incompatible** with the field that differs; nothing is deleted. Install the rebuilt package over it (a new version replaces the old one at the next start).
 
 Before loading, the editor also checks that the file is a library for this system and processor, reads the fingerprint in a separate short-lived process (a broken library cannot crash the editor), checks the plugin id, and compares the library with the checksum (SHA-256) recorded at install: a library changed afterwards is refused.
 
@@ -75,7 +73,7 @@ The template is `examples/editor_plugins/hello`: a window, a **Tools** menu acti
 crate-type = ["cdylib"]
 
 [dependencies]
-orbit_editor_sdk = { git = "https://.../OrbitEngine", tag = "v0.3.1" }
+orbit_editor_sdk = { git = "https://.../OrbitEngine", tag = "v0.4.0" }
 
 [lints.rust]
 unsafe_code = "deny"   # not "forbid": export_plugin! generates exported functions

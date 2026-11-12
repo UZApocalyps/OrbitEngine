@@ -200,6 +200,10 @@ pub enum ValidationWarning {
     /// it (unless a plugin or a script does).
     #[error("achievement {0} is never unlocked by any Unlock node")]
     AchievementNeverUnlocked(AchievementId),
+    /// Every zone of a hotspot map only stays on the map: the player can
+    /// never leave it.
+    #[error("hotspot map {0} has no zone that leaves the map: the player is stuck there")]
+    HotspotsNoExit(NodeId),
 }
 
 /// Errors from loading / saving / migrating a story.

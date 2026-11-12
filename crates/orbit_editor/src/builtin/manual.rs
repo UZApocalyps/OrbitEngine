@@ -59,6 +59,14 @@ macro_rules! all_chapters {
             chapter!($lang, "15-renpy-import"),
             chapter!($lang, "16-ai-studio"),
             chapter!($lang, "17-editor-plugins"),
+            chapter!($lang, "18-tutorial-first-game"),
+            chapter!($lang, "19-tutorial-interface"),
+            chapter!($lang, "20-tutorial-point-and-click"),
+            chapter!($lang, "21-tutorial-characters"),
+            chapter!($lang, "22-tutorial-achievements-translations"),
+            chapter!($lang, "23-tutorial-publish"),
+            chapter!($lang, "24-tutorial-other-starts"),
+            chapter!($lang, "25-tutorial-experts"),
         ]
     };
 }
@@ -82,6 +90,10 @@ pub enum Block {
     Paragraph(String),
     /// `Some(n)` for a numbered item, `None` for a bullet.
     Item(Option<usize>, String),
+    /// A bullet indented under another item (one level only).
+    SubItem(String),
+    /// A pipe table: header cells, then rows (padded to the header width).
+    Table(Vec<String>, Vec<Vec<String>>),
     Quote(String),
     Code(String),
 }
@@ -96,7 +108,16 @@ pub fn parse(markdown: &str) -> Vec<Block> {
             blocks.push(Block::Paragraph(std::mem::take(paragraph)));
         }
     };
+    let mut table: Vec<&str> = Vec::new();
     for line in markdown.lines() {
+        if code.is_none() {
+            if line.trim_start().starts_with('|') {
+                flush(&mut blocks, &mut paragraph);
+                table.push(line.trim());
+                continue;
+            }
+            flush_table(&mut blocks, &mut table);
+        }
         if let Some(buffer) = code.as_mut() {
             if line.trim_start().starts_with("```") {
                 blocks.push(Block::Code(code.take().unwrap_or_default()));
@@ -122,7 +143,13 @@ pub fn parse(markdown: &str) -> Vec<Block> {
             .or_else(|| trimmed.strip_prefix("* "))
         {
             flush(&mut blocks, &mut paragraph);
-            blocks.push(Block::Item(None, text.to_owned()));
+            let indent = line.len() - line.trim_start().len();
+            let nested = indent >= 2 && matches!(blocks.last(), Some(Block::Item(..) | Block::SubItem(_)));
+            blocks.push(if nested {
+                Block::SubItem(text.to_owned())
+            } else {
+                Block::Item(None, text.to_owned())
+            });
         } else if let Some((n, text)) = numbered(trimmed) {
             flush(&mut blocks, &mut paragraph);
             blocks.push(Block::Item(Some(n), text.to_owned()));
@@ -137,10 +164,61 @@ pub fn parse(markdown: &str) -> Vec<Block> {
         }
     }
     flush(&mut blocks, &mut paragraph);
+    flush_table(&mut blocks, &mut table);
     if let Some(rest) = code {
         blocks.push(Block::Code(rest));
     }
     blocks
+}
+
+/// Cells of a `| a | b |` row (`\|` is a literal pipe).
+fn table_cells(line: &str) -> Vec<String> {
+    let inner = line.trim().trim_start_matches('|');
+    let inner = inner.strip_suffix('|').filter(|_| !inner.ends_with("\\|")).unwrap_or(inner);
+    let mut cells = vec![String::new()];
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&'|') {
+            chars.next();
+            cells.last_mut().unwrap().push('|');
+        } else if c == '|' {
+            cells.push(String::new());
+        } else {
+            cells.last_mut().unwrap().push(c);
+        }
+    }
+    cells.iter().map(|c| c.trim().to_owned()).collect()
+}
+
+fn is_separator(line: &str) -> bool {
+    let cells = table_cells(line);
+    !cells.is_empty()
+        && cells
+            .iter()
+            .all(|c| !c.is_empty() && c.contains('-') && c.chars().all(|ch| matches!(ch, '-' | ':')))
+}
+
+/// Turns the buffered `|` lines into a table (header, separator, rows), or a
+/// paragraph when there is no separator row.
+fn flush_table(blocks: &mut Vec<Block>, lines: &mut Vec<&str>) {
+    if lines.is_empty() {
+        return;
+    }
+    if lines.len() >= 2 && is_separator(lines[1]) {
+        let header = table_cells(lines[0]);
+        let rows = lines[2..]
+            .iter()
+            .map(|l| {
+                let mut r = table_cells(l);
+                r.resize(header.len(), String::new());
+                r
+            })
+            .collect();
+        blocks.push(Block::Table(header, rows));
+    } else {
+        blocks.push(Block::Paragraph(lines.join(" ")));
+    }
+    lines.clear();
 }
 
 fn heading(line: &str) -> Option<(u8, &str)> {
@@ -274,6 +352,29 @@ fn render(ui: &mut Ui, blocks: &[Block]) {
                     ui.label(job(ui, t, 14.0, text));
                 });
             }
+            Block::SubItem(t) => {
+                ui.horizontal_top(|ui| {
+                    ui.add_space(30.0);
+                    ui.label(RichText::new("–").color(weak(ui)));
+                    ui.label(job(ui, t, 14.0, text));
+                });
+            }
+            Block::Table(header, rows) => {
+                let id = ui.next_auto_id();
+                egui::Grid::new(id).striped(true).spacing([14.0, 6.0]).show(ui, |ui| {
+                    for h in header {
+                        ui.label(RichText::new(h).font(bold(14.0)));
+                    }
+                    ui.end_row();
+                    for row in rows {
+                        for cell in row {
+                            ui.label(job(ui, cell, 14.0, text));
+                        }
+                        ui.end_row();
+                    }
+                });
+                ui.add_space(6.0);
+            }
             Block::Quote(t) => {
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
@@ -337,44 +438,162 @@ pub fn visible_chapters(lang: Lang) -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
+/// Chapters numbered 18 and above are tutorials, the others the reference.
+fn is_tutorial(stem: &str) -> bool {
+    stem.split('-')
+        .next()
+        .and_then(|n| n.parse::<u32>().ok())
+        .is_some_and(|n| n >= 18)
+}
+
+/// A chapter matches a search when one of its headings (the title included)
+/// contains it, ignoring case.
+pub fn chapter_matches(markdown: &str, query: &str) -> bool {
+    let q = query.trim().to_lowercase();
+    q.is_empty()
+        || markdown
+            .lines()
+            .filter(|l| l.starts_with('#'))
+            .any(|l| l.to_lowercase().contains(&q))
+}
+
+/// Texts of the manual view (already translated).
+pub struct ManualTexts {
+    pub reference: String,
+    pub tutorials: String,
+    pub search_hint: String,
+    pub no_match: String,
+    pub empty: String,
+}
+
+#[derive(Clone, Default)]
+struct ManualState {
+    current: usize,
+    query: String,
+    /// The sidebar is hidden by the user (wide panels only).
+    collapsed: bool,
+}
+
+/// Below this width the chapter list becomes a drop-down.
+const NARROW: f32 = 520.0;
+
+type Chapters<'a> = &'a [(&'static str, &'static str)];
+
+/// The manual: chapter list on the left (grouped, searchable, collapsible),
+/// content on the right; a drop-down above the content when narrow.
+pub fn manual_view(ui: &mut Ui, lang: Lang, chapters: Chapters<'_>, t: &ManualTexts) {
+    let id = egui::Id::new("orbit_manual_state");
+    let mut st: ManualState = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+    st.current = st.current.min(chapters.len().saturating_sub(1));
+    let narrow = ui.available_width() < NARROW;
+    let height = ui.available_height();
+    let width = ui.available_width();
+    // Explicit top-down layouts: `allocate_ui` inherits the parent layout,
+    // which inside `horizontal_top` made the list a row of buttons.
+    let topdown = egui::Layout::top_down(egui::Align::Min);
+    if narrow {
+        ui.allocate_ui_with_layout(egui::vec2(width, height), topdown, |ui| {
+            let selected = chapters.get(st.current).map_or("", |(_, md)| title(md));
+            egui::ComboBox::from_id_salt("orbit_manual_combo")
+                .selected_text(selected)
+                .width((width - 16.0).max(80.0))
+                .show_ui(ui, |ui| {
+                    for (n, (_, md)) in chapters.iter().enumerate() {
+                        ui.selectable_value(&mut st.current, n, title(md));
+                    }
+                });
+            ui.add_space(4.0);
+            content(ui, lang, chapters, st.current, t);
+        });
+    } else if st.collapsed {
+        ui.allocate_ui_with_layout(egui::vec2(width, height), topdown, |ui| {
+            if ui.small_button(icons::LIST).on_hover_text(&t.reference).clicked() {
+                st.collapsed = false;
+            }
+            content(ui, lang, chapters, st.current, t);
+        });
+    } else {
+        let side = 220.0_f32.min(width * 0.35);
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(egui::vec2(side, height), topdown, |ui| {
+                ui.set_min_size(egui::vec2(side, height));
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut st.query)
+                            .hint_text(&t.search_hint)
+                            .desired_width((side - 36.0).max(40.0)),
+                    );
+                    if ui.small_button(icons::CARET_LEFT).clicked() {
+                        st.collapsed = true;
+                    }
+                });
+                egui::ScrollArea::vertical()
+                    .id_salt("orbit_manual_toc")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let mut any = false;
+                        for (group, tutorials) in [(&t.reference, false), (&t.tutorials, true)] {
+                            let items: Vec<usize> = chapters
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, (stem, md))| {
+                                    is_tutorial(stem) == tutorials && chapter_matches(md, &st.query)
+                                })
+                                .map(|(n, _)| n)
+                                .collect();
+                            if items.is_empty() {
+                                continue;
+                            }
+                            any = true;
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(group).small().strong().color(weak(ui)));
+                            for n in items {
+                                let label = title(chapters[n].1);
+                                if ui.selectable_label(n == st.current, label).clicked() {
+                                    st.current = n;
+                                }
+                            }
+                        }
+                        if !any {
+                            ui.label(RichText::new(&t.no_match).color(faint(ui)));
+                        }
+                    });
+            });
+            ui.separator();
+            let rest = ui.available_width();
+            ui.allocate_ui_with_layout(egui::vec2(rest, height), topdown, |ui| {
+                content(ui, lang, chapters, st.current, t);
+            });
+        });
+    }
+    ui.data_mut(|d| d.insert_temp(id, st));
+}
+
+fn content(ui: &mut Ui, lang: Lang, chapters: Chapters<'_>, current: usize, t: &ManualTexts) {
+    let Some((stem, md)) = chapters.get(current) else {
+        ui.label(RichText::new(&t.empty).color(faint(ui)));
+        return;
+    };
+    egui::ScrollArea::vertical()
+        .id_salt(("orbit_manual_scroll", *stem, lang.code()))
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.set_max_width(760.0_f32.min(ui.available_width()));
+            render(ui, &parse(md));
+        });
+}
+
 fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>) {
     let lang = ctx.lang();
     let chapters = visible_chapters(lang);
-    let id = egui::Id::new("orbit_manual_chapter");
-    let mut current: usize = ui.data(|d| d.get_temp(id)).unwrap_or(0);
-    current = current.min(chapters.len().saturating_sub(1));
-    let height = ui.available_height();
-    let toc_width = 200.0_f32.min(ui.available_width() * 0.4);
-    ui.horizontal_top(|ui| {
-        ui.allocate_ui(egui::vec2(toc_width, height), |ui| {
-            ui.set_min_size(egui::vec2(toc_width, height));
-            egui::ScrollArea::vertical()
-                .id_salt("orbit_manual_toc")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    for (n, (_, md)) in chapters.iter().enumerate() {
-                        if ui.selectable_label(n == current, title(md)).clicked() {
-                            current = n;
-                        }
-                    }
-                });
-        });
-        ui.separator();
-        ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
-            let Some((stem, md)) = chapters.get(current) else {
-                ui.label(RichText::new(ctx.t("manual.empty")).color(faint(ui)));
-                return;
-            };
-            egui::ScrollArea::vertical()
-                .id_salt(("orbit_manual_scroll", *stem, lang.code()))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.set_max_width(760.0_f32.min(ui.available_width()));
-                    render(ui, &parse(md));
-                });
-        });
-    });
-    ui.data_mut(|d| d.insert_temp(id, current));
+    let texts = ManualTexts {
+        reference: ctx.t("manual.group.reference"),
+        tutorials: ctx.t("manual.group.tutorials"),
+        search_hint: ctx.t("manual.search"),
+        no_match: ctx.t("manual.no_match"),
+        empty: ctx.t("manual.empty"),
+    };
+    manual_view(ui, lang, &chapters, &texts);
 }
 
 #[cfg(test)]
@@ -395,6 +614,27 @@ mod tests {
                 Block::Code("x\ny".into()),
             ]
         );
+    }
+
+    #[test]
+    fn parses_tables_and_nested_items() {
+        let blocks = parse("| A | B |\n|---|:-:|\n| 1 | x \\| y |\n| 2 |\n\ntext\n- top\n  - sub\n- next\n| not | table |\n");
+        assert_eq!(
+            blocks,
+            vec![
+                Block::Table(
+                    vec!["A".into(), "B".into()],
+                    vec![vec!["1".into(), "x | y".into()], vec!["2".into(), String::new()]],
+                ),
+                Block::Paragraph("text".into()),
+                Block::Item(None, "top".into()),
+                Block::SubItem("sub".into()),
+                Block::Item(None, "next".into()),
+                Block::Paragraph("| not | table |".into()),
+            ]
+        );
+        // An indented bullet with nothing above it is an ordinary item.
+        assert_eq!(parse("  - a"), vec![Block::Item(None, "a".into())]);
     }
 
     #[test]
@@ -422,5 +662,106 @@ mod tests {
             assert_ne!(title(fr), "?", "{fr_name}");
             assert!(en.len() > 400 && fr.len() > 400, "{en_name} is too short");
         }
+    }
+
+    fn texts() -> ManualTexts {
+        ManualTexts {
+            reference: "Reference".into(),
+            tutorials: "Tutorials".into(),
+            search_hint: "Search".into(),
+            no_match: "None".into(),
+            empty: "Empty".into(),
+        }
+    }
+
+    /// Runs the manual in a headless frame of `size`; returns the text drawn
+    /// and the largest x position of any text.
+    fn run(lang: Lang, current: usize, size: egui::Vec2) -> (String, f32) {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let list = chapters(lang);
+        ctx.data_mut(|d| {
+            d.insert_temp(
+                egui::Id::new("orbit_manual_state"),
+                ManualState { current, query: String::new(), collapsed: false },
+            )
+        });
+        let mut out = String::new();
+        let mut max_x = 0.0_f32;
+        // Two frames: the first lays out, the second is the settled one.
+        for _ in 0..2 {
+            out.clear();
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                ..Default::default()
+            };
+            let full = ctx.run_ui(raw, |ui| {
+                manual_view(ui, lang, list, &texts());
+            });
+            for clipped in &full.shapes {
+                collect(&clipped.shape, &mut out, &mut max_x);
+            }
+            full.drop_without_applying_deltas();
+        }
+        (out, max_x)
+    }
+
+    fn collect(shape: &egui::epaint::Shape, out: &mut String, max_x: &mut f32) {
+        match shape {
+            egui::epaint::Shape::Text(t) => {
+                out.push_str(t.galley.text());
+                out.push('\n');
+                *max_x = max_x.max(t.pos.x);
+            }
+            egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| collect(s, out, max_x)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn every_chapter_renders_in_both_languages() {
+        for lang in [Lang::En, Lang::Fr] {
+            for (n, (stem, md)) in chapters(lang).iter().enumerate() {
+                let blocks = parse(md);
+                assert!(blocks.len() > 3, "{stem}: parsed to nothing");
+                let first = blocks
+                    .iter()
+                    .find_map(|b| if let Block::Paragraph(p) = b { Some(p.clone()) } else { None })
+                    .unwrap_or_else(|| panic!("{stem}: no paragraph"));
+                // Inline markers are stripped when drawn: compare a plain prefix.
+                let plain: String = first
+                    .chars()
+                    .take(12)
+                    .take_while(|c| c.is_alphanumeric() || *c == ' ')
+                    .collect();
+                for size in [egui::vec2(1000.0, 700.0), egui::vec2(400.0, 700.0)] {
+                    let (text, _) = run(lang, n, size);
+                    assert!(text.contains(title(md)), "{stem} {size:?}: title missing");
+                    assert!(text.contains(plain.trim()), "{stem} {size:?}: content missing ({plain:?})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_chapter_list_is_a_column_not_a_row() {
+        // Regression: `allocate_ui` inside `horizontal_top` inherited the
+        // horizontal layout, so the chapters were laid out in one row that
+        // ate the width and left no room for the content.
+        let (text, max_x) = run(Lang::En, 0, egui::vec2(1000.0, 700.0));
+        assert!(text.contains("Reference") && text.contains("Tutorials"));
+        assert!(max_x < 1000.0, "text laid out past the panel: {max_x}");
+        // The content (chapter 1 text) is drawn to the right of the list.
+        assert!(text.contains(title(chapters(Lang::En)[0].1)));
+    }
+
+    #[test]
+    fn search_matches_titles_and_headings() {
+        let md = "# Alpha chapter\n\n## Beta part\n\ntext gamma";
+        assert!(chapter_matches(md, "ALPHA"));
+        assert!(chapter_matches(md, "beta"));
+        assert!(!chapter_matches(md, "gamma"), "body text is not searched");
+        assert!(chapter_matches(md, "  "));
+        assert!(is_tutorial("18-tutorial-first-game") && !is_tutorial("17-editor-plugins"));
     }
 }

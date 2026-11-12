@@ -100,3 +100,28 @@ fn bad_stage_nodes_are_reported() {
         |w| matches!(w, ValidationWarning::UnknownEmitter { node, .. } if *node == stop)
     ));
 }
+
+#[test]
+fn a_hotspot_map_without_exit_warns() {
+    use orbit_core::{Hotspot, HotspotAction, HotspotMap, HotspotShape, StringId};
+    let (mut story, _, _) = base();
+    let mut stay = Hotspot::new(
+        StringId::new(),
+        HotspotShape::Rect { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+        NodeId::new(),
+    );
+    stay.actions = vec![HotspotAction::Stay];
+    let map = push(
+        &mut story,
+        NodeKind::Hotspots(HotspotMap { background: None, hotspots: vec![stay.clone()], style: Default::default() }),
+    );
+    let has = |s: &Story| validate(s).warnings.iter().any(|w| matches!(w, ValidationWarning::HotspotsNoExit(n) if *n == map));
+    assert!(has(&story));
+    // A second zone that jumps to its target is a way out.
+    let mut exit = stay.clone();
+    exit.actions.clear();
+    if let NodeKind::Hotspots(m) = &mut story.scenes.last_mut().unwrap().nodes.last_mut().unwrap().kind {
+        m.hotspots.push(exit);
+    }
+    assert!(!has(&story));
+}

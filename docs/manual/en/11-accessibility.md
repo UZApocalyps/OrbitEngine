@@ -30,6 +30,11 @@ Your own preferences screen can offer the same options: in the Interface editor,
 
 The Interface editor warns about theme colors that are hard to read: in the Theme tab and in the problems list, each pair of text and background colors below the WCAG AA contrast (4.5:1 for text, 3:1 for the parts of sliders and toggles) is listed with its ratio. A warning does not stop your game from being exported. Players who need more contrast can still switch on the high-contrast mode, which always passes the check.
 
+## Notifications and point & click
+
+- **Notifications** (achievements, engine messages and the Notification step) are read by the screen reader when they appear. With **Reduce motion** on, a sliding notification fades instead. Their behaviour while the player skips the text is set in the *Notifications* tab of the Interface editor.
+- **Clickable zones** can be reached without a mouse: with the keyboard (Tab, arrows, digits) and the game controller. The **V** key (and a controller button, Select / View by default) outlines every zone at once, so no one has to hunt for them. A zone that is dimmed is not clickable yet.
+
 ## What you can do as an author
 
 - Write choices with clear wording, not only colors or positions.
