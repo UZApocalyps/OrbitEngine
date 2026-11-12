@@ -9,7 +9,7 @@ publish.workspace = true
 
 [lib]
 # `rlib` too: the tests drive the transport against a real editor core.
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 # The plugin SDK: editor API, the editor's egui and dependency resolution.
