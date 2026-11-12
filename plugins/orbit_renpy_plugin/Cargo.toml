@@ -14,8 +14,6 @@ crate-type = ["cdylib"]
 # The plugin SDK: editor API, the editor's egui and dependency resolution.
 orbit_editor_sdk.workspace = true
 orbit_renpy.workspace = true
-# Folder pickers (same crate and version as the editor).
-rfd.workspace = true
 
 # `export_plugin!` generates `#[no_mangle]` functions: `unsafe_code` is denied
 # here rather than forbidden (the workspace forbids it).

@@ -34,8 +34,6 @@ struct Cache {
 #[derive(Default)]
 struct State {
     cache: RefCell<Option<Cache>>,
-    /// Destination of the Mermaid export.
-    path: RefCell<String>,
 }
 
 fn refresh(state: &State, ctx: &EditorContext<'_>) {
@@ -76,15 +74,8 @@ fn export(state: &State, ctx: &mut EditorContext<'_>, how: Export, egui_ctx: &eg
         ctx.info(message);
         return;
     }
-    let path = PathBuf::from(state.path.borrow().trim());
-    if path.as_os_str().is_empty() {
-        let message = ctx.t("storylint.no_path");
-        ctx.warn(message);
-        return;
-    }
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        let _ = std::fs::create_dir_all(dir);
-    }
+    let title = ctx.t("storylint.save_title");
+    let Some(path) = ctx.save_file(&title, "scenes.mmd", &[("Mermaid", &["mmd"])]) else { return };
     match std::fs::write(&path, text) {
         Ok(()) => {
             let message = ctx.tf("storylint.saved", &[("path", &path.display())]);
@@ -190,14 +181,6 @@ fn panel(ui: &mut egui::Ui, ctx: &mut EditorContext<'_>, state: &State) {
                 "storylint.graph_summary",
                 &[("scenes", &a.graph.scenes.len()), ("links", &a.graph.edges.len()), ("unreachable", &unreachable)],
             ));
-            {
-                let mut path = state.path.borrow_mut();
-                ui.add(
-                    egui::TextEdit::singleline(&mut *path)
-                        .hint_text(ctx.t("storylint.path_hint"))
-                        .desired_width(f32::INFINITY),
-                );
-            }
             ui.horizontal(|ui| {
                 let enabled = !a.graph.scenes.is_empty();
                 if ui
@@ -231,7 +214,6 @@ pub struct StoryLintPlugin {
 impl NativePlugin for StoryLintPlugin {
     fn on_load(&mut self, host: &mut PluginHost<'_>) -> Result<(), String> {
         let state = self.state.clone();
-        *state.path.borrow_mut() = host.data_dir().join("scenes.mmd").display().to_string();
         let st = state.clone();
         host.panel(PanelDef::new(
             "analysis",

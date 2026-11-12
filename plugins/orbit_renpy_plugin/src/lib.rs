@@ -61,10 +61,8 @@ fn start(ctx: &mut EditorContext<'_>, s: &State) {
     if s.importing.borrow().is_some() {
         return;
     }
-    let source = rfd::FileDialog::new().set_title(ctx.t("renpy.pick_source")).pick_folder();
-    let parent = source
-        .as_ref()
-        .and_then(|_| rfd::FileDialog::new().set_title(ctx.t("renpy.pick_parent")).pick_folder());
+    let source = ctx.pick_folder(&ctx.t("renpy.pick_source"));
+    let parent = source.as_ref().and_then(|_| ctx.pick_folder(&ctx.t("renpy.pick_parent")));
     let (Some(source), Some(parent)) = (source, parent) else {
         return;
     };

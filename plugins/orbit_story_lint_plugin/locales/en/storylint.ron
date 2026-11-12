@@ -14,11 +14,10 @@
     "storylint.unused_characters_help": "Defined, but never speaking, shown, hidden or animated.",
     "storylint.graph": "Scene graph",
     "storylint.graph_summary": "{scenes} scenes, {links} links, {unreachable} unreachable from the start.",
-    "storylint.path_hint": "File to write (Mermaid .mmd)",
+    "storylint.save_title": "Save the scene graph (Mermaid)",
     "storylint.save_mermaid": "Save as Mermaid",
     "storylint.copy_mermaid": "Copy Mermaid",
     "storylint.copied": "Scene graph copied to the clipboard (Mermaid).",
-    "storylint.no_path": "Enter the path of the file first.",
     "storylint.saved": "Scene graph saved: {path}",
     "storylint.save_failed": "Could not write {path}: {error}",
 }

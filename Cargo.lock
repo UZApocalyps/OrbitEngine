@@ -3107,7 +3107,6 @@ version = "0.4.0"
 dependencies = [
  "orbit_editor_sdk",
  "orbit_i18n",
- "rfd",
 ]
 
 [[package]]
@@ -3529,7 +3528,6 @@ version = "0.4.0"
 dependencies = [
  "orbit_editor_sdk",
  "orbit_renpy",
- "rfd",
 ]
 
 [[package]]
@@ -3670,7 +3668,6 @@ version = "0.4.0"
 dependencies = [
  "orbit_editor_sdk",
  "orbit_i18n",
- "rfd",
 ]
 
 [[package]]

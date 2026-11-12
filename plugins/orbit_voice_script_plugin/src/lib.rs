@@ -189,14 +189,8 @@ struct Export<'a> {
 }
 
 fn write_export(ctx: &mut EditorContext<'_>, title_key: &str, ext: &str, filter: &str, name: String, content: String) {
-    let mut dialog = rfd::FileDialog::new()
-        .set_title(ctx.t(title_key))
-        .set_file_name(format!("{name}.{ext}"))
-        .add_filter(filter, &[ext]);
-    if let Some(info) = ctx.project_info() {
-        dialog = dialog.set_directory(&info.root);
-    }
-    let Some(path) = dialog.save_file() else { return };
+    let title = ctx.t(title_key);
+    let Some(path) = ctx.save_file(&title, &format!("{name}.{ext}"), &[(filter, &[ext])]) else { return };
     let shown = path.display().to_string();
     match std::fs::write(&path, content.as_bytes()) {
         Ok(()) => {

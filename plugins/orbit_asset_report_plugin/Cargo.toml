@@ -15,8 +15,6 @@ crate-type = ["cdylib"]
 orbit_editor_sdk.workspace = true
 # Translations (their voices reference sound assets).
 orbit_i18n.workspace = true
-# Save dialog of the CSV export (the editor API has no equivalent).
-rfd.workspace = true
 
 # `export_plugin!` generates `#[no_mangle]` functions: `unsafe_code` is denied
 # here rather than forbidden (the workspace forbids it).

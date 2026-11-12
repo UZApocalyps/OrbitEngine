@@ -175,14 +175,9 @@ fn export_csv(ctx: &mut EditorContext<'_>, report: &Report) {
         .collect();
     debug_assert_eq!(header.len(), CSV_COLUMNS);
     let text = to_csv(report, &header, csv_separator(ctx));
-    let mut dialog = rfd::FileDialog::new()
-        .set_title(ctx.t("asset_report.csv_title"))
-        .set_file_name(ctx.t("asset_report.csv_default_name"))
-        .add_filter("CSV", &["csv"]);
-    if let Some(info) = ctx.project_info() {
-        dialog = dialog.set_directory(&info.root);
-    }
-    let Some(path) = dialog.save_file() else { return };
+    let title = ctx.t("asset_report.csv_title");
+    let name = ctx.t("asset_report.csv_default_name");
+    let Some(path) = ctx.save_file(&title, &name, &[("CSV", &["csv"])]) else { return };
     let shown = path.display().to_string();
     match std::fs::write(&path, text.as_bytes()) {
         Ok(()) => {

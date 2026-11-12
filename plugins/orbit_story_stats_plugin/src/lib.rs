@@ -37,8 +37,6 @@ struct Cache {
 #[derive(Default)]
 struct State {
     cache: RefCell<Option<Cache>>,
-    /// Destination of the CSV export.
-    path: RefCell<String>,
 }
 
 fn wpm(ctx: &EditorContext<'_>) -> u32 {
@@ -95,15 +93,8 @@ fn export(state: &State, ctx: &mut EditorContext<'_>, to_clipboard: bool, egui_c
         ctx.info(message);
         return;
     }
-    let path = PathBuf::from(state.path.borrow().trim());
-    if path.as_os_str().is_empty() {
-        let message = ctx.t("storystats.no_path");
-        ctx.warn(message);
-        return;
-    }
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        let _ = std::fs::create_dir_all(dir);
-    }
+    let title = ctx.t("storystats.save_title");
+    let Some(path) = ctx.save_file(&title, "story_stats.csv", &[("CSV", &["csv"])]) else { return };
     match std::fs::write(&path, csv) {
         Ok(()) => {
             let message = ctx.tf("storystats.saved", &[("path", &path.display())]);
@@ -195,14 +186,6 @@ fn panel(ui: &mut egui::Ui, ctx: &mut EditorContext<'_>, state: &State) {
             ui.add_space(8.0);
             ui.separator();
             ui.strong(ctx.t("storystats.export"));
-            {
-                let mut path = state.path.borrow_mut();
-                ui.add(
-                    egui::TextEdit::singleline(&mut *path)
-                        .hint_text(ctx.t("storystats.path_hint"))
-                        .desired_width(f32::INFINITY),
-                );
-            }
             ui.horizontal(|ui| {
                 if ui.button(format!("{} {}", icons::FILE_CSV, ctx.t("storystats.save_csv"))).clicked() {
                     action = Some(false);
@@ -226,7 +209,6 @@ pub struct StoryStatsPlugin {
 impl NativePlugin for StoryStatsPlugin {
     fn on_load(&mut self, host: &mut PluginHost<'_>) -> Result<(), String> {
         let state = self.state.clone();
-        *state.path.borrow_mut() = host.data_dir().join("story_stats.csv").display().to_string();
 
         let st = state.clone();
         host.panel(PanelDef::new(
