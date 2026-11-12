@@ -4,7 +4,7 @@
 (
     id: "orbit.git",
     name: "Git",
-    version: "0.5.0",
+    version: "0.5.1",
     description: "Git panel for the open project: branch, changed files, commit, recent history, repository creation. Uses the system's git; no network, nothing destructive.",
     author: "OrbitEngine contributors",
     library: "orbit_git_plugin.dll",

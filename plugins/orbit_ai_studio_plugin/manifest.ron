@@ -4,7 +4,7 @@
 (
     id: "orbit.ai_studio",
     name: "AI Studio",
-    version: "0.5.0",
+    version: "0.5.1",
     description: "AI game-creation wizard: pitch, story bible, script, generated pictures, implementation in the project; plus its MCP tools.",
     author: "OrbitEngine contributors",
     library: "orbit_ai_studio_plugin.dll",

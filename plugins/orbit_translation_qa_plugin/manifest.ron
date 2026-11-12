@@ -4,7 +4,7 @@
 (
     id: "orbit.translation_qa",
     name: "Translation check",
-    version: "0.5.0",
+    version: "0.5.1",
     description: "Read-only check of the translations: variables and text tags that differ from the source, identical or empty translations, spaces, final punctuation, too long texts, orphaned entries, CSV export.",
     author: "OrbitEngine contributors",
     library: "orbit_translation_qa_plugin.dll",

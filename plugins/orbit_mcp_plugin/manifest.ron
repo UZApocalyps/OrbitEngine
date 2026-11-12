@@ -5,7 +5,7 @@
 (
     id: "orbit.mcp",
     name: "MCP server",
-    version: "0.5.0",
+    version: "0.5.1",
     description: "Live MCP server of the editor (HTTP on 127.0.0.1, token) and the AI Assistant panel: lets an AI client such as Claude Code edit the open project.",
     author: "OrbitEngine contributors",
     library: "orbit_mcp_plugin.dll",

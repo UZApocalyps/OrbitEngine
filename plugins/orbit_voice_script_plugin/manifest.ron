@@ -4,7 +4,7 @@
 (
     id: "orbit.voice_script",
     name: "Voice script",
-    version: "0.5.0",
+    version: "0.5.1",
     description: "Read-only voice-acting script: the lines to record per character, in scene order, with the expected voice file and its status; CSV and actor-friendly text export.",
     author: "OrbitEngine contributors",
     library: "orbit_voice_script_plugin.dll",
