@@ -1548,7 +1548,7 @@ mod tests {
         for i in 0..ACTION_NAMES.len() {
             assert_eq!(action_index(&action_from_index(i, &[])), i);
         }
-        assert_eq!(ACTION_NAMES.len(), 20);
+        assert_eq!(ACTION_NAMES.len(), 21);
         for (key, name) in SETTINGS {
             assert_eq!(setting_name(key), name);
         }
