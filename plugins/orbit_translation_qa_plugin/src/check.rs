@@ -342,6 +342,8 @@ pub fn check_text(source: &str, found: &str, settings: &Settings, same_language:
         && !same_language
         && source.trim() == found.trim()
         && source_plain.chars().any(char::is_alphabetic)
+        // One word is usually a name or a cognate (Alice, Menu): not worth a report.
+        && source.split_whitespace().nth(1).is_some()
     {
         out.push((Kind::Identical, Detail::None));
     }
@@ -524,6 +526,7 @@ mod tests {
         assert_eq!(kinds("Welcome home", "Welcome home"), [Kind::Identical]);
         assert!(kinds("...", "...").is_empty());
         assert!(kinds("42", "42").is_empty());
+        assert!(kinds("Alice", "Alice").is_empty());
         // A regional variant of the source language is expected to match.
         assert!(check_text("Colour", "Colour", &s(), true).is_empty());
         let off = Settings { identical: false, ..s() };
