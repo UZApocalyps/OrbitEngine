@@ -261,6 +261,9 @@ jobs:
   release-draft:
     name: draft GitHub Release
     needs: release
+    # Without this, a failed Linux leg of `templates` (an ancestor) skips the draft
+    # even when the installers were built.
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
