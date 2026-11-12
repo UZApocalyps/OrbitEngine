@@ -23,6 +23,7 @@ use orbit_plugin_host::{
     ProcessProber, RangeError,
 };
 
+use super::game_plugins::StoreKind;
 use super::plugin_store::{self, StoreUi};
 use super::ui_util::{card, danger, primary_button, secondary_button, success, warning, weak};
 use crate::plugins::SharedPlugins;
@@ -99,6 +100,27 @@ impl EditorPlugin for PluginsPlugin {
             .menu_group("menu.extensions")
             .menu_label("plugins.menu"),
         );
+        // One action per tab, so the command palette (and `--run-action`)
+        // opens the manager straight on it.
+        for (id, label, tab, kind) in [
+            ("open_installed", "plugins.open_installed", Tab::Installed, StoreKind::Editor),
+            ("open_store", "plugins.open_store", Tab::Store, StoreKind::Editor),
+            ("open_game_store", "plugins.open_game_store", Tab::Store, StoreKind::Game),
+            ("open_sources", "plugins.open_sources", Tab::Sources, StoreKind::Editor),
+        ] {
+            let ui = self.ui.clone();
+            reg.action(
+                ActionDef::new(id, label, move |c| {
+                    if let Ok(mut m) = ui.try_borrow_mut() {
+                        m.tab = tab;
+                        m.game.kind = kind;
+                    }
+                    c.request(EditorRequest::ShowPanel(PANEL.to_owned()));
+                })
+                .icon(icons::PUZZLE_PIECE)
+                .category("category.tools"),
+            );
+        }
         let ui = self.ui.clone();
         reg.window(WindowDef::new("settings", move |ctx, c| settings_window(ctx, c, &ui)));
     }
