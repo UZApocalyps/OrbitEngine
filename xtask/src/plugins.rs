@@ -132,10 +132,42 @@ fn resolved(package: &str) -> Result<BTreeSet<String>> {
 /// `orbit_editor_api` depends on (egui included). Their resolved features
 /// decide their `TypeId`s, which the plugin fingerprint compares.
 fn shared_crates() -> Result<BTreeSet<String>> {
-    Ok(resolved("orbit_editor_api")?
+    let mut shared: BTreeSet<String> = resolved("orbit_editor_api")?
         .into_iter()
         .filter_map(|l| l.split('|').next().map(str::to_owned))
-        .collect())
+        .collect();
+    // `orbit_editor_api` alone does not enable what the editor enables on
+    // those crates: `orbit_core/schema` adds `schemars`, and its features
+    // (and those of its own dependencies) are part of `orbit_core`'s
+    // identity. Add everything the editor's tree puts below a shared
+    // workspace crate.
+    let out = cargo()
+        .args(["tree", "-p", "orbit_editor", "-e", "normal,build", "--no-dedupe", "--prefix", "depth", "-f", "{p}"])
+        .output()?;
+    if !out.status.success() {
+        return Err(format!("cargo tree failed for orbit_editor: {}", String::from_utf8_lossy(&out.stderr)).into());
+    }
+    // (depth of the shared workspace crate whose subtree we are in, if any)
+    let mut under: Option<usize> = None;
+    let mut extra = BTreeSet::new();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let digits = line.chars().take_while(char::is_ascii_digit).count();
+        let (Ok(depth), rest) = (line[..digits].parse::<usize>(), &line[digits..]) else { continue };
+        if under.is_some_and(|d| depth <= d) {
+            under = None;
+        }
+        // `name vX.Y.Z (path)` for workspace crates, `name vX.Y.Z (proc-macro)` for proc macros.
+        let name = rest.split(' ').next().unwrap_or_default();
+        let workspace = rest.contains(" (") && !rest.contains("(proc-macro)") && !rest.contains("(*)");
+        if under.is_none() && workspace && shared.contains(name) {
+            under = Some(depth);
+        }
+        if under.is_some() {
+            extra.insert(name.to_owned());
+        }
+    }
+    shared.extend(extra);
+    Ok(shared)
 }
 
 /// What `package` resolves differently from the editor among `shared`.
