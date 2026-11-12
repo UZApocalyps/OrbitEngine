@@ -277,6 +277,10 @@ impl EditorCore {
             asset_epoch: 0,
             mcp: crate::live::LiveService::default(),
         };
+        let queue = core.mcp.queue();
+        core.state
+            .dialogs
+            .set(std::sync::Arc::new(crate::dialogs::RfdDialogs::new(queue)));
         crate::live::load_settings(&mut core);
         core
     }

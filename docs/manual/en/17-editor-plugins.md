@@ -112,6 +112,8 @@ In the closures, the `EditorContext` reads the project and edits it like the bui
 
 **Package**: a `.orbitplugin` is a zip with `manifest.ron` (`id`, `name`, `version`, `description`, `author`, `library`, optional `min_editor` / `max_editor` / `homepage`), the library, and optional `locales/` and `assets/` folders. `cargo xtask plugins --examples` builds and packages the plugins of this repository, after checking that each one resolves the crates shared with the editor exactly like the editor.
 
+**File dialogs**: the editor provides the native dialogs, a plugin does not ship its own dialog library. `ctx.pick_folder(title)` picks a folder, `ctx.pick_file(title, &[("Images", &["png", "jpg"])])` a file to open, `ctx.save_file(title, "name.csv", &[("CSV", &["csv"])])` a file to save (the file is not created). Each returns `Option<PathBuf>` (`None`: cancelled), starts in the open project's folder and blocks the editor while it is open, like the editor's own dialogs; the MCP server answers "busy" meanwhile.
+
 **Rules**:
 
 - Draw with `orbit_editor_sdk::egui`, never with an egui of your own.

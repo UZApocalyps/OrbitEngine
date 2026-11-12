@@ -112,6 +112,8 @@ Dans les closures, l'`EditorContext` lit le projet et le modifie comme les outil
 
 **Paquet** : un `.orbitplugin` est un zip avec `manifest.ron` (`id`, `name`, `version`, `description`, `author`, `library`, et en option `min_editor` / `max_editor` / `homepage`), la bibliothèque, et des dossiers `locales/` et `assets/` facultatifs. `cargo xtask plugins --examples` compile et empaquette les plugins de ce dépôt, après avoir vérifié que chacun résout les crates partagées avec l'éditeur exactement comme lui.
 
+**Boîtes de dialogue de fichiers** : l'éditeur fournit les dialogues natifs, un plugin n'embarque pas sa propre bibliothèque de dialogues. `ctx.pick_folder(titre)` choisit un dossier, `ctx.pick_file(titre, &[("Images", &["png", "jpg"])])` un fichier à ouvrir, `ctx.save_file(titre, "nom.csv", &[("CSV", &["csv"])])` un fichier à enregistrer (le fichier n'est pas créé). Chacun renvoie `Option<PathBuf>` (`None` : annulé), démarre dans le dossier du projet ouvert et bloque l'éditeur pendant qu'il est ouvert, comme les dialogues de l'éditeur ; le serveur MCP répond « occupé » pendant ce temps.
+
 **Règles** :
 
 - Dessinez avec `orbit_editor_sdk::egui`, jamais avec votre propre egui.

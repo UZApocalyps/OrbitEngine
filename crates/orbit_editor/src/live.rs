@@ -120,6 +120,11 @@ impl LiveService {
         !self.queue.is_empty()
     }
 
+    /// The queue shared with the transport (the file dialogs mark it busy).
+    pub fn queue(&self) -> McpQueue {
+        self.queue.clone()
+    }
+
     /// Tells clients why the editor cannot answer for a while (a blocking
     /// native dialog); `None` when it can again.
     pub fn set_busy(&self, reason: Option<String>) {
