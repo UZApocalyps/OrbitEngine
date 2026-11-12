@@ -3199,7 +3199,6 @@ dependencies = [
  "orbit_project",
  "orbit_render2d",
  "orbit_render3d",
- "orbit_renpy",
  "orbit_runtime",
  "orbit_save",
  "orbit_scene",
@@ -3466,6 +3465,15 @@ dependencies = [
  "orbit_dsl",
  "orbit_i18n",
  "orbit_project",
+]
+
+[[package]]
+name = "orbit_renpy_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
+ "orbit_renpy",
+ "rfd",
 ]
 
 [[package]]

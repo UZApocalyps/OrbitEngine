@@ -1,5 +1,9 @@
 # Changelog
 
+## Non publié
+
+- **L'import Ren'Py de l'éditeur devient un plugin** (`orbit.renpy_import`, `plugins/orbit_renpy_plugin`) : l'éditeur n'embarque plus `orbit_renpy`. Compilez-le avec `cargo xtask plugins` et installez-le depuis le gestionnaire de plugins ; Fichier > Importer depuis Ren'Py et le rapport d'import fonctionnent comme avant une fois installé (le bouton de la fenêtre Nouveau projet disparaît). `orbit import-renpy` est inchangé.
+
 ## 0.4.0 (2026-11-05)
 
 Version centrée sur l'import de jeux Ren'Py, le point & click, les notifications en jeu, les personnages 3D animés et un éditeur extensible par plugins.

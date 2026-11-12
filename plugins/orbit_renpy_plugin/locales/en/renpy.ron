@@ -1,0 +1,9 @@
+{
+    "renpy.action": "Import from Ren'Py…",
+    "renpy.pick_source": "Ren'Py game folder (or its game/ folder)",
+    "renpy.pick_parent": "Folder that will contain the imported project",
+    "renpy.task": "Importing the Ren'Py game",
+    "renpy.done": "Ren'Py import: {summary}",
+    "renpy.report_title": "Ren'Py import report",
+    "renpy.report_note": "This report is also saved as import-report.md in the new project.",
+}
