@@ -71,16 +71,6 @@ pub fn set_loop(rig: &mut Rig, name: &str, looping: Loop) -> Result<(), OpError>
     Ok(())
 }
 
-pub fn remove_track(rig: &mut Rig, name: &str, index: usize) -> Result<(), OpError> {
-    let clip = clip_mut(rig, name)?;
-    if index < clip.tracks.len() {
-        clip.tracks.remove(index);
-        Ok(())
-    } else {
-        Err(OpError::Unknown)
-    }
-}
-
 // ------------------------------------------------------------ track kinds
 
 /// What a track animates.
@@ -837,8 +827,7 @@ mod tests {
         assert_eq!(add_track(&mut r, "c", Channel::Deform, &Target::Deform(SlotId::new("s1"), AttachmentId::new("m")), 0.0), None);
         let d = add_track(&mut r, "c", Channel::DrawOrder, &Target::DrawOrder, 0.0).unwrap();
         assert_eq!(key_value(&r.clips["c"].tracks[d], 0), Some(KeyValue::Order(vec![SlotId::new("s1"), SlotId::new("s2")])));
-        remove_track(&mut r, "c", d).unwrap();
-        assert_eq!(remove_track(&mut r, "c", 9), Err(OpError::Unknown));
+        r.clips.get_mut("c").unwrap().tracks.remove(d);
         assert!(validate_ok(&r));
     }
 

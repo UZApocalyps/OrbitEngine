@@ -46,7 +46,7 @@ fn open_screen_node_is_created_edited_with_params_and_undone() {
     let nodes = session.project.story().scenes[0].nodes.len();
 
     // Both nodes give drafts (they are in the palette).
-    let mut draft = |key: &str| {
+    let draft = |key: &str| {
         drafts_for(session.project.story(), &core.registry, &texts, key, scene, 0)
             .unwrap()
             .remove(0)
