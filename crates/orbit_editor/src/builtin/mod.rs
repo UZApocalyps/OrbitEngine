@@ -33,6 +33,7 @@ mod library;
 mod library_select;
 pub mod manual;
 mod nodeinfo;
+mod game_plugins;
 mod plugin_store;
 mod plugins;
 mod preview;

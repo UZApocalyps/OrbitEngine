@@ -45,6 +45,8 @@ struct ManagerUi {
     /// The panel was just shown (cached catalogs, background refresh).
     shown: bool,
     store: StoreUi,
+    /// Game plugins of the open project (`builtin::game_plugins`).
+    game: super::game_plugins::GameUi,
     /// The plugin folders, read again when the panel shows or after a change.
     list: Option<Vec<InstalledPlugin>>,
     /// A file picked, waiting for the security confirmation.
@@ -287,6 +289,7 @@ fn poll_install(ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &mut Man
 
 fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &mut ManagerUi) {
     poll_install(ctx, shared, m);
+    super::game_plugins::poll(ctx, shared, &mut m.game);
     if plugin_store::poll(ctx, shared, &mut m.store) {
         m.list = None;
     }
@@ -337,7 +340,11 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &m
     match m.tab {
         Tab::Installed => {}
         Tab::Store => {
-            plugin_store::store_tab(ui, ctx, shared, &mut m.store, &list);
+            if super::game_plugins::store_switch(ui, ctx, &mut m.game) {
+                super::game_plugins::store_view(ui, ctx, shared, &mut m.game);
+            } else {
+                plugin_store::store_tab(ui, ctx, shared, &mut m.store, &list);
+            }
             return;
         }
         Tab::Sources => {
@@ -391,6 +398,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &m
         ui.colored_label(color, text);
     }
     plugin_store::installed_header(ui, ctx, shared, &mut m.store);
+    super::game_plugins::installed_section(ui, ctx, shared, &mut m.game);
     ui.separator();
 
     if list.is_empty() {

@@ -3,6 +3,7 @@
 mod arch;
 mod assets;
 mod bench;
+mod game_plugin;
 mod plugin_store;
 mod plugins;
 mod serve;
@@ -43,6 +44,9 @@ Commands:
                 pub <file>: print its public key
   plugin-index  Merge the build descriptors of <target>/plugins into a store catalog:
                 --index <index.json> [--builds <dir>] [--url <pattern>] [--tag <tag>] [--changelog <text>]
+  game-plugin   Game plugins (runtime crates) for the store: `pack <crate dir> [--sign <keyfile>]` writes a
+                signed .orbitsrc source package into <target>/game-plugins/; `index --index <index.json>`
+                merges them into the catalog's game_plugins (cargo xtask game-plugin help)
 ";
 
 fn main() -> ExitCode {
@@ -60,6 +64,7 @@ fn main() -> ExitCode {
         Some("plugins") => plugins::plugins(&rest),
         Some("plugin-key") => plugin_store::plugin_key(&rest),
         Some("plugin-index") => plugin_store::plugin_index(&rest, default_plugins_dir()),
+        Some("game-plugin") => game_plugin::game_plugin(&rest),
         Some("help") | Some("--help") | Some("-h") | None => {
             print!("{HELP}");
             Ok(())

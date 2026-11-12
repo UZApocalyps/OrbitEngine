@@ -1,5 +1,20 @@
 # Changelog
 
+## Non publié
+
+### Nouveautés
+
+**Plugins de jeu dans le Store**
+- **Plugins de jeu (projet)** : l'onglet Store du gestionnaire de plugins a un sélecteur « Plugins d'éditeur / Plugins de jeu (projet) ». Les plugins de jeu (étapes et actions personnalisées exécutées dans le jeu) sont distribués en sources, avec un badge **Jeu**, la version proposée pour ce moteur (version d'API de plugins et plage de versions du moteur) et leur état dans le projet ouvert.
+- **Installation par projet** : un plugin de jeu s'installe dans `plugins/<nom>/` du projet (jamais dans le dossier des plugins de l'éditeur) et s'ajoute à la liste des plugins requis de `orbit.project.ron` ; mise à jour (depuis sa source d'installation uniquement) et désinstallation depuis l'onglet Installés, section « Plugins de jeu de <projet> ».
+- **Sécurité** : mêmes niveaux de confiance que les plugins d'éditeur (Officiel, Tiers signé, Non signé), signature Ed25519 propre aux paquets de sources, taille et SHA-256 vérifiés, chaque fichier du paquet haché ; chemins d'archive hostiles (`..`, chemins absolus, lecteurs, liens, noms réservés Windows), doublons et bombes zip refusés avant toute écriture ; avertissement « code compilé et exécuté à l'export » avant toute installation tierce.
+- **Modifications locales protégées** : un dossier modifié depuis son installation, une crate écrite à la main au même endroit ou fournissant le même identifiant ne sont jamais écrasés en silence ; « Remplacer (garder une sauvegarde) » les déplace dans `.orbit/plugin-backups/`.
+- **Partie éditeur et toolchain** : l'onglet Installés dit si l'éditeur connaît les types de nœuds du plugin (sinon ses étapes restent en lecture seule) et si l'export pourra le compiler (toolchain Rust, `ORBIT_ENGINE_SRC`) ; sans eux, le plugin s'installe mais l'export échouera, et l'éditeur le dit.
+- **Auteurs** : `cargo xtask game-plugin pack <crate> --sign <clé>` produit un paquet `.orbitsrc` signé, `cargo xtask game-plugin index` l'ajoute au champ `game_plugins` d'un catalogue. Le plugin d'exemple `examples/plugins/dice` est empaqueté et installé de bout en bout dans les tests.
+
+### Compatibilité
+- `index.json` reste au schéma 1 : `game_plugins` est un champ facultatif, ignoré par les éditeurs précédents ; un catalogue sans ce champ est inchangé, et `cargo xtask plugin-index` le conserve.
+
 ## 0.4.0 (2026-11-05)
 
 Version centrée sur l'import de jeux Ren'Py, le point & click, les notifications en jeu, les personnages 3D animés et un éditeur extensible par plugins.

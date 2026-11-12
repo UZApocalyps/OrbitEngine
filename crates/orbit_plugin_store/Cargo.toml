@@ -13,8 +13,12 @@ orbit_http.workspace = true
 serde.workspace = true
 serde_json = "1"
 ron.workspace = true
+# Game plugin source packages (`game::package`): read, checked, extracted.
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+# The game plugin end-to-end test packs `examples/plugins/dice` for this API.
+orbit_plugin_api.workspace = true
 # The editor build id must be computed the same way from the editor's facts
 # and from a probed plugin's fingerprint (JSON).
 orbit_plugin_host.workspace = true

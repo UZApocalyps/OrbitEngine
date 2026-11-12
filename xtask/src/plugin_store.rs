@@ -318,7 +318,7 @@ pub fn merge(
     catalog.plugins.sort_by(|a, b| a.id.cmp(&b.id));
 }
 
-fn utc_now() -> String {
+pub(crate) fn utc_now() -> String {
     // Days to civil date (Howard Hinnant's algorithm), no time crate.
     let secs = orbit_plugin_store::now_secs();
     let days = (secs / 86_400) as i64;
@@ -405,6 +405,8 @@ pub fn plugin_index(args: &[String], default_builds: PathBuf) -> Result {
         )
         .into());
     }
+    // The catalog's game plugins (`cargo xtask game-plugin index`) are kept.
+    let mut games = Vec::new();
     let mut catalog = match std::fs::read_to_string(&index) {
         Ok(text) => {
             let parsed =
@@ -412,6 +414,9 @@ pub fn plugin_index(args: &[String], default_builds: PathBuf) -> Result {
             for w in &parsed.warnings {
                 println!("warning: {w}");
             }
+            games = orbit_plugin_store::game::catalog::parse_game_plugins(&text, true)
+                .map(|(g, _)| g)
+                .unwrap_or_default();
             parsed.catalog
         }
         Err(_) => Catalog::new(&source_name),
@@ -426,7 +431,7 @@ pub fn plugin_index(args: &[String], default_builds: PathBuf) -> Result {
         released.as_deref(),
     );
     catalog.generated = Some(utc_now());
-    let text = catalog.to_json();
+    let text = orbit_plugin_store::game::catalog::catalog_json(&catalog, &games);
     // What the editor will read.
     let check =
         catalog::parse(&text, true).map_err(|e| format!("the merged catalog is invalid: {e}"))?;
