@@ -111,8 +111,7 @@ jobs:
           cp examples/stories/demo.ron demo-project/story.ron
           cp examples/stories/i18n/demo.fr.ron demo-project/i18n/story.fr.ron
           cp -r assets/demo demo-project/assets/demo
-          printf '(format: 1, name: "Demo", story: "story.ron")
-' > demo-project/orbit.project.ron
+          printf '(format: 1, name: "Demo", story: "story.ron")\n' > demo-project/orbit.project.ron
           cargo run -p orbit_cli -- export all --project demo-project --out dist --templates target/templates
           ls -R dist | head -50
           test -f dist/demo-1.0.0-windows.zip
@@ -302,7 +301,7 @@ jobs:
         run: |
           VERSION=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep '^version' | cut -d'"' -f2)
           cargo install wasm-bindgen-cli --version "$VERSION" --locked
-      - name: Web bundle (development: RON story and loose files)
+      - name: "Web bundle (development: RON story and loose files)"
         run: cargo xtask web
       # M6-13: the 3D web template compiles (2D-only player features + `3d`),
       # and the GPU-free 3D data path (scenes, quality check, KTX2 + zstd)
