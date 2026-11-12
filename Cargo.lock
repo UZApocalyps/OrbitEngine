@@ -3539,6 +3539,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit_story_lint_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
+]
+
+[[package]]
+name = "orbit_story_stats_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
+]
+
+[[package]]
 name = "orbit_text"
 version = "0.4.0"
 dependencies = [

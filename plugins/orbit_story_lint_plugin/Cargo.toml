@@ -1,0 +1,23 @@
+[package]
+name = "orbit_story_lint_plugin"
+description = "Story analysis panel (unused or never-written variables, unused characters) and Mermaid export of the scene graph: official native editor plugin, read-only on the project."
+version = "0.4.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The plugin SDK only: editor API, the editor's egui, the project crates.
+orbit_editor_sdk.workspace = true
+
+# `export_plugin!` generates `#[no_mangle]` functions: `unsafe_code` is denied
+# here rather than forbidden (the workspace forbids it).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
