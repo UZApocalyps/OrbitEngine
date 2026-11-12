@@ -87,7 +87,7 @@ Le modèle est `examples/editor_plugins/hello` : une fenêtre, une action du men
 crate-type = ["cdylib"]
 
 [dependencies]
-orbit_editor_sdk = { git = "https://.../OrbitEngine", tag = "v0.4.0" }
+orbit_editor_sdk = { git = "https://.../OrbitEngine", tag = "v0.5.0" }
 
 [lints.rust]
 unsafe_code = "deny"   # pas "forbid" : export_plugin! génère des fonctions exportées
