@@ -4,7 +4,7 @@ OrbitEngine can work with an AI assistant that edits your story alongside you. I
 
 ## In the editor
 
-The editor's MCP server and the **AI Assistant** panel come with the official **MCP server** plugin (`orbit.mcp`): the base editor contains no network server and no async runtime, which keeps it lighter. Install the plugin from **Tools > Extensions > Plugins…** (see the "Editor plugins" chapter). Without it, the robot of the status bar is not shown and `--mcp-port` says the plugin is missing; the command-line server (below) still works. The port and token already saved are kept as they are.
+The editor's MCP server and the **AI Assistant** panel come with the official **MCP server** plugin (`orbit.mcp`): the base editor contains no network server and no async runtime, which keeps it lighter. The official distributions ship it with the editor and install it at the first launch; in a build you compiled yourself, install it from **Tools > Extensions > Plugins…** (see the "Editor plugins" chapter). Without it, the robot of the status bar is not shown and `--mcp-port` says the plugin is missing; the command-line server (below) still works. The port and token already saved are kept as they are.
 
 Open the **Assistant** panel (Tools menu, Ctrl+Shift+A). It shows whether the connection is ready and gives the address to put into your AI application. While the editor is open, the assistant sees your project live: its changes appear immediately and can be undone with Ctrl+Z like your own.
 

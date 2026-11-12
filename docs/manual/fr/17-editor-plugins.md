@@ -1,6 +1,6 @@
 # Plugins de l'éditeur
 
-Les plugins de l'éditeur ajoutent des panneaux, des fenêtres, des entrées de menu et des outils à l'éditeur lui-même. Ce sont des bibliothèques natives (un `.dll` sous Windows, `.so` sous Linux, `.dylib` sous macOS) que l'éditeur charge à son démarrage. L'éditeur est livré sans aucun plugin : vous installez ceux que vous voulez. **Studio IA** en est un.
+Les plugins de l'éditeur ajoutent des panneaux, des fenêtres, des entrées de menu et des outils à l'éditeur lui-même. Ce sont des bibliothèques natives (un `.dll` sous Windows, `.so` sous Linux, `.dylib` sous macOS) que l'éditeur charge à son démarrage. L'éditeur de base est livré sans plugin ; les distributions officielles en livrent quelques-uns (voir *Plugins livrés avec l'éditeur*) et vous installez ceux que vous voulez en plus. **Studio IA** en est un.
 
 Ils sont différents des *plugins Rust* des chapitres précédents, qui ajoutent des étapes à un jeu et sont exportés avec lui. Un plugin de l'éditeur ne se retrouve jamais dans un jeu exporté.
 
@@ -50,6 +50,16 @@ Un plugin et l'éditeur partagent directement des types Rust (l'interface egui, 
 Le manifeste d'un paquet peut aussi indiquer les versions de l'éditeur qu'il accepte (`min_editor`, `max_editor`). En pratique : **un plugin doit être recompilé pour chaque nouvelle version de l'éditeur**, avec la chaîne de compilation de l'éditeur. Après une mise à jour de l'éditeur, un plugin qui fonctionnait est listé comme **Incompatible**, avec le champ qui diffère ; rien n'est supprimé. Installez le paquet recompilé par-dessus (une nouvelle version remplace l'ancienne au prochain démarrage).
 
 Avant le chargement, l'éditeur vérifie aussi que le fichier est une bibliothèque pour ce système et ce processeur, lit l'empreinte dans un processus séparé de courte durée (une bibliothèque défectueuse ne peut pas faire planter l'éditeur), contrôle l'identifiant du plugin et compare la bibliothèque avec la somme de contrôle (SHA-256) enregistrée à l'installation : une bibliothèque modifiée ensuite est refusée.
+
+## Plugins livrés avec l'éditeur
+
+Les distributions officielles (installateurs et archive portable) contiennent un dossier `bundled-plugins/` à côté de l'exécutable, avec des paquets `.orbitplugin` : par défaut l'import Ren'Py (`orbit.renpy_import`) et le serveur MCP avec le panneau Assistant (`orbit.mcp`). Au démarrage, l'éditeur installe chaque paquet livré dont l'identifiant n'a jamais été installé, exactement comme une installation depuis un fichier (mêmes vérifications, SHA-256 enregistré), puis l'active : le plugin est chargé dès ce premier lancement. Les fonctions qui étaient intégrées à l'éditeur restent donc disponibles après une mise à jour, sans rien installer à la main.
+
+- Le gestionnaire de plugins marque ces plugins du badge **Livré avec l'éditeur**.
+- Un plugin livré que vous désactivez ou désinstallez **ne revient pas** : l'éditeur retient les identifiants déjà proposés dans `plugins.ron` (champ `bundled_offered`, ignoré par les anciennes versions de l'éditeur).
+- Une nouvelle version de l'éditeur met à jour un plugin livré si le paquet livré a une version strictement supérieure, ou la même version mais que le plugin installé ne correspond plus à l'éditeur (empreinte ou plage de versions) : le build livré, compatible, le remplace. Un plugin que vous avez installé vous-même (fichier ou Store) n'est jamais touché ; s'il est désactivé, il le reste après une mise à jour.
+- Seul le dossier `bundled-plugins/` à côté de l'exécutable est lu (ni le dossier courant ni celui de l'utilisateur) et rien n'est vérifié en moins. Un paquet livré invalide ou incompatible est ignoré avec une ligne dans le journal. `--no-plugins` désactive aussi ce mécanisme.
+- Pour préparer une distribution : `cargo build --release -p orbit_editor`, puis `cargo xtask plugins --bundle` copie les paquets des identifiants choisis dans `packaging/bundled-plugins/` (que le packager place dans `bundled-plugins/`). Sans liste, `--bundle` livre `orbit.renpy_import` et `orbit.mcp` (constante `DEFAULT_BUNDLED` de `xtask/src/plugins.rs`) ; `--bundle orbit.mcp,orbit.ai_studio` en choisit d'autres, `--bundle-dir <dossier>` change la destination.
 
 ## Studio IA
 

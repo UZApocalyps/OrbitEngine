@@ -24,7 +24,7 @@ use crate::{Result, cargo, run, workspace_root};
 
 const HELP: &str = "\
 cargo xtask plugins [--debug] [--examples] [--only <package>] [--out <dir>] [--no-check]
-                    [--sign <keyfile> | --sign-env <VAR>]
+                    [--sign <keyfile> | --sign-env <VAR>] [--bundle [<ids>]] [--bundle-dir <dir>]
 
 Builds the official native editor plugins (plugins/*) in release (or --debug), with the
 toolchain and profile of the editor, and writes <target>/plugins/<id>-<version>-<os>-<arch>.orbitplugin.
@@ -35,7 +35,17 @@ When the editor of that profile is built, <package>.orbitplugin.json (sha256, si
 id: what `cargo xtask plugin-index` puts in a catalog) is written next to each package; --sign
 signs it with the Ed25519 key of a file (cargo xtask plugin-key gen), --sign-env with the key in an
 environment variable (CI secret ORBIT_PLUGIN_SIGNING_KEY). Signing needs the editor binary.
+--bundle copies the packages of the listed plugin ids (comma separated; default: DEFAULT_BUNDLED,
+orbit.renpy_import and orbit.mcp) into <bundle-dir> (default packaging/bundled-plugins), the folder the
+installers ship as bundled-plugins/ next to the editor: the editor installs those packages on its
+first start. Older packages of the same id are removed from that folder; build the plugins in the
+same profile as the editor you package.
 ";
+
+/// The plugins shipped with the editor by default (`--bundle` without ids):
+/// change this list to ship others. Keep it short: every shipped plugin
+/// adds its size to the installer.
+const DEFAULT_BUNDLED: &[&str] = &["orbit.renpy_import", "orbit.mcp"];
 
 /// The package manifest (`manifest.ron`), as the editor reads it.
 #[derive(Serialize, Deserialize)]
@@ -228,7 +238,9 @@ pub fn plugins(args: &[String]) -> Result {
     let mut out_dir: Option<PathBuf> = None;
     let mut check = true;
     let mut key: Option<crate::plugin_store::KeySource> = None;
-    let mut it = args.iter();
+    let mut bundle: Option<Vec<String>> = None;
+    let mut bundle_dir: Option<PathBuf> = None;
+    let mut it = args.iter().peekable();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--debug" => release = false,
@@ -237,6 +249,15 @@ pub fn plugins(args: &[String]) -> Result {
             "--no-check" => check = false,
             "--only" => only = Some(it.next().ok_or("--only needs a package")?.clone()),
             "--out" => out_dir = Some(PathBuf::from(it.next().ok_or("--out needs a folder")?)),
+            "--bundle" => {
+                // Optional list of ids; a following option is not one.
+                let ids = match it.peek() {
+                    Some(next) if !next.starts_with("--") => it.next().cloned().unwrap_or_default(),
+                    _ => DEFAULT_BUNDLED.join(","),
+                };
+                bundle = Some(ids.split(',').map(str::trim).filter(|i| !i.is_empty()).map(str::to_owned).collect());
+            }
+            "--bundle-dir" => bundle_dir = Some(PathBuf::from(it.next().ok_or("--bundle-dir needs a folder")?)),
             "--sign" => {
                 key = Some(crate::plugin_store::KeySource::File(PathBuf::from(
                     it.next().ok_or("--sign needs a key file")?,
@@ -319,6 +340,8 @@ pub fn plugins(args: &[String]) -> Result {
         .into());
     }
 
+    let bundle_dir = bundle_dir.unwrap_or_else(|| workspace_root().join("packaging").join("bundled-plugins"));
+    let mut bundled: BTreeSet<String> = BTreeSet::new();
     for c in &crates {
         let mut build = cargo();
         build.args(["build", "-p", &c.name]);
@@ -363,6 +386,21 @@ pub fn plugins(args: &[String]) -> Result {
         zip.finish()?;
         let size = std::fs::metadata(&file)?.len();
         println!("{} ({:.1} MB)", file.display(), size as f64 / 1e6);
+        if bundle.as_ref().is_some_and(|ids| ids.contains(&manifest.id)) {
+            std::fs::create_dir_all(&bundle_dir)?;
+            // One package per id: drop the other versions.
+            let prefix = format!("{}-", manifest.id);
+            for old in std::fs::read_dir(&bundle_dir)?.flatten() {
+                let name = old.file_name().to_string_lossy().into_owned();
+                if name.starts_with(&prefix) && name.ends_with(".orbitplugin") {
+                    std::fs::remove_file(old.path())?;
+                }
+            }
+            let dest = bundle_dir.join(file.file_name().ok_or("package without a name")?);
+            std::fs::copy(&file, &dest)?;
+            println!("  bundled: {}", dest.display());
+            bundled.insert(manifest.id.clone());
+        }
 
         if let Some(editor) = &editor_abi {
             let probe = editor_json(&editor_exe, &["--probe-plugin".as_ref(), lib.as_os_str()]);
@@ -398,6 +436,17 @@ pub fn plugins(args: &[String]) -> Result {
                 _ => println!("  warning: the probe of {} failed: {probe:?}", lib.display()),
             }
         }
+    }
+    if let Some(ids) = &bundle {
+        let missing: Vec<&String> = ids.iter().filter(|i| !bundled.contains(*i)).collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "no package built for the bundled plugin id(s) {} (check --only and the ids)",
+                missing.iter().map(|m| m.as_str()).collect::<Vec<_>>().join(", ")
+            )
+            .into());
+        }
+        println!("{} plugin package(s) in {}", bundled.len(), bundle_dir.display());
     }
     Ok(())
 }

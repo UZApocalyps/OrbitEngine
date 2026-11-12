@@ -175,11 +175,15 @@ jobs:
           pattern: templates-*
           path: packaging/templates
           merge-multiple: true
+      # Official plugins shipped next to the editor (bundled-plugins/), built with the editor's profile.
+      - name: Bundled plugins
+        run: cargo xtask plugins --bundle
       - name: Portable archive
         shell: bash
         run: |
           mkdir -p dist/orbit-editor/assets
           cp -r packaging/templates dist/orbit-editor/templates
+          cp -r packaging/bundled-plugins dist/orbit-editor/bundled-plugins
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp target/release/orbit-editor.exe dist/orbit-editor/
           else
@@ -237,6 +241,8 @@ jobs:
           pattern: templates-*
           path: packaging/templates
           merge-multiple: true
+      - name: Bundled plugins (installed by the editor at its first start)
+        run: cargo xtask plugins --bundle
       - name: Build the installers
         working-directory: crates/orbit_editor
         env:

@@ -435,7 +435,13 @@ fn plugin_card(
                 ui.label(RichText::new(ctx.tf("plugins.by", &[("author", &plugin.manifest.author)])).color(weak(ui)));
             }
         });
-        ui.label(RichText::new(&id).small().monospace().color(weak(ui)));
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(&id).small().monospace().color(weak(ui)));
+            if plugin.record.bundled {
+                ui.label(RichText::new(ctx.t("plugins.bundled")).small().color(success()))
+                    .on_hover_text(ctx.t("plugins.bundled_hint"));
+            }
+        });
         if !plugin.manifest.description.is_empty() {
             ui.label(&plugin.manifest.description);
         }

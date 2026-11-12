@@ -123,11 +123,15 @@ icons = [
     "../../assets/brand/icon-256.png",
 ]
 # Next to the executable: the demo project and its assets, and the (possibly
-# empty) `templates/` folder where the game player templates go.
+# empty) `templates/` folder where the game player templates go, and the
+# (possibly empty) `bundled-plugins/` folder of the plugins shipped with the editor.
 resources = [
     { src = "../../examples/stories", target = "examples/stories" },
     { src = "../../assets/demo", target = "assets/demo" },
     { src = "../../packaging/templates", target = "templates" },
+    # Native editor plugins installed at the first start (`cargo xtask plugins --bundle`
+    # fills this folder; empty in builds that ship none).
+    { src = "../../packaging/bundled-plugins", target = "bundled-plugins" },
 ]
 
 # `.orbit` story files (TL-02): registry keys + ProgID on Windows (MSI and

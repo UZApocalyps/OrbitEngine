@@ -193,6 +193,17 @@ cargo xtask plugin-index --index ../OrbitEnginePlugins/index.json --builds targe
 target, profile, file, size, sha256, signature) that `plugin-index` merges into
 `index.json` (a build with the same id, version and build id is replaced).
 
+### 5.1 Plugins shipped with the editor
+
+The editor distributions (installers, portable archive) can ship plugin packages in
+`bundled-plugins/` next to the executable (`cargo xtask plugins --bundle [ids]`, default
+`orbit.renpy_import` and `orbit.mcp`, which used to be built into the editor). They are
+unrelated to the catalogs: the editor installs them at start-up through the same code as an
+install from a file (no network, nothing relaxed), once per id (`bundled_offered` in
+`plugins.ron`, so an uninstalled one does not return), and updates only the plugins that came
+from such a package. They have no store origin: the catalogs' update check does not apply to them. Any later install
+over one (from a file or the store) makes it the user's, no longer updated from `bundled-plugins/`.
+
 ## 6. Third-party catalogs
 
 Anyone can host a catalog: a repository with an `index.json` in this format and

@@ -31,6 +31,8 @@
     "plugins.uninstall_yes": "Supprimer",
     "plugins.pick_title": "Installer un plugin",
     "plugins.filter": "Plugins de l'éditeur",
+    "plugins.bundled": "Livré avec l'éditeur",
+    "plugins.bundled_hint": "Installé avec l'éditeur et mis à jour avec lui. Vous pouvez le désactiver ou le désinstaller : il ne reviendra pas.",
     "plugins.status.running": "Activé — en cours d'exécution",
     "plugins.status.next_start": "Activé — démarre après un redémarrage",
     "plugins.status.disabled": "Désactivé",

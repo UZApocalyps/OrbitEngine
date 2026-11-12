@@ -20,6 +20,8 @@ use crate::manifest::{MANIFEST_FILE, PackageManifest};
 use crate::store::{PluginRecord, PluginStore, ProbeCache};
 use crate::verify::{EditorFacts, Problem, Prober, valid_id, verify};
 
+pub mod bundled;
+
 /// Extension of a plugin package (a zip archive).
 pub const PACKAGE_EXTENSION: &str = "orbitplugin";
 /// Folder (in the plugins folder) of the plugins being installed.
@@ -410,6 +412,8 @@ impl PluginManager {
         record.error = None;
         record.uninstall = false;
         record.staged = staged;
+        // Any install makes the plugin the user's (bundled installs mark it after).
+        record.bundled = false;
         record.sha256 = sha.clone();
         record.size = meta.len();
         record.modified = modified;

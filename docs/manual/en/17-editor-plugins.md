@@ -1,6 +1,6 @@
 # Editor plugins
 
-Editor plugins add panels, windows, menu entries and tools to the editor itself. They are native libraries (a `.dll` on Windows, `.so` on Linux, `.dylib` on macOS) that the editor loads when it starts. The editor ships without any: you install the ones you want. **AI Studio** is one of them.
+Editor plugins add panels, windows, menu entries and tools to the editor itself. They are native libraries (a `.dll` on Windows, `.so` on Linux, `.dylib` on macOS) that the editor loads when it starts. The base editor ships without any; the official distributions ship a few (see *Plugins shipped with the editor*) and you install the ones you want on top. **AI Studio** is one of them.
 
 They are different from the *Rust plugins* of the previous chapters, which add steps to a game and are exported with it. An editor plugin never ends up in an exported game.
 
@@ -50,6 +50,16 @@ A plugin and the editor share Rust types directly (the egui interface, the proje
 The manifest of a package can also give the editor versions it accepts (`min_editor`, `max_editor`). In practice: **a plugin must be rebuilt for each new editor version**, with the editor's toolchain. After you update the editor, a plugin that worked before is listed as **Incompatible** with the field that differs; nothing is deleted. Install the rebuilt package over it (a new version replaces the old one at the next start).
 
 Before loading, the editor also checks that the file is a library for this system and processor, reads the fingerprint in a separate short-lived process (a broken library cannot crash the editor), checks the plugin id, and compares the library with the checksum (SHA-256) recorded at install: a library changed afterwards is refused.
+
+## Plugins shipped with the editor
+
+The official distributions (installers and portable archive) contain a `bundled-plugins/` folder next to the executable, with `.orbitplugin` packages: by default the Ren'Py import (`orbit.renpy_import`) and the MCP server with the Assistant panel (`orbit.mcp`). At start-up the editor installs every shipped package whose id was never installed before, exactly like an install from a file (same checks, SHA-256 recorded), then enables it: the plugin is loaded from that very first launch. The features that used to be built into the editor therefore stay available after an update, with nothing to install by hand.
+
+- The plugin manager marks these plugins with a **Ships with the editor** badge.
+- A shipped plugin you disable or uninstall **does not come back**: the editor remembers the ids already offered in `plugins.ron` (`bundled_offered` field, ignored by earlier editor versions).
+- A new editor version updates a shipped plugin when the shipped package has a strictly higher version, or the same version but the installed plugin no longer matches the editor (fingerprint or version range): the compatible shipped build replaces it. A plugin you installed yourself (file or Store) is never touched; if it is disabled, it stays disabled after an update.
+- Only the `bundled-plugins/` folder next to the executable is read (not the current folder, not the user's), and no check is relaxed. An invalid or incompatible shipped package is skipped with a line in the log. `--no-plugins` also turns this off.
+- To prepare a distribution: `cargo build --release -p orbit_editor`, then `cargo xtask plugins --bundle` copies the packages of the chosen ids into `packaging/bundled-plugins/` (which the packager places in `bundled-plugins/`). Without a list, `--bundle` ships `orbit.renpy_import` and `orbit.mcp` (the `DEFAULT_BUNDLED` constant in `xtask/src/plugins.rs`); `--bundle orbit.mcp,orbit.ai_studio` picks others, `--bundle-dir <folder>` changes the destination.
 
 ## AI Studio
 

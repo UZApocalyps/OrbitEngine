@@ -2,7 +2,7 @@
 //! the checksum recorded at install, the cached probe result and the last
 //! error that disabled it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use orbit_editor_api::native::DescriptorInfo;
@@ -43,12 +43,23 @@ pub struct PluginRecord {
     /// A new version waits in `.staged/<id>` (installed while loaded).
     #[serde(default)]
     pub staged: bool,
+    /// Installed from a package shipped with the editor (`bundled-plugins/`),
+    /// not by hand nor from the store: only such a plugin is updated from
+    /// the shipped package. Cleared by any other install.
+    #[serde(default)]
+    pub bundled: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginStore {
     #[serde(default)]
     pub plugins: BTreeMap<String, PluginRecord>,
+    /// Ids of the shipped packages already installed (or found installed by
+    /// hand) once: a shipped plugin the user uninstalled does not come back.
+    /// Missing in files written by earlier editors; ignored (as an unknown
+    /// field) by those editors reading a newer file.
+    #[serde(default)]
+    pub bundled_offered: BTreeSet<String>,
 }
 
 impl PluginStore {

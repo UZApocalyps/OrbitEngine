@@ -4,7 +4,7 @@ OrbitEngine peut transformer un jeu Ren'Py en un nouveau projet, pour ne pas rep
 
 ## Comment importer
 
-- Dans l'éditeur : l'import est un plugin de l'éditeur (`orbit.renpy_import`, compilé par `cargo xtask plugins` et installé depuis **Outils > Extensions > Plugins…**, voir *Plugins de l'éditeur*). Une fois installé : **Fichier > Importer depuis Ren'Py…**. Choisissez le dossier du jeu Ren'Py (celui qui contient `game/`, ou `game/` lui-même), puis le dossier qui contiendra le nouveau projet. L'import se fait en arrière-plan ; le projet s'ouvre à la fin et le rapport d'import s'affiche.
+- Dans l'éditeur : l'import est un plugin de l'éditeur (`orbit.renpy_import`, compilé par `cargo xtask plugins` et installé depuis **Outils > Extensions > Plugins…**, voir *Plugins de l'éditeur*). Il est livré avec l'éditeur dans les distributions officielles (installé au premier lancement, voir *Plugins livrés avec l'éditeur*) ; dans une version compilée à la main, installez-le d'abord. Une fois installé : **Fichier > Importer depuis Ren'Py…**. Choisissez le dossier du jeu Ren'Py (celui qui contient `game/`, ou `game/` lui-même), puis le dossier qui contiendra le nouveau projet. L'import se fait en arrière-plan ; le projet s'ouvre à la fin et le rapport d'import s'affiche.
 - En ligne de commande : `orbit import-renpy <dossier_renpy> <dossier_sortie>`. Le dossier de sortie doit être vide ou absent.
 
 Le rapport est aussi enregistré dans `import-report.md`, dans le nouveau projet : les comptes, chaque instruction non convertie (avec son fichier et sa ligne) et chaque approximation.

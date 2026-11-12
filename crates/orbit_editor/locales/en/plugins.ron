@@ -31,6 +31,8 @@
     "plugins.uninstall_yes": "Remove",
     "plugins.pick_title": "Install a plugin",
     "plugins.filter": "Editor plugins",
+    "plugins.bundled": "Ships with the editor",
+    "plugins.bundled_hint": "Installed with the editor and updated with it. You can disable or uninstall it; it will not come back.",
     "plugins.status.running": "Enabled — running",
     "plugins.status.next_start": "Enabled — runs after a restart",
     "plugins.status.disabled": "Disabled",
