@@ -507,9 +507,13 @@ fn list(ui: &mut egui::Ui, ctx: &mut EditorContext<'_>, shown: &[&Line], show_sp
                         [w_text, ROW_HEIGHT],
                         egui::Label::new(text).truncate().sense(egui::Sense::click()),
                     );
+                    // Only the file name: the folders all begin alike and the
+                    // end-truncation hid the part that tells the lines apart
+                    // (the full path is in the tooltip).
+                    let name = line.expected.rsplit(['/', '\\']).next().unwrap_or(&line.expected);
                     let file = ui.add_sized(
                         [w_file, ROW_HEIGHT],
-                        egui::Label::new(egui::RichText::new(&line.expected).small()).truncate(),
+                        egui::Label::new(egui::RichText::new(name).small()).truncate(),
                     );
                     file.on_hover_text(&line.expected);
                     let color = state_color(ui, line.state);
