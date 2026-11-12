@@ -2,7 +2,10 @@
 
 ## Non publié
 
+### Changements
 - **L'import Ren'Py de l'éditeur devient un plugin** (`orbit.renpy_import`, `plugins/orbit_renpy_plugin`) : l'éditeur n'embarque plus `orbit_renpy`. Compilez-le avec `cargo xtask plugins` et installez-le depuis le gestionnaire de plugins ; Fichier > Importer depuis Ren'Py et le rapport d'import fonctionnent comme avant une fois installé (le bouton de la fenêtre Nouveau projet disparaît). `orbit import-renpy` est inchangé.
+- **Serveur MCP de l'éditeur en plugin** : le serveur MCP live (HTTP sur 127.0.0.1, jeton) et le panneau Assistant IA deviennent le plugin officiel **Serveur MCP** (`orbit.mcp`, `plugins/orbit_mcp_plugin`, compilé par `cargo xtask plugins`). L'éditeur ne compile plus tokio, hyper ni rmcp (arbre de dépendances de `orbit_editor` : 419 → 374 lignes) ; il garde les outils MCP et les exécute lui-même, si bien que les plugins qui appellent des outils (Studio IA) fonctionnent sans le plugin. Le port et le jeton enregistrés sont repris. Sans le plugin, le robot de la barre d'état est masqué et `--mcp-port` signale le plugin manquant. `orbit mcp` (ligne de commande) est inchangé.
+- Pour les développeurs : `orbit_mcp` a une feature `server` (transports stdio et HTTP, désactivée par défaut, activée par `orbit_cli` et le plugin) ; l'API de l'éditeur gagne `orbit_editor_api::mcp` (file de requêtes `McpQueue`, trait `McpTransport`, `PluginHost::mcp_transport`).
 
 ## 0.4.0 (2026-11-05)
 

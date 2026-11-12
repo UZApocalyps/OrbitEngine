@@ -62,6 +62,10 @@ cargo xtask plugins
 
 La seconde commande écrit `target/plugins/orbit.ai_studio-<version>-<os>-<arch>.orbitplugin`. Installez ce fichier depuis le gestionnaire de plugins de l'éditeur compilé par la première commande (même profil : `cargo xtask plugins --debug` pour un éditeur en debug). Ses réglages (fournisseurs, clés) restent dans `ai_studio.ron` dans le dossier de configuration de l'éditeur, comme avant.
 
+## Serveur MCP
+
+Le serveur MCP de l'éditeur (connexion d'un client IA comme Claude Code au projet ouvert) et le panneau **Assistant IA** forment un autre plugin officiel, `orbit.mcp` (`plugins/orbit_mcp_plugin`), compilé par la même commande `cargo xtask plugins` (`target/plugins/orbit.mcp-<version>-<os>-<arch>.orbitplugin`). L'éditeur garde les outils et les exécute lui-même sur le projet ouvert : sans le plugin, les plugins qui appellent des outils (Studio IA) fonctionnent toujours ; seul le transport réseau (HTTP sur 127.0.0.1, jeton) et le panneau sont dans le plugin. Le port et le jeton restent dans la configuration de l'éditeur (`orbit.ai`), comme avant.
+
 ## Pour les programmeurs : écrire un plugin
 
 Le modèle est `examples/editor_plugins/hello` : une fenêtre, une action du menu **Outils** qui ajoute une note au projet en une seule étape annulable, une page de réglages et ses textes en français et en anglais.

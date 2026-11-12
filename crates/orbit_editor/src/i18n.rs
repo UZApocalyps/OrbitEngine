@@ -74,7 +74,7 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
     ),
     (
         "assistant",
-        &["assistant", "live"],
+        &["live"],
         include_str!("../locales/en/assistant.ron"),
         include_str!("../locales/fr/assistant.ron"),
     ),

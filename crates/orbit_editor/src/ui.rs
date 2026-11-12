@@ -472,7 +472,11 @@ fn status_bar(
                     ui.label(RichText::new(mode).small().color(theme.text_faint()));
                     // The live MCP: an always-visible robot (grey when the server
                     // is off, green when it listens, accent while the AI edits);
-                    // a click opens the "Assistant IA" panel.
+                    // a click opens the "Assistant IA" panel. Only with the
+                    // `orbit.mcp` plugin, which provides the server and the panel.
+                    if ectx.registry().mcp_transport().is_none() {
+                        return;
+                    }
                     ui.separator();
                     let ai = &ectx.state().ai;
                     let editing = ai.edited_within(2.5);

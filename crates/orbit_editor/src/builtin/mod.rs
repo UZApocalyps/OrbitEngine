@@ -4,7 +4,6 @@
 
 mod actions;
 mod anim_edit;
-mod assistant;
 mod console;
 mod curves;
 mod definitions;
@@ -115,7 +114,6 @@ pub mod ids {
     pub const SCENE3D: &str = "orbit.scene3d";
     pub const EXPORT: &str = "orbit.export";
     pub const TRANSLATIONS: &str = "orbit.translations";
-    pub const ASSISTANT: &str = "orbit.assistant";
     pub const UI_EDITOR: &str = "orbit.ui";
     pub const TEXTVIEW: &str = "orbit.textview";
     pub const MANUAL: &str = "orbit.manual";
@@ -146,7 +144,8 @@ pub mod panels {
     pub const SCENE3D_INSPECTOR: &str = "orbit.scene3d.inspector";
     pub const EXPORT: &str = "orbit.export.export";
     pub const TRANSLATIONS: &str = "orbit.translations.translations";
-    pub const ASSISTANT: &str = "orbit.assistant.assistant";
+    /// The "AI Assistant" panel of the `orbit.mcp` plugin (not built in).
+    pub const ASSISTANT: &str = "orbit.mcp.assistant";
     pub const UI_EDITOR: &str = "orbit.ui.editor";
     pub const TEXTVIEW: &str = "orbit.textview.textview";
     pub const MANUAL: &str = "orbit.manual.manual";
@@ -209,7 +208,6 @@ pub fn plugins_with(shared: &Shared) -> Vec<Box<dyn EditorPlugin>> {
         Box::new(search::SearchPlugin::new(shared.search.clone())),
         Box::new(export::ExportPlugin),
         Box::new(translations::TranslationsPlugin),
-        Box::new(assistant::AssistantPlugin),
         Box::new(uied::UiEditorPlugin::default()),
         Box::new(textview::TextViewPlugin),
         Box::new(manual::ManualPlugin),
@@ -270,7 +268,7 @@ fn panel_group(panel_id: &str) -> &'static str {
         "orbit.ui.editor"
         | "orbit.timeline.timeline"
         | "orbit.export.export"
-        | "orbit.assistant.assistant"
+        | "orbit.mcp.assistant"
         | "orbit.manual.manual"
         | "orbit.plugins.manager" => GROUP_TOOLS,
         id if id.starts_with("orbit.rig.") || id.starts_with("orbit.scene3d.") => GROUP_TOOLS,
