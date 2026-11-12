@@ -28,3 +28,5 @@ Si un projet utilise un plugin non installé, ses étapes sont conservées telle
 ## Pour les programmeurs
 
 Un plugin est une crate Rust qui dépend d'`orbit_plugin_api` (version d'API 1, mêmes sources du moteur). Elle implémente `Plugin` (côté éditeur : types de nœuds et leurs champs) et `RuntimePlugin` (handlers), déclare ses identifiants dans `Cargo.toml` sous `[package.metadata.orbit] plugins = ["votre.id"]` et exporte `orbit_plugins()`. Un handler lit les variables, tire dans le générateur aléatoire seedé de la partie et renvoie des opérations sur les variables et des événements ; il peut faire patienter l'histoire quelques secondes. Il ne doit garder aucun état de jeu pour lui : tout ce qui doit survivre à une sauvegarde ou à un retour en arrière va dans des variables.
+
+Un gestionnaire peut aussi afficher une notification (un toast avec un texte, et éventuellement une icône, un son, une durée et un style) : elle s'affiche une fois le gestionnaire réussi, comme la fonction `notify(...)` des scripts.

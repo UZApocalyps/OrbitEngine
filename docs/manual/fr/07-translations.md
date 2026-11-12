@@ -1,6 +1,6 @@
 # Traductions (PO et CSV)
 
-Chaque texte de votre histoire (répliques, noms de personnages, choix) peut être traduit dans d'autres langues. La langue dans laquelle vous écrivez est la **langue source**.
+Chaque texte de votre histoire (répliques, noms de personnages, choix, notifications et infobulles des zones cliquables) peut être traduit dans d'autres langues. La langue dans laquelle vous écrivez est la **langue source**.
 
 ## Ajouter une langue
 

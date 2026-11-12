@@ -48,6 +48,13 @@ Un **rig** donne vie à un dessin avec des os : respiration, bras qui salue, tê
 
 Si vous ajoutez des os ensuite, la barre d'étapes demande de lier à nouveau. Cliquez enfin sur **Ajouter au projet** : le fichier est enregistré en `assets/rigs/<nom>.rig.ron` et apparaît dans la Bibliothèque. Les images dessinées par un rig doivent être des fichiers du projet.
 
+### Maillages, clips et clés
+
+- **Maillage.** Le maillage d'une image est tracé depuis sa transparence. Prenez l'**outil maillage** (**M**) pour retoucher les sommets (Suppr retire le sommet sélectionné), ou **Recréer le maillage** depuis l'image pour recommencer (cela remplace les retouches manuelles) ; un *espacement intérieur* plus petit donne plus de sommets intérieurs, qui plient mieux. **Suivre seulement l'os du slot** retire les poids pour que le maillage suive son os d'un bloc.
+- **Clips.** Dans le panneau des clips de rig, créez un clip (nom, durée, boucle). Sélectionnez-le pour modifier ses pistes et ses clés dans la chronologie : magnétisme sur la grille, la tête de lecture et les autres clés (maintenez **Alt** pour l'ignorer), Suppr retire les clés sélectionnées.
+- **Enregistrer des clés.** En mode pose, posez un os et enregistrez : avec l'**auto-clé** activée (le bouton d'enregistrement), chaque changement de pose écrit des clés à la tête de lecture ; ou appuyez sur **K** (*Clé de pose*) pour enregistrer d'un coup tous les os posés à la tête de lecture.
+- **Personnages en scène.** Un clip se joue sur un personnage dès qu'une expression utilise le rig (voir la fin de cette section).
+
 ### Découper une image en calques
 
 Un personnage dessiné d'un seul bloc peut être séparé en calques posés sur des plans différents et animés par leurs propres os — typiquement, pour un visage d'anime : **mèches de devant / paupières / visage / cheveux de derrière**. Sélectionnez la partie dans la liste des slots (Hiérarchie du rig) et prenez l'**outil découpe** (ciseaux, en mode repos) :

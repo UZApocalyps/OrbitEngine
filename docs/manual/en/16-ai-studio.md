@@ -25,8 +25,8 @@ Any server with an OpenAI-compatible `chat/completions` API works: Ollama, LM St
 ### Example: Ollama (local)
 
 1. Install Ollama, then pull a model: `ollama pull llama3.1` (any model you like; a 12B+ model writes noticeably better scripts).
-2. URL `http://localhost:11434/v1`, model `llama3.1`, no key.
-3. **Test connection / list models** lists the models the server has.
+2. In **Providers**, URL `http://127.0.0.1:11434/v1` (the default `http://localhost:11434/v1` works too), model `llama3.1`, no key. A bare `http://127.0.0.1:11434` gets its `/v1` added for you. If the connection fails, use `127.0.0.1` rather than `localhost`: on some systems `localhost` resolves to IPv6 (`::1`) while Ollama listens on IPv4 only (the studio tries every address, but a firewall or proxy can still get in the way).
+3. **Test connection / list models** lists the models the server has. If the server answers *model not found*, the model is not downloaded: run `ollama pull <model>` in a terminal and test again.
 
 Reasoning models are fine: their `<think>` section is removed from the answers.
 
@@ -50,10 +50,14 @@ Common settings: style prefix (or the *art style* of the pitch), negative prompt
 ## Stable Diffusion models (SD models tab)
 
 - **Model family**: *SD 1.5*, *SDXL*, *Pony*, *Illustrious / NoobAI* set suitable sizes, quality tags (`score_9, score_8_up...` for Pony), negative prompt and clip skip. You can change each value after.
-- **Checkpoint, VAE, sampler, scheduler**: type a name or pick one from the lists read from the backend (A1111 / Forge: checkpoints, LoRAs, VAEs, embeddings, samplers, schedulers; ComfyUI: the choices of its loader and sampler nodes). Sampler names in the A1111 style (`DPM++ 2M Karras`) are translated for ComfyUI.
+- **Checkpoint, VAE, sampler, scheduler**: pick one from the searchable drop-down lists (type to filter), or type a name. The lists merge two sources, marked *disk* and *backend*: the files found in the model folders (see *Model folders* below) and what the backend reports (A1111 / Forge: checkpoints, LoRAs, VAEs, embeddings, samplers, schedulers; ComfyUI: the choices of its loader and sampler nodes). A name that is in neither list is kept as typed, with a notice. **Rescan the disk** reads the folders again. LoRAs are added from a drop-down too (**Choose a LoRA...**), and **Insert an embedding** adds one to a prompt. Sampler names in the A1111 style (`DPM++ 2M Karras`) are translated for ComfyUI.
 - **LoRAs for every picture**: name, weight and trigger words. With A1111 the studio writes `<lora:name:weight>` in the prompt; with ComfyUI it adds `LoraLoader` nodes. Trigger words are added to the prompts automatically.
 - **Embeddings**: write their name in the quality tags, the style prefix or the negative prompt.
 - **Character consistency** (Pictures tab): per character, a fixed seed and / or a character LoRA (for instance one trained on that character).
+
+### Model folders
+
+The studio can read your models straight from the disk, even when the backend is not running. Under **Download folders** (SD models tab), give the four folders of your backend (checkpoints, LoRAs, embeddings, VAEs), or let the studio find them: type the **ComfyUI folder** (the install folder; the portable build with its inner `ComfyUI` folder works too) or the **A1111 / Forge folder** (the `stable-diffusion-webui` folder) and click **Detect the model folders**. A message says *Model folders found.* or *No models folder found there.* The same folders are used as download targets for Civitai.
 
 ## Civitai (optional)
 

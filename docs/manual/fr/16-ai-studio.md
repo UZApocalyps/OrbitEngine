@@ -25,8 +25,8 @@ Tout serveur avec une API `chat/completions` compatible OpenAI convient : Ollama
 ### Exemple : Ollama (local)
 
 1. Installez Ollama, puis téléchargez un modèle : `ollama pull llama3.1` (n'importe quel modèle ; à partir de 12B les scripts sont nettement meilleurs).
-2. URL `http://localhost:11434/v1`, modèle `llama3.1`, pas de clé.
-3. **Tester la connexion / lister les modèles** affiche les modèles du serveur.
+2. Dans **Fournisseurs**, URL `http://127.0.0.1:11434/v1` (l'URL par défaut `http://localhost:11434/v1` convient aussi), modèle `llama3.1`, pas de clé. Une URL nue `http://127.0.0.1:11434` reçoit son `/v1` automatiquement. Si la connexion échoue, utilisez `127.0.0.1` plutôt que `localhost` : sur certains systèmes `localhost` désigne l'IPv6 (`::1`) alors qu'Ollama n'écoute qu'en IPv4 (le studio essaie toutes les adresses, mais un pare-feu ou un proxy peut quand même gêner).
+3. **Tester la connexion / lister les modèles** affiche les modèles du serveur. Si le serveur répond *model not found*, le modèle n'est pas téléchargé : lancez `ollama pull <modèle>` dans un terminal et testez à nouveau.
 
 Les modèles « à raisonnement » conviennent : leur section `<think>` est retirée des réponses.
 
@@ -50,10 +50,14 @@ Réglages communs : préfixe de style (ou le *style graphique* du pitch), prompt
 ## Modèles Stable Diffusion (onglet Modèles SD)
 
 - **Famille de modèle** : *SD 1.5*, *SDXL*, *Pony*, *Illustrious / NoobAI* règlent des tailles adaptées, les tags de qualité (`score_9, score_8_up...` pour Pony), le prompt négatif et le clip skip. Chaque valeur reste modifiable.
-- **Checkpoint, VAE, sampler, scheduler** : tapez un nom ou choisissez dans les listes lues sur le moteur (A1111 / Forge : checkpoints, LoRA, VAE, embeddings, samplers, schedulers ; ComfyUI : les choix de ses nœuds de chargement et de sampler). Les noms de sampler au format A1111 (`DPM++ 2M Karras`) sont traduits pour ComfyUI.
+- **Checkpoint, VAE, sampler, scheduler** : choisissez dans les listes déroulantes avec recherche (tapez pour filtrer), ou tapez un nom. Les listes fusionnent deux sources, marquées *disque* et *moteur* : les fichiers trouvés dans les dossiers de modèles (voir *Dossiers de modèles* plus bas) et ce que signale le moteur (A1111 / Forge : checkpoints, LoRA, VAE, embeddings, samplers, schedulers ; ComfyUI : les choix de ses nœuds de chargement et de sampler). Un nom présent dans aucune liste est conservé tel quel, avec un avertissement. **Rescanner le disque** relit les dossiers. Les LoRA s'ajoutent aussi depuis une liste (**Choisir une LoRA...**), et **Insérer un embedding** en ajoute un à un prompt. Les noms de sampler au format A1111 (`DPM++ 2M Karras`) sont traduits pour ComfyUI.
 - **LoRA pour toutes les images** : nom, poids et mots déclencheurs. Avec A1111 le studio écrit `<lora:nom:poids>` dans le prompt ; avec ComfyUI il ajoute des nœuds `LoraLoader`. Les mots déclencheurs sont ajoutés aux prompts automatiquement.
 - **Embeddings** : écrivez leur nom dans les tags de qualité, le préfixe de style ou le prompt négatif.
 - **Cohérence des personnages** (onglet Images) : par personnage, une graine fixe et / ou une LoRA de personnage (par exemple entraînée sur ce personnage).
+
+### Dossiers de modèles
+
+Le studio peut lire vos modèles directement sur le disque, même quand le moteur ne tourne pas. Sous **Dossiers de téléchargement** (onglet Modèles SD), donnez les quatre dossiers de votre moteur (checkpoints, LoRA, embeddings, VAE), ou laissez le studio les trouver : saisissez le **Dossier de ComfyUI** (le dossier d'installation ; la version portable avec son dossier `ComfyUI` interne convient aussi) ou le **Dossier de A1111 / Forge** (le dossier `stable-diffusion-webui`) et cliquez sur **Détecter les dossiers de modèles**. Un message indique *Dossiers de modèles trouvés.* ou *Aucun dossier models trouvé ici.* Les mêmes dossiers servent de destination aux téléchargements Civitai.
 
 ## Civitai (facultatif)
 
