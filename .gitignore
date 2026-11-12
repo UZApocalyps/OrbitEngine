@@ -12,3 +12,7 @@ Cargo.lock.bak
 # Player templates copied locally before packaging (built by cargo xtask templates)
 /packaging/templates/*
 !/packaging/templates/README.txt
+
+# Official plugin packages shipped next to the editor (built by cargo xtask plugins --bundle)
+/packaging/bundled-plugins/*
+!/packaging/bundled-plugins/README.txt

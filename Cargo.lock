@@ -3102,6 +3102,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit_asset_report_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
+ "orbit_i18n",
+]
+
+[[package]]
 name = "orbit_assets"
 version = "0.4.0"
 dependencies = [
@@ -3172,6 +3180,7 @@ dependencies = [
 name = "orbit_editor"
 version = "0.4.0"
 dependencies = [
+ "chrono",
  "egui",
  "egui-phosphor",
  "egui-snarl",
@@ -3179,9 +3188,12 @@ dependencies = [
  "egui-winit",
  "egui_dock",
  "env_logger",
+ "getrandom 0.4.3",
  "hound",
  "image",
+ "indexmap",
  "log",
+ "once_cell",
  "orbit_anim",
  "orbit_assets",
  "orbit_audio",
@@ -3201,20 +3213,26 @@ dependencies = [
  "orbit_project",
  "orbit_render2d",
  "orbit_render3d",
- "orbit_renpy",
  "orbit_runtime",
  "orbit_save",
  "orbit_scene",
  "orbit_script",
+ "orbit_sign",
  "orbit_text",
  "orbit_ui",
  "orbit_vm",
  "pollster 1.0.1",
  "rfd",
  "ron",
+ "schemars",
  "serde",
  "serde_json",
  "spade",
+ "syn 2.0.119",
+ "syn 3.0.6",
+ "tracing",
+ "tracing-core",
+ "uuid",
  "winresource",
  "zip",
 ]
@@ -3274,6 +3292,13 @@ dependencies = [
  "orbit_profile",
  "thiserror 2.0.21",
  "wgpu",
+]
+
+[[package]]
+name = "orbit_git_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
 ]
 
 [[package]]
@@ -3342,6 +3367,18 @@ dependencies = [
  "tokio",
  "tokio-util",
  "zip",
+]
+
+[[package]]
+name = "orbit_mcp_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_core",
+ "orbit_editor",
+ "orbit_editor_sdk",
+ "orbit_mcp",
+ "orbit_project",
+ "serde_json",
 ]
 
 [[package]]
@@ -3430,11 +3467,13 @@ version = "0.4.0"
 dependencies = [
  "orbit_editor_api",
  "orbit_http",
+ "orbit_plugin_api",
  "orbit_plugin_host",
  "orbit_sign",
  "ron",
  "serde",
  "serde_json",
+ "zip",
 ]
 
 [[package]]
@@ -3488,6 +3527,14 @@ dependencies = [
  "orbit_dsl",
  "orbit_i18n",
  "orbit_project",
+]
+
+[[package]]
+name = "orbit_renpy_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
+ "orbit_renpy",
 ]
 
 [[package]]
@@ -3565,6 +3612,20 @@ name = "orbit_sign"
 version = "0.4.0"
 
 [[package]]
+name = "orbit_story_lint_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
+]
+
+[[package]]
+name = "orbit_story_stats_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
+]
+
+[[package]]
 name = "orbit_text"
 version = "0.4.0"
 dependencies = [
@@ -3573,6 +3634,14 @@ dependencies = [
  "orbit_render2d",
  "thiserror 2.0.21",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "orbit_translation_qa_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
+ "orbit_i18n",
 ]
 
 [[package]]
@@ -3606,6 +3675,14 @@ dependencies = [
  "ron",
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "orbit_voice_script_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
+ "orbit_i18n",
 ]
 
 [[package]]
@@ -6030,6 +6107,7 @@ dependencies = [
  "hound",
  "image",
  "orbit_export",
+ "orbit_plugin_api",
  "orbit_plugin_store",
  "orbit_sign",
  "ron",

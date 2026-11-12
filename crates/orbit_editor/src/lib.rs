@@ -13,6 +13,7 @@ pub mod builtin;
 pub mod config;
 pub mod core;
 pub mod diagnostics;
+pub mod dialogs;
 pub mod dock;
 pub mod fuzzy;
 pub mod hitches;

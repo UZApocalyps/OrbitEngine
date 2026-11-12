@@ -24,7 +24,7 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
     (
         "host",
         &[
-            "host", "status", "dialog", "palette", "dock", "welcome", "action", "lang", "time", "renpy",
+            "host", "status", "dialog", "palette", "dock", "welcome", "action", "lang", "time",
             "project", "problem",
         ],
         include_str!("../locales/en/host.ron"),
@@ -74,7 +74,7 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
     ),
     (
         "assistant",
-        &["assistant", "live"],
+        &["live"],
         include_str!("../locales/en/assistant.ron"),
         include_str!("../locales/fr/assistant.ron"),
     ),
@@ -137,6 +137,12 @@ pub const AREAS: &[(&str, &[&str], &str, &str)] = &[
         &["store"],
         include_str!("../locales/en/store.ron"),
         include_str!("../locales/fr/store.ron"),
+    ),
+    (
+        "game_plugins",
+        &["gplug"],
+        include_str!("../locales/en/game_plugins.ron"),
+        include_str!("../locales/fr/game_plugins.ron"),
     ),
     (
         "manual",

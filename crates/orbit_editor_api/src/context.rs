@@ -128,9 +128,6 @@ pub enum EditorRequest {
     ConvertStory,
     /// Opens the "new project" dialog.
     NewProjectDialog,
-    /// Imports a Ren'Py game into a new project (folder pickers, then a
-    /// background task; the project opens when done).
-    ImportRenpy,
     Save,
     CloseProject,
     Quit,
@@ -296,6 +293,9 @@ pub struct EditorState {
     /// Wakes the event loop from background threads (thumbnails, file
     /// watching, validation).
     pub waker: Waker,
+    /// The native file dialogs (installed by the editor), for plugins:
+    /// see `EditorContext::pick_folder`.
+    pub dialogs: crate::dialogs::FileDialogs,
     /// A thing to show that no shared panel can: the panel that owns it
     /// takes it (characters panel, asset library...). See `reveal`.
     pub pending_reveal: Option<Location>,
@@ -465,6 +465,48 @@ impl<'a> EditorContext<'a> {
 
     pub fn project_info(&self) -> Option<&ProjectInfo> {
         self.state.project.as_ref()
+    }
+
+    // ---- file dialogs
+
+    /// Asks for a folder. `None`: cancelled (or no dialog available).
+    /// Blocks the editor thread while the dialog is open.
+    pub fn pick_folder(&self, title: &str) -> Option<std::path::PathBuf> {
+        self.state.dialogs.pick_folder(&self.dialog_request(title, None, &[]))
+    }
+
+    /// Asks for a file to open; `filters`: (name, extensions without dot).
+    /// Starts in the project folder when a project is open.
+    pub fn pick_file(&self, title: &str, filters: &[(&str, &[&str])]) -> Option<std::path::PathBuf> {
+        self.state.dialogs.open_file(&self.dialog_request(title, None, filters))
+    }
+
+    /// Asks where to save a file, with a suggested name. Starts in the
+    /// project folder when a project is open. The file is not created.
+    pub fn save_file(
+        &self,
+        title: &str,
+        file_name: &str,
+        filters: &[(&str, &[&str])],
+    ) -> Option<std::path::PathBuf> {
+        self.state.dialogs.save_file(&self.dialog_request(title, Some(file_name), filters))
+    }
+
+    fn dialog_request(
+        &self,
+        title: &str,
+        file_name: Option<&str>,
+        filters: &[(&str, &[&str])],
+    ) -> crate::dialogs::FileDialogRequest {
+        crate::dialogs::FileDialogRequest {
+            title: title.to_owned(),
+            directory: self.project_info().map(|info| info.root.clone()),
+            file_name: file_name.map(str::to_owned),
+            filters: filters
+                .iter()
+                .map(|(name, extensions)| crate::dialogs::FileFilter::new(name, extensions))
+                .collect(),
+        }
     }
 
     pub fn state(&self) -> &EditorState {

@@ -1,0 +1,33 @@
+[package]
+name = "orbit_mcp_plugin"
+description = "MCP server, an official native editor plugin (cdylib): the editor's live MCP server over HTTP (127.0.0.1, token) and the AI Assistant panel. Keeps tokio / hyper / rmcp out of the editor. Built by `cargo xtask plugins`, installed from the editor's plugin manager."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# `rlib` too: the tests drive the transport against a real editor core.
+crate-type = ["cdylib"]
+
+[dependencies]
+# The plugin SDK: editor API, the editor's egui and dependency resolution.
+orbit_editor_sdk.workspace = true
+# The transports (tokio, hyper, rmcp): what the editor no longer links.
+orbit_mcp = { workspace = true, features = ["server"] }
+serde_json = "1"
+
+[dev-dependencies]
+# tests/live_mcp.rs: a bare editor core with this transport, over real HTTP.
+orbit_editor = { path = "../../crates/orbit_editor" }
+orbit_core.workspace = true
+orbit_project.workspace = true
+
+# `export_plugin!` generates `#[no_mangle]` functions: `unsafe_code` is denied
+# here rather than forbidden (the workspace forbids it).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

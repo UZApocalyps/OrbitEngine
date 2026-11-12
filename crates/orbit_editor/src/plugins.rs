@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use orbit_editor_api::{EditorRegistry, EditorState, Lang, Level};
-use orbit_plugin_host::{EditorFacts, LoadedPlugin, PluginManager, Problem, ProcessProber};
+use orbit_plugin_host::{EditorFacts, LoadedPlugin, PluginManager, Problem, ProcessProber, bundled_dir_for_exe};
 
 /// What the editor knows about native plugins this session.
 #[derive(Default)]
@@ -70,13 +70,14 @@ pub fn load_at_startup(state: &mut PluginsState, registry: &mut EditorRegistry, 
         log::info!("safe mode: native plugins are not loaded");
         return;
     }
-    if manager.installed().iter().all(|p| !p.record.enabled) {
-        return;
-    }
     let Some(prober) = ProcessProber::current_exe() else {
         log::error!("cannot find the editor executable to inspect plugins");
         return;
     };
+    install_bundled(state, &mut manager, &prober);
+    if manager.installed().iter().all(|p| !p.record.enabled) {
+        return;
+    }
     let started = std::time::Instant::now();
     let report = manager.load_enabled(&prober, registry, lang, state.config_dir.as_deref());
     log::info!(
@@ -97,6 +98,18 @@ pub fn load_at_startup(state: &mut PluginsState, registry: &mut EditorRegistry, 
             state.reported.insert(p.id.clone());
         }
     }
+}
+
+/// Installs / updates the plugins shipped with the editor (`bundled-plugins/`
+/// next to the executable, nowhere else), before the loading: they run from
+/// this very start. Nothing to do (and no message) without that folder.
+fn install_bundled(state: &PluginsState, manager: &mut PluginManager, prober: &ProcessProber) {
+    let Some(dir) = std::env::current_exe().ok().and_then(|exe| bundled_dir_for_exe(&exe)) else { return };
+    if !dir.is_dir() {
+        return;
+    }
+    // Logged by the manager (one line per install, update or skipped package).
+    manager.install_bundled(&dir, prober, &|id| state.builtin_ids.contains(id));
 }
 
 /// Each frame: a plugin that panicked since the last check is reported once

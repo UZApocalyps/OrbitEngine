@@ -1,0 +1,11 @@
+// Package manifest of the asset report. `cargo xtask plugins` sets `library`
+// to the platform's file name and `min_editor` / `max_editor` to the editor
+// version it was built against (a native plugin is tied to one editor build).
+(
+    id: "orbit.asset_report",
+    name: "Asset report",
+    version: "0.4.0",
+    description: "Read-only report on the project's assets: unreferenced and undeclared files, size per asset and per type, biggest files, CSV export.",
+    author: "OrbitEngine contributors",
+    library: "orbit_asset_report_plugin.dll",
+)

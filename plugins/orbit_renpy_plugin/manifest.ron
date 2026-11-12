@@ -1,0 +1,11 @@
+// Package manifest of the Ren'Py import. `cargo xtask plugins` sets `library`
+// to the platform's file name and `min_editor` / `max_editor` to the editor
+// version it was built against (a native plugin is tied to one editor build).
+(
+    id: "orbit.renpy_import",
+    name: "Ren'Py import",
+    version: "0.4.0",
+    description: "File > Import from Ren'Py: converts a Ren'Py game into a new project and shows the import report.",
+    author: "OrbitEngine contributors",
+    library: "orbit_renpy_plugin.dll",
+)

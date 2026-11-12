@@ -1,0 +1,25 @@
+[package]
+name = "orbit_translation_qa_plugin"
+description = "Translation check, an official native editor plugin (cdylib): interpolated variables, text tags, identical or empty translations, spaces, final punctuation, length, orphaned entries, CSV export. Read-only."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The plugin SDK: editor API, the editor's egui and dependency resolution.
+orbit_editor_sdk.workspace = true
+# Translation files.
+orbit_i18n.workspace = true
+
+# `export_plugin!` generates `#[no_mangle]` functions: `unsafe_code` is denied
+# here rather than forbidden (the workspace forbids it).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

@@ -34,7 +34,9 @@ orbit_assets.workspace = true
 orbit_audio.workspace = true
 orbit_export.workspace = true
 orbit_i18n.workspace = true
-orbit_renpy.workspace = true
+# The MCP tools only (run on the open project for the live server and for
+# plugins): no `server` feature, so no tokio / hyper / rmcp. The transport
+# is the `orbit.mcp` plugin (plugins/orbit_mcp_plugin).
 orbit_mcp.workspace = true
 # Native editor plugins (DLL): verification, install, loading. The editor
 # ships without plugins; AI Studio is one (plugins/orbit_ai_studio_plugin).
@@ -64,10 +66,34 @@ serde_json = "1"
 # Constrained Delaunay triangulation for rig meshes (ADR 0013, editor only).
 spade = "2.15"
 
+# Feature pins (not used by the code). A native plugin only loads when it
+# resolves the crates shared with the editor (everything `orbit_editor_api`
+# depends on) with exactly the editor's features: their `TypeId`s depend on it
+# (see `orbit_editor_api::native`, checked by `cargo xtask plugins`). The
+# transport of the official `orbit.mcp` plugin (tokio, rmcp) enables these
+# features of shared crates; the editor enables them too, which costs nothing
+# at run time (no code is linked from them) and keeps the plugin loadable.
+uuid = { version = "1", features = ["v4"] }
+getrandom = { version = "0.4", features = ["std", "sys_rng"] }
+once_cell = "1"
+schemars = { version = "1.2", features = ["chrono04"] }
+chrono = { version = "0.4", default-features = false, features = ["alloc", "now", "serde", "std"] }
+indexmap = { version = "2", features = ["serde"] }
+tracing = { version = "0.1", features = ["attributes", "std"] }
+tracing-core = { version = "0.1", default-features = false, features = ["once_cell", "std"] }
+
 [dev-dependencies]
 hound.workspace = true
 # tests/native_plugins.rs builds a .orbitplugin package.
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+# builtin::game_plugins export test: signs a game plugin package.
+orbit_sign.workspace = true
+
+[build-dependencies]
+# Feature pins, as above, for the proc macros' `syn` (build-time crates are
+# part of the shared resolution: they change the metadata of what they build).
+syn = { version = "2", features = ["full", "visit-mut"] }
+syn3 = { package = "syn", version = "3", features = ["full", "visit-mut"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = { version = "0.1", default-features = false }
@@ -97,11 +123,15 @@ icons = [
     "../../assets/brand/icon-256.png",
 ]
 # Next to the executable: the demo project and its assets, and the (possibly
-# empty) `templates/` folder where the game player templates go.
+# empty) `templates/` folder where the game player templates go, and the
+# (possibly empty) `bundled-plugins/` folder of the plugins shipped with the editor.
 resources = [
     { src = "../../examples/stories", target = "examples/stories" },
     { src = "../../assets/demo", target = "assets/demo" },
     { src = "../../packaging/templates", target = "templates" },
+    # Native editor plugins installed at the first start (`cargo xtask plugins --bundle`
+    # fills this folder; empty in builds that ship none).
+    { src = "../../packaging/bundled-plugins", target = "bundled-plugins" },
 ]
 
 # `.orbit` story files (TL-02): registry keys + ProgID on Windows (MSI and

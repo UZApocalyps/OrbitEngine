@@ -40,7 +40,7 @@ const TAB_ORDER: &[&str] = &[
     "orbit.translations.translations",
     "orbit.search.search",
     "orbit.library.library",
-    "orbit.assistant.assistant",
+    "orbit.mcp.assistant",
 ];
 
 fn order_key(id: &str) -> usize {

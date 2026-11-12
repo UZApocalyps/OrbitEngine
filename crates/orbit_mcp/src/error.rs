@@ -44,6 +44,23 @@ impl ErrorKind {
             ErrorKind::Unavailable => "unavailable",
         }
     }
+
+    /// The kind of a code given by [`ErrorKind::as_str`] (the editor and the
+    /// `orbit.mcp` plugin exchange errors as codes).
+    pub fn from_code(code: &str) -> Option<Self> {
+        Some(match code {
+            "invalid_arguments" => ErrorKind::InvalidArguments,
+            "not_found" => ErrorKind::NotFound,
+            "version_conflict" => ErrorKind::VersionConflict,
+            "refused" => ErrorKind::Refused,
+            "outside_project" => ErrorKind::OutsideProject,
+            "io_error" => ErrorKind::Io,
+            "plugin_error" => ErrorKind::Plugin,
+            "internal_error" => ErrorKind::Internal,
+            "unavailable" => ErrorKind::Unavailable,
+            _ => return None,
+        })
+    }
 }
 
 /// A failed tool call. The project is left unchanged (calls are rolled back

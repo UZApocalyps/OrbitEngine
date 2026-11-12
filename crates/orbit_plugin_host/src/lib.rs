@@ -33,5 +33,6 @@ pub use manager::{
     DATA_DIR, InstallError, Installed, InstalledPlugin, LoadedPlugin, PACKAGE_EXTENSION, PluginManager,
     StartupReport,
 };
+pub use manager::bundled::{BUNDLED_DIR, BundledReport, bundled_dir_for_exe};
 pub use manifest::{MANIFEST_FILE, PackageManifest, RangeError};
 pub use verify::{EditorFacts, InProcessProber, Problem, ProcessProber, Prober};

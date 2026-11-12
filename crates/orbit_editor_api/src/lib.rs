@@ -12,11 +12,13 @@
 pub mod ai;
 mod context;
 pub mod curve_editor;
+pub mod dialogs;
 pub mod errors;
 pub mod fields;
 mod graph_state;
 pub mod i18n;
 pub mod lazy;
+pub mod mcp;
 
 mod preview;
 mod registry;

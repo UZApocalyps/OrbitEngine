@@ -1,6 +1,6 @@
 # Editor plugins
 
-Editor plugins add panels, windows, menu entries and tools to the editor itself. They are native libraries (a `.dll` on Windows, `.so` on Linux, `.dylib` on macOS) that the editor loads when it starts. The editor ships without any: you install the ones you want. **AI Studio** is one of them.
+Editor plugins add panels, windows, menu entries and tools to the editor itself. They are native libraries (a `.dll` on Windows, `.so` on Linux, `.dylib` on macOS) that the editor loads when it starts. The base editor ships without any; the official distributions ship a few (see *Plugins shipped with the editor*) and you install the ones you want on top. **AI Studio** is one of them.
 
 They are different from the *Rust plugins* of the previous chapters, which add steps to a game and are exported with it. An editor plugin never ends up in an exported game.
 
@@ -51,6 +51,16 @@ The manifest of a package can also give the editor versions it accepts (`min_edi
 
 Before loading, the editor also checks that the file is a library for this system and processor, reads the fingerprint in a separate short-lived process (a broken library cannot crash the editor), checks the plugin id, and compares the library with the checksum (SHA-256) recorded at install: a library changed afterwards is refused.
 
+## Plugins shipped with the editor
+
+The official distributions (installers and portable archive) contain a `bundled-plugins/` folder next to the executable, with `.orbitplugin` packages: by default the Ren'Py import (`orbit.renpy_import`) and the MCP server with the Assistant panel (`orbit.mcp`). At start-up the editor installs every shipped package whose id was never installed before, exactly like an install from a file (same checks, SHA-256 recorded), then enables it: the plugin is loaded from that very first launch. The features that used to be built into the editor therefore stay available after an update, with nothing to install by hand.
+
+- The plugin manager marks these plugins with a **Ships with the editor** badge.
+- A shipped plugin you disable or uninstall **does not come back**: the editor remembers the ids already offered in `plugins.ron` (`bundled_offered` field, ignored by earlier editor versions).
+- A new editor version updates a shipped plugin when the shipped package has a strictly higher version, or the same version but the installed plugin no longer matches the editor (fingerprint or version range): the compatible shipped build replaces it. A plugin you installed yourself (file or Store) is never touched; if it is disabled, it stays disabled after an update.
+- Only the `bundled-plugins/` folder next to the executable is read (not the current folder, not the user's), and no check is relaxed. An invalid or incompatible shipped package is skipped with a line in the log. `--no-plugins` also turns this off.
+- To prepare a distribution: `cargo build --release -p orbit_editor`, then `cargo xtask plugins --bundle` copies the packages of the chosen ids into `packaging/bundled-plugins/` (which the packager places in `bundled-plugins/`). Without a list, `--bundle` ships `orbit.renpy_import` and `orbit.mcp` (the `DEFAULT_BUNDLED` constant in `xtask/src/plugins.rs`); `--bundle orbit.mcp,orbit.ai_studio` picks others, `--bundle-dir <folder>` changes the destination.
+
 ## AI Studio
 
 AI Studio is an official plugin built from this repository:
@@ -61,6 +71,10 @@ cargo xtask plugins
 ```
 
 The second command writes `target/plugins/orbit.ai_studio-<version>-<os>-<arch>.orbitplugin`. Install that file from the plugin manager of the editor built by the first command (same profile: `cargo xtask plugins --debug` for a debug editor). Its settings (providers, keys) stay in `ai_studio.ron` in the editor's configuration folder, as before.
+
+## MCP server
+
+The editor's MCP server (an AI client such as Claude Code connecting to the open project) and the **AI Assistant** panel are another official plugin, `orbit.mcp` (`plugins/orbit_mcp_plugin`), built by the same `cargo xtask plugins` command (`target/plugins/orbit.mcp-<version>-<os>-<arch>.orbitplugin`). The editor keeps the tools and runs them itself on the open project: without the plugin, plugins that call tools (AI Studio) still work; only the network transport (HTTP on 127.0.0.1, token) and the panel are in the plugin. The port and token stay in the editor's configuration (`orbit.ai`), as before.
 
 ## For programmers: writing a plugin
 
@@ -107,6 +121,8 @@ What `PluginHost` offers: panels (`panel`), floating windows (`window`), actions
 In the closures, the `EditorContext` reads the project and edits it like the built-in tools: `exec`, `transaction` and `group` (several operations as one undo entry), `call_tool` / `take_tool_result` (the MCP tools, one undo entry per call), `spawn_task` on `state()` for background work with progress and cancel, `t` / `tf` for texts, `info` / `warn` / `error` for notices.
 
 **Package**: a `.orbitplugin` is a zip with `manifest.ron` (`id`, `name`, `version`, `description`, `author`, `library`, optional `min_editor` / `max_editor` / `homepage`), the library, and optional `locales/` and `assets/` folders. `cargo xtask plugins --examples` builds and packages the plugins of this repository, after checking that each one resolves the crates shared with the editor exactly like the editor.
+
+**File dialogs**: the editor provides the native dialogs, a plugin does not ship its own dialog library. `ctx.pick_folder(title)` picks a folder, `ctx.pick_file(title, &[("Images", &["png", "jpg"])])` a file to open, `ctx.save_file(title, "name.csv", &[("CSV", &["csv"])])` a file to save (the file is not created). Each returns `Option<PathBuf>` (`None`: cancelled), starts in the open project's folder and blocks the editor while it is open, like the editor's own dialogs; the MCP server answers "busy" meanwhile.
 
 **Rules**:
 

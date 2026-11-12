@@ -23,6 +23,7 @@ use orbit_plugin_host::{
     ProcessProber, RangeError,
 };
 
+use super::game_plugins::StoreKind;
 use super::plugin_store::{self, StoreUi};
 use super::ui_util::{card, danger, primary_button, secondary_button, success, warning, weak};
 use crate::plugins::SharedPlugins;
@@ -45,6 +46,8 @@ struct ManagerUi {
     /// The panel was just shown (cached catalogs, background refresh).
     shown: bool,
     store: StoreUi,
+    /// Game plugins of the open project (`builtin::game_plugins`).
+    game: super::game_plugins::GameUi,
     /// The plugin folders, read again when the panel shows or after a change.
     list: Option<Vec<InstalledPlugin>>,
     /// A file picked, waiting for the security confirmation.
@@ -97,6 +100,27 @@ impl EditorPlugin for PluginsPlugin {
             .menu_group("menu.extensions")
             .menu_label("plugins.menu"),
         );
+        // One action per tab, so the command palette (and `--run-action`)
+        // opens the manager straight on it.
+        for (id, label, tab, kind) in [
+            ("open_installed", "plugins.open_installed", Tab::Installed, StoreKind::Editor),
+            ("open_store", "plugins.open_store", Tab::Store, StoreKind::Editor),
+            ("open_game_store", "plugins.open_game_store", Tab::Store, StoreKind::Game),
+            ("open_sources", "plugins.open_sources", Tab::Sources, StoreKind::Editor),
+        ] {
+            let ui = self.ui.clone();
+            reg.action(
+                ActionDef::new(id, label, move |c| {
+                    if let Ok(mut m) = ui.try_borrow_mut() {
+                        m.tab = tab;
+                        m.game.kind = kind;
+                    }
+                    c.request(EditorRequest::ShowPanel(PANEL.to_owned()));
+                })
+                .icon(icons::PUZZLE_PIECE)
+                .category("category.tools"),
+            );
+        }
         let ui = self.ui.clone();
         reg.window(WindowDef::new("settings", move |ctx, c| settings_window(ctx, c, &ui)));
     }
@@ -287,6 +311,7 @@ fn poll_install(ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &mut Man
 
 fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &mut ManagerUi) {
     poll_install(ctx, shared, m);
+    super::game_plugins::poll(ctx, shared, &mut m.game);
     if plugin_store::poll(ctx, shared, &mut m.store) {
         m.list = None;
     }
@@ -337,7 +362,11 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &m
     match m.tab {
         Tab::Installed => {}
         Tab::Store => {
-            plugin_store::store_tab(ui, ctx, shared, &mut m.store, &list);
+            if super::game_plugins::store_switch(ui, ctx, &mut m.game) {
+                super::game_plugins::store_view(ui, ctx, shared, &mut m.game);
+            } else {
+                plugin_store::store_tab(ui, ctx, shared, &mut m.store, &list);
+            }
             return;
         }
         Tab::Sources => {
@@ -391,6 +420,7 @@ fn panel(ui: &mut Ui, ctx: &mut EditorContext<'_>, shared: &SharedPlugins, m: &m
         ui.colored_label(color, text);
     }
     plugin_store::installed_header(ui, ctx, shared, &mut m.store);
+    super::game_plugins::installed_section(ui, ctx, shared, &mut m.game);
     ui.separator();
 
     if list.is_empty() {
@@ -427,7 +457,13 @@ fn plugin_card(
                 ui.label(RichText::new(ctx.tf("plugins.by", &[("author", &plugin.manifest.author)])).color(weak(ui)));
             }
         });
-        ui.label(RichText::new(&id).small().monospace().color(weak(ui)));
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(&id).small().monospace().color(weak(ui)));
+            if plugin.record.bundled {
+                ui.label(RichText::new(ctx.t("plugins.bundled")).small().color(success()))
+                    .on_hover_text(ctx.t("plugins.bundled_hint"));
+            }
+        });
         if !plugin.manifest.description.is_empty() {
             ui.label(&plugin.manifest.description);
         }

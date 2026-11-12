@@ -8,14 +8,6 @@
 
     // ---- actions of the core plugin
     "action.new_project": "Nouveau projet…",
-    "action.import_renpy": "Importer depuis Ren'Py…",
-    "renpy.pick_source": "Dossier du jeu Ren'Py (ou son dossier game/)",
-    "renpy.pick_parent": "Dossier qui contiendra le projet importé",
-    "renpy.task": "Import du jeu Ren'Py",
-    "renpy.done": "Import Ren'Py : {summary}",
-    "renpy.report_title": "Rapport d'import Ren'Py",
-    "renpy.report_note": "Ce rapport est aussi enregistré dans import-report.md, dans le nouveau projet.",
-    "renpy.open_from_new": "Importer depuis Ren'Py…",
     "action.open_project": "Ouvrir un projet…",
     "action.open_story": "Ouvrir une histoire (.orbit, .ron)…",
     "action.convert_story": "Convertir l'histoire en .orbit",

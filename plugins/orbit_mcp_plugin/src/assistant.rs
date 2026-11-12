@@ -6,66 +6,69 @@
 //! lists live what the AI does: tool, arguments, result, duration, a link to
 //! reveal the touched nodes, and a button that undoes the last AI action.
 //!
-//! The panel never touches the network: it reads `EditorState::ai` and posts
-//! [`AiCommand`]s the host carries out (see `crate::live`).
+//! The panel itself never touches the network: it reads `EditorState::ai`
+//! and posts [`AiCommand`]s the editor carries out (its `live` module), the
+//! editor calling this plugin's transport (`crate::transport`) to start and
+//! stop the server.
 
 use std::time::Duration;
 
-use egui::{Align, Align2, Color32, FontId, Key, Layout, Modifiers, RichText, Sense, Ui, vec2};
-use orbit_editor_api::ai::{AiCommand, AiLogEntry, AiServerStatus};
-use orbit_editor_api::{
-    ActionDef, DockSlot, EditorContext, EditorPlugin, EditorRegistry, EditorRequest, Location,
-    PanelDef, Plugin, PluginManifest, Translator, UiText, icons,
+use orbit_editor_sdk::ai::{AiCommand, AiLogEntry, AiServerStatus};
+use orbit_editor_sdk::egui::{
+    self, Align, Align2, Color32, FontId, Key, Layout, Modifiers, RichText, Sense, Ui, vec2,
+};
+use orbit_editor_sdk::{
+    ActionDef, DockSlot, EditorContext, EditorRegistry, EditorRequest, Location, PanelDef,
+    Translator, UiText, icons,
 };
 
-use super::ids;
-use super::reveal::reveal;
-use super::ui_util::{
-    accent, card, danger, faint, icon_button, list_row, primary_button, secondary_button,
+use crate::ui_util::{
+    accent, bold, card, danger, faint, icon_button, list_row, primary_button, secondary_button,
     section_title, strong, success, warning, weak,
 };
 
-pub struct AssistantPlugin;
+/// Id of the panel (`<plugin id>.<name>`), opened by the status bar robot.
+pub const PANEL_ID: &str = "orbit.mcp.assistant";
+/// The editor's scene panel, where a revealed node is shown.
+const SCENE_PANEL: &str = "orbit.scene.scene";
 
 const ROW_HEIGHT: f32 = 44.0;
 /// How long the "the AI is editing" indicator stays lit.
 const ACTIVITY_SECONDS: f32 = 2.5;
 
-impl Plugin for AssistantPlugin {
-    fn manifest(&self) -> PluginManifest {
-        PluginManifest::new(ids::ASSISTANT, "Assistant IA", "0.1.0")
-    }
+/// Registers the panel and its "open" action (under the plugin's id).
+pub fn register(reg: &mut EditorRegistry) {
+    reg.panel(PanelDef::new(
+        "assistant",
+        "assistant.title",
+        icons::ROBOT,
+        DockSlot::Bottom,
+        panel,
+    ));
+    // Opens (or brings back, even when the saved layout lacks it) the panel.
+    reg.action(
+        ActionDef::new("open", "assistant.open", |c| {
+            c.request(EditorRequest::ShowPanel(PANEL_ID.to_owned()));
+        })
+        .icon(icons::ROBOT)
+        .category("category.tools")
+        .shortcut(
+            Modifiers {
+                command: true,
+                shift: true,
+                ..Modifiers::NONE
+            },
+            Key::A,
+        )
+        .menu("tools", 200),
+    );
 }
 
-impl EditorPlugin for AssistantPlugin {
-    fn register_ui(&self, reg: &mut EditorRegistry) {
-        reg.panel(PanelDef::new(
-            "assistant",
-            "assistant.title",
-            icons::ROBOT,
-            DockSlot::Bottom,
-            panel,
-        ));
-        // Opens (or brings back, even when the saved layout lacks it) the panel.
-        reg.action(
-            ActionDef::new("open", "assistant.open", |c| {
-                c.request(EditorRequest::ShowPanel(
-                    super::panels::ASSISTANT.to_owned(),
-                ));
-            })
-            .icon(icons::ROBOT)
-            .category("category.tools")
-            .shortcut(
-                Modifiers {
-                    command: true,
-                    shift: true,
-                    ..Modifiers::NONE
-                },
-                Key::A,
-            )
-            .menu("tools", 200),
-        );
-    }
+/// Unix time in milliseconds (the journal's clock).
+fn unix_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 /// `orbit_a1b2…9f3c`: enough to recognise a token, not to copy it.
@@ -237,7 +240,7 @@ fn settings_grid(ui: &mut Ui, ctx: &mut EditorContext<'_>, running: bool) {
                     ui.ctx().copy_text(token.clone());
                     let toast = ui.t("assistant.token_copied");
                     ctx.state_mut()
-                        .push_toast(orbit_editor_api::Level::Info, toast);
+                        .push_toast(orbit_editor_sdk::Level::Info, toast);
                 }
                 if icon_button(
                     ui,
@@ -265,7 +268,7 @@ fn settings_grid(ui: &mut Ui, ctx: &mut EditorContext<'_>, running: bool) {
                     ui.ctx().copy_text(text);
                     let toast = ui.t("assistant.command_copied");
                     ctx.state_mut()
-                        .push_toast(orbit_editor_api::Level::Info, toast);
+                        .push_toast(orbit_editor_sdk::Level::Info, toast);
                 }
                 if secondary_button(ui, &format!("{}  .mcp.json", icons::COPY))
                     .on_hover_text(ui.t("assistant.mcp_json_hint"))
@@ -275,7 +278,7 @@ fn settings_grid(ui: &mut Ui, ctx: &mut EditorContext<'_>, running: bool) {
                     ui.ctx().copy_text(text);
                     let toast = ui.t("assistant.mcp_json_copied");
                     ctx.state_mut()
-                        .push_toast(orbit_editor_api::Level::Info, toast);
+                        .push_toast(orbit_editor_sdk::Level::Info, toast);
                 }
             });
             ui.end_row();
@@ -330,7 +333,7 @@ fn journal(ui: &mut Ui, ctx: &mut EditorContext<'_>, fill: bool) {
         return;
     }
 
-    let now = orbit_platform::unix_time_ms();
+    let now = unix_time_ms();
     let texts = ui.texts();
     // Newest first.
     let entries: Vec<AiLogEntry> = ctx.state().ai.log.iter().rev().cloned().collect();
@@ -359,7 +362,7 @@ fn journal(ui: &mut Ui, ctx: &mut EditorContext<'_>, fill: bool) {
         let text_painter = painter.with_clip_rect(text_clip);
         let galley = text_painter.layout_no_wrap(
             entry.tool.clone(),
-            crate::theme::bold(13.0),
+            bold(13.0),
             ui.visuals().text_color(),
         );
         let tool_width = galley.size().x;
@@ -445,6 +448,8 @@ fn journal(ui: &mut Ui, ctx: &mut EditorContext<'_>, fill: bool) {
         }
     }
     if let Some(location) = to_reveal {
-        reveal(ctx, location);
+        // Like the editor's own "reveal": select, then show the scene panel.
+        ctx.reveal(location);
+        ctx.request(EditorRequest::ShowPanel(SCENE_PANEL.to_owned()));
     }
 }

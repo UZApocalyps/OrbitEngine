@@ -1,0 +1,12 @@
+// Package manifest of the MCP server plugin. `cargo xtask plugins` sets
+// `library` to the platform's file name and `min_editor` / `max_editor` to the
+// editor version it was built against (a native plugin is tied to one editor
+// build).
+(
+    id: "orbit.mcp",
+    name: "MCP server",
+    version: "0.4.0",
+    description: "Live MCP server of the editor (HTTP on 127.0.0.1, token) and the AI Assistant panel: lets an AI client such as Claude Code edit the open project.",
+    author: "OrbitEngine contributors",
+    library: "orbit_mcp_plugin.dll",
+)

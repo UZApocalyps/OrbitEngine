@@ -10,8 +10,15 @@
 //! * [`tools`]: the tools and their input schemas (generated from Rust types);
 //! * [`host`]: the project, tool dispatch, saving, the action log
 //!   (`.orbit/mcp.log`) and the resources;
-//! * [`server`]: the `rmcp` handler and the stdio entry point;
+//! * [`server`]: the `rmcp` handler and the stdio entry point (feature
+//!   `server`);
+//! * [`live`]: the live HTTP server of the editor plugin `orbit.mcp`
+//!   (`live::LiveServer`, feature `server`) and its access token;
 //! * [`sandbox`]: path confinement.
+//!
+//! Feature `server` (off by default) adds the transports and their async
+//! stack (tokio, hyper, rmcp). Without it the crate is the tools alone: what
+//! the editor links to run tools on its open project.
 //!
 //! This crate is never linked into the player (checked by `xtask check-arch`).
 
@@ -28,6 +35,7 @@ pub mod scene3d_tools;
 pub mod script_tools;
 pub mod voice_tools;
 pub mod schema;
+#[cfg(feature = "server")]
 pub mod server;
 pub mod tools;
 pub mod ui_tools;
@@ -38,4 +46,5 @@ pub use host::{
     ExportRequest, HeadlessHost, LOG_FILE, ProjectHost, ResourceInfo, ToolInfo, ToolOutput,
     ToolRunner, UNDO_PREFIX,
 };
+#[cfg(feature = "server")]
 pub use server::{LIVE_INSTRUCTIONS, OrbitMcpServer, serve_stdio, serve_stdio_with};

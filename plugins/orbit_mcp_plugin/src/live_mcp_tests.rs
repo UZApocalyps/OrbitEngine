@@ -1,6 +1,8 @@
 //! The live MCP server inside the editor, end to end and without a window:
-//! a real HTTP server on a free port, a hand-written HTTP client, and an
-//! `EditorCore` (no GPU) whose frame loop is played by the test thread.
+//! this plugin's HTTP transport on a free port, a hand-written HTTP client,
+//! and an `EditorCore` (no GPU) whose frame loop is played by the test
+//! thread. The transport is installed in the core's registry as the plugin
+//! does when the editor loads it.
 //!
 //! What it proves: the server is off until started; requests without the
 //! token (or with a wrong one, or a foreign `Host`) are refused; an authorised
@@ -14,12 +16,16 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use egui::Context;
+use std::rc::Rc;
+
 use orbit_core::NodeKind;
 use orbit_editor::core::{CoreOptions, EditorCore};
 use orbit_editor::live::{self, NoPreview};
-use orbit_editor_api::Selection;
-use orbit_editor_api::ai::{AiCommand, AiServerStatus};
+use orbit_editor_sdk as orbit_editor_api;
+use orbit_editor_sdk::Selection;
+use orbit_editor_sdk::ai::{AiCommand, AiServerStatus};
+use orbit_editor_sdk::egui::Context;
+use crate::HttpTransport;
 use orbit_project::MANIFEST_FILE;
 use serde_json::{Value, json};
 
@@ -70,9 +76,16 @@ fn demo_project(root: &Path) -> PathBuf {
     project
 }
 
+/// An editor core with this plugin's transport, as when the editor loads it.
+fn editor(ctx: &Context) -> EditorCore {
+    let mut core = EditorCore::new(CoreOptions::with_language(orbit_editor_api::Lang::Fr), ctx);
+    core.registry.set_mcp_transport(Rc::new(HttpTransport::new()));
+    core
+}
+
 fn editor_with_demo(dir: &TempDir) -> (EditorCore, Context) {
     let ctx = Context::default();
-    let mut core = EditorCore::new(CoreOptions::with_language(orbit_editor_api::Lang::Fr), &ctx);
+    let mut core = editor(&ctx);
     core.open_project(&demo_project(dir.path()));
     assert!(core.has_project());
     (core, ctx)
@@ -322,6 +335,19 @@ fn the_server_is_off_until_the_user_starts_it() {
     assert!(core.state.ai.url.is_none());
     // A token exists from the start (generated once, kept in the preferences).
     assert!(core.state.ai.token.starts_with("orbit_"));
+}
+
+#[test]
+fn without_the_plugin_the_server_cannot_start_and_says_why() {
+    let _serial = serial();
+    let ctx = Context::default();
+    let mut core = EditorCore::new(CoreOptions::with_language(orbit_editor_api::Lang::En), &ctx);
+    assert!(!live::has_transport(&core));
+    core.state.ai.port = 0;
+    let err = live::start(&mut core).unwrap_err();
+    assert!(err.contains("orbit.mcp"), "{err}");
+    assert!(matches!(core.state.ai.status, AiServerStatus::Failed(_)));
+    assert!(!core.mcp.is_running());
 }
 
 #[test]
@@ -718,10 +744,7 @@ fn stopping_the_server_closes_the_port_and_a_busy_port_is_reported() {
 
     // A second editor on the same port fails with a message, not a panic.
     let ctx2 = Context::default();
-    let mut other = EditorCore::new(
-        CoreOptions::with_language(orbit_editor_api::Lang::Fr),
-        &ctx2,
-    );
+    let mut other = editor(&ctx2);
     other.state.ai.port = port;
     let err = live::start(&mut other).unwrap_err();
     assert!(err.contains("cannot listen"), "{err}");

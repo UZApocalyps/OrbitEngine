@@ -1,0 +1,11 @@
+// Package manifest of the Git panel. `cargo xtask plugins` sets `library` to
+// the platform's file name and `min_editor` / `max_editor` to the editor
+// version it was built against.
+(
+    id: "orbit.git",
+    name: "Git",
+    version: "0.4.0",
+    description: "Git panel for the open project: branch, changed files, commit, recent history, repository creation. Uses the system's git; no network, nothing destructive.",
+    author: "OrbitEngine contributors",
+    library: "orbit_git_plugin.dll",
+)

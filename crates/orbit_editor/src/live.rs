@@ -1,8 +1,10 @@
-//! Live MCP in the editor (M4): the editor side of `orbit_mcp::live`.
+//! Live MCP in the editor (M4): the editor side of the live server.
 //!
-//! The server (a thread of its own) posts [`LiveJob`]s to the shared
-//! [`CommandQueue`]; [`pump`] drains it on the editor thread, between two
-//! frames, and answers each job:
+//! The network side (HTTP, tokio, rmcp) is not in the editor: a plugin
+//! provides it as an [`McpTransport`] (the official one is `orbit.mcp`,
+//! `plugins/orbit_mcp_plugin`). Its threads post [`McpJob`]s to the shared
+//! [`McpQueue`]; [`pump`] drains it on the editor thread, between two frames,
+//! and answers each job:
 //!
 //! * the story tools run through `orbit_mcp::ToolRunner` against the **open
 //!   session's `Project`**, one undo entry per call (`Project::group`): the
@@ -14,15 +16,22 @@
 //! * every call is journaled for the "Assistant IA" panel and `.orbit/mcp.log`.
 //!
 //! Nothing in this module needs a window or a GPU: the whole path is tested
-//! with a bare [`crate::core::EditorCore`].
+//! with a bare [`crate::core::EditorCore`] (and the plugin's transport, in
+//! `plugins/orbit_mcp_plugin/tests`). Without a transport, [`start`] says the
+//! plugin is missing; the tools keep running for plugins
+//! ([`run_story_tool`]).
 
+use std::rc::Rc;
 use std::time::Instant;
 
 use orbit_core::{NodeId, Story, Value};
 use orbit_editor_api::ai::{AiCommand, AiLogEntry, AiServerStatus};
+use orbit_editor_api::mcp::{
+    McpError, McpExport, McpJob, McpOutput, McpQueue, McpReply, McpRequest, McpResource, McpTool,
+    McpTransport,
+};
 use orbit_editor_api::{EditorContext, Level, Location};
-use orbit_mcp::host::{ResourceCx, append_log, read_resource, resource_list};
-use orbit_mcp::live::{CommandQueue, LiveConfig, LiveJob, LiveReply, LiveRequest, LiveServer};
+use orbit_mcp::host::{ResourceCx, ResourceInfo, append_log, read_resource, resource_list};
 use orbit_mcp::live_tools::{self, LiveCall, live_tool_infos};
 use orbit_mcp::sandbox::Sandbox;
 use orbit_mcp::{
@@ -71,23 +80,30 @@ impl PreviewBackend for NoPreview {
     }
 }
 
+/// The server started through a transport.
+struct Running {
+    transport: Rc<dyn McpTransport>,
+    port: u16,
+}
+
 /// State of the live service, owned by the editor core.
 pub struct LiveService {
-    queue: CommandQueue,
-    server: Option<LiveServer>,
+    queue: McpQueue,
+    server: Option<Running>,
     runner: ToolRunner,
     next_log_id: u64,
     lock: Option<ProjectLock>,
     /// The takeover of our lock was already reported.
     takeover_reported: bool,
-    /// When the tool list was last published to the queue.
-    tools_published: Option<Instant>,
+    /// When the tool list was last published to the queue, and with which
+    /// experimental-3D switch.
+    tools_published: Option<(Instant, bool)>,
 }
 
 impl Default for LiveService {
     fn default() -> Self {
         Self {
-            queue: CommandQueue::new(),
+            queue: McpQueue::new(),
             server: None,
             runner: ToolRunner::new(),
             next_log_id: 1,
@@ -104,6 +120,11 @@ impl LiveService {
         !self.queue.is_empty()
     }
 
+    /// The queue shared with the transport (the file dialogs mark it busy).
+    pub fn queue(&self) -> McpQueue {
+        self.queue.clone()
+    }
+
     /// Tells clients why the editor cannot answer for a while (a blocking
     /// native dialog); `None` when it can again.
     pub fn set_busy(&self, reason: Option<String>) {
@@ -117,7 +138,7 @@ impl LiveService {
     /// Port the server really listens on (it may differ from the setting
     /// when the setting is 0).
     pub fn port(&self) -> Option<u16> {
-        self.server.as_ref().map(LiveServer::port)
+        self.server.as_ref().map(|s| s.port)
     }
 
     /// Whether another process holds the project (see `orbit_project::lock`).
@@ -165,6 +186,14 @@ pub fn start(core: &mut EditorCore) -> Result<(), String> {
     if core.mcp.server.is_some() {
         return Err(core.state.t("live.already_running"));
     }
+    let Some(transport) = core.registry.mcp_transport() else {
+        let e = core.state.t("live.no_transport");
+        core.state.ai.status = AiServerStatus::Failed(e.clone());
+        core.state.ai.url = None;
+        let message = core.state.tf("live.failed", &[("error", &e)]);
+        core.state.console.push(Level::Error, message);
+        return Err(e);
+    };
     if core.state.ai.token.is_empty() {
         core.state.ai.token = orbit_mcp::live::generate_token();
     }
@@ -173,17 +202,15 @@ pub fn start(core: &mut EditorCore) -> Result<(), String> {
     // `tools/list` is answered from this list on the server thread: a client
     // gets it even while the editor sleeps or sits in a blocking dialog.
     publish_tools(core);
-    let config = LiveConfig {
-        port: core.state.ai.port,
-        token: core.state.ai.token.clone(),
-    };
-    match LiveServer::start(core.mcp.queue.clone(), config) {
-        Ok(server) => {
-            core.state.ai.url = Some(server.url());
+    let token = core.state.ai.token.clone();
+    match transport.start(core.mcp.queue.clone(), core.state.ai.port, &token) {
+        Ok(port) => {
+            let url = server_url(port);
+            core.state.ai.url = Some(url.clone());
             core.state.ai.status = AiServerStatus::Listening;
-            let message = core.state.tf("live.listening", &[("url", &server.url())]);
+            let message = core.state.tf("live.listening", &[("url", &url)]);
             core.state.console.push(Level::Info, message);
-            core.mcp.server = Some(server);
+            core.mcp.server = Some(Running { transport, port });
             save_settings(core);
             Ok(())
         }
@@ -197,10 +224,20 @@ pub fn start(core: &mut EditorCore) -> Result<(), String> {
     }
 }
 
+/// URL clients connect to.
+fn server_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/mcp")
+}
+
+/// Whether a plugin provides the network side of the live server.
+pub fn has_transport(core: &EditorCore) -> bool {
+    core.registry.mcp_transport().is_some()
+}
+
 /// Stops the server (clients are disconnected).
 pub fn stop(core: &mut EditorCore) {
     if let Some(server) = core.mcp.server.take() {
-        server.stop();
+        server.transport.stop();
         let message = core.state.t("live.stopped");
         core.state.console.push(Level::Info, message);
     }
@@ -276,16 +313,15 @@ pub fn pump(core: &mut EditorCore, backend: &mut dyn PreviewBackend) {
     process_commands(core);
     check_lock(core);
     if core.mcp.server.is_some()
-        && core
-            .mcp
-            .tools_published
-            .is_none_or(|at| at.elapsed() >= TOOLS_REFRESH)
+        && core.mcp.tools_published.is_none_or(|(at, with_3d)| {
+            at.elapsed() >= TOOLS_REFRESH || with_3d != orbit_core::experimental::enabled_3d()
+        })
     {
         publish_tools(core); // plugins may have added or removed tools
     }
     let jobs = core.mcp.queue.drain();
     for job in jobs {
-        let LiveJob { request, reply } = job;
+        let McpJob { request, reply } = job;
         let answer = execute(core, request, backend);
         // The client may have gone away while waiting: nothing to do.
         let _ = reply.send(answer);
@@ -295,18 +331,16 @@ pub fn pump(core: &mut EditorCore, backend: &mut dyn PreviewBackend) {
 
 fn publish_status(core: &mut EditorCore) {
     if let Some(server) = &core.mcp.server {
-        use std::sync::atomic::Ordering;
-        let status = server.status();
+        let stats = server.transport.stats().unwrap_or_default();
         // A session outlives its client (HTTP has no hang-up): one that has
         // been silent for a while no longer counts as a connected client.
-        let idle_ms = orbit_platform::unix_time_ms()
-            .saturating_sub(status.last_request_ms.load(Ordering::Relaxed));
+        let idle_ms = orbit_platform::unix_time_ms().saturating_sub(stats.last_request_ms);
         let clients = if idle_ms < CLIENT_IDLE_MS {
-            status.sessions.load(Ordering::Relaxed)
+            stats.sessions
         } else {
             0
         };
-        core.state.ai.rejected = status.rejected.load(Ordering::Relaxed);
+        core.state.ai.rejected = stats.rejected;
         core.state.ai.status = if clients > 0 {
             AiServerStatus::Connected { clients }
         } else {
@@ -391,26 +425,93 @@ fn undo_last_ai_edit(core: &mut EditorCore) {
 
 // ------------------------------------------------------------ the requests
 
+// ------------------------------------------------- to the transport's types
+
+fn tool_to_mcp(tool: ToolInfo) -> McpTool {
+    McpTool {
+        name: tool.name,
+        title: tool.title,
+        description: tool.description,
+        input_schema: Json::Object(tool.input_schema).to_string(),
+        read_only: tool.read_only,
+        destructive: tool.destructive,
+        idempotent: tool.idempotent,
+    }
+}
+
+fn resource_to_mcp(resource: ResourceInfo) -> McpResource {
+    McpResource {
+        uri: resource.uri,
+        name: resource.name,
+        description: resource.description,
+        mime_type: resource.mime_type.to_owned(),
+    }
+}
+
+fn error_to_mcp(error: ToolError) -> McpError {
+    McpError {
+        kind: error.kind.as_str().to_owned(),
+        message: error.message,
+    }
+}
+
+fn output_to_mcp(output: ToolOutput) -> McpOutput {
+    McpOutput {
+        text: output.text,
+        images: output.images,
+    }
+}
+
+fn export_request(export: McpExport) -> ExportRequest {
+    ExportRequest {
+        build_only: export.build_only,
+        target: export.target,
+        profile: export.profile,
+        out_dir: export.out_dir,
+    }
+}
+
 fn execute(
     core: &mut EditorCore,
-    request: LiveRequest,
+    request: McpRequest,
     backend: &mut dyn PreviewBackend,
-) -> LiveReply {
+) -> McpReply {
     match request {
-        LiveRequest::ListTools => LiveReply::Tools(list_tools(core)),
-        LiveRequest::ListResources => LiveReply::Resources(
+        McpRequest::ListTools => {
+            McpReply::Tools(list_tools(core).into_iter().map(tool_to_mcp).collect())
+        }
+        McpRequest::ListResources => McpReply::Resources(
             core.session
                 .as_ref()
                 .map(|s| resource_list(s.project.story()))
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .into_iter()
+                .map(resource_to_mcp)
+                .collect(),
         ),
-        LiveRequest::ReadResource { uri } => LiveReply::Resource(read_one(core, &uri)),
-        LiveRequest::CallTool { name, args } => {
-            LiveReply::Tool(logged(core, &name, args, |core, name, args| {
-                run_tool(core, name, args, backend)
-            }))
+        McpRequest::ReadResource { uri } => McpReply::Resource(
+            read_one(core, &uri)
+                .map(|(mime, text)| (mime.to_owned(), text))
+                .map_err(error_to_mcp),
+        ),
+        McpRequest::CallTool { name, args } => {
+            let args = if args.trim().is_empty() {
+                Ok(Json::Null)
+            } else {
+                serde_json::from_str::<Json>(&args).map_err(|e| {
+                    ToolError::new(ErrorKind::InvalidArguments, format!("invalid JSON arguments: {e}"))
+                })
+            };
+            let result = match args {
+                Ok(args) => logged(core, &name, args, |core, name, args| {
+                    run_tool(core, name, args, backend)
+                }),
+                Err(e) => Err(e),
+            };
+            McpReply::Tool(result.map(output_to_mcp).map_err(error_to_mcp))
         }
-        LiveRequest::Export(request) => {
+        McpRequest::Export(request) => {
+            let request = export_request(request);
             let name = if request.build_only {
                 live_tools::BUILD_PROJECT
             } else {
@@ -419,11 +520,12 @@ fn execute(
             let args = json!({
                 "target": request.target, "profile": request.profile, "out_dir": request.out_dir,
             });
-            LiveReply::Export(
+            McpReply::Export(
                 logged(core, name, args, |core, _, _| {
                     export(core, &request).map(ToolOutput::text)
                 })
-                .map(|out| out.text),
+                .map(|out| out.text)
+                .map_err(error_to_mcp),
             )
         }
     }
@@ -432,12 +534,12 @@ fn execute(
 /// How often the published tool list is rebuilt (plugin tools may change).
 const TOOLS_REFRESH: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Publishes the full tool list to the queue (the 3D tools are filtered when
-/// it is read, see `CommandQueue::tools`).
+/// Publishes the tool list clients see to the queue (the 3D tools only while
+/// the experimental switch is on; republished as soon as it changes).
 fn publish_tools(core: &mut EditorCore) {
-    let tools = all_tools(core);
+    let tools = list_tools(core).into_iter().map(tool_to_mcp).collect();
     core.mcp.queue.publish_tools(tools);
-    core.mcp.tools_published = Some(Instant::now());
+    core.mcp.tools_published = Some((Instant::now(), orbit_core::experimental::enabled_3d()));
 }
 
 fn list_tools(core: &EditorCore) -> Vec<ToolInfo> {
