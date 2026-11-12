@@ -4,7 +4,7 @@ OrbitEngine can turn a Ren'Py game into a new project, so that you do not start 
 
 ## How to import
 
-- In the editor: **File > Import from Ren'Py…** (also in the **New project** dialog). Pick the Ren'Py game folder (the folder containing `game/`, or `game/` itself), then the folder that will contain the new project. The import runs in the background; the project opens when it is done and the import report is shown.
+- In the editor: the import is an editor plugin (`orbit.renpy_import`, built by `cargo xtask plugins` and installed from **Tools > Extensions > Plugins…**, see *Editor plugins*). Once installed: **File > Import from Ren'Py…**. Pick the Ren'Py game folder (the folder containing `game/`, or `game/` itself), then the folder that will contain the new project. The import runs in the background; the project opens when it is done and the import report is shown.
 - From the command line: `orbit import-renpy <renpy_dir> <out_dir>`. The output folder must be empty or absent.
 
 The report is also saved as `import-report.md` in the new project: counts, every statement that could not be converted (with its file and line), and every approximation.

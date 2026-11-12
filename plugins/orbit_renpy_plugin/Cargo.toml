@@ -1,0 +1,26 @@
+[package]
+name = "orbit_renpy_plugin"
+description = "Ren'Py import as an official native editor plugin (cdylib): File > Import from Ren'Py. Built by `cargo xtask plugins`, installed from the editor's plugin manager."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The plugin SDK: editor API, the editor's egui and dependency resolution.
+orbit_editor_sdk.workspace = true
+orbit_renpy.workspace = true
+# Folder pickers (same crate and version as the editor).
+rfd.workspace = true
+
+# `export_plugin!` generates `#[no_mangle]` functions: `unsafe_code` is denied
+# here rather than forbidden (the workspace forbids it).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

@@ -29,8 +29,6 @@ enum DialogOutcome {
         template: String,
     },
     CancelNewProject,
-    /// "Import from Ren'Py…" in the new project dialog.
-    ImportRenpy,
     /// The story file changed on disk: reload (`true`) or keep ours.
     ExternalChange(bool),
 }
@@ -232,10 +230,6 @@ impl EditorCore {
                 self.resolve_recovery(restore);
             }
             DialogOutcome::CancelNewProject => self.dialog = None,
-            DialogOutcome::ImportRenpy => {
-                self.dialog = None;
-                self.state.requests.push(EditorRequest::ImportRenpy);
-            }
             DialogOutcome::ExternalChange(reload) => {
                 self.dialog = None;
                 self.resolve_external_change(reload);
@@ -787,36 +781,6 @@ fn show_dialog(
         Dialog::NewProject(form) => {
             outcome = new_project_dialog(ctx, theme, form, escape);
         }
-        Dialog::ImportReport { text } => {
-            egui::Modal::new(Id::new("orbit_import_report"))
-                .frame(dialog_frame(theme, ctx))
-                .show(ctx, |ui| {
-                    ui.set_width(620.0);
-                    ui.label(RichText::new(ctx.t("renpy.report_title")).font(bold(17.0)));
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(ctx.t("renpy.report_note"))
-                            .small()
-                            .color(theme.text_weak()),
-                    );
-                    ui.add_space(8.0);
-                    egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(text.as_str()).monospace().size(12.0))
-                                .wrap(),
-                        );
-                    });
-                    ui.add_space(12.0);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if primary(ui, theme, &ctx.t("common.close")).clicked() {
-                            outcome = DialogOutcome::CancelNewProject;
-                        }
-                    });
-                });
-            if escape {
-                outcome = DialogOutcome::CancelNewProject;
-            }
-        }
         Dialog::ExternalChange { conflict } => {
             let conflict = *conflict;
             egui::Modal::new(Id::new("orbit_external_change"))
@@ -954,12 +918,6 @@ fn new_project_dialog(
                 if ui.button(ctx.t("common.cancel")).clicked() {
                     outcome = DialogOutcome::CancelNewProject;
                 }
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    let label = format!("{}  {}", icons::DOWNLOAD_SIMPLE, ctx.t("renpy.open_from_new"));
-                    if ui.button(label).clicked() {
-                        outcome = DialogOutcome::ImportRenpy;
-                    }
-                });
             });
         });
     if escape {

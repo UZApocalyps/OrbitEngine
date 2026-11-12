@@ -34,7 +34,6 @@ orbit_assets.workspace = true
 orbit_audio.workspace = true
 orbit_export.workspace = true
 orbit_i18n.workspace = true
-orbit_renpy.workspace = true
 orbit_mcp.workspace = true
 # Native editor plugins (DLL): verification, install, loading. The editor
 # ships without plugins; AI Studio is one (plugins/orbit_ai_studio_plugin).
