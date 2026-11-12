@@ -3,6 +3,7 @@
 mod arch;
 mod assets;
 mod bench;
+mod plugin_store;
 mod plugins;
 mod serve;
 mod templates;
@@ -37,6 +38,11 @@ Commands:
   plugins       Build the official native editor plugins (plugins/*) and package them as .orbitplugin into
                 <target>/plugins/. Options: --debug (default release, same profile as the editor)
                 --examples (also examples/editor_plugins/*) --only <package> --out <dir> --no-check
+                --sign <keyfile> | --sign-env <VAR> (signed build descriptors for the plugin store)
+  plugin-key    gen [--out <file>]: new Ed25519 plugin signing key, written outside any repository;
+                pub <file>: print its public key
+  plugin-index  Merge the build descriptors of <target>/plugins into a store catalog:
+                --index <index.json> [--builds <dir>] [--url <pattern>] [--tag <tag>] [--changelog <text>]
 ";
 
 fn main() -> ExitCode {
@@ -52,6 +58,8 @@ fn main() -> ExitCode {
         Some("bench") => bench::bench(&rest),
         Some("gen-assets") => assets::generate(),
         Some("plugins") => plugins::plugins(&rest),
+        Some("plugin-key") => plugin_store::plugin_key(&rest),
+        Some("plugin-index") => plugin_store::plugin_index(&rest, default_plugins_dir()),
         Some("help") | Some("--help") | Some("-h") | None => {
             print!("{HELP}");
             Ok(())
@@ -65,6 +73,12 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `<target>/plugins` (where `cargo xtask plugins` writes the packages).
+fn default_plugins_dir() -> PathBuf {
+    let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| workspace_root().join("target"), PathBuf::from);
+    target.join("plugins")
 }
 
 /// Workspace root (the xtask crate lives in `<root>/xtask`).

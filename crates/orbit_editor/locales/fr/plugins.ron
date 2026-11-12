@@ -22,7 +22,7 @@
     "plugins.installed": "{name} {version} installé : redémarrez l'éditeur pour l'utiliser.",
     "plugins.updated": "{name} {version} installé à la place de la version précédente : redémarrez l'éditeur pour l'utiliser.",
     "plugins.uninstalled": "{name} désinstallé.",
-    "plugins.empty": "Aucun plugin installé. Les plugins officiels (comme AI Studio) sont des fichiers .orbitplugin : installez-les avec le bouton ci-dessus.",
+    "plugins.empty": "Aucun plugin installé. Trouvez les plugins officiels (comme AI Studio) dans l'onglet Store, ou installez un fichier .orbitplugin avec le bouton ci-dessus.",
     "plugins.by": "par {author}",
     "plugins.enabled": "Activé",
     "plugins.settings": "Réglages",

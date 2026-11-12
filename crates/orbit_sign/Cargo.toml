@@ -1,0 +1,13 @@
+[package]
+name = "orbit_sign"
+description = "OrbitEngine: SHA-256, SHA-512 and Ed25519 (RFC 8032) without dependencies, for the plugin store (signed plugin builds). Ed25519 is a port of TweetNaCl (public domain)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
