@@ -25,7 +25,7 @@ use orbit_editor_sdk as orbit_editor_api;
 use orbit_editor_sdk::Selection;
 use orbit_editor_sdk::ai::{AiCommand, AiServerStatus};
 use orbit_editor_sdk::egui::Context;
-use orbit_mcp_plugin::HttpTransport;
+use crate::HttpTransport;
 use orbit_project::MANIFEST_FILE;
 use serde_json::{Value, json};
 

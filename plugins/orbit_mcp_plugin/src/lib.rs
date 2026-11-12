@@ -13,6 +13,8 @@
 mod assistant;
 pub mod transport;
 mod ui_util;
+#[cfg(test)]
+mod live_mcp_tests;
 
 use orbit_editor_sdk::native::{NativePlugin, PluginHost};
 
