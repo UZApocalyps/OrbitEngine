@@ -76,6 +76,11 @@ spade = "2.15"
 uuid = { version = "1", features = ["v4"] }
 getrandom = { version = "0.4", features = ["std", "sys_rng"] }
 once_cell = "1"
+schemars = { version = "1.2", features = ["chrono04"] }
+chrono = { version = "0.4", default-features = false, features = ["alloc", "now", "serde", "std"] }
+indexmap = { version = "2", features = ["serde"] }
+tracing = { version = "0.1", features = ["attributes", "std"] }
+tracing-core = { version = "0.1", default-features = false, features = ["once_cell", "std"] }
 
 [dev-dependencies]
 hound.workspace = true

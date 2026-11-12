@@ -3181,6 +3181,7 @@ dependencies = [
 name = "orbit_editor"
 version = "0.4.0"
 dependencies = [
+ "chrono",
  "egui",
  "egui-phosphor",
  "egui-snarl",
@@ -3191,6 +3192,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hound",
  "image",
+ "indexmap",
  "log",
  "once_cell",
  "orbit_anim",
@@ -3222,11 +3224,14 @@ dependencies = [
  "pollster 1.0.1",
  "rfd",
  "ron",
+ "schemars",
  "serde",
  "serde_json",
  "spade",
  "syn 2.0.119",
  "syn 3.0.6",
+ "tracing",
+ "tracing-core",
  "uuid",
  "winresource",
  "zip",
