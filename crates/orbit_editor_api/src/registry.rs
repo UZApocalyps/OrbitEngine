@@ -373,6 +373,9 @@ pub struct EditorRegistry {
     texts: Vec<(Lang, Table)>,
     /// Registration problems (duplicates...), reported in the console.
     pub errors: Vec<String>,
+    /// The network side of the live MCP server (plugin `orbit.mcp`), with
+    /// the id of the plugin that gave it.
+    mcp_transport: Option<(String, std::rc::Rc<dyn crate::mcp::McpTransport>)>,
 }
 
 impl EditorRegistry {
@@ -598,6 +601,25 @@ impl EditorRegistry {
     /// The floating windows, in registration order.
     pub fn windows(&self) -> &[RegisteredWindow] {
         &self.windows
+    }
+
+    /// Installs the transport of the live MCP server (see [`crate::mcp`]).
+    /// One per editor: a second one is refused and reported. Native plugins
+    /// go through `PluginHost::mcp_transport`, which guards it.
+    pub fn set_mcp_transport(&mut self, transport: std::rc::Rc<dyn crate::mcp::McpTransport>) {
+        if let Some((owner, _)) = &self.mcp_transport {
+            self.errors.push(format!(
+                "plugin `{}`: an MCP transport is already provided by `{owner}`",
+                self.current
+            ));
+            return;
+        }
+        self.mcp_transport = Some((self.current.clone(), transport));
+    }
+
+    /// The transport of the live MCP server, when a plugin provides one.
+    pub fn mcp_transport(&self) -> Option<std::rc::Rc<dyn crate::mcp::McpTransport>> {
+        self.mcp_transport.as_ref().map(|(_, t)| t.clone())
     }
 
     /// The settings page of a plugin, if it has one.

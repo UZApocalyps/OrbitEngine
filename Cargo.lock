@@ -3178,9 +3178,11 @@ dependencies = [
  "egui-winit",
  "egui_dock",
  "env_logger",
+ "getrandom 0.4.3",
  "hound",
  "image",
  "log",
+ "once_cell",
  "orbit_anim",
  "orbit_assets",
  "orbit_audio",
@@ -3213,6 +3215,9 @@ dependencies = [
  "serde",
  "serde_json",
  "spade",
+ "syn 2.0.119",
+ "syn 3.0.6",
+ "uuid",
  "winresource",
  "zip",
 ]
@@ -3333,6 +3338,18 @@ dependencies = [
  "tokio",
  "tokio-util",
  "zip",
+]
+
+[[package]]
+name = "orbit_mcp_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_core",
+ "orbit_editor",
+ "orbit_editor_sdk",
+ "orbit_mcp",
+ "orbit_project",
+ "serde_json",
 ]
 
 [[package]]

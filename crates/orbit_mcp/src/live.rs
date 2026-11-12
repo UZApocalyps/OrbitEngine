@@ -4,7 +4,7 @@
 //!  client ──HTTP──▶ [server thread: tokio, auth, rmcp]
 //!                        │ OrbitMcpServer worker thread (one call at a time)
 //!                        ▼
-//!                  LiveHost (ProjectHost) ──▶ CommandQueue ──▶ editor thread
+//!                  a ProjectHost ──▶ the editor's queue ──▶ editor thread
 //!                        ▲                                      │ runs the tool
 //!                        └────────────── reply (channel) ◀──────┘ on the live Project
 //! ```
@@ -12,334 +12,17 @@
 //! * The server only ever listens on **127.0.0.1**; every request needs the
 //!   access token (`Authorization: Bearer <token>`); `Host` is checked by
 //!   `rmcp` against DNS rebinding.
-//! * It never touches a project: it posts [`LiveJob`]s to the shared
-//!   [`CommandQueue`]. The editor drains the queue on its own thread (the
-//!   `Project`, the registry and the GPU are not `Send`), runs the tool with
-//!   [`crate::host::ToolRunner`] (one undo entry per call) and answers. A
-//!   [`CommandQueue::set_waker`] callback wakes the editor's event loop.
+//! * It never touches a project: its [`ProjectHost`](crate::host::ProjectHost)
+//!   forwards every request to the editor thread (the `Project`, the
+//!   registry and the GPU are not `Send`). In the editor, that host is the
+//!   `orbit.mcp` plugin's bridge to the editor's request queue
+//!   (`orbit_editor_api::mcp::McpQueue`).
+//!
+//! The editor links this crate without the `server` feature: only
+//! [`generate_token`] is there then. `LiveServer` (tokio, hyper, rmcp) is
+//! compiled with the feature, by the `orbit.mcp` plugin.
 
-use std::collections::VecDeque;
-use std::convert::Infallible;
-use std::net::{Ipv4Addr, SocketAddr, TcpListener};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
-
-use bytes::Bytes;
-use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, Full};
-use hyper::body::Incoming;
-use hyper::header::{AUTHORIZATION, CONTENT_TYPE, WWW_AUTHENTICATE};
-use hyper::service::service_fn;
-use hyper::{Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
-use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
-use serde_json::Value as Json;
-use tokio_util::sync::CancellationToken;
-
-use crate::error::{ErrorKind, ToolError};
-use crate::host::{ExportRequest, ProjectHost, ResourceInfo, ToolInfo, ToolOutput};
-use crate::live_tools::{self, LiveCall};
-use crate::server::{LIVE_INSTRUCTIONS, OrbitMcpServer};
-
-/// How long a request waits for the editor to answer (a sleeping or blocked
-/// editor must not hang the client for ever).
-const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
-/// Builds and exports take longer.
-const EXPORT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-
-// ------------------------------------------------------------ the queue
-
-/// What the server asks of the editor.
-#[derive(Debug)]
-pub enum LiveRequest {
-    ListTools,
-    CallTool { name: String, args: Json },
-    ListResources,
-    ReadResource { uri: String },
-    Export(ExportRequest),
-}
-
-/// The editor's answer.
-#[derive(Debug)]
-pub enum LiveReply {
-    Tools(Vec<ToolInfo>),
-    Tool(Result<ToolOutput, ToolError>),
-    Resources(Vec<ResourceInfo>),
-    Resource(Result<(&'static str, String), ToolError>),
-    Export(Result<String, ToolError>),
-}
-
-/// A request and the way back.
-#[derive(Debug)]
-pub struct LiveJob {
-    pub request: LiveRequest,
-    pub reply: mpsc::Sender<LiveReply>,
-}
-
-type Waker = Box<dyn Fn() + Send + Sync>;
-
-/// How long a posted request may wait for the editor thread to pick it up
-/// before the editor counts as busy (a native file dialog blocks its thread,
-/// for example). The request is then withdrawn, never run, and the client
-/// gets a clear `unavailable` error instead of a silent timeout.
-const PICKUP_GRACE: Duration = Duration::from_secs(5);
-
-#[derive(Default)]
-struct QueueInner {
-    jobs: Mutex<VecDeque<(u64, LiveJob)>>,
-    next_id: AtomicU64,
-    waker: Mutex<Option<Waker>>,
-    /// The editor's tool list, published from its thread: `tools/list`
-    /// never needs the editor thread (see [`CommandQueue::publish_tools`]).
-    tools: Mutex<Option<Vec<ToolInfo>>>,
-    /// Why the editor cannot answer right now, when it knows (shown to the
-    /// client in the "editor busy" error).
-    busy: Mutex<Option<String>>,
-}
-
-/// The thread-safe queue between the server thread and the editor thread.
-/// Cloning shares it.
-#[derive(Clone, Default)]
-pub struct CommandQueue {
-    inner: Arc<QueueInner>,
-}
-
-impl CommandQueue {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Called after each push, from the pushing thread: wakes the editor loop.
-    pub fn set_waker(&self, wake: impl Fn() + Send + Sync + 'static) {
-        if let Ok(mut slot) = self.inner.waker.lock() {
-            *slot = Some(Box::new(wake));
-        }
-    }
-
-    /// Posts a job and wakes the editor; returns its ticket (see
-    /// [`CommandQueue::withdraw`]).
-    pub fn push(&self, job: LiveJob) -> u64 {
-        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
-        if let Ok(mut jobs) = self.inner.jobs.lock() {
-            jobs.push_back((id, job));
-        }
-        self.wake();
-        id
-    }
-
-    /// Asks the editor loop for a frame (the window draws on demand).
-    pub fn wake(&self) {
-        if let Ok(slot) = self.inner.waker.lock()
-            && let Some(wake) = slot.as_ref()
-        {
-            wake();
-        }
-    }
-
-    /// Takes back a job the editor has not picked up yet. `false`: it was
-    /// already taken (it runs or ran).
-    pub fn withdraw(&self, id: u64) -> bool {
-        let Ok(mut jobs) = self.inner.jobs.lock() else {
-            return false;
-        };
-        let before = jobs.len();
-        jobs.retain(|(job_id, _)| *job_id != id);
-        jobs.len() != before
-    }
-
-    /// Takes everything posted so far, in order.
-    pub fn drain(&self) -> Vec<LiveJob> {
-        self.inner
-            .jobs
-            .lock()
-            .map(|mut jobs| jobs.drain(..).map(|(_, job)| job).collect())
-            .unwrap_or_default()
-    }
-
-    /// The editor publishes its full tool list (3D tools included: they are
-    /// filtered when read, with the switch of that moment). `tools/list` is
-    /// then answered from the server thread, even while the editor thread is
-    /// asleep or blocked.
-    pub fn publish_tools(&self, tools: Vec<ToolInfo>) {
-        if let Ok(mut slot) = self.inner.tools.lock() {
-            *slot = Some(tools);
-        }
-    }
-
-    /// The published tool list, filtered by the experimental-3D switch.
-    pub fn tools(&self) -> Option<Vec<ToolInfo>> {
-        let mut tools = self.inner.tools.lock().ok()?.clone()?;
-        if !orbit_core::experimental::enabled_3d() {
-            tools.retain(|t| !crate::host::is_3d_tool(&t.name));
-        }
-        Some(tools)
-    }
-
-    /// The editor says why it cannot answer for a while (`None`: it can).
-    pub fn set_busy(&self, reason: Option<String>) {
-        if let Ok(mut slot) = self.inner.busy.lock() {
-            *slot = reason;
-        }
-    }
-
-    fn busy_reason(&self) -> Option<String> {
-        self.inner.busy.lock().ok().and_then(|r| r.clone())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.inner.jobs.lock().is_ok_and(|jobs| jobs.is_empty())
-    }
-}
-
-// ------------------------------------------------------------ the host
-
-/// A [`ProjectHost`] that owns nothing: it forwards to the editor through the
-/// queue and waits for the answer. `Send`, so the generic MCP worker thread
-/// can own it.
-#[derive(Clone)]
-pub struct LiveHost {
-    queue: CommandQueue,
-}
-
-impl LiveHost {
-    pub fn new(queue: CommandQueue) -> Self {
-        Self { queue }
-    }
-
-    fn ask(&self, request: LiveRequest, timeout: Duration) -> Result<LiveReply, ToolError> {
-        self.ask_with_grace(request, timeout, PICKUP_GRACE)
-    }
-
-    /// Posts `request` and waits for the answer. When the editor thread has
-    /// not even picked the job up after `grace` (it is blocked: a native file
-    /// dialog, a frozen window), the job is withdrawn — it will never run —
-    /// and the caller gets an "editor busy" error at once rather than after
-    /// `timeout`.
-    fn ask_with_grace(
-        &self,
-        request: LiveRequest,
-        timeout: Duration,
-        grace: Duration,
-    ) -> Result<LiveReply, ToolError> {
-        let (reply, answer) = mpsc::channel();
-        let id = self.queue.push(LiveJob { request, reply });
-        let started = Instant::now();
-        let mut picked = false;
-        loop {
-            let slice = Duration::from_millis(200).min(timeout.saturating_sub(started.elapsed()));
-            match answer.recv_timeout(slice) {
-                Ok(reply) => return Ok(reply),
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(ToolError::unavailable(
-                        "the editor dropped the request (it is closing)",
-                    ));
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-            }
-            let elapsed = started.elapsed();
-            if !picked && elapsed >= grace {
-                if self.queue.withdraw(id) {
-                    let reason = self.queue.busy_reason().unwrap_or_else(|| {
-                        "its window is not processing events (a native dialog such as a file \
-                         picker may be open, or the window is frozen)"
-                            .to_owned()
-                    });
-                    return Err(ToolError::unavailable(format!(
-                        "editor busy: {reason}. The request was not run; close the dialog in \
-                         the editor and try again."
-                    )));
-                }
-                picked = true; // the editor runs it: wait for the answer
-            }
-            if elapsed >= timeout {
-                return Err(ToolError::unavailable(format!(
-                    "the editor did not answer within {} s (is it busy with a dialog or closed?)",
-                    timeout.as_secs()
-                )));
-            }
-            if !picked {
-                // A lost wake-up must not cost the whole grace period.
-                self.queue.wake();
-            }
-        }
-    }
-}
-
-fn protocol_error() -> ToolError {
-    ToolError::new(
-        ErrorKind::Internal,
-        "the editor answered with an unexpected message",
-    )
-}
-
-impl ProjectHost for LiveHost {
-    fn list_tools(&self) -> Vec<ToolInfo> {
-        if let Some(tools) = self.queue.tools() {
-            return tools;
-        }
-        match self.ask(LiveRequest::ListTools, REPLY_TIMEOUT) {
-            Ok(LiveReply::Tools(tools)) => tools,
-            _ => Vec::new(),
-        }
-    }
-
-    fn call_tool(&mut self, name: &str, args: Json) -> Result<String, ToolError> {
-        self.call_tool_rich(name, args).map(|out| out.text)
-    }
-
-    fn call_tool_rich(&mut self, name: &str, args: Json) -> Result<ToolOutput, ToolError> {
-        let args = if args.is_null() {
-            serde_json::json!({})
-        } else {
-            args
-        };
-        // Build / export go through the host interface, like any other mode.
-        if matches!(name, live_tools::BUILD_PROJECT | live_tools::EXPORT_GAME)
-            && let Some(parsed) = live_tools::parse_live_call(name, args.clone())
-        {
-            return match parsed? {
-                LiveCall::Export(request) => self.export(&request).map(ToolOutput::text),
-                _ => Err(protocol_error()),
-            };
-        }
-        let request = LiveRequest::CallTool {
-            name: name.to_owned(),
-            args,
-        };
-        match self.ask(request, REPLY_TIMEOUT)? {
-            LiveReply::Tool(result) => result,
-            _ => Err(protocol_error()),
-        }
-    }
-
-    fn list_resources(&self) -> Vec<ResourceInfo> {
-        match self.ask(LiveRequest::ListResources, REPLY_TIMEOUT) {
-            Ok(LiveReply::Resources(list)) => list,
-            _ => Vec::new(),
-        }
-    }
-
-    fn read_resource(&self, uri: &str) -> Result<(&'static str, String), ToolError> {
-        let request = LiveRequest::ReadResource {
-            uri: uri.to_owned(),
-        };
-        match self.ask(request, REPLY_TIMEOUT)? {
-            LiveReply::Resource(result) => result,
-            _ => Err(protocol_error()),
-        }
-    }
-
-    fn export(&mut self, request: &ExportRequest) -> Result<String, ToolError> {
-        match self.ask(LiveRequest::Export(request.clone()), EXPORT_TIMEOUT)? {
-            LiveReply::Export(result) => result,
-            _ => Err(protocol_error()),
-        }
-    }
-}
+use std::time::Instant;
 
 // ------------------------------------------------------------- the token
 
@@ -368,245 +51,285 @@ pub fn generate_token() -> String {
     token
 }
 
-/// Constant-time comparison (the token must not leak through timing).
-fn token_matches(expected: &str, given: &str) -> bool {
-    let (a, b) = (expected.as_bytes(), given.as_bytes());
-    let mut diff = a.len() ^ b.len();
-    for i in 0..a.len().max(b.len()) {
-        diff |= usize::from(a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0));
-    }
-    diff == 0
-}
+#[cfg(feature = "server")]
+pub use http::{LiveConfig, LiveServer, ServerStatus};
 
-/// The token in `Authorization: Bearer <token>`.
-fn bearer(request: &Request<Incoming>) -> Option<&str> {
-    let value = request.headers().get(AUTHORIZATION)?.to_str().ok()?;
-    let (scheme, token) = value.split_once(' ')?;
-    scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
-}
+/// The HTTP server (feature `server`).
+#[cfg(feature = "server")]
+mod http {
+    use std::convert::Infallible;
+    use std::net::{Ipv4Addr, SocketAddr, TcpListener};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::thread::{self, JoinHandle};
+    use std::time::Duration;
 
-// ------------------------------------------------------------ the server
+    use bytes::Bytes;
+    use http_body_util::combinators::BoxBody;
+    use http_body_util::{BodyExt, Full};
+    use hyper::body::Incoming;
+    use hyper::header::{AUTHORIZATION, CONTENT_TYPE, WWW_AUTHENTICATE};
+    use hyper::service::service_fn;
+    use hyper::{Request, Response, StatusCode};
+    use hyper_util::rt::TokioIo;
+    use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+    use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
+    use tokio_util::sync::CancellationToken;
 
-/// What the panel shows about the server.
-#[derive(Default)]
-pub struct ServerStatus {
-    /// MCP sessions open right now (a connected client).
-    pub sessions: AtomicUsize,
-    /// Requests that passed authentication.
-    pub requests: AtomicU64,
-    /// Requests refused (bad or missing token, not loopback).
-    pub rejected: AtomicU64,
-    /// Unix ms of the last authenticated request (0: none yet).
-    pub last_request_ms: AtomicU64,
-}
+    use crate::host::{ProjectHost, ToolInfo};
+    use crate::server::{LIVE_INSTRUCTIONS, OrbitMcpServer};
 
-fn unix_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64)
-}
-
-/// Settings of a live server.
-#[derive(Debug, Clone)]
-pub struct LiveConfig {
-    /// TCP port on 127.0.0.1 (0: let the system pick one).
-    pub port: u16,
-    pub token: String,
-}
-
-/// A running live server. Dropping it (or [`LiveServer::stop`]) shuts it down.
-pub struct LiveServer {
-    addr: SocketAddr,
-    status: Arc<ServerStatus>,
-    cancel: CancellationToken,
-    thread: Option<JoinHandle<()>>,
-}
-
-type Body = BoxBody<Bytes, Infallible>;
-
-fn text_response(status: StatusCode, message: &str) -> Response<Body> {
-    let body = Full::new(Bytes::from(
-        serde_json::json!({"error": message}).to_string(),
-    ))
-    .boxed();
-    let mut response = Response::new(body);
-    *response.status_mut() = status;
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, "application/json".parse().expect("static"));
-    response
-}
-
-impl LiveServer {
-    /// Binds `127.0.0.1:<port>` and serves until stopped. The bind happens
-    /// here, so a busy port is an immediate error.
-    pub fn start(queue: CommandQueue, config: LiveConfig) -> Result<Self, String> {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.port))
-            .map_err(|e| format!("cannot listen on 127.0.0.1:{}: {e}", config.port))?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| format!("cannot configure the listener: {e}"))?;
-        let addr = listener
-            .local_addr()
-            .map_err(|e| format!("cannot read the listener address: {e}"))?;
-
-        // The generic MCP worker thread; its host forwards to the editor.
-        let tools = queue.clone();
-        let mcp = OrbitMcpServer::spawn(move || Ok(LiveHost::new(queue)))?
-            .with_instructions(LIVE_INSTRUCTIONS)
-            .with_tool_list(move || tools.tools());
-
-        let status = Arc::new(ServerStatus::default());
-        let cancel = CancellationToken::new();
-        let thread = {
-            let (status, cancel) = (status.clone(), cancel.clone());
-            thread::Builder::new()
-                .name("orbit-mcp-http".into())
-                .spawn(move || run_http(listener, mcp, config.token, status, cancel))
-                .map_err(|e| format!("cannot start the server thread: {e}"))?
-        };
-        Ok(Self {
-            addr,
-            status,
-            cancel,
-            thread: Some(thread),
-        })
+    /// Constant-time comparison (the token must not leak through timing).
+    pub(super) fn token_matches(expected: &str, given: &str) -> bool {
+        let (a, b) = (expected.as_bytes(), given.as_bytes());
+        let mut diff = a.len() ^ b.len();
+        for i in 0..a.len().max(b.len()) {
+            diff |= usize::from(a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0));
+        }
+        diff == 0
     }
 
-    pub fn addr(&self) -> SocketAddr {
-        self.addr
+    /// The token in `Authorization: Bearer <token>`.
+    fn bearer(request: &Request<Incoming>) -> Option<&str> {
+        let value = request.headers().get(AUTHORIZATION)?.to_str().ok()?;
+        let (scheme, token) = value.split_once(' ')?;
+        scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
     }
 
-    pub fn port(&self) -> u16 {
-        self.addr.port()
+    // ------------------------------------------------------------ the server
+
+    /// What the panel shows about the server.
+    #[derive(Default)]
+    pub struct ServerStatus {
+        /// MCP sessions open right now (a connected client).
+        pub sessions: AtomicUsize,
+        /// Requests that passed authentication.
+        pub requests: AtomicU64,
+        /// Requests refused (bad or missing token, not loopback).
+        pub rejected: AtomicU64,
+        /// Unix ms of the last authenticated request (0: none yet).
+        pub last_request_ms: AtomicU64,
     }
 
-    pub fn status(&self) -> &Arc<ServerStatus> {
-        &self.status
+    fn unix_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64)
     }
 
-    /// URL clients connect to.
-    pub fn url(&self) -> String {
-        format!("http://127.0.0.1:{}/mcp", self.addr.port())
+    /// Settings of a live server.
+    #[derive(Debug, Clone)]
+    pub struct LiveConfig {
+        /// TCP port on 127.0.0.1 (0: let the system pick one).
+        pub port: u16,
+        pub token: String,
     }
 
-    pub fn stop(mut self) {
-        self.shutdown();
+    /// A running live server. Dropping it (or [`LiveServer::stop`]) shuts it down.
+    pub struct LiveServer {
+        addr: SocketAddr,
+        status: Arc<ServerStatus>,
+        cancel: CancellationToken,
+        thread: Option<JoinHandle<()>>,
     }
 
-    fn shutdown(&mut self) {
-        self.cancel.cancel();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+    type Body = BoxBody<Bytes, Infallible>;
+
+    fn text_response(status: StatusCode, message: &str) -> Response<Body> {
+        let body = Full::new(Bytes::from(
+            serde_json::json!({"error": message}).to_string(),
+        ))
+        .boxed();
+        let mut response = Response::new(body);
+        *response.status_mut() = status;
+        response
+            .headers_mut()
+            .insert(CONTENT_TYPE, "application/json".parse().expect("static"));
+        response
+    }
+
+    impl LiveServer {
+        /// Binds `127.0.0.1:<port>` and serves until stopped. The bind happens
+        /// here, so a busy port is an immediate error.
+        ///
+        /// `make_host` builds, on the MCP worker thread, the host every request
+        /// goes to; `tool_list` answers `tools/list` from the server thread
+        /// (`None`: ask the host).
+        pub fn start<H, F>(
+            make_host: F,
+            tool_list: impl Fn() -> Option<Vec<ToolInfo>> + Send + Sync + 'static,
+            config: LiveConfig,
+        ) -> Result<Self, String>
+        where
+            H: ProjectHost + 'static,
+            F: FnOnce() -> Result<H, String> + Send + 'static,
+        {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.port))
+                .map_err(|e| format!("cannot listen on 127.0.0.1:{}: {e}", config.port))?;
+            listener
+                .set_nonblocking(true)
+                .map_err(|e| format!("cannot configure the listener: {e}"))?;
+            let addr = listener
+                .local_addr()
+                .map_err(|e| format!("cannot read the listener address: {e}"))?;
+
+            // The generic MCP worker thread; its host forwards to the editor.
+            let mcp = OrbitMcpServer::spawn(make_host)?
+                .with_instructions(LIVE_INSTRUCTIONS)
+                .with_tool_list(tool_list);
+
+            let status = Arc::new(ServerStatus::default());
+            let cancel = CancellationToken::new();
+            let thread = {
+                let (status, cancel) = (status.clone(), cancel.clone());
+                thread::Builder::new()
+                    .name("orbit-mcp-http".into())
+                    .spawn(move || run_http(listener, mcp, config.token, status, cancel))
+                    .map_err(|e| format!("cannot start the server thread: {e}"))?
+            };
+            Ok(Self {
+                addr,
+                status,
+                cancel,
+                thread: Some(thread),
+            })
+        }
+
+        pub fn addr(&self) -> SocketAddr {
+            self.addr
+        }
+
+        pub fn port(&self) -> u16 {
+            self.addr.port()
+        }
+
+        pub fn status(&self) -> &Arc<ServerStatus> {
+            &self.status
+        }
+
+        /// URL clients connect to.
+        pub fn url(&self) -> String {
+            format!("http://127.0.0.1:{}/mcp", self.addr.port())
+        }
+
+        pub fn stop(mut self) {
+            self.shutdown();
+        }
+
+        fn shutdown(&mut self) {
+            self.cancel.cancel();
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
         }
     }
-}
 
-impl Drop for LiveServer {
-    fn drop(&mut self) {
-        self.shutdown();
-    }
-}
-
-fn run_http(
-    listener: TcpListener,
-    mcp: OrbitMcpServer,
-    token: String,
-    status: Arc<ServerStatus>,
-    cancel: CancellationToken,
-) {
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(e) => {
-            eprintln!("orbit mcp (live): cannot start the async runtime: {e}");
-            return;
+    impl Drop for LiveServer {
+        fn drop(&mut self) {
+            self.shutdown();
         }
-    };
-    runtime.block_on(async move {
-        let listener = match tokio::net::TcpListener::from_std(listener) {
-            Ok(listener) => listener,
+    }
+
+    fn run_http(
+        listener: TcpListener,
+        mcp: OrbitMcpServer,
+        token: String,
+        status: Arc<ServerStatus>,
+        cancel: CancellationToken,
+    ) {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
             Err(e) => {
-                eprintln!("orbit mcp (live): cannot use the listener: {e}");
+                eprintln!("orbit mcp (live): cannot start the async runtime: {e}");
                 return;
             }
         };
-        let sessions = Arc::new(LocalSessionManager::default());
-        let config = StreamableHttpServerConfig::default()
-            .with_allowed_hosts(["localhost", "127.0.0.1", "::1"])
-            .with_json_response(true)
-            .with_cancellation_token(cancel.child_token());
-        let service = StreamableHttpService::new(move || Ok(mcp.clone()), sessions.clone(), config);
-        let token: Arc<str> = Arc::from(token);
-
-        // Keeps the "client connected" figure current.
-        {
-            let (status, sessions, cancel) = (status.clone(), sessions.clone(), cancel.clone());
-            tokio::spawn(async move {
-                while !cancel.is_cancelled() {
-                    let n = sessions.sessions.read().await.len();
-                    status.sessions.store(n, Ordering::Relaxed);
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+        runtime.block_on(async move {
+            let listener = match tokio::net::TcpListener::from_std(listener) {
+                Ok(listener) => listener,
+                Err(e) => {
+                    eprintln!("orbit mcp (live): cannot use the listener: {e}");
+                    return;
                 }
-            });
-        }
-
-        loop {
-            let (stream, peer) = tokio::select! {
-                () = cancel.cancelled() => break,
-                accepted = listener.accept() => match accepted {
-                    Ok(pair) => pair,
-                    Err(_) => continue,
-                },
             };
-            let (service, token, status) = (service.clone(), token.clone(), status.clone());
-            tokio::spawn(async move {
-                let handler = service_fn(move |request: Request<Incoming>| {
-                    let (service, token, status) = (service.clone(), token.clone(), status.clone());
-                    async move {
-                        Ok::<_, Infallible>(
-                            handle_request(&service, &token, &status, peer, request).await,
-                        )
+            let sessions = Arc::new(LocalSessionManager::default());
+            let config = StreamableHttpServerConfig::default()
+                .with_allowed_hosts(["localhost", "127.0.0.1", "::1"])
+                .with_json_response(true)
+                .with_cancellation_token(cancel.child_token());
+            let service = StreamableHttpService::new(move || Ok(mcp.clone()), sessions.clone(), config);
+            let token: Arc<str> = Arc::from(token);
+
+            // Keeps the "client connected" figure current.
+            {
+                let (status, sessions, cancel) = (status.clone(), sessions.clone(), cancel.clone());
+                tokio::spawn(async move {
+                    while !cancel.is_cancelled() {
+                        let n = sessions.sessions.read().await.len();
+                        status.sessions.store(n, Ordering::Relaxed);
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                     }
                 });
-                // Errors are the client hanging up; nothing to report.
-                let _ = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(TokioIo::new(stream), handler)
-                    .await;
-            });
-        }
-    });
-}
+            }
 
-async fn handle_request(
-    service: &StreamableHttpService<OrbitMcpServer, LocalSessionManager>,
-    token: &str,
-    status: &ServerStatus,
-    peer: SocketAddr,
-    request: Request<Incoming>,
-) -> Response<Body> {
-    // Belt and braces: the listener is bound to loopback already.
-    if !peer.ip().is_loopback() {
-        status.rejected.fetch_add(1, Ordering::Relaxed);
-        return text_response(StatusCode::FORBIDDEN, "only local connections are accepted");
+            loop {
+                let (stream, peer) = tokio::select! {
+                    () = cancel.cancelled() => break,
+                    accepted = listener.accept() => match accepted {
+                        Ok(pair) => pair,
+                        Err(_) => continue,
+                    },
+                };
+                let (service, token, status) = (service.clone(), token.clone(), status.clone());
+                tokio::spawn(async move {
+                    let handler = service_fn(move |request: Request<Incoming>| {
+                        let (service, token, status) = (service.clone(), token.clone(), status.clone());
+                        async move {
+                            Ok::<_, Infallible>(
+                                handle_request(&service, &token, &status, peer, request).await,
+                            )
+                        }
+                    });
+                    // Errors are the client hanging up; nothing to report.
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), handler)
+                        .await;
+                });
+            }
+        });
     }
-    let authorized = bearer(&request).is_some_and(|given| token_matches(token, given));
-    if !authorized {
-        status.rejected.fetch_add(1, Ordering::Relaxed);
-        let mut response = text_response(
-            StatusCode::UNAUTHORIZED,
-            "missing or invalid access token (Authorization: Bearer <token>)",
-        );
-        response
-            .headers_mut()
-            .insert(WWW_AUTHENTICATE, "Bearer".parse().expect("static"));
-        return response;
+
+    async fn handle_request(
+        service: &StreamableHttpService<OrbitMcpServer, LocalSessionManager>,
+        token: &str,
+        status: &ServerStatus,
+        peer: SocketAddr,
+        request: Request<Incoming>,
+    ) -> Response<Body> {
+        // Belt and braces: the listener is bound to loopback already.
+        if !peer.ip().is_loopback() {
+            status.rejected.fetch_add(1, Ordering::Relaxed);
+            return text_response(StatusCode::FORBIDDEN, "only local connections are accepted");
+        }
+        let authorized = bearer(&request).is_some_and(|given| token_matches(token, given));
+        if !authorized {
+            status.rejected.fetch_add(1, Ordering::Relaxed);
+            let mut response = text_response(
+                StatusCode::UNAUTHORIZED,
+                "missing or invalid access token (Authorization: Bearer <token>)",
+            );
+            response
+                .headers_mut()
+                .insert(WWW_AUTHENTICATE, "Bearer".parse().expect("static"));
+            return response;
+        }
+        status.requests.fetch_add(1, Ordering::Relaxed);
+        status.last_request_ms.store(unix_ms(), Ordering::Relaxed);
+        service.handle(request).await
     }
-    status.requests.fetch_add(1, Ordering::Relaxed);
-    status.last_request_ms.store(unix_ms(), Ordering::Relaxed);
-    service.handle(request).await
 }
 
 #[cfg(test)]
@@ -621,91 +344,13 @@ mod tests {
         assert!(a["orbit_".len()..].chars().all(|c| c.is_ascii_hexdigit()));
     }
 
+    #[cfg(feature = "server")]
     #[test]
     fn token_comparison_is_exact() {
+        use super::http::token_matches;
         assert!(token_matches("orbit_abc", "orbit_abc"));
         assert!(!token_matches("orbit_abc", "orbit_abd"));
         assert!(!token_matches("orbit_abc", "orbit_ab"));
         assert!(!token_matches("orbit_abc", ""));
-    }
-
-    #[test]
-    fn the_queue_keeps_order_and_wakes() {
-        let queue = CommandQueue::new();
-        let woken = Arc::new(AtomicUsize::new(0));
-        let w = woken.clone();
-        queue.set_waker(move || {
-            w.fetch_add(1, Ordering::Relaxed);
-        });
-        let (tx, _rx) = mpsc::channel();
-        for name in ["a", "b"] {
-            queue.push(LiveJob {
-                request: LiveRequest::CallTool {
-                    name: name.into(),
-                    args: Json::Null,
-                },
-                reply: tx.clone(),
-            });
-        }
-        assert_eq!(woken.load(Ordering::Relaxed), 2);
-        let jobs = queue.drain();
-        assert_eq!(jobs.len(), 2);
-        assert!(matches!(&jobs[0].request, LiveRequest::CallTool { name, .. } if name == "a"));
-        assert!(queue.is_empty());
-    }
-
-    #[test]
-    fn a_host_without_an_editor_times_out_with_a_clear_error() {
-        // Nobody drains the queue: the call must fail, not hang.
-        let host = LiveHost::new(CommandQueue::new());
-        let err = host
-            .ask(LiveRequest::ListTools, Duration::from_millis(50))
-            .unwrap_err();
-        assert_eq!(err.kind, ErrorKind::Unavailable);
-    }
-
-    #[test]
-    fn a_blocked_editor_gets_a_quick_busy_error_and_the_job_is_withdrawn() {
-        let queue = CommandQueue::new();
-        queue.set_busy(Some("a file dialog is open".into()));
-        let host = LiveHost::new(queue.clone());
-        let started = Instant::now();
-        let err = host
-            .ask_with_grace(
-                LiveRequest::CallTool {
-                    name: "add_dialogue".into(),
-                    args: Json::Null,
-                },
-                Duration::from_secs(60),
-                Duration::from_millis(100),
-            )
-            .unwrap_err();
-        assert!(started.elapsed() < Duration::from_secs(5));
-        assert_eq!(err.kind, ErrorKind::Unavailable);
-        assert!(err.message.contains("editor busy: a file dialog is open"), "{}", err.message);
-        // Never run later, when the editor comes back.
-        assert!(queue.is_empty());
-    }
-
-    #[test]
-    fn tools_list_is_answered_from_the_published_list_without_the_editor() {
-        let queue = CommandQueue::new();
-        assert!(queue.tools().is_none());
-        queue.publish_tools(vec![ToolInfo {
-            name: "list_scenes".into(),
-            title: "List scenes".into(),
-            description: String::new(),
-            input_schema: serde_json::Map::new(),
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-        }]);
-        // Nobody drains the queue: still an immediate answer.
-        let host = LiveHost::new(queue.clone());
-        let started = Instant::now();
-        let tools = host.list_tools();
-        assert!(started.elapsed() < Duration::from_millis(500));
-        assert_eq!(tools.len(), 1);
-        assert!(queue.is_empty());
     }
 }

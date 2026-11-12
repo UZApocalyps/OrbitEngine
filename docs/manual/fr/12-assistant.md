@@ -4,6 +4,8 @@ OrbitEngine peut travailler avec un assistant IA qui modifie votre histoire à v
 
 ## Dans l'éditeur
 
+Le serveur MCP de l'éditeur et le panneau **Assistant IA** sont fournis par le plugin officiel **Serveur MCP** (`orbit.mcp`) : l'éditeur de base ne contient ni serveur réseau ni moteur asynchrone, ce qui le garde plus léger. Installez le plugin depuis **Outils > Extensions > Plugins…** (voir le chapitre « Plugins de l'éditeur »). Sans lui, le robot de la barre d'état n'apparaît pas et `--mcp-port` indique que le plugin manque ; le serveur en ligne de commande (plus bas) fonctionne toujours. Le port et le jeton déjà enregistrés sont repris tels quels.
+
 Ouvrez le panneau **Assistant** (menu Outils, Ctrl+Maj+A). Il indique si la connexion est prête et donne l'adresse à renseigner dans votre application d'IA. Tant que l'éditeur est ouvert, l'assistant voit votre projet en direct : ses modifications apparaissent immédiatement et s'annulent avec Ctrl+Z comme les vôtres.
 
 ## Ce que l'assistant peut faire

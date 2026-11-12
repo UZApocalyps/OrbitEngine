@@ -22,15 +22,19 @@ orbit_vm.workspace = true
 orbit_script.workspace = true
 orbit_i18n.workspace = true
 orbit_layers.workspace = true
-rmcp = { version = "3.5", default-features = false, features = ["server", "transport-io", "transport-streamable-http-server"] }
-tokio = { version = "1", features = ["rt", "io-std", "sync", "net", "time", "macros"] }
+# The transports (feature `server`): stdio (`orbit mcp`) and the live HTTP
+# server of the `orbit.mcp` editor plugin. Without the feature the crate is the
+# tools alone (definitions, dispatch, the project host), with no async runtime
+# and no network: what the editor links.
+rmcp = { version = "3.5", default-features = false, features = ["server", "transport-io", "transport-streamable-http-server"], optional = true }
+tokio = { version = "1", features = ["rt", "io-std", "sync", "net", "time", "macros"], optional = true }
 # Live mode: the HTTP side of the streamable transport (rmcp provides a tower
 # service, not a listener).
-hyper = { version = "1", default-features = false, features = ["server", "http1"] }
-hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
-http-body-util = "0.1"
-bytes = "1"
-tokio-util = "0.7"
+hyper = { version = "1", default-features = false, features = ["server", "http1"], optional = true }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"], optional = true }
+http-body-util = { version = "0.1", optional = true }
+bytes = { version = "1", optional = true }
+tokio-util = { version = "0.7", optional = true }
 base64.workspace = true
 getrandom = "0.3"
 serde.workspace = true
@@ -41,6 +45,11 @@ thiserror.workspace = true
 # through orbit_assets' decoder).
 image.workspace = true
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[features]
+# The MCP transports: `server` (stdio, rmcp) and `live::LiveServer` (HTTP).
+# Enabled by `orbit_cli` and the `orbit.mcp` editor plugin, never by the editor.
+server = ["dep:rmcp", "dep:tokio", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:bytes", "dep:tokio-util"]
 
 [lints]
 workspace = true

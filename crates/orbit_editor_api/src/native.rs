@@ -566,6 +566,17 @@ impl<'a> PluginHost<'a> {
         self.registry.settings_page(def);
     }
 
+    /// Provides the network side of the live MCP server (the official one is
+    /// the `orbit.mcp` plugin). Every call the editor makes to it goes
+    /// through this plugin's guard.
+    pub fn mcp_transport(&mut self, transport: Box<dyn crate::mcp::McpTransport>) {
+        let guarded = crate::mcp::GuardedTransport {
+            inner: transport,
+            guard: self.guard.clone(),
+        };
+        self.registry.set_mcp_transport(std::rc::Rc::new(guarded));
+    }
+
     /// Wraps what was registered since the last seal with the plugin's
     /// guard. Called for the plugin after `on_load` by [`export_plugin!`]'s
     /// wrapper; this function runs in the plugin's copy of the crate, which
