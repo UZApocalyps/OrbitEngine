@@ -512,6 +512,18 @@ impl Cx<'_> {
                     if map.hotspots.is_empty() {
                         self.errors.push(ValidationError::EmptyChoice(id));
                     }
+                    // A zone leaves the map unless its first flow action is
+                    // `Stay` (no flow action: it jumps to its target).
+                    if !map.hotspots.is_empty()
+                        && map.hotspots.iter().all(|h| {
+                            matches!(
+                                h.actions.iter().find(|a| a.is_flow()),
+                                Some(crate::HotspotAction::Stay)
+                            )
+                        })
+                    {
+                        self.warnings.push(ValidationWarning::HotspotsNoExit(id));
+                    }
                     if map.hotspots.iter().any(|h| !h.shape.is_valid()) {
                         self.stage_problem(id, "a hotspot has an empty or invalid shape");
                     }

@@ -272,6 +272,7 @@ pub fn describe_warning(
             Some(*node),
             texts.format("problem.unknown_emitter", &[("name", name)]),
         ),
+        W::HotspotsNoExit(n) => (Some(*n), texts.get("problem.hotspots_no_exit")),
         W::AchievementNeverUnlocked(_) => (None, texts.get("problem.achievement_never_unlocked")),
     }
 }

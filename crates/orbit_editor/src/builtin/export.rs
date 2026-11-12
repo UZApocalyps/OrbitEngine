@@ -860,9 +860,9 @@ fn targets_and_output(ui: &mut Ui, state: &mut ExportUi) {
         let profile = state.profile();
         let mut on = profile.targets.contains(&target);
         let label = if present {
-            target.label().to_owned()
+            texts.t(&format!("export.target.{}", target.id()))
         } else {
-            format!("{}  {}", target.label(), texts.t("export.template_missing"))
+            format!("{}  {}", texts.t(&format!("export.target.{}", target.id())), texts.t("export.template_missing"))
         };
         let response = ui.checkbox(&mut on, label);
         if !present {
@@ -1222,7 +1222,7 @@ fn journal(ui: &mut Ui, state: &mut ExportUi, messages: &mut Vec<(bool, String)>
                         ui.label(texts.tf(
                             "export.report_line",
                             &[
-                                ("target", &report.target.label()),
+                                ("target", &texts.t(&format!("export.target.{}", report.target.id()))),
                                 ("path", &report.output.display()),
                                 ("size", &human_size(&texts, report.bytes)),
                             ],

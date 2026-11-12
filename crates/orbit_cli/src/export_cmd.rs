@@ -188,7 +188,7 @@ pub fn build_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> R
 }
 
 pub fn export_cmd(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Result<u8, String> {
-    const USAGE_LINE: &str = "usage: orbit export <windows|linux|web|all> --project <dir> --out <dir> [--profile <name>]";
+    const USAGE_LINE: &str = "usage: orbit export <windows|linux|web|android|all> --project <dir> --out <dir> [--profile <name>]";
     let (positional, common) = parse(args)?;
     let [target] = positional.as_slice() else {
         return Err(USAGE_LINE.into());

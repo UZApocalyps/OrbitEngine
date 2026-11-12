@@ -1,6 +1,10 @@
 {
     "manual.title": "Manuel",
     "manual.open": "Ouvrir le manuel",
+    "manual.group.reference": "Référence",
+    "manual.group.tutorials": "Tutoriels",
+    "manual.search": "Chercher un chapitre",
+    "manual.no_match": "Aucun chapitre ne correspond.",
     "manual.empty": "Le manuel est vide.",
     "template.title": "Modèle",
     "template.blank.name": "Vide",

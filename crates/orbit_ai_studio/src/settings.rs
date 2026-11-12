@@ -16,7 +16,7 @@ pub const SETTINGS_FILE: &str = "ai_studio.ron";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TextSettings {
-    /// Base URL, up to `/v1` (`http://localhost:11434/v1` for Ollama).
+    /// Base URL, up to `/v1` (`http://127.0.0.1:11434/v1` for Ollama).
     pub base_url: String,
     pub model: String,
     /// Bearer key; empty for local servers.
@@ -32,7 +32,7 @@ pub struct TextSettings {
 impl Default for TextSettings {
     fn default() -> Self {
         Self {
-            base_url: "http://localhost:11434/v1".to_owned(),
+            base_url: "http://127.0.0.1:11434/v1".to_owned(),
             model: "llama3.1".to_owned(),
             api_key: String::new(),
             temperature: 0.8,
