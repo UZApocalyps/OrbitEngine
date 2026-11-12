@@ -3295,6 +3295,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit_git_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
+]
+
+[[package]]
 name = "orbit_hello_plugin"
 version = "0.1.0"
 dependencies = [
@@ -3627,6 +3634,14 @@ dependencies = [
  "orbit_render2d",
  "thiserror 2.0.21",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "orbit_translation_qa_plugin"
+version = "0.4.0"
+dependencies = [
+ "orbit_editor_sdk",
+ "orbit_i18n",
 ]
 
 [[package]]
