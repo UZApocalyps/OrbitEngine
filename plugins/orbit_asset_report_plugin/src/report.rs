@@ -287,10 +287,13 @@ pub fn join_rel(dir: &str, rel: &str) -> Option<String> {
 
 /// One CSV field: quoted when it holds the separator, a quote or a line break.
 fn field(value: &str, sep: char) -> String {
+    // A spreadsheet reads a cell starting with these as a formula: a leading
+    // apostrophe makes it text (same rule as the story statistics export).
+    let value = if value.starts_with(['=', '+', '-', '@', '\t', '\r']) { format!("'{value}") } else { value.to_owned() };
     if value.contains([sep, '"', '\n', '\r']) {
         format!("\"{}\"", value.replace('"', "\"\""))
     } else {
-        value.to_owned()
+        value
     }
 }
 
@@ -336,6 +339,18 @@ pub fn to_csv(report: &Report, header: &[String], sep: char) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn csv_cells_cannot_be_formulas() {
+        assert_eq!(field("=1+1", ';'), "'=1+1");
+        assert_eq!(field("@SUM(A1)", ';'), "'@SUM(A1)");
+        assert_eq!(field("-2", ';'), "'-2");
+        assert_eq!(field("+1", ';'), "'+1");
+        assert_eq!(field("\tx", ';'), "'\tx");
+        assert_eq!(field("\rx", ';'), "\"'\rx\"");
+        assert_eq!(field("a=b", ';'), "a=b");
+        assert_eq!(field("=a;b", ';'), "\"'=a;b\"");
+    }
 
     fn asset(kind: AssetKind, path: &str) -> DeclaredAsset {
         DeclaredAsset { id: AssetId::new(), kind, path: path.into() }
