@@ -142,4 +142,4 @@ Les installeurs sont produits par `cargo-packager` (CI : job `release`, attaché
 
 ## Licence
 
-Provisoire : `MIT OR Apache-2.0` (voir ROADMAP §6). Seules des dépendances sous licences permissives sont acceptées (`deny.toml`).
+Double licence, au choix : MIT ([LICENSE-MIT](LICENSE-MIT)) ou Apache 2.0 ([LICENSE-APACHE](LICENSE-APACHE)). Seules des dépendances sous licences permissives sont acceptées (`deny.toml`).
